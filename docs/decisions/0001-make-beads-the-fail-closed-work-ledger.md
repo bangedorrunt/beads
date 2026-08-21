@@ -167,6 +167,17 @@ pub commit_sha: Option<String>,
 
 /// Last legal verdict kind that authorized close, kebab-case.
 pub close_verdict: Option<String>,
+
+/// Blast radius for legal_close. Default Normal. High forces the
+/// P0/P1 band (unit-test-verified or live-verified only).
+#[serde(default)]
+pub blast: Blast,
+```
+
+```rust
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Blast { #[default] Normal, High }
 ```
 
 ```rust
@@ -178,7 +189,7 @@ pub struct PrincipleCitation {
 }
 ```
 
-`br create` / `br update` grow `--verify`, `--principle 'name — decision'` (repeatable), `--wave N`, `--pin`, `--commit-sha`. `br close` requires `--commit-sha` unless bypass.
+`br create` / `br update` grow `--verify`, `--principle 'name — decision'` (repeatable), `--wave N`, `--pin`, `--commit-sha`, `--blast normal|high`, `--ac checkable|judgment`. `br close` requires `--commit-sha` unless bypass.
 
 Bump `CURRENT_SCHEMA_VERSION` from **17 to 18**. Migration is additive `ALTER TABLE` + JSONL field defaults. `br doctor migrate-schema` must run `integrity_check` after stamp and **fail** if it disagrees (parent #428 is the anti-pattern).
 
@@ -354,7 +365,7 @@ An agent should implement wave 1 from this section without asking follow-up ques
 
 **Target (write):**
 
-* `src/model/mod.rs` — new fields + `PrincipleCitation` + `AcShape`
+* `src/model/mod.rs` — new fields + `PrincipleCitation` + `AcShape` + `Blast`
 * `src/verify.rs` — **new**: `is_loop_runnable`, `legal_close` (port from flywheel `verdict.rs`; keep kebab-case gate names)
 * `src/storage/schema.rs` — v17 → v18 additive columns; `integrity_check` after stamp
 * `src/close_policy.rs` — `require_legal_close`; default-ON policy; reject `require_all` of the five ADR-0019 names; `BR_OPERATOR=1` for bypass
@@ -445,7 +456,7 @@ Wave 1 files listed in Target get `// governed-by: ADR-0001` at the top. `src/ve
 Wave 1 is done only when every box is checked with a command, not a self-report.
 
 - [ ] `CURRENT_SCHEMA_VERSION == 18` in `src/storage/schema.rs`
-- [ ] `Issue` has `verify`, `principles`, `wave`, `pin`, `commit_sha`, `close_verdict`, `ac_shape`
+- [ ] `Issue` has `verify`, `principles`, `wave`, `pin`, `commit_sha`, `close_verdict`, `ac_shape`, `blast`
 - [ ] `src/verify.rs` exists and `legal_close` matches the table in §5.3 (exhaustive over gate kinds; no wildcard)
 - [ ] `cargo test legal_close_ --offline` (or the crate's equivalent filter) is green
 - [ ] `cargo test ready_omits_ --offline` is green
