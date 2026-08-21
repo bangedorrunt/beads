@@ -1,9 +1,10 @@
 # AGENTS.md — beads (bangedorrunt fork of beads_rust)
 
 > **Governing decision:** [ADR-0001](docs/decisions/0001-make-beads-the-fail-closed-work-ledger.md).
-> This is a dedicated work-ledger for flywheel × toron, forked from `Dicklesworthstone/beads_rust` at the 2026-08-21 fast-forward (`9c45f79a`). Close is fail-closed. Binary remains `br`. Do not add MCP tools. Do not track upstream features. Do not run git from `br`.
+> This is a dedicated work-ledger for flywheel × toron, forked from `Dicklesworthstone/beads_rust` at the 2026-08-21 fast-forward (`9c45f79a`). Close is fail-closed. Binary remains `br`. Do not add MCP tools. Do not run git from `br`.
+> **Upstream:** do not fetch/merge/cherry-pick from `Dicklesworthstone/beads_rust` unless the captain says **fork sync**. Then review and take only commits this fork still needs. Never merge `upstream/main` wholesale. See **RULE 2**.
 >
-> Guidelines below are upstream agent rules. Where they conflict with ADR-0001, **ADR-0001 wins**.
+> Guidelines below are upstream agent rules. Where they conflict with ADR-0001 or RULE 2, **ADR-0001 and RULE 2 win**.
 
 ---
 
@@ -18,6 +19,27 @@ If I tell you to do something, even if it goes against what follows below, YOU M
 **YOU ARE NEVER ALLOWED TO DELETE A FILE WITHOUT EXPRESS PERMISSION.** Even a new file that you yourself created, such as a test code file. You have a horrible track record of deleting critically important files or otherwise throwing away tons of expensive work. As a result, you have permanently lost any and all rights to determine that a file or folder should be deleted.
 
 **YOU MUST ALWAYS ASK AND RECEIVE CLEAR, WRITTEN PERMISSION BEFORE EVER DELETING A FILE OR FOLDER OF ANY KIND.**
+
+---
+
+## RULE 2: FORK SYNC IS OPT-IN, CHERRY-PICK ONLY
+
+This repo is a **hard fork**. Default: ignore `Dicklesworthstone/beads_rust`. Do not "stay current."
+
+**Do nothing** with the parent until the captain's message contains **fork sync** (same intent: "sync the fork", "sync upstream"). A drive-by `git fetch upstream` plus merge is a policy violation.
+
+When **fork sync** is requested, do this and nothing else:
+
+1. `git fetch upstream` (remote `upstream` = `https://github.com/Dicklesworthstone/beads_rust.git`).
+2. List commits `HEAD..upstream/main` (or since the last recorded baseline SHA in this banner / ADR-0001).
+3. Classify **every** commit as `TAKE` or `SKIP` with one line why. No silent drops.
+4. **TAKE** only a commit that fixes a defect this fork still has: storage/WAL/lock honesty, `integrity_check` vs migrate-schema, EPIPE/`SIGABRT` on closed pipes, JSONL flush/hash that can exit 0 on a skipped write, doctor lying about health, schema correctness for tables we still use.
+5. **SKIP** (always): MCP/FastMCP, GitHub/Claude/Codex plugin install, `br agents --add` / AGENTS.md writer, `bd` migration, capacity exemptions, changelog-as-product, CLI growth, worktree-as-a-feature, generic tracker UX, anything on ADR-0001 Forbidden. Mixed commits (needed fix + skipped feature) are **SKIP**; note the SHA so a later split can be considered.
+6. If `TAKE` is empty: stop. Report that. Do not merge.
+7. If `TAKE` is non-empty: cherry-pick those SHAs onto `main`, one commit at a time, in parent order. Resolve conflicts toward **our** close/ready/gate/schema-18 semantics. Never `git merge upstream/main`. Never rebase this fork onto upstream.
+8. After the cherry-picks: run the smallest relevant proof (`cargo test` on the touched modules, or `br doctor` in a scratch dir). Report TAKE/SKIP lists, new HEAD, and leftover parent bugs we still do not want.
+
+Baseline after the founding fast-forward: `9c45f79a`. Update the banner SHA only when a fork-sync TAKE actually lands.
 
 ---
 

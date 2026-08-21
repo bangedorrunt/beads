@@ -35,7 +35,7 @@ This ADR is the whole program. Wave 1 is the first cut. Waves 2–6 are specifie
 3. Gate results sync through JSONL. A clone can prove a close.
 4. One ready predicate. Flywheel trusts `br ready --json`.
 5. Keep SQLite (fsqlite) + JSONL. Keep binary name `br`. Keep "br never runs git."
-6. Absorb `bv --robot-*` into `br next` / `br triage` later. Do not add MCP. Do not track upstream features after the 2026-08-21 fast-forward.
+6. Absorb `bv --robot-*` into `br next` / `br triage` later. Do not add MCP. Do not track upstream features after the 2026-08-21 fast-forward. Parent commits land only on an explicit **fork sync** request, cherry-picked if this fork still needs the fix; never `merge upstream/main`.
 
 Cite: `encode-lessons-in-structure` — close legality moves from loop-reopen into types. `type-system-discipline` — illegal close is unrepresentable. `prove-it-works` — a close is a gate row plus a SHA, not a reason string. `subtract-before-you-add` — delete the dual lint templates and the flywheel markdown parsers after migration.
 
@@ -328,7 +328,7 @@ Parent already has optional `routes.jsonl`. A later ADR may make toron + flywhee
 * Beads MCP (`br serve` / `mcp` feature is not in the default release; do not document it as the agent path).
 * `br` running `git commit` / `push` / `pull`. `--commit-sha` is a field the caller supplies.
 * Worktrees as loop isolation (ADR-0019 Spec 3). `br` may *discover* a primary-checkout `.beads` from a linked worktree (parent #429); flywheel still must not spawn worktrees for beads.
-* Tracking Dicklesworthstone feature work after `9c45f79a`. Cherry-pick a storage fix if wave 4 needs it; do not merge "the parent moved."
+* Tracking Dicklesworthstone feature work after `9c45f79a`. Parent history is ignored unless the captain says **fork sync** (`AGENTS.md` RULE 2). Then cherry-pick only defect fixes this fork still has. Never merge `upstream/main`.
 * Replacing fsqlite, replacing JSONL, adopting GasTown, embedding flywheel inside `br`.
 * Reservation enforcement inside `br` in wave 1. Toron owns the lease. Wave 3 may *display* holder+paths on `br show`; it must not grant leases.
 
@@ -535,7 +535,7 @@ Sibling of `toron` and `flywheel` at `~/workspace/beads`. Consumers: flywheel `l
 
 ### Forbidden
 
-Flywheel/toron crate deps. MCP as agent path. Git from `br`. `require_all` five verdicts. Markdown as live VERIFY. New Nostr kinds. Upstream feature merges after `9c45f79a`.
+Flywheel/toron crate deps. MCP as agent path. Git from `br`. `require_all` five verdicts. Markdown as live VERIFY. New Nostr kinds. Upstream fetch/merge/cherry-pick except on an explicit **fork sync** (`AGENTS.md` RULE 2).
 
 ---
 
@@ -558,4 +558,5 @@ Flywheel/toron crate deps. MCP as agent path. Git from `br`. `require_all` five 
 * Flywheel `src/verdict.rs` legal-close table is the behavioral original. After `src/verify.rs` ships, flywheel should call the same rules (copy or a shared crate later). Drift is a bug.
 * Revisit if: schema 18 cannot import toron's 488-row JSONL losslessly; or swarm write bursts corrupt v18 the way #426 corrupted deps; or captain restores lock 4 (then supersede this ADR).
 * Fast-forward baseline: `9c45f79a` `docs(agents): require OpenAI File Downloader user-agent on curl/web fetches`.
+* **2026-08-21 addendum (fork sync):** `AGENTS.md` RULE 2. Agents must not fetch/merge/cherry-pick from `Dicklesworthstone/beads_rust` unless the captain requests **fork sync**. On that request they classify `HEAD..upstream/main` as TAKE (storage/lock/integrity/EPIPE/doctor-honesty still in this tree) or SKIP (MCP, plugins, CLI growth, worktree-as-feature, anything Forbidden), cherry-pick TAKE only, and never merge `upstream/main` wholesale. Mixed commits are SKIP.
 * Parent issues left open on purpose: #419 WSL DrvFS, #413 Windows JSONL route, #411 minisign key, #402 reconcile path. Not our hosts; not wave 1.
