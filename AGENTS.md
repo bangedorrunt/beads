@@ -1,6 +1,9 @@
-# AGENTS.md — beads_rust (br)
+# AGENTS.md — beads (bangedorrunt fork of beads_rust)
 
-> Guidelines for AI coding agents working in this Rust codebase.
+> **Governing decision:** [ADR-0001](docs/decisions/0001-make-beads-the-fail-closed-work-ledger.md).
+> This is a dedicated work-ledger for flywheel × toron, forked from `Dicklesworthstone/beads_rust` at the 2026-08-21 fast-forward (`9c45f79a`). Close is fail-closed. Binary remains `br`. Do not add MCP tools. Do not track upstream features. Do not run git from `br`.
+>
+> Guidelines below are upstream agent rules. Where they conflict with ADR-0001, **ADR-0001 wins**.
 
 ---
 
