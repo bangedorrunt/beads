@@ -45,6 +45,7 @@ pub mod storage;
 pub mod sync;
 pub mod util;
 pub mod validation;
+pub mod verify;
 pub mod write_combining;
 
 pub use error::{BeadsError, ErrorCode, Result, StructuredError};
