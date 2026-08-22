@@ -2,15 +2,15 @@
   "name": "interrupted_rebuild_leftovers",
   "family": "recovery_debris",
   "description": "A failed rebuild left a bad replacement database in place along with preserved backups and recovery artifacts.",
-  "expected_classification": "recoverable",
+  "expected_classification": "degraded",
   "expected_command_outcomes": [
     {
       "surface": "startup/open",
-      "outcome": "success_with_auto_recovery"
+      "outcome": "status_merge_inspection_degraded"
     },
     {
       "surface": "create",
-      "outcome": "success_with_auto_recovery"
+      "outcome": "fails_schema_migration_gate"
     },
     {
       "surface": "doctor",
@@ -18,11 +18,11 @@
     },
     {
       "surface": "doctor --repair",
-      "outcome": "fails_repeated_repair"
+      "outcome": "repair_refused_by_gate"
     },
     {
       "surface": "sync --status",
-      "outcome": "status_in_sync"
+      "outcome": "status_merge_inspection_degraded"
     },
     {
       "surface": "history",

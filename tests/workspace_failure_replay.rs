@@ -430,8 +430,16 @@ fn assert_custom_path_resolution(fixture: &FixtureWorkspace, surface: &str, json
         return;
     }
 
-    let expected_db_path = fixture.beads_dir.join("custom.db");
-    let expected_jsonl_path = fixture.beads_dir.join("custom.jsonl");
+    let expected_db_path = fixture
+        .beads_dir
+        .canonicalize()
+        .expect("canonical beads dir")
+        .join("custom.db");
+    let expected_jsonl_path = fixture
+        .beads_dir
+        .canonicalize()
+        .expect("canonical beads dir")
+        .join("custom.jsonl");
     let surface_name = match surface {
         "where" => "where",
         "info" => "info",
@@ -550,14 +558,24 @@ fn assert_doctor_reliability_audit(fixture: &FixtureWorkspace, context: &str, js
 
     match fixture.metadata.family.as_str() {
         "sidecar_mismatch" => {
-            let sidecar_message = doctor_check(json, "db.sidecars")["message"]
-                .as_str()
-                .unwrap_or("");
+            let sidecars = doctor_check(json, "db.sidecars");
+            let sidecar_message = sidecars["message"].as_str().unwrap_or("");
             assert!(
                 has_code("sidecar_mismatch")
                     || has_code("database_corrupt")
-                    || sidecar_message.contains("expected for frankensqlite"),
-                "{context} should surface a real sidecar fault or explicitly classify the WAL-only family as expected for FrankenSQLite: {json}"
+                    // Real SQLite semantics: a leftover WAL-only family is
+                    // benign (auto-recovered on the next open) and doctor
+                    // reports it informationally rather than as a fault.
+                    || sidecar_message.contains("recovered automatically on the next open")
+                    || sidecar_message.contains("normal live-engine family")
+                    // A stale orphan -shm is removed automatically the next
+                    // time the engine opens the database fresh, so doctor
+                    // may legitimately report an already-clean family; the
+                    // write probe proves the store itself is healthy.
+                    || (sidecars["status"] == "ok"
+                        && sidecar_message.is_empty()
+                        && doctor_check(json, "db.write_probe")["status"] == "ok"),
+                "{context} should surface a real sidecar fault or explicitly classify the WAL-only family as expected under real SQLite: {json}"
             );
         }
         "malformed_jsonl" => {
@@ -588,7 +606,13 @@ fn assert_doctor_reliability_audit(fixture: &FixtureWorkspace, context: &str, js
         }
         "corrupt_db" | "recovery_debris" => {
             assert!(
-                has_code("database_not_sqlite") || has_code("database_corrupt"),
+                has_code("database_not_sqlite")
+                    || has_code("database_corrupt")
+                    // Real SQLite posture for an interrupted-rebuild leftover
+                    // (old-schema db + debris): the engine refuses to inspect
+                    // pending merge state and doctor degrades on the drift
+                    // instead of reporting page corruption.
+                    || has_code("db_newer"),
                 "{context} should surface malformed database diagnostics: {json}"
             );
         }
@@ -632,6 +656,7 @@ fn assert_status_surface(
     );
 }
 
+#[allow(clippy::too_many_lines)]
 fn assert_surface_outcome(
     fixture: &FixtureWorkspace,
     surface: &str,
@@ -652,6 +677,25 @@ fn assert_surface_outcome(
             assert!(run.status.success(), "{context} failed: {}", run.stderr);
             let _json = parse_stdout_json(&run, &context);
             assert_sqlite_header(&resolved_database_path(fixture, "resolved_db"), &context);
+        }
+        WorkspaceFailureCommandOutcome::StatusMergeInspectionDegraded
+            if surface != "sync --status" =>
+        {
+            // Non-status surfaces over an uninspectable database degrade the
+            // same way: warn, proceed without auto-sync, exit nonzero.
+            assert!(
+                !run.status.success(),
+                "{context} should exit nonzero on uninspectable pending-merge state: {}",
+                run.stderr
+            );
+            assert!(
+                run.stdout.contains("sync_merge_pending_unknown")
+                    || run.stderr.contains("sync_merge_pending_unknown"),
+                "{context} must surface the degraded merge-inspection warning: \
+                 stdout={}\nstderr={}",
+                run.stdout,
+                run.stderr
+            );
         }
         WorkspaceFailureCommandOutcome::DoctorClean => {
             assert!(
@@ -697,6 +741,21 @@ fn assert_surface_outcome(
             let json = parse_stdout_json(&run, &context);
             assert_status_surface(&context, &json, false, false);
         }
+        WorkspaceFailureCommandOutcome::StatusMergeInspectionDegraded => {
+            assert!(
+                !run.status.success(),
+                "{context} should exit nonzero on uninspectable pending-merge state: {}",
+                run.stderr
+            );
+            assert!(
+                run.stdout.contains("sync_merge_pending_unknown")
+                    || run.stderr.contains("sync_merge_pending_unknown"),
+                "{context} must surface the degraded merge-inspection warning: \
+                 stdout={}\nstderr={}",
+                run.stdout,
+                run.stderr
+            );
+        }
         WorkspaceFailureCommandOutcome::StatusJsonlNewer => {
             assert!(run.status.success(), "{context} failed: {}", run.stderr);
             let json = parse_stdout_json(&run, &context);
@@ -723,6 +782,43 @@ fn assert_surface_outcome(
         }
         WorkspaceFailureCommandOutcome::FailsRepeatedRepair => {
             assert_config_error(&run, "--allow-repeated-repair", &context);
+        }
+        WorkspaceFailureCommandOutcome::RepairRefusedByGate => {
+            assert!(
+                !run.status.success(),
+                "{context} should fail: {}",
+                run.stderr
+            );
+            let json = parse_stdout_json(&run, &context);
+            assert_eq!(
+                json["code"].as_str(),
+                Some("refused_unsafe"),
+                "{context} must refuse at the mutation gate: {json}"
+            );
+            assert!(
+                json["message"].as_str().is_some_and(
+                    |message| message.contains("could not prove that no sync merge is pending")
+                ),
+                "{context} refusal must name the uninspectable pending-merge gate: {json}"
+            );
+        }
+        WorkspaceFailureCommandOutcome::FailsSchemaMigrationGate => {
+            assert!(
+                !run.status.success(),
+                "{context} must fail closed on a schema-mismatched database: {}",
+                run.stderr
+            );
+            assert!(
+                run.stderr
+                    .contains("never migrate an existing tracker database")
+                    || run
+                        .stdout
+                        .contains("never migrate an existing tracker database"),
+                "{context} must direct the operator to the explicit migrate-schema flow: \
+                 stdout={}\nstderr={}",
+                run.stdout,
+                run.stderr
+            );
         }
     }
 }
@@ -1065,6 +1161,20 @@ fn workspace_failure_replay_core_read_surfaces_match_expected_posture() {
                     .expect("startup/open failure");
                 assert_core_read_failure(&where_workspace, &where_json, failure);
             }
+            WorkspaceFailureCommandOutcome::StatusMergeInspectionDegraded => {
+                // Read-only surfaces over an uninspectable schema degrade:
+                // the where/info replay reports the same warning posture.
+                // `where` still exits 0 (it prints resolved routes) while
+                // warning on stderr; other read surfaces exit nonzero.
+                let warned = where_run.stdout.contains("sync_merge_pending_unknown")
+                    || where_run.stderr.contains("sync_merge_pending_unknown");
+                assert!(
+                    warned,
+                    "{} core read replay should warn on an uninspectable \
+                     database: stdout={}\nstderr={}",
+                    fixture.metadata.name, where_run.stdout, where_run.stderr
+                );
+            }
             other => unreachable!(
                 "{} has unsupported startup/open outcome for core read replay: {:?}",
                 fixture.metadata.name, other
@@ -1106,6 +1216,28 @@ fn workspace_failure_replay_core_write_surfaces_match_expected_posture() {
             WorkspaceFailureCommandOutcome::FailsPrefixMismatch
             | WorkspaceFailureCommandOutcome::FailsConflictMarkers => {
                 assert_core_write_failure(&workspace, &create, expected_create);
+            }
+            WorkspaceFailureCommandOutcome::FailsSchemaMigrationGate => {
+                assert!(
+                    !create.status.success(),
+                    "{} core write replay must fail closed on a \
+                     schema-mismatched database: {}",
+                    fixture.metadata.name,
+                    create.stderr
+                );
+                assert!(
+                    create
+                        .stderr
+                        .contains("never migrate an existing tracker database")
+                        || create
+                            .stdout
+                            .contains("never migrate an existing tracker database"),
+                    "{} core write replay must direct the operator to migrate-schema: \
+                     stdout={}\nstderr={}",
+                    fixture.metadata.name,
+                    create.stdout,
+                    create.stderr
+                );
             }
             other => unreachable!(
                 "{} has unsupported create outcome for core write replay: {:?}",

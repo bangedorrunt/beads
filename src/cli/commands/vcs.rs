@@ -396,9 +396,8 @@ fn is_linked_worktree_of(worktree_root: &Path, canonical_beads: &Path) -> bool {
     if !git_file.is_file() {
         return false;
     }
-    let contents = match fs::read_to_string(&git_file) {
-        Ok(contents) => contents,
-        Err(_) => return false,
+    let Ok(contents) = fs::read_to_string(&git_file) else {
+        return false;
     };
     let Some(gitdir_line) = contents
         .lines()

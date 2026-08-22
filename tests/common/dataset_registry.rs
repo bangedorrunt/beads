@@ -131,6 +131,11 @@ pub enum WorkspaceFailureCommandOutcome {
     RepairApplied,
     RepairNoop,
     StatusInSync,
+    /// Read-only surface over a database whose schema cannot be inspected:
+    /// br warns (sync_merge_pending_unknown), proceeds with automatic sync
+    /// disabled, and exits nonzero. Real-SQLite posture for a non-SQLite
+    /// database file, which fsqlite used to open "successfully".
+    StatusMergeInspectionDegraded,
     StatusJsonlNewer,
     StatusDiverged,
     StatusDbNewer,
@@ -138,6 +143,14 @@ pub enum WorkspaceFailureCommandOutcome {
     FailsConflictMarkers,
     FailsInvalidJson,
     FailsRepeatedRepair,
+    /// `doctor --repair` refuses at the sync.merge_pending gate: pending
+    /// merge state is uninspectable (e.g. old-schema database), so mutation
+    /// fails closed with the refused_unsafe envelope.
+    RepairRefusedByGate,
+    /// Mutating surface refuses to implicitly migrate an existing tracker
+    /// database (ADR-0001 fail-closed): error directs the operator to
+    /// `br doctor migrate-schema`.
+    FailsSchemaMigrationGate,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

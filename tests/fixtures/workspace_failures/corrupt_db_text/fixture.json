@@ -22,7 +22,7 @@
     },
     {
       "surface": "sync --status",
-      "outcome": "status_in_sync"
+      "outcome": "status_merge_inspection_degraded"
     },
     {
       "surface": "list --no-db",

@@ -3253,7 +3253,7 @@ mod tests {
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        let first_jsonl = beads_dir.join("first.jsonl");
+        let _first_jsonl = beads_dir.join("first.jsonl");
         let second_jsonl = beads_dir.join("second.jsonl");
         let metadata_path = beads_dir.join("metadata.json");
         fs::write(
@@ -3275,7 +3275,13 @@ mod tests {
 
         let storage_ctx = open_storage_from_ctx(&mut ctx, None).expect("preopened storage");
 
-        assert_eq!(storage_ctx.paths.jsonl_path, first_jsonl);
+        // br reports configured routes through their physical location;
+        // resolve the expected path the same way (canonical parent + leaf,
+        // since first.jsonl itself may not exist yet) so symlinked system
+        // prefixes (/var -> /private/var) don't fail the reuse assertion.
+        let mut expected_first = beads_dir.canonicalize().expect("canonical beads dir");
+        expected_first.push("first.jsonl");
+        assert_eq!(storage_ctx.paths.jsonl_path, expected_first);
         assert_ne!(storage_ctx.paths.jsonl_path, second_jsonl);
     }
 
