@@ -11,7 +11,7 @@ cd "$target_dir"
 
 snapshot_current_tree() {
     local prefix="${1:?prefix}"
-    ( cd .beads && find . -type f -printf '%P\n' | sort ) > ".fixture_baseline/${prefix}.files"
+    ( cd .beads && find . -type f | sed 's|^\./||' | sort ) > ".fixture_baseline/${prefix}.files"
     ( cd .beads && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1 ) \
         > ".fixture_baseline/${prefix}.sha256"
 }
@@ -59,10 +59,13 @@ case "$stage" in
         out="$(run_readonly_doctor_stably detect)"
         assert_tree_matches_snapshot beads
 
+        # Real SQLite has no `db.open` check; the malformed-database signal
+        # surfaces through the integrity-check cross-checks instead.
         echo "$out" | jq -e '
           any(.checks[]; .name == "db.sidecars" and .status == "ok")
-          and any(.checks[]; .name == "db.open" and .status == "error")
-          and any(.checks[]; .name == "sqlite3.integrity_check" and .status == "error")
+          and any(.checks[];
+              (.name == "db.open" or .name == "sqlite3.integrity_check"
+               or .name == "sqlite.integrity_check") and .status == "error")
         ' >/dev/null || {
             echo "ASSERT FAIL[$stage]: malformed DB did not surface expected diagnostics" >&2
             echo "$out" | jq '.checks[] | select(.name == "db.sidecars" or .name == "db.open" or .name == "sqlite3.integrity_check")' >&2

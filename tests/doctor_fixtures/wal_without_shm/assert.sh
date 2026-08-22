@@ -9,11 +9,12 @@ cd "$target_dir"
 case "$stage" in
   detect)
     out=$("$tool_bin" doctor --json 2>/dev/null) || true
-    # db.sidecars must be healthy since FrankenSQLite intentionally keeps its
-    # WAL index in process-local memory rather than a sibling SHM file.
+    # db.sidecars must be healthy: under real SQLite a WAL-without-SHM
+    # workspace is benign (leftover WAL auto-recovers on next open), and a
+    # fresh clean-close workspace has no sidecars at all. Accept any ok
+    # classification regardless of informational message presence.
     echo "$out" | jq -e '
       .checks[] | select(.name == "db.sidecars") | select(.status == "ok")
-      | select(.message | test("WAL sidecar"; "i"))
     ' >/dev/null || {
       echo "ASSERT FAIL[$stage]: db.sidecars not healthy for valid WAL-without-SHM" >&2
       echo "$out" | jq '.checks[] | select(.name == "db.sidecars")' >&2

@@ -606,7 +606,13 @@ pub fn mutate(ctx: &MutateContext, path: &Path, op: Op) -> Result<ActionResult, 
     //     a third stat(2) inside execute_atomic — that third stat opened
     //     a TOCTOU window between cmp_strict and execute_atomic where a
     //     concurrent writer could swap the file (and its mode) under us.
-    let rel = path.strip_prefix(&ctx.repo_root).unwrap_or(path);
+    // Absolute paths outside the repo root (e.g. the startup-cache file)
+    // must still land INSIDE backups/: strip the leading separator so
+    // PathBuf::join cannot replace the base with the absolute path.
+    let rel = path
+        .strip_prefix(&ctx.repo_root)
+        .or_else(|_| path.strip_prefix("/"))
+        .unwrap_or(path);
     let backup = ctx.run_dir.join("backups").join(rel);
     let existing_mode = if before_bytes_or_missing.is_some() {
         match fs::metadata(path) {
@@ -659,7 +665,11 @@ pub fn mutate(ctx: &MutateContext, path: &Path, op: Op) -> Result<ActionResult, 
 
     // (8) Record.
     let record = ActionRecord {
-        path: rel.to_string_lossy().into_owned(),
+        path: path
+            .strip_prefix(&ctx.repo_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned(),
         op: op_name,
         before_hash: before_hash.clone(),
         after_hash: after_hash.clone(),
@@ -731,7 +741,6 @@ fn mutate_db(
         });
     }
 
-    let rel = path.strip_prefix(&ctx.repo_root).unwrap_or(path);
     let op_name = op.name();
 
     let exec_result: Result<DbMutationOutcome, BeadsError> = match op {
@@ -822,7 +831,11 @@ fn mutate_db(
     };
 
     let record = DbActionRecord {
-        path: rel.to_string_lossy().into_owned(),
+        path: path
+            .strip_prefix(&ctx.repo_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned(),
         op: op_name,
         before_hash,
         after_hash: &after_hash,
@@ -1458,7 +1471,6 @@ where
 
     // (5) + (6): post-state hash + actions.jsonl line per path.
     for (path, _, before_hash, existed_before) in &pre_state {
-        let rel = path.strip_prefix(&ctx.repo_root).unwrap_or(path);
         let after_bytes_or_missing = match fs::read(path) {
             Ok(b) => Some(b),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -1469,7 +1481,11 @@ where
             None => SHA256_EMPTY_PREFIXED.to_string(),
         };
         let record = ActionRecord {
-            path: rel.to_string_lossy().into_owned(),
+            path: path
+                .strip_prefix(&ctx.repo_root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned(),
             op: "legacy_op",
             before_hash: before_hash.clone(),
             after_hash,

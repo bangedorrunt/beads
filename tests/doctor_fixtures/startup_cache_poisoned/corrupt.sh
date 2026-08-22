@@ -24,7 +24,10 @@ mkdir -p "$CACHE_DIR"
 # Prime the real startup-cache entry for this workspace, then poison that exact
 # file. The production startup path reads only startup-<current-key>.json, not
 # every startup-*.json in the directory.
-BR_STARTUP_CACHE=1 "$tool_bin" info --json >/dev/null 2>&1
+# Pin the cache dir explicitly: production resolves XDG_CACHE_HOME before
+# HOME, so hosts with XDG set would otherwise prime a different directory
+# than the one this fixture plants files in.
+BR_STARTUP_CACHE=1 BR_STARTUP_CACHE_DIR="$CACHE_DIR" "$tool_bin" info --json >/dev/null 2>&1
 current_cache_file="$(find "$CACHE_DIR" -maxdepth 1 -type f -name 'startup-*.json' | sort | head -n 1)"
 if [ -z "${current_cache_file:-}" ]; then
   echo "failed to prime startup cache under $CACHE_DIR" >&2

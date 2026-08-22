@@ -38,7 +38,7 @@ find_quarantine_run_dir() {
 
 case "$stage" in
   detect)
-    out=$("$tool_bin" doctor --json 2>/dev/null) || true
+    out=$(BR_STARTUP_CACHE_DIR="$target_dir/.cache/beads/startup" "$tool_bin" doctor --json 2>/dev/null) || true
     echo "$out" | jq -e '
       .checks[] | select(.name == "startup_cache.health")
       | select(.status == "warn" or .status == "error")
@@ -92,7 +92,7 @@ case "$stage" in
     done
 
     # Re-detect: status returns to ok.
-    redetect=$("$tool_bin" doctor --json 2>/dev/null) || true
+    redetect=$(BR_STARTUP_CACHE_DIR="$target_dir/.cache/beads/startup" "$tool_bin" doctor --json 2>/dev/null) || true
     status=$(echo "$redetect" | jq -r '.checks[] | select(.name == "startup_cache.health") | .status' 2>/dev/null || echo "")
     if [ "$status" != "ok" ] && [ -n "$status" ]; then
       echo "ASSERT FAIL[$stage]: startup_cache.health still '$status' after repair" >&2

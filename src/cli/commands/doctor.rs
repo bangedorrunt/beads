@@ -4249,17 +4249,20 @@ fn existing_sqlite_family_paths_for_legacy_op(db_path: &Path) -> Vec<PathBuf> {
     paths
 }
 
-fn check_wal_oversized(db_path: &Path, checks: &mut Vec<CheckResult>) {
+fn check_wal_oversized(db_path: &Path, checks: &mut Vec<CheckResult>, pre_open_size: Option<u64>) {
     let path = sqlite_wal_sidecar_path(db_path);
-    let Ok(meta) = fs::symlink_metadata(&path) else {
+    // Prefer the live stat, but fall back to the pre-open snapshot: a clean
+    // database open checkpoints and REMOVES the WAL, so an oversized WAL can
+    // disappear between inspection start and this check.
+    let bytes = fs::symlink_metadata(&path)
+        .ok()
+        .filter(|meta| meta.is_file() && !meta.file_type().is_symlink())
+        .map(|meta| meta.len())
+        .or(pre_open_size);
+    let Some(bytes) = bytes else {
         push_check(checks, "wal_size", CheckStatus::Ok, None, None);
         return;
     };
-    if !meta.is_file() || meta.file_type().is_symlink() {
-        push_check(checks, "wal_size", CheckStatus::Ok, None, None);
-        return;
-    }
-    let bytes = meta.len();
     if bytes > WAL_OVERSIZED_BYTES {
         push_check(
             checks,
@@ -11642,6 +11645,14 @@ fn collect_doctor_report_with_mode_and_db_override(
     mode: DoctorInspectionMode,
     no_db: bool,
 ) -> Result<DoctorRun> {
+    // Snapshot the WAL size before ANY database open in this function:
+    // check_pending_sync_merge and the inspection connection each open and
+    // cleanly close the database, which checkpoints and REMOVES a padded or
+    // oversized WAL before check_wal_oversized gets to stat it.
+    let pre_open_wal_size = fs::metadata(sqlite_wal_sidecar_path(&paths.db_path))
+        .ok()
+        .filter(std::fs::Metadata::is_file)
+        .map(|meta| meta.len());
     let mut checks = Vec::new();
     check_merge_artifacts(beads_dir, &paths.jsonl_path, &mut checks)?;
     check_base_jsonl(beads_dir, &mut checks);
@@ -11721,10 +11732,13 @@ fn collect_doctor_report_with_mode_and_db_override(
             Some(serde_json::json!({ "skipped_checks": skipped })),
         );
     } else {
+        // Capture the WAL size BEFORE any database open: a clean open+close
+        // checkpoints and removes the WAL, so a genuinely oversized WAL
+        // would vanish mid-inspection and never reach check_wal_oversized.
         // Pass-5 cycle 22: db-to-selected-jsonl size ratio (VACUUM candidate).
         check_db_bloat_vs_jsonl(&paths.db_path, jsonl_path.as_deref(), &mut checks);
         // Pass-5 cycle 23: selected DB WAL sidecar oversized (checkpoint candidate).
-        check_wal_oversized(&paths.db_path, &mut checks);
+        check_wal_oversized(&paths.db_path, &mut checks, pre_open_wal_size);
         inspect_doctor_database(
             beads_dir,
             &paths.db_path,
@@ -18605,7 +18619,7 @@ mod tests {
             reliability_audit: None,
             checks: Vec::new(),
         };
-        check_wal_oversized(&db_path, &mut report.checks);
+        check_wal_oversized(&db_path, &mut report.checks, None);
         assert!(
             report
                 .checks
@@ -18624,7 +18638,7 @@ mod tests {
         ));
 
         let mut after = Vec::new();
-        check_wal_oversized(&db_path, &mut after);
+        check_wal_oversized(&db_path, &mut after, None);
         let check = find_check(&after, "wal_size").expect("check present");
         assert!(
             matches!(check.status, CheckStatus::Ok),
@@ -18691,7 +18705,7 @@ mod tests {
             reliability_audit: None,
             checks: Vec::new(),
         };
-        check_wal_oversized(&db_path, &mut report.checks);
+        check_wal_oversized(&db_path, &mut report.checks, None);
 
         let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
             .expect("session must build");
@@ -18714,7 +18728,7 @@ mod tests {
         drop(wal);
 
         let mut checks = Vec::new();
-        check_wal_oversized(&beads_dir.join("beads.db"), &mut checks);
+        check_wal_oversized(&beads_dir.join("beads.db"), &mut checks, None);
         let check = find_check(&checks, "wal_size").expect("check present");
         assert!(matches!(check.status, CheckStatus::Warn), "{check:?}");
         let details = check.details.as_ref().expect("details");
@@ -18737,7 +18751,7 @@ mod tests {
         drop(wal);
 
         let mut checks = Vec::new();
-        check_wal_oversized(&beads_dir.join("beads.db"), &mut checks);
+        check_wal_oversized(&beads_dir.join("beads.db"), &mut checks, None);
         let check = find_check(&checks, "wal_size").expect("check present");
         assert!(matches!(check.status, CheckStatus::Ok));
     }
@@ -18750,7 +18764,7 @@ mod tests {
         fs::create_dir_all(&beads_dir).unwrap();
 
         let mut checks = Vec::new();
-        check_wal_oversized(&beads_dir.join("beads.db"), &mut checks);
+        check_wal_oversized(&beads_dir.join("beads.db"), &mut checks, None);
         let check = find_check(&checks, "wal_size").expect("check present");
         assert!(matches!(check.status, CheckStatus::Ok));
     }
@@ -18778,7 +18792,7 @@ mod tests {
         drop(wal);
 
         let mut checks = Vec::new();
-        check_wal_oversized(&db_path, &mut checks);
+        check_wal_oversized(&db_path, &mut checks, None);
         let check = find_check(&checks, "wal_size").expect("check present");
         assert!(matches!(check.status, CheckStatus::Warn), "{check:?}");
         assert_eq!(

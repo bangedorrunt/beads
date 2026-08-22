@@ -715,7 +715,7 @@ pub fn execute_undo(args: &DoctorUndoArgs, repo_root: &Path) -> Result<()> {
         // are still revalidated before being added here.
         let mut capabilities = MutateCapabilities::for_repo(repo_root);
         for record in &actions {
-            if let Ok(target) = workspace_relative_path(repo_root, &record.path)
+            if let Ok(target) = undo_action_target(repo_root, &record.path)
                 && !capabilities
                     .write_scopes
                     .iter()
@@ -923,7 +923,7 @@ fn restore_one(
     backups_dir: &Path,
     record: &StoredActionRecord,
 ) -> UndoStep {
-    let target = match workspace_relative_path(repo_root, &record.path) {
+    let target = match undo_action_target(repo_root, &record.path) {
         Ok(target) => target,
         Err(e) => {
             return UndoStep {
@@ -934,7 +934,12 @@ fn restore_one(
             };
         }
     };
-    let backup = backups_dir.join(&record.path);
+    // Mirror the writer-side layout: strip the leading separator from
+    // absolute action paths so PathBuf::join cannot replace backups_dir.
+    let backup_rel = std::path::Path::new(&record.path)
+        .strip_prefix("/")
+        .unwrap_or_else(|_| std::path::Path::new(&record.path));
+    let backup = backups_dir.join(backup_rel);
 
     // For Rename ops we recorded an empty after-hash; the recovery is
     // to move the renamed file back from its destination.
@@ -1056,6 +1061,13 @@ fn restore_db_exec(repo_root: &Path, record: &StoredActionRecord, target: PathBu
             };
         }
     };
+    // Undo replays intentionally-orphaned rows: the forward repair pruned
+    // rows whose parent issue was already gone, so restoring the backup
+    // violates the comments/dependencies FK under real SQLite (the previous
+    // engine never enforced it; rusqlite runs with foreign_keys = ON).
+    // `PRAGMA foreign_keys` is a no-op inside a transaction, so toggle it
+    // BEFORE BEGIN and restore the default after the replay settles.
+    let _ = conn.execute("PRAGMA foreign_keys = OFF");
     if let Err(e) = conn.execute("BEGIN IMMEDIATE") {
         let _ = conn.close();
         return UndoStep {
@@ -1067,7 +1079,11 @@ fn restore_db_exec(repo_root: &Path, record: &StoredActionRecord, target: PathBu
     }
 
     let replay_result = replay_db_snapshot_envelopes(&conn, &envelopes);
-    finish_db_replay(conn, record, replay_result)
+    let step = finish_db_replay(conn, record, replay_result);
+    if let Ok(reopen) = Connection::open(target.to_string_lossy().into_owned()) {
+        let _ = reopen.execute("PRAGMA foreign_keys = ON");
+    }
+    step
 }
 
 fn read_db_snapshot_envelopes(
@@ -1320,6 +1336,30 @@ fn quote_sql_ident(s: &str) -> String {
     format!("\"{s}\"")
 }
 
+/// Resolve an undo action's recorded path to its on-disk target.
+///
+/// Relative paths are joined against `repo_root` after traversal checks.
+/// Absolute paths are accepted verbatim (minus traversal components): the
+/// forward repair legitimately quarantines files OUTSIDE the workspace
+/// (e.g. the startup-cache file under `$HOME/.cache`), and their undo must
+/// restore them where they lived.
+fn undo_action_target(repo_root: &Path, rel: &str) -> std::result::Result<PathBuf, String> {
+    let path = Path::new(rel);
+    if path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err("path_traversal".to_string());
+    }
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(repo_root.join(path))
+    }
+}
+
 fn workspace_relative_path(repo_root: &Path, rel: &str) -> std::result::Result<PathBuf, String> {
     let path = Path::new(rel);
     if path.is_absolute() {
@@ -1434,6 +1474,7 @@ fn step_with_backup(record: &StoredActionRecord, status: &str, backup: &Path) ->
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn restore_rename(
     ctx: &MutateContext,
     repo_root: &Path,
@@ -1451,11 +1492,6 @@ fn restore_rename(
         };
     };
 
-    let backup_bytes = match read_verified_backup(record, backup) {
-        Ok(bytes) => bytes,
-        Err(step) => return step,
-    };
-
     let from = match validate_rename_source_path(repo_root, run_dir_path, rt) {
         Ok(path) => path,
         Err(err) => {
@@ -1466,6 +1502,27 @@ fn restore_rename(
                 backup_used: Some(rt.clone()),
             };
         }
+    };
+
+    // Rename ops carry their payload at `rename_to`, so the verbatim backup
+    // is only an idempotence witness. Older runs recorded absolute-path
+    // actions whose `backups_dir.join(path)` collapsed to the original
+    // location (no durable copy), so tolerate a missing backup when the
+    // moved file itself still hashes to the recorded before_hash.
+    let backup_bytes = match read_verified_backup(record, backup) {
+        Ok(bytes) => bytes,
+        Err(_) if from.exists() => match fs::read(&from) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                return UndoStep {
+                    path: record.path.clone(),
+                    op: record.op.clone(),
+                    status: format!("failed_read_rename_source:{err}"),
+                    backup_used: Some(rt.clone()),
+                };
+            }
+        },
+        Err(step) => return step,
     };
     if !from.exists() {
         if let Ok(live) = fs::read(&target)
@@ -1540,13 +1597,14 @@ fn restore_rename(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn plan_one(
     repo_root: &Path,
     run_dir_path: &Path,
     backups_dir: &Path,
     record: &StoredActionRecord,
 ) -> UndoStep {
-    let target = match workspace_relative_path(repo_root, &record.path) {
+    let target = match undo_action_target(repo_root, &record.path) {
         Ok(target) => target,
         Err(e) => {
             return UndoStep {
@@ -1557,7 +1615,12 @@ fn plan_one(
             };
         }
     };
-    let backup = backups_dir.join(&record.path);
+    // Mirror the writer-side layout: strip the leading separator from
+    // absolute action paths so PathBuf::join cannot replace backups_dir.
+    let backup_rel = std::path::Path::new(&record.path)
+        .strip_prefix("/")
+        .unwrap_or_else(|_| std::path::Path::new(&record.path));
+    let backup = backups_dir.join(backup_rel);
     if record.op == "rename"
         && let Some(rt) = &record.rename_to
     {

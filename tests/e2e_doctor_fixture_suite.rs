@@ -68,6 +68,13 @@ fn doctor_fixture_suite_passes() {
         .env_remove("BEADS_DIR")
         .env_remove("BEADS_JSONL")
         .env_remove("BR_STARTUP_CACHE")
+        // Production resolves the startup-cache directory XDG-first, HOME
+        // second. A host with XDG_CACHE_HOME set would otherwise prime and
+        // inspect a different startup-cache directory than the one the
+        // startup_cache_poisoned fixture plants under $HOME/.cache, breaking
+        // its prime/quarantine assertions for environment reasons that have
+        // nothing to do with the fixers under test.
+        .env_remove("XDG_CACHE_HOME")
         .output()
         .expect("spawn run_all.sh");
 

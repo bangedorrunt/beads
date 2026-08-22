@@ -18,9 +18,11 @@ cd "$target_dir"
 
 printf 'this is not a SQLite' > .beads/beads.db
 
+# Real SQLite checkpoints and removes the WAL at clean close; plant an
+# empty one so the SHM-creation regression path still has a family to
+# exercise.
 if [ ! -f .beads/beads.db-wal ]; then
-    echo "fixture corrupt.sh: expected a WAL sidecar to exercise the SHM creation regression" >&2
-    exit 1
+    : > .beads/beads.db-wal
 fi
 # Which sidecars survive a clean exit is an engine implementation detail, not
 # something this fixture may assert: 0.1.18 retains `-shm` where earlier
@@ -30,7 +32,7 @@ fi
 rm -f .beads/beads.db-shm
 
 mkdir -p .fixture_baseline
-( cd .beads && find . -type f -printf '%P\n' | sort ) > .fixture_baseline/beads.files
+( cd .beads && find . -type f | sed 's|^\./||' | sort ) > .fixture_baseline/beads.files
 ( cd .beads && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1 ) \
     > .fixture_baseline/beads.sha256
 
