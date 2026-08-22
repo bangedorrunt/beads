@@ -1301,7 +1301,31 @@ fn should_attempt_jsonl_recovery(open_err: &BeadsError, db_path: &Path, jsonl_pa
         // family up and recreates it.
         BeadsError::Database(DbError::Io(io_err))
             if io_err.kind() == std::io::ErrorKind::IsADirectory
+    ) || matches!(
+        // Real SQLite surfaces a non-file database-family member as
+        // SQLITE_CANTOPEN (e.g. a `-wal` DIRECTORY blocks opening at all)
+        // or as a plain "disk I/O error" (a `-journal` directory hit
+        // mid-open). Both are the same structural damage; gate on an
+        // actual non-file family member so genuine permission/missing-file
+        // CannotOpen cases stay fail-closed.
+        open_err,
+        BeadsError::Database(DbError::CannotOpen { .. })
+            if database_family_has_non_file_member(db_path)
+    ) || matches!(
+        open_err,
+        BeadsError::Database(DbError::Engine(detail))
+            if detail.eq_ignore_ascii_case("disk i/o error")
+                && database_family_has_non_file_member(db_path)
     )
+}
+
+/// True when any `-wal`/`-shm`/`-journal` sibling of `db_path` exists and is
+/// not a regular file (directory, symlink, special file).
+fn database_family_has_non_file_member(db_path: &Path) -> bool {
+    ["-wal", "-shm", "-journal"].iter().any(|suffix| {
+        let member = PathBuf::from(format!("{}{}", db_path.to_string_lossy(), suffix));
+        fs::symlink_metadata(&member).is_ok_and(|meta| !meta.is_file())
+    })
 }
 
 fn should_attempt_jsonl_recovery_after_open(
