@@ -10,7 +10,7 @@
 //!   `REPORT_OUTPUT_DIR=target/reports` \
 //!   cargo test --test `e2e_report_generation` -- --nocapture
 //!
-//! Task: beads_rust-x7on
+//! Task: beads-x7on
 
 mod common;
 

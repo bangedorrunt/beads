@@ -928,7 +928,7 @@ fn benchmark_all_datasets() {
     }
 }
 
-/// Benchmark only `beads_rust` dataset (faster iteration).
+/// Benchmark only `beads` dataset (faster iteration).
 #[test]
 #[ignore = "manual benchmark run"]
 fn benchmark_beads_rust_only() {

@@ -64,7 +64,7 @@ pub struct ParsedIssue {
     /// Dependencies list (format: "type:id" or "id").
     pub dependencies: Vec<String>,
     /// Agent-context governance text (opaque, same semantics as
-    /// `br update --agent-context`). beads_rust#304.
+    /// `br update --agent-context`). beads#304.
     pub agent_context: Option<String>,
 }
 

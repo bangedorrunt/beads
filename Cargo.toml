@@ -1,12 +1,12 @@
 [package]
-name = "beads_rust"
+name = "beads"
 version = "0.3.2"
 edition = "2024"
 rust-version = "1.88"
 autobenches = false
 description = "Agent-first issue tracker (SQLite + JSONL)"
 license = "MIT"
-repository = "https://github.com/Dicklesworthstone/beads_rust"
+repository = "https://github.com/bangedorrunt/beads"
 keywords = ["cli", "issue-tracker", "sqlite", "agent"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
@@ -40,46 +40,11 @@ path = "src/main.rs"
 clap = { version = "4.6.6", features = ["derive", "env", "unstable-ext"] }
 clap_complete = { version = "4.6.9", features = ["unstable-dynamic"] }
 
-# Database (pure-Rust SQLite with concurrent writer support)
-# NOTE: transitive fsqlite workspace deps listed explicitly so rch syncs them
-# Default features minus `json`: br issues no JSON1 SQL. Note this does
-# NOT fully remove fsqlite-ext-json — fsqlite-core 0.3.6 hard-depends on
-# it — so serde_json's `arbitrary_precision` feature (enabled by
-# ext-json 0.3.6+) is still unified into every build. That feature makes
-# `serde_json::Number` serialize as a private newtype struct through
-# non-serde_json serializers; `br` output bytes are unaffected (verified
-# for --json and TOON), and the insta snapshot harness compensates via
-# tests/snapshots `SnapshotJson`. Dropping the flag upstream in
-# fsqlite-ext-json would let this trim actually remove the crate.
-fsqlite = { version = "0.3.6", default-features = false, features = [
-    "native",
-    "linux-asupersync-uring",
-    "fts5",
-    "rtree",
-    "icu",
-    "misc",
-] }
-fsqlite-types = "0.3.6"
-fsqlite-error = "0.3.6"
-fsqlite-core = "0.3.6"
-fsqlite-func = "0.3.6"
-fsqlite-vdbe = "0.3.6"
-fsqlite-vfs = "0.3.6"
-fsqlite-pager = "0.3.6"
-fsqlite-parser = "0.3.6"
-fsqlite-planner = "0.3.6"
-fsqlite-wal = "0.3.6"
-fsqlite-btree = "0.3.6"
-fsqlite-ast = "0.3.6"
-fsqlite-mvcc = "0.3.6"
-fsqlite-observability = "0.3.6"
-
-# Current-thread runtime that drives fsqlite 0.3's async (!Send) futures to
-# completion behind the synchronous `franken_sync::Connection` bridge.
-# Pinned =0.4.8 to match the fsqlite family's requirement (>=0.4.3,<0.5).
-# This dependency is deleted along with the bridge in ADR-0002 W2.
-# default-features = false mirrors fsqlite's own spec.
-asupersync = { version = "=0.4.8", default-features = false }
+# Database (ADR-0002 W2): synchronous rusqlite over a bundled libsqlite3.
+# The 15-crate fsqlite family and its asupersync runtime pin were removed;
+# WAL mode, busy_timeout, PRAGMA user_version stamping, prepared statements,
+# explicit transactions, and integrity_check are all first-class here.
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 # Serialization
 serde = { version = "1.0.229", features = ["derive"] }
@@ -194,19 +159,6 @@ self_update = [
     "self_update/compression-tar-gz",
     "self_update/compression-zip-deflate",
 ]
-
-# NOTE: no `[patch.crates-io]` here.
-#
-# All dependencies — fsqlite 0.3.6 and its fsqlite-* transitive crates —
-# are published on crates.io, so this crate resolves everything from the
-# registry out of the box.  That makes
-# `cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked`
-# work without requiring sibling `frankensqlite` checkouts (issue #250 bug 1).
-#
-# Local co-development: contributors who want to hack on frankensqlite
-# alongside beads_rust can add a workspace-level
-# `.cargo/config.toml` with their own `[patch.crates-io]` table.  See
-# `scripts/dev-local-frankensqlite.toml` for a ready-to-copy template.
 
 [lints.rust]
 # Deny (not forbid): `sync::db_inode_lock` carries the crate's single

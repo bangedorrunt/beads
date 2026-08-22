@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/e2e_scripts/forced_cycle_close_audit.sh
 #
-# beads_rust-30ci: regression check that no closed bead has audit-suspect
+# beads-30ci: regression check that no closed bead has audit-suspect
 # close_reason text WITHOUT a corresponding `audit-historical-cycle-close-*`
 # label.
 #

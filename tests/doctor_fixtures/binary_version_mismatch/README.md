@@ -3,7 +3,7 @@
 - **FM**: `fm-external_artifacts-binary-version-mismatch` (P1)
 - **Subsystem**: external_artifacts
 - **Detect**: `binary_version` check goes to `warn` when an
-  upward-reachable `Cargo.toml` declares `name = "beads_rust"` and a
+  upward-reachable `Cargo.toml` declares `name = "beads"` and a
   `version` strictly GREATER than the running binary's
   `CARGO_PKG_VERSION`. Surfaces both versions + the canonical
   `cargo install --path . --locked` rebuild command.

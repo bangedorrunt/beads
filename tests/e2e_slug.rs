@@ -1,7 +1,7 @@
 //! E2E tests for `br create --slug` round-trip + slugged-ID tolerance in
 //! downstream commands (orphans, show, update, close).
 //!
-//! Created 2026-05-09 for beads_rust-l6xl (audit-driven snapshot + slug
+//! Created 2026-05-09 for beads-l6xl (audit-driven snapshot + slug
 //! coverage). Pairs with the unit tests in `src/util/id.rs::tests` (those
 //! verify the normalizer; these verify the full CLI lifecycle).
 

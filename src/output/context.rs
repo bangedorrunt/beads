@@ -1702,11 +1702,11 @@ mod tests {
 
         let rows = vec![
             Row {
-                id: "beads_rust-alpha",
+                id: "beads-alpha",
                 priority: 0,
             },
             Row {
-                id: "beads_rust-beta",
+                id: "beads-beta",
                 priority: 1,
             },
         ];
@@ -1750,11 +1750,11 @@ mod tests {
 
         let rows = vec![
             Row {
-                id: "beads_rust-alpha",
+                id: "beads-alpha",
                 priority: 0,
             },
             Row {
-                id: "beads_rust-beta",
+                id: "beads-beta",
                 priority: 1,
             },
         ];
@@ -1817,8 +1817,8 @@ mod tests {
     fn write_toon_lines_to_writer_matches_materialized_encode_output() {
         let value = json!({
             "issues": [
-                { "id": "beads_rust-alpha", "priority": 0 },
-                { "id": "beads_rust-beta", "priority": 1 }
+                { "id": "beads-alpha", "priority": 0 },
+                { "id": "beads-beta", "priority": 1 }
             ],
             "count": 2
         });
@@ -2014,7 +2014,7 @@ mod tests {
 
     #[test]
     fn write_toon_lines_to_writer_propagates_partial_writer_failure() {
-        let lines = vec!["items[1]:".to_string(), "  - beads_rust-alpha".to_string()];
+        let lines = vec!["items[1]:".to_string(), "  - beads-alpha".to_string()];
         let err =
             write_toon_lines_to_writer(&mut WriteZero, &lines).expect_err("partial writer failed");
 

@@ -1,4 +1,4 @@
-//! `beads_rust` - Agent-first issue tracker library
+//! `beads` - Agent-first issue tracker library
 //!
 //! This crate provides the core functionality for the `br` CLI tool,
 //! a Rust port of the classic beads issue tracker.
@@ -34,7 +34,6 @@ pub mod config;
 pub mod coordination;
 pub mod error;
 pub mod format;
-pub mod franken_sync;
 pub mod health;
 pub mod inheritance;
 pub mod logging;

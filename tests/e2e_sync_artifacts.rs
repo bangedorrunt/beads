@@ -9,7 +9,7 @@
 //! - Artifact preservation: logs and snapshots for postmortem analysis
 //!
 //! Related beads:
-//! - beads_rust-0v1.3.6: E2E sync test scripts with detailed logging and artifacts
+//! - beads-0v1.3.6: E2E sync test scripts with detailed logging and artifacts
 
 #![allow(
     clippy::format_push_string,
@@ -162,7 +162,7 @@ impl DirectorySnapshot {
                     if let Ok(contents) = fs::read(&path) {
                         let mut digest = Sha256::new();
                         digest.update(&contents);
-                        let hash = beads_rust::util::hex_encode(&digest.finalize());
+                        let hash = beads::util::hex_encode(&digest.finalize());
                         files.insert(rel_path, hash);
                     }
                 } else if path.is_dir() {
@@ -804,7 +804,7 @@ fn e2e_sync_deterministic_export() {
 /// E2E test: Staleness detection hash check prevents false positives from touch.
 ///
 /// Related beads:
-/// - beads_rust-3qi: Auto-import staleness detection (Lstat + content hash + conflict markers)
+/// - beads-3qi: Auto-import staleness detection (Lstat + content hash + conflict markers)
 #[test]
 fn e2e_staleness_hash_check_prevents_false_touch() {
     use std::thread;
@@ -900,7 +900,7 @@ fn e2e_staleness_hash_check_prevents_false_touch() {
 /// E2E test: Staleness detection correctly identifies real changes.
 ///
 /// Related beads:
-/// - beads_rust-3qi: Auto-import staleness detection (Lstat + content hash + conflict markers)
+/// - beads-3qi: Auto-import staleness detection (Lstat + content hash + conflict markers)
 #[test]
 fn e2e_staleness_detects_real_content_change() {
     let _log = common::test_log("e2e_staleness_detects_real_content_change");

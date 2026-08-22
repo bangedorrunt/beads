@@ -110,7 +110,7 @@ fn which(cmd: &str) -> Option<PathBuf> {
     None
 }
 
-/// Coverage drift gate (beads_rust-yx0b): `tests/doctor_fixtures/COVERAGE.md`
+/// Coverage drift gate (beads-yx0b): `tests/doctor_fixtures/COVERAGE.md`
 /// maps every declared `fm-` finding id to the fixture(s) exercising it.
 /// This test keeps the manifest honest in three directions:
 ///

@@ -1,10 +1,10 @@
 //! CLI definitions and entry point.
 
-use crate::franken_sync::Connection;
+use crate::storage::Connection;
+use crate::storage::SqliteValue;
 use clap::builder::StyledStr;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
-use fsqlite_types::SqliteValue;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -1112,14 +1112,14 @@ pub struct CreateArgs {
     #[arg(long, short = 's', add = ArgValueCompleter::new(status_completer))]
     pub status: Option<String>,
 
-    /// Acceptance criteria recorded on the initial issue (beads_rust#408).
+    /// Acceptance criteria recorded on the initial issue (beads#408).
     // Markdown checklists routinely begin with a list marker ("- [ ] item"),
     // which clap otherwise parses as an unknown flag.
     #[arg(long, visible_alias = "acceptance", allow_hyphen_values = true)]
     pub acceptance_criteria: Option<String>,
 
     /// Set the initial `agent_context` governing-instructions JSON
-    /// (beads_rust#408).
+    /// (beads#408).
     ///
     /// Accepts the same forms as `br update --agent-context`: inline JSON,
     /// `@path/to/file.json`, or `@path/to/file.yaml` (normalized to JSON).
@@ -1232,7 +1232,7 @@ pub struct UpdateArgs {
 
     /// Change status. Terminal states (`closed`, `tombstone`) are refused —
     /// use the dedicated `br close` / `br delete` commands so close-policy
-    /// and dependency-rewiring are enforced (beads_rust#301).
+    /// and dependency-rewiring are enforced (beads#301).
     #[arg(long, short = 's', add = ArgValueCompleter::new(status_completer))]
     pub status: Option<String>,
 
@@ -1302,7 +1302,7 @@ pub struct UpdateArgs {
     #[arg(long = "source-repo-path")]
     pub source_repo_path: Option<String>,
 
-    /// Set the `agent_context` governing-instructions JSON (beads_rust#297).
+    /// Set the `agent_context` governing-instructions JSON (beads#297).
     /// Accepts inline JSON or a `@path` to a JSON or YAML file (extension
     /// determines parser; YAML is normalized to JSON before storage).
     /// Pass `--agent-context ""` (empty string) to clear the field back
@@ -3185,7 +3185,7 @@ pub struct DoctorArgs {
     pub repair: bool,
 
     /// REINDEX-only recovery for the partial-index stale-entry class
-    /// (see beads_rust#288). Strictly narrower than `--repair`: walks
+    /// (see beads#288). Strictly narrower than `--repair`: walks
     /// every user-defined index, runs `REINDEX "<name>"`
     /// inside a single transaction with a verbatim pre-snapshot
     /// backup, and never touches issue rows. Use when
@@ -3528,7 +3528,7 @@ pub struct QueryDeleteArgs {
 /// so `br graph <id>` answers "what does closing this unblock?". An issue that
 /// is itself blocked and blocks nothing therefore reports no dependents. This
 /// is a deliberate divergence from classic `bd`, whose `graph` walks
-/// dependencies (`beads_rust-mf72`).
+/// dependencies (`beads-mf72`).
 ///
 /// `--dependencies` walks the other way — "what is blocking this?" — so one
 /// command covers both directions. `br dep tree <id>` remains the

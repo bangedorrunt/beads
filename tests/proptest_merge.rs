@@ -7,8 +7,8 @@
 //! - tombstone protection (tombstoned issues cannot be resurrected)
 //! - conflict detection under Manual strategy
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::sync::{
+use beads::model::{Issue, IssueType, Priority, Status};
+use beads::sync::{
     ConflictResolution, ConflictType, MergeContext, MergeResult, merge_issue, three_way_merge,
 };
 use chrono::{Duration, TimeZone, Utc};
@@ -494,7 +494,7 @@ fn three_way_merge_notes_are_byte_identical_across_context_order() {
 }
 
 // ---------------------------------------------------------------------------
-// Custom status variant tests (beads_rust-jvkc)
+// Custom status variant tests (beads-jvkc)
 // ---------------------------------------------------------------------------
 
 proptest! {

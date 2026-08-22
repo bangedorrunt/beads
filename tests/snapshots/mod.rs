@@ -35,7 +35,7 @@ fn parse_created_id(stdout: &str) -> String {
 }
 
 // ============================================================================
-// Golden Text Snapshot System (beads_rust-hdc0)
+// Golden Text Snapshot System (beads-hdc0)
 // ============================================================================
 //
 // Provides deterministic text output capture and comparison for CLI commands.
@@ -74,7 +74,7 @@ static VERSION_NUM_RE: LazyLock<Regex> = LazyLock::new(|| {
 static LINE_NUM_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\.rs:\d+:").expect("line number regex"));
 /// `tracing` source-location annotation that appears in dev builds after the
-/// target-and-colon, e.g., `beads_rust::sync::path: src/sync/path.rs:123:`.
+/// target-and-colon, e.g., `beads::sync::path: src/sync/path.rs:123:`.
 /// Release builds omit it.  Normalize by deleting the segment entirely so the
 /// dev-vs-release formatter delta does not cause snapshot drift.
 static TRACING_SRC_LOC_RE: LazyLock<Regex> =
@@ -107,14 +107,14 @@ static TMP_PID_RE: LazyLock<Regex> =
 static DURATION_MS_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\d+(\.\d+)?\s*(ms|µs|ns|s)").expect("duration regex"));
 /// `br doctor` checks whose result is determined by the machine the test runs
-/// on rather than by anything br did (`beads_rust-alur`). Both made the doctor
+/// on rather than by anything br did (`beads-alur`). Both made the doctor
 /// golden pass on a developer box and fail on an rch remote worker:
 ///
 /// - `sqlite3.integrity_check` shells out to the system `sqlite3` binary and
 ///   degrades to a WARN when it is absent. Workers have no `sqlite3`.
 /// - `binary_version` reports either "matches (or is ahead of) Cargo.toml at
-///   <path> (<version>)" or "no beads_rust Cargo.toml reachable from .beads/ —
-///   not flagging", depending on whether a `beads_rust` manifest happens to sit
+///   <path> (<version>)" or "no beads Cargo.toml reachable from .beads/ —
+///   not flagging", depending on whether a `beads` manifest happens to sit
 ///   above the temp workspace. rch sets `TMPDIR` *inside* the synced repo, so
 ///   the worker takes the first branch and a developer box the second. It also
 ///   leaks a bare version number that `VERSION_NUM_RE` does not catch, since
@@ -166,7 +166,7 @@ pub struct TextNormConfig {
     pub mask_version_numbers: bool,
     /// Mask check results whose status depends on optional tooling being
     /// installed on the host rather than on anything br did
-    /// (`beads_rust-alur`).
+    /// (`beads-alur`).
     pub mask_host_tooling: bool,
 }
 
@@ -661,7 +661,7 @@ pub fn normalize_json(json: &Value) -> Value {
                     // path of the workspace; under tempdir-based tests this is
                     // a randomly-named ".tmpXXXXXX" path, so the snapshot must
                     // collapse it back to a stable token. (Issue surfaced by
-                    // beads_rust-l6xl audit; PC-RECOVERY-adjacent: not a
+                    // beads-l6xl audit; PC-RECOVERY-adjacent: not a
                     // safety problem, just a snapshot determinism gap.)
                     "source_repo" | "source_repo_path" => {
                         if let Value::String(_) = value {
@@ -827,11 +827,11 @@ mod golden_snapshot_tests {
 
     #[test]
     fn test_redact_issue_ids() {
-        let input = "Issue bd-abc123 depends on beads_rust-xyz789";
+        let input = "Issue bd-abc123 depends on beads-xyz789";
         let snapshot = TextSnapshot::golden(input);
         assert!(snapshot.normalized.contains("ID-REDACTED"));
         assert!(!snapshot.normalized.contains("bd-abc123"));
-        assert!(!snapshot.normalized.contains("beads_rust-xyz789"));
+        assert!(!snapshot.normalized.contains("beads-xyz789"));
     }
 
     #[test]
@@ -856,11 +856,11 @@ mod golden_snapshot_tests {
     ///
     /// The whole `binary_version` result line is now replaced outright, because
     /// its *message* is host-dependent too and not just its version number
-    /// (`beads_rust-alur`) — which subsumes the original concern: no version can
+    /// (`beads-alur`) — which subsumes the original concern: no version can
     /// survive if the line does not. Both properties are asserted here.
     #[test]
     fn test_mask_bare_br_version() {
-        let input = "OK binary_version: Running br 0.2.19; no beads_rust Cargo.toml reachable";
+        let input = "OK binary_version: Running br 0.2.19; no beads Cargo.toml reachable";
         let snapshot = TextSnapshot::golden(input);
         assert_eq!(snapshot.normalized, "HOST-DEPENDENT binary_version");
         assert!(!snapshot.normalized.contains("0.2.19"));
@@ -905,8 +905,7 @@ mod golden_snapshot_tests {
 
     #[test]
     fn test_mask_nested_temp_paths() {
-        let input =
-            "Temp file at /data/projects/beads_rust/.rch-target-worker/.tmpABC123XYZ/.beads";
+        let input = "Temp file at /data/projects/beads/.rch-target-worker/.tmpABC123XYZ/.beads";
         let snapshot = TextSnapshot::golden(input);
         assert_eq!(snapshot.normalized, "Temp file at /TMP/.beads");
     }
@@ -924,10 +923,10 @@ mod golden_snapshot_tests {
         // (the whole check-result line is host-dependent, so step 13b
         // replaces it outright); no version number may survive.
         let outside_tree = TextSnapshot::golden(
-            "OK binary_version: Running br 0.2.15; no beads_rust Cargo.toml reachable from .beads/ — not flagging",
+            "OK binary_version: Running br 0.2.15; no beads Cargo.toml reachable from .beads/ — not flagging",
         );
         let inside_tree = TextSnapshot::golden(
-            "OK binary_version: Running br 0.2.19; matches (or is ahead of) Cargo.toml at /data/projects/beads_rust/Cargo.toml (0.2.19)",
+            "OK binary_version: Running br 0.2.19; matches (or is ahead of) Cargo.toml at /data/projects/beads/Cargo.toml (0.2.19)",
         );
         assert_eq!(outside_tree.normalized, "HOST-DEPENDENT binary_version");
         assert_eq!(inside_tree.normalized, outside_tree.normalized);
@@ -1110,7 +1109,7 @@ Issue bd-abc123 created
 mod host_tooling_masking_tests {
     use super::{TextNormConfig, normalize_output, normalize_text_with_log};
 
-    /// `beads_rust-alur`: `sqlite3.integrity_check` reports OK where the system
+    /// `beads-alur`: `sqlite3.integrity_check` reports OK where the system
     /// `sqlite3` binary exists and WARN where it does not, so the golden must
     /// not encode either. Both host states must normalize to the same text.
     #[test]
@@ -1127,14 +1126,14 @@ mod host_tooling_masking_tests {
         assert!(normalize_output(with_sqlite3).contains("HOST-DEPENDENT sqlite3.integrity_check"));
     }
 
-    /// `beads_rust-alur`: `binary_version`'s message depends on whether a
-    /// `beads_rust` Cargo.toml sits above the temp workspace — true on rch
+    /// `beads-alur`: `binary_version`'s message depends on whether a
+    /// `beads` Cargo.toml sits above the temp workspace — true on rch
     /// workers, which put `TMPDIR` inside the synced repo, false on a developer
     /// box. Both forms must normalize to the same text.
     #[test]
     fn binary_version_message_is_host_independent() {
-        let in_repo = "OK binary_version: Running br 0.2.19; matches (or is ahead of) Cargo.toml at /data/projects/beads_rust/Cargo.toml (0.2.19)\n";
-        let outside_repo = "OK binary_version: Running br 0.2.19; no beads_rust Cargo.toml reachable from .beads/ — not flagging\n";
+        let in_repo = "OK binary_version: Running br 0.2.19; matches (or is ahead of) Cargo.toml at /data/projects/beads/Cargo.toml (0.2.19)\n";
+        let outside_repo = "OK binary_version: Running br 0.2.19; no beads Cargo.toml reachable from .beads/ — not flagging\n";
 
         assert_eq!(
             normalize_output(in_repo),

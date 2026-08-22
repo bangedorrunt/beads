@@ -1,10 +1,10 @@
 mod common;
 
-use beads_rust::franken_sync::Connection;
-use beads_rust::storage::SqliteStorage;
+use beads::storage::Connection;
+use beads::storage::SqliteStorage;
+use beads::storage::SqliteValue;
+use beads::storage::db::DbError;
 use common::cli::{BrWorkspace, run_br};
-use fsqlite_error::FrankenError;
-use fsqlite_types::SqliteValue;
 use serde_json::Value;
 use std::path::Path;
 
@@ -52,7 +52,7 @@ fn keyed_issue_row(conn: &Connection, id: &str) -> Option<String> {
             .first()
             .and_then(SqliteValue::as_text)
             .map(ToOwned::to_owned),
-        Err(FrankenError::QueryReturnedNoRows) => None,
+        Err(DbError::QueryReturnedNoRows) => None,
         Err(error) => panic!("query_row issue lookup failed for {id}: {error}"),
     }
 }
@@ -64,7 +64,7 @@ fn keyed_text_value(conn: &Connection, sql: &str, key: &str) -> Option<String> {
             .first()
             .and_then(SqliteValue::as_text)
             .map(ToOwned::to_owned),
-        Err(FrankenError::QueryReturnedNoRows) => None,
+        Err(DbError::QueryReturnedNoRows) => None,
         Err(error) => panic!("text lookup failed for key {key} with sql {sql:?}: {error}"),
     }
 }

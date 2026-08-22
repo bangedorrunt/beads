@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/e2e_scripts/sync_safety_witness.sh
 #
-# beads_rust-yyxo: filesystem-witness regression script for br sync.
+# beads-yyxo: filesystem-witness regression script for br sync.
 #
 # Creates a workspace, runs `br sync --flush-only` and `br sync --import-only`,
 # and uses Linux strace (or fall back to inotifywait, or a polling stat scan

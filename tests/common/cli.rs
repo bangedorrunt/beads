@@ -115,7 +115,7 @@ pub fn is_inside_beads_workspace(start: &Path) -> bool {
 ///
 /// This is not hypothetical: rch points `TMPDIR` at `<repo>/.rch-tmp` for remote
 /// builds, so under remote execution `br list` in a "fresh" workspace returns
-/// the beads_rust repo's own issues and exits 0 where the test requires failure.
+/// the beads repo's own issues and exits 0 where the test requires failure.
 ///
 /// Prefer `TMPDIR`; fall back to a system temp root that is clean.
 pub fn isolated_temp_root() -> PathBuf {
@@ -254,7 +254,7 @@ where
     // allowing tests of effective global configuration to supply another
     // HOME explicitly.
     cmd.env("HOME", root);
-    // `error`, not `beads_rust=debug`. Debug tracing goes to stderr, which
+    // `error`, not `beads=debug`. Debug tracing goes to stderr, which
     // (a) `br doctor`'s own `rust_log` check flags as an agent-hostile
     // setting — so every "healthy workspace" doctor assertion failed purely
     // because the harness set it — and (b) drowns the assertions that match
@@ -481,7 +481,7 @@ mod tests {
         }
     }
 
-    /// Built from a synthetic tree rather than the beads_rust checkout: rch
+    /// Built from a synthetic tree rather than the beads checkout: rch
     /// excludes `.beads/` when syncing to remote workers, so "the repo tracks its
     /// own issues" does not hold everywhere the suite runs.
     #[test]

@@ -1,4 +1,4 @@
-//! Error types and handling for `beads_rust`.
+//! Error types and handling for `beads`.
 //!
 //! This module provides structured errors that match the classic bd
 //! behavior for JSON error output compatibility.
@@ -19,7 +19,7 @@ pub use structured::{ErrorCode, StructuredError};
 use std::path::PathBuf;
 use thiserror::Error;
 
-/// Primary error type for `beads_rust` operations.
+/// Primary error type for `beads` operations.
 ///
 /// Design: Structured variants for common cases.
 #[derive(Error, Debug)]
@@ -39,7 +39,7 @@ pub enum BeadsError {
 
     /// `SQLite` database error.
     #[error("Database error: {0}")]
-    Database(#[from] fsqlite_error::FrankenError),
+    Database(#[from] crate::storage::db::DbError),
 
     // === Issue Errors ===
     /// Issue with the specified ID was not found.
@@ -574,7 +574,7 @@ mod tests {
         assert!(recoverable.is_user_recoverable());
 
         let not_recoverable =
-            BeadsError::Database(fsqlite_error::FrankenError::Internal("test".to_string()));
+            BeadsError::Database(crate::storage::db::DbError::Internal("test".to_string()));
         assert!(!not_recoverable.is_user_recoverable());
     }
 

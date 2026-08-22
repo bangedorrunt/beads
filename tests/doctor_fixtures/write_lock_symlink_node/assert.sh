@@ -35,7 +35,7 @@ case "$stage" in
     # lock node from lstat alone before any open, so doctor exits
     # non-zero with the typed refusal instead of running its checks.
     if [ "$doctor_rc" -eq 0 ]; then
-      echo "ASSERT FAIL[$stage]: symlinked .write.lock did not fail doctor (beads_rust-5sej)" >&2
+      echo "ASSERT FAIL[$stage]: symlinked .write.lock did not fail doctor (beads-5sej)" >&2
       echo "$out" >&2
       exit 1
     fi

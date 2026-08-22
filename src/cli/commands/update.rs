@@ -180,7 +180,7 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
     // Refuse terminal-state transitions before doing any I/O. `br update`
     // is a data-only field mutator; terminal-state transitions
     // (closed, tombstone) must go through their dedicated commands so the
-    // close-policy / delete pipelines are applied (see beads_rust#301).
+    // close-policy / delete pipelines are applied (see beads#301).
     reject_terminal_status_transition(args.status.as_deref())?;
 
     // Resolve description-file input once before route discovery/fan-out.
@@ -349,7 +349,7 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
         for warning in &capacity_warnings {
             ctx.warning(&warning.to_string());
         }
-        // beads_rust#297: emit inherited governing context for any
+        // beads#297: emit inherited governing context for any
         // bead that just transitioned into in_progress (via --claim or
         // --status in_progress). Done after the update summary so the
         // child's status change is visible first, then the inherited
@@ -1145,7 +1145,7 @@ fn validate_mutable_target_issues(
 ///
 /// Allowing both paths to reach the same terminal state would give the
 /// project two different audit contracts depending on which command the
-/// operator reached for — see beads_rust#301 for the regression that
+/// operator reached for — see beads#301 for the regression that
 /// motivated this gate.
 ///
 /// This deliberately runs *before* any I/O (route discovery, locking,
@@ -1164,7 +1164,7 @@ fn reject_terminal_status_transition(raw_status: Option<&str>) -> Result<()> {
              (close-reason / AC / attribution) is enforced. \
              Use `br close <id> --reason \"...\"` instead, or `br close <id> \
              --bypass-policy --bypass-reason \"...\"` to opt out explicitly. \
-             See https://github.com/Dicklesworthstone/beads_rust/issues/301.",
+             See https://github.com/Dicklesworthstone/beads/issues/301.",
         )),
         Status::Tombstone => Err(BeadsError::validation(
             "status",
@@ -1295,7 +1295,7 @@ fn optional_string_field(value: Option<&str>) -> Option<Option<String>> {
 /// Validation happens here because the storage column is opaque TEXT —
 /// without this guard we'd happily round-trip syntactically invalid
 /// JSON through SQLite and then have the emission path discover the
-/// problem at agent claim time. (beads_rust#297)
+/// problem at agent claim time. (beads#297)
 #[allow(clippy::option_option)]
 pub(crate) fn agent_context_update_from_arg(value: Option<&str>) -> Result<Option<Option<String>>> {
     let Some(raw) = value else {
@@ -1637,7 +1637,7 @@ mod tests {
         info!("test_build_update_with_status: starting");
         // Non-terminal status transitions still flow through build_update.
         // Terminal transitions (closed/tombstone) are rejected up-front by
-        // `reject_terminal_status_transition` — see beads_rust#301 and the
+        // `reject_terminal_status_transition` — see beads#301 and the
         // dedicated tests below.
         let args_blocked = UpdateArgs {
             status: Some("blocked".to_string()),
@@ -1659,7 +1659,7 @@ mod tests {
         info!("test_build_update_with_status: assertions passed");
     }
 
-    /// beads_rust#301: `br update --status closed` must refuse and direct
+    /// beads#301: `br update --status closed` must refuse and direct
     /// the operator at `br close` so close-policy fires.
     #[test]
     fn reject_terminal_status_transition_refuses_closed() {
@@ -1680,7 +1680,7 @@ mod tests {
         );
     }
 
-    /// beads_rust#301: tombstone is also a terminal state with a dedicated
+    /// beads#301: tombstone is also a terminal state with a dedicated
     /// command (`br delete`); refuse the update path so dependency rewiring
     /// is not skipped.
     #[test]

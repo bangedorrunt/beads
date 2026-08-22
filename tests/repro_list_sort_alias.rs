@@ -1,7 +1,7 @@
-use beads_rust::cli::ListArgs;
-use beads_rust::cli::commands::list;
-use beads_rust::config::CliOverrides;
-use beads_rust::output::OutputContext;
+use beads::cli::ListArgs;
+use beads::cli::commands::list;
+use beads::config::CliOverrides;
+use beads::output::OutputContext;
 
 #[test]
 fn test_list_sort_aliases_are_accepted() {

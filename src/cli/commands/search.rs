@@ -1,7 +1,7 @@
 //! Search command implementation.
 //!
 //! Classic bd-style substring search across title/description/id — plus
-//! comment bodies (beads_rust#416) — with list-like filters.
+//! comment bodies (beads#416) — with list-like filters.
 
 use crate::cli::{
     DEFAULT_LIST_OFFSET, DEFAULT_SEARCH_LIMIT, ListArgs, OutputFormat, SearchArgs,
@@ -416,7 +416,7 @@ fn build_filters(args: &ListArgs) -> Result<ListFilters> {
     validate_sort_key(args.sort.as_deref())?;
 
     // `--status all` is the same meta-value `br lint` accepts: no status
-    // filter, every status included (beads_rust-6ilv).
+    // filter, every status included (beads-6ilv).
     let all_statuses = super::status_filter_requests_all(&args.status);
     let statuses = if args.status.is_empty() || all_statuses {
         None
@@ -817,7 +817,7 @@ mod tests {
 
     #[test]
     fn test_search_matches_comment_bodies() {
-        // beads_rust#416: a token that exists only in a comment body must be
+        // beads#416: a token that exists only in a comment body must be
         // findable — agent workflows put durable handoffs in comments.
         let mut storage = SqliteStorage::open_memory().expect("db");
         let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();

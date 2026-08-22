@@ -1,5 +1,5 @@
 //! End-to-end coverage for audited issue-specific capacity exemptions
-//! (GitHub #384 phase 4, bead beads_rust-8nbk.4).
+//! (GitHub #384 phase 4, bead beads-8nbk.4).
 //!
 //! Drives the real `br` binary through the full lifecycle: a hard status
 //! capacity rejects fresh work, an authorized `br capacity exempt` grant

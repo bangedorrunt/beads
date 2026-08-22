@@ -7,7 +7,7 @@
 
 mod common;
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
+use beads::model::{Issue, IssueType, Priority, Status};
 use chrono::{Duration, TimeZone, Utc};
 use common::cli::{BrWorkspace, run_br};
 use serde_json::Value;

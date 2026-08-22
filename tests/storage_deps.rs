@@ -8,8 +8,8 @@
 
 mod common;
 
-use beads_rust::model::{Dependency, DependencyType, EventType, Status};
-use beads_rust::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
+use beads::model::{Dependency, DependencyType, EventType, Status};
+use beads::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 #[allow(unused_imports)]
 use common::ordering::{
     assert_contains_exactly_one, assert_hybrid_ordered, assert_no_duplicate_ids,
@@ -1055,7 +1055,7 @@ fn blocked_cache_reflects_status_changes() {
     assert!(blocked_ids.contains(&blocked.id));
 
     // Close the blocker
-    let update = beads_rust::storage::IssueUpdate {
+    let update = beads::storage::IssueUpdate {
         status: Some(Status::Closed),
         ..Default::default()
     };
@@ -1238,7 +1238,7 @@ fn blocked_issues_excluded_from_ready_list() {
 }
 
 // ============================================================================
-// beads_rust-uelt: dep-type matrix coverage (added 2026-05-09)
+// beads-uelt: dep-type matrix coverage (added 2026-05-09)
 // Verifies the single-parent rule applies ONLY to `parent-child`, not to
 // any other dep type. Each test is paired with its specific assertion.
 // ============================================================================
@@ -1402,7 +1402,7 @@ fn test_dep_add_each_supported_type_against_full_matrix() {
 }
 
 // ============================================================================
-// DIRECTIONAL BATCH QUERIES (beads_rust-mf72)
+// DIRECTIONAL BATCH QUERIES (beads-mf72)
 // ============================================================================
 
 /// `get_blocking_dependencies_for_issue_ids` backs `br graph --dependencies`
@@ -1437,7 +1437,7 @@ fn blocking_dependencies_batch_is_the_inverse_of_blocking_dependents() {
 
     let neighbours = |map: &std::collections::HashMap<
         String,
-        Vec<beads_rust::format::IssueWithDependencyMetadata>,
+        Vec<beads::format::IssueWithDependencyMetadata>,
     >,
                       id: &str|
      -> Vec<String> {

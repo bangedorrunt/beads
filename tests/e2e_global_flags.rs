@@ -1,7 +1,7 @@
 //! E2E tests for global CLI flags and output modes.
 //!
 //! Tests --json, --robot, --no-color, --no-db, and other global flags.
-//! Part of beads_rust-pnvt.
+//! Part of beads-pnvt.
 
 mod common;
 
@@ -1660,7 +1660,7 @@ fn e2e_global_flag_after_command() {
 }
 
 // ============================================================================
-// Output mode consistency tests (beads_rust-14eu)
+// Output mode consistency tests (beads-14eu)
 // ============================================================================
 
 /// JSON mode should produce stdout that parses as valid JSON with no extra text.

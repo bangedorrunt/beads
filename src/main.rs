@@ -1,12 +1,12 @@
-use beads_rust::cli::commands;
-use beads_rust::cli::{Cli, Commands, OutputFormat, command_requests_robot_json};
-use beads_rust::config;
-use beads_rust::logging::init_logging;
-use beads_rust::output::OutputContext;
-use beads_rust::sync::{
+use beads::cli::commands;
+use beads::cli::{Cli, Commands, OutputFormat, command_requests_robot_json};
+use beads::config;
+use beads::logging::init_logging;
+use beads::output::OutputContext;
+use beads::sync::{
     auto_flush, auto_import_if_stale, auto_import_probe, auto_import_probe_refreshing_witnesses,
 };
-use beads_rust::{BeadsError, Result, StructuredError};
+use beads::{BeadsError, Result, StructuredError};
 use clap::{CommandFactory, Parser};
 use clap_complete::CompleteEnv;
 use std::ffi::OsStr;
@@ -31,7 +31,7 @@ fn main() {
     // and lets `SqliteStorage::Drop` flush the WAL (#270). The handler
     // is process-global and idempotent, so calling it from clap's
     // completion subprocess (above) would also be safe.
-    beads_rust::shutdown::install();
+    beads::shutdown::install();
 
     let cli = Cli::parse();
     let json_error_mode = should_render_errors_as_json(&cli);
@@ -45,7 +45,7 @@ fn main() {
         eprintln!("Failed to initialize logging: {e}");
     }
     if let Commands::Sync(args) = &cli.command
-        && let Err(error) = beads_rust::cli::commands::sync::validate_sync_mode_args(args)
+        && let Err(error) = beads::cli::commands::sync::validate_sync_mode_args(args)
     {
         handle_error(&error, json_error_mode, color_error_mode);
     }
@@ -145,7 +145,7 @@ fn main() {
             .as_deref()
             .zip(ctx.paths.as_ref())
             .map(|(beads_dir, paths)| {
-                beads_rust::sync::blocking_database_family_write_lock_with_timeout(
+                beads::sync::blocking_database_family_write_lock_with_timeout(
                     beads_dir,
                     &paths.db_path,
                     lock_timeout,
@@ -154,7 +154,7 @@ fn main() {
             }) {
             Some(Ok(lock)) => Some(lock),
             Some(Err(e)) => {
-                // Round-3 fresh-eyes (`beads_rust-sexc`): when the
+                // Round-3 fresh-eyes (`beads-sexc`): when the
                 // contended command is `br doctor --repair`, surface the
                 // structured `ConcurrencyLost` (exit code 5) documented
                 // in `doctor_subsystems::exit_codes` instead of the
@@ -178,8 +178,8 @@ fn main() {
                         if json_error_mode {
                             let payload = serde_json::json!({
                                 "ok": false,
-                                "exit_code": beads_rust::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost.as_i32(),
-                                "code": beads_rust::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost.as_str(),
+                                "exit_code": beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost.as_i32(),
+                                "code": beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost.as_str(),
                                 "message": format!(
                                     "Refusing {command_name}: workspace write lock at {lock_display} is held by another process",
                                 ),
@@ -200,7 +200,7 @@ fn main() {
                                  Underlying error: {e}",
                             );
                         }
-                        std::process::exit(beads_rust::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost.as_i32());
+                        std::process::exit(beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost.as_i32());
                     }
                     if doctor_args.subcommand.is_none() {
                         if is_unwritable_write_lock_open_error(&lock_path, &e) {
@@ -372,7 +372,7 @@ fn main() {
         if !ctx.overrides.read_only_fast_open && write_lock.is_none() {
             let lock_timeout = ctx.write_lock_timeout();
             auto_import_write_lock = match ctx.beads_dir.as_deref().map(|beads_dir| {
-                beads_rust::sync::blocking_database_family_write_lock_with_timeout(
+                beads::sync::blocking_database_family_write_lock_with_timeout(
                     beads_dir,
                     &paths.db_path,
                     lock_timeout,
@@ -408,7 +408,7 @@ fn main() {
             if ctx.overrides.read_only_fast_open && write_lock.is_none() {
                 let lock_timeout = ctx.write_lock_timeout();
                 auto_import_write_lock = match ctx.beads_dir.as_deref().map(|beads_dir| {
-                    beads_rust::sync::blocking_database_family_write_lock_with_timeout(
+                    beads::sync::blocking_database_family_write_lock_with_timeout(
                         beads_dir,
                         &paths.db_path,
                         lock_timeout,
@@ -435,11 +435,7 @@ fn main() {
             }
 
             let _ = auto_import_write_lock.as_ref();
-            let sync_lock = match ctx
-                .beads_dir
-                .as_deref()
-                .map(beads_rust::sync::try_sync_lock)
-            {
+            let sync_lock = match ctx.beads_dir.as_deref().map(beads::sync::try_sync_lock) {
                 Some(Ok(Some(lock))) => Some(lock),
                 Some(Ok(None)) => {
                     tracing::debug!("Auto-import skipped because .sync.lock is held");
@@ -607,7 +603,7 @@ fn main() {
             }
         }
         Commands::Coordination { command } => match command {
-            beads_rust::cli::CoordinationCommands::Status(args) => {
+            beads::cli::CoordinationCommands::Status(args) => {
                 if let (Some(res), Some(beads_dir)) =
                     (storage_result.as_ref(), ctx.beads_dir.as_ref())
                 {
@@ -818,7 +814,7 @@ fn main() {
     // every local — including `storage_result` — drop on the way out
     // of `main`, so `SqliteStorage::Drop` checkpoints the WAL before
     // the process exits (#270).
-    if let Some(exit_code) = beads_rust::shutdown::exit_code() {
+    if let Some(exit_code) = beads::shutdown::exit_code() {
         drop(storage_result);
         drop(write_lock);
         std::process::exit(exit_code);
@@ -829,7 +825,7 @@ fn main() {
         && !ctx.no_auto_flush()
         && let (Some(res), Some(paths)) = (storage_result.as_mut(), ctx.paths.as_ref())
     {
-        let sync_lock = match beads_rust::sync::try_sync_lock(&paths.beads_dir) {
+        let sync_lock = match beads::sync::try_sync_lock(&paths.beads_dir) {
             Ok(Some(lock)) => Some(lock),
             Ok(None) => {
                 let err = BeadsError::Config(format!(
@@ -876,7 +872,7 @@ fn main() {
         }
     }
 
-    if let Some(err) = beads_rust::output::take_output_serialization_failure() {
+    if let Some(err) = beads::output::take_output_serialization_failure() {
         std::process::exit(err.exit_code());
     }
 
@@ -885,7 +881,7 @@ fn main() {
     // non-zero exit code (e.g. `dep cycles` with cycles present, or `create -f`
     // that dropped declared dependency edges) — see #368. Drop storage first so
     // `SqliteStorage::Drop` checkpoints the WAL before the process exits (#270).
-    if let Some(exit_code) = beads_rust::output::take_pending_exit_code() {
+    if let Some(exit_code) = beads::output::take_pending_exit_code() {
         drop(storage_result);
         drop(write_lock);
         std::process::exit(exit_code);
@@ -963,7 +959,7 @@ impl StartupContext {
 
     fn write_lock_timeout(&self) -> Option<u64> {
         self.configured_write_lock_timeout()
-            .or(Some(beads_rust::sync::default_write_lock_timeout_ms()))
+            .or(Some(beads::sync::default_write_lock_timeout_ms()))
     }
 
     fn startup_write_lock_timeout(&self, command: &Commands) -> Option<u64> {
@@ -979,26 +975,25 @@ fn command_is_doctor_repair(command: &Commands) -> bool {
     matches!(command, Commands::Doctor(args) if (args.repair || args.repair_indexes) && !args.robot_triage)
 }
 
-const fn doctor_subcommand_needs_write_lock(args: &beads_rust::cli::DoctorArgs) -> bool {
+const fn doctor_subcommand_needs_write_lock(args: &beads::cli::DoctorArgs) -> bool {
     match &args.subcommand {
         None
         | Some(
-            beads_rust::cli::DoctorSubcommand::Undo(_)
-            | beads_rust::cli::DoctorSubcommand::MigrateSchema(_),
+            beads::cli::DoctorSubcommand::Undo(_) | beads::cli::DoctorSubcommand::MigrateSchema(_),
         ) => true,
         Some(
-            beads_rust::cli::DoctorSubcommand::Capabilities(_)
-            | beads_rust::cli::DoctorSubcommand::RobotDocs(_)
-            | beads_rust::cli::DoctorSubcommand::Health(_)
-            | beads_rust::cli::DoctorSubcommand::Ls(_)
-            | beads_rust::cli::DoctorSubcommand::Explain(_),
+            beads::cli::DoctorSubcommand::Capabilities(_)
+            | beads::cli::DoctorSubcommand::RobotDocs(_)
+            | beads::cli::DoctorSubcommand::Health(_)
+            | beads::cli::DoctorSubcommand::Ls(_)
+            | beads::cli::DoctorSubcommand::Explain(_),
         ) => false,
     }
 }
 
 fn open_storage_from_ctx(
     ctx: &mut StartupContext,
-    write_authority: Option<&Arc<beads_rust::sync::DatabaseFamilyWriteLock>>,
+    write_authority: Option<&Arc<beads::sync::DatabaseFamilyWriteLock>>,
 ) -> Result<config::OpenStorageResult> {
     let startup = ctx.startup.take().ok_or(BeadsError::NotInitialized)?;
     if let Some(write_authority) = write_authority {
@@ -1022,7 +1017,7 @@ fn resolve_auto_import_expected_prefix(
 }
 
 fn execute_create_command(
-    args: &beads_rust::cli::CreateArgs,
+    args: &beads::cli::CreateArgs,
     overrides: &config::CliOverrides,
     output_ctx: &OutputContext,
     storage_result: &mut Option<config::OpenStorageResult>,
@@ -1037,7 +1032,7 @@ const fn should_preopen_storage(
     storage_enabled && needs_preopened_storage_context
 }
 
-const fn sync_mode_opens_storage(args: &beads_rust::cli::SyncArgs) -> bool {
+const fn sync_mode_opens_storage(args: &beads::cli::SyncArgs) -> bool {
     args.flush_only || args.import_only || args.merge || args.reconcile || args.status
 }
 
@@ -1089,23 +1084,23 @@ const fn is_mutating_command(cmd: &Commands) -> bool {
         | Commands::Undefer(_) => true,
         Commands::Dep { command } => matches!(
             command,
-            beads_rust::cli::DepCommands::Add(_)
-                | beads_rust::cli::DepCommands::Import(_)
-                | beads_rust::cli::DepCommands::Remove(_)
+            beads::cli::DepCommands::Add(_)
+                | beads::cli::DepCommands::Import(_)
+                | beads::cli::DepCommands::Remove(_)
         ),
         Commands::Label { command } => matches!(
             command,
-            beads_rust::cli::LabelCommands::Add(_)
-                | beads_rust::cli::LabelCommands::Remove(_)
-                | beads_rust::cli::LabelCommands::Rename(_)
+            beads::cli::LabelCommands::Add(_)
+                | beads::cli::LabelCommands::Remove(_)
+                | beads::cli::LabelCommands::Rename(_)
         ),
         Commands::Comments(args) => matches!(
             args.command.as_ref(),
-            Some(beads_rust::cli::CommentCommands::Add(_))
+            Some(beads::cli::CommentCommands::Add(_))
         ),
         Commands::Epic { command } => matches!(
             command,
-            beads_rust::cli::EpicCommands::CloseEligible(args) if !args.dry_run
+            beads::cli::EpicCommands::CloseEligible(args) if !args.dry_run
         ),
         Commands::Orphans(args) => args.fix,
         _ => false,
@@ -1136,38 +1131,38 @@ const fn command_must_refuse_during_pending_merge(cmd: &Commands) -> bool {
             ((!args.robot_triage && (args.repair || args.repair_indexes)) && !args.dry_run)
                 || matches!(
                     args.subcommand.as_ref(),
-                    Some(beads_rust::cli::DoctorSubcommand::Undo(undo)) if !undo.dry_run
+                    Some(beads::cli::DoctorSubcommand::Undo(undo)) if !undo.dry_run
                 )
                 || matches!(
                     args.subcommand.as_ref(),
-                    Some(beads_rust::cli::DoctorSubcommand::MigrateSchema(_))
+                    Some(beads::cli::DoctorSubcommand::MigrateSchema(_))
                 )
         }
         Commands::Gate { command } => {
-            matches!(command, beads_rust::cli::GateCommands::Report(_))
+            matches!(command, beads::cli::GateCommands::Report(_))
         }
         Commands::Query { command } => matches!(
             command,
-            beads_rust::cli::QueryCommands::Save(_) | beads_rust::cli::QueryCommands::Delete(_)
+            beads::cli::QueryCommands::Save(_) | beads::cli::QueryCommands::Delete(_)
         ),
         Commands::Config { command } => matches!(
             command,
-            beads_rust::cli::ConfigCommands::Set { .. }
-                | beads_rust::cli::ConfigCommands::Delete { .. }
-                | beads_rust::cli::ConfigCommands::Edit
+            beads::cli::ConfigCommands::Set { .. }
+                | beads::cli::ConfigCommands::Delete { .. }
+                | beads::cli::ConfigCommands::Edit
         ),
         Commands::History(args) => matches!(
             args.command,
             Some(
-                beads_rust::cli::HistoryCommands::Restore { .. }
-                    | beads_rust::cli::HistoryCommands::Prune { .. }
+                beads::cli::HistoryCommands::Restore { .. }
+                    | beads::cli::HistoryCommands::Prune { .. }
             )
         ),
         Commands::Audit { command } => matches!(
             command,
-            beads_rust::cli::AuditCommands::Record(_)
-                | beads_rust::cli::AuditCommands::Coordination(_)
-                | beads_rust::cli::AuditCommands::Label(_)
+            beads::cli::AuditCommands::Record(_)
+                | beads::cli::AuditCommands::Coordination(_)
+                | beads::cli::AuditCommands::Label(_)
         ),
         Commands::Agents(args) => !args.dry_run && (args.add || args.remove || args.update),
         _ => false,
@@ -1250,7 +1245,7 @@ fn inspect_pending_sync_merge_for_startup(
 
 fn inspect_pending_sync_merge_for_startup_under_authority(
     db_path: &Path,
-    authority: &Arc<beads_rust::sync::DatabaseFamilyWriteLock>,
+    authority: &Arc<beads::sync::DatabaseFamilyWriteLock>,
 ) -> Result<Option<commands::doctor::PendingSyncMergeState>> {
     // Binding an exactly absent database under the held family authority
     // makes that absence definitive for the startup gate. The subsequent
@@ -1387,13 +1382,13 @@ const fn needs_write_lock(cmd: &Commands) -> bool {
         Commands::Sync(args) => sync_mode_opens_storage(args),
         Commands::Config { command } => !matches!(
             command,
-            beads_rust::cli::ConfigCommands::Path | beads_rust::cli::ConfigCommands::Edit
+            beads::cli::ConfigCommands::Path | beads::cli::ConfigCommands::Edit
         ),
         Commands::History(args) => matches!(
             args.command,
             Some(
-                beads_rust::cli::HistoryCommands::Restore { .. }
-                    | beads_rust::cli::HistoryCommands::Prune { .. }
+                beads::cli::HistoryCommands::Restore { .. }
+                    | beads::cli::HistoryCommands::Prune { .. }
             )
         ),
         _ => false,
@@ -1473,13 +1468,13 @@ const fn supports_read_only_fast_open(cmd: &Commands) -> bool {
         | Commands::Lint(_)
         | Commands::Changelog(_)
         | Commands::Graph(_)
-        | Commands::Orphans(beads_rust::cli::OrphansArgs { fix: false, .. })
-        | Commands::Comments(beads_rust::cli::CommentsArgs {
-            command: None | Some(beads_rust::cli::CommentCommands::List(_)),
+        | Commands::Orphans(beads::cli::OrphansArgs { fix: false, .. })
+        | Commands::Comments(beads::cli::CommentsArgs {
+            command: None | Some(beads::cli::CommentCommands::List(_)),
             ..
         })
         | Commands::Epic {
-            command: beads_rust::cli::EpicCommands::Status(_),
+            command: beads::cli::EpicCommands::Status(_),
         } => true,
         Commands::Dep { command } => is_read_only_dep_command(command),
         Commands::Label { command } => is_read_only_label_listing(command),
@@ -1488,36 +1483,32 @@ const fn supports_read_only_fast_open(cmd: &Commands) -> bool {
     }
 }
 
-const fn is_read_only_dep_command(command: &beads_rust::cli::DepCommands) -> bool {
+const fn is_read_only_dep_command(command: &beads::cli::DepCommands) -> bool {
     match command {
-        beads_rust::cli::DepCommands::List(_)
-        | beads_rust::cli::DepCommands::Tree(_)
-        | beads_rust::cli::DepCommands::Cycles(_) => true,
-        beads_rust::cli::DepCommands::Add(_)
-        | beads_rust::cli::DepCommands::Import(_)
-        | beads_rust::cli::DepCommands::Remove(_) => false,
+        beads::cli::DepCommands::List(_)
+        | beads::cli::DepCommands::Tree(_)
+        | beads::cli::DepCommands::Cycles(_) => true,
+        beads::cli::DepCommands::Add(_)
+        | beads::cli::DepCommands::Import(_)
+        | beads::cli::DepCommands::Remove(_) => false,
     }
 }
 
-const fn is_read_only_label_listing(command: &beads_rust::cli::LabelCommands) -> bool {
+const fn is_read_only_label_listing(command: &beads::cli::LabelCommands) -> bool {
     match command {
-        beads_rust::cli::LabelCommands::ListAll
-        | beads_rust::cli::LabelCommands::List(beads_rust::cli::LabelListArgs { issue: None }) => {
-            true
-        }
-        beads_rust::cli::LabelCommands::Add(_)
-        | beads_rust::cli::LabelCommands::Remove(_)
-        | beads_rust::cli::LabelCommands::List(_)
-        | beads_rust::cli::LabelCommands::Rename(_) => false,
+        beads::cli::LabelCommands::ListAll
+        | beads::cli::LabelCommands::List(beads::cli::LabelListArgs { issue: None }) => true,
+        beads::cli::LabelCommands::Add(_)
+        | beads::cli::LabelCommands::Remove(_)
+        | beads::cli::LabelCommands::List(_)
+        | beads::cli::LabelCommands::Rename(_) => false,
     }
 }
 
-const fn is_read_only_query_command(command: &beads_rust::cli::QueryCommands) -> bool {
+const fn is_read_only_query_command(command: &beads::cli::QueryCommands) -> bool {
     match command {
-        beads_rust::cli::QueryCommands::Run(_) | beads_rust::cli::QueryCommands::List => true,
-        beads_rust::cli::QueryCommands::Save(_) | beads_rust::cli::QueryCommands::Delete(_) => {
-            false
-        }
+        beads::cli::QueryCommands::Run(_) | beads::cli::QueryCommands::List => true,
+        beads::cli::QueryCommands::Save(_) | beads::cli::QueryCommands::Delete(_) => false,
     }
 }
 
@@ -1527,11 +1518,11 @@ fn command_requested_output_format(cmd: &Commands) -> Option<OutputFormat> {
         Commands::Search(args) => args.filters.format,
         Commands::Show(args) => args.format.map(Into::into),
         Commands::Coordination { command } => match command {
-            beads_rust::cli::CoordinationCommands::Status(args) => args.format.map(Into::into),
+            beads::cli::CoordinationCommands::Status(args) => args.format.map(Into::into),
         },
         Commands::Capabilities(args) => args.format.map(Into::into),
         Commands::RobotDocs { command } => match command {
-            beads_rust::cli::RobotDocsCommands::Guide(args) => args.format.map(Into::into),
+            beads::cli::RobotDocsCommands::Guide(args) => args.format.map(Into::into),
         },
         Commands::Ready(args) => args.format.map(Into::into),
         Commands::Scheduler(args) => args.format.map(Into::into),
@@ -1539,18 +1530,18 @@ fn command_requested_output_format(cmd: &Commands) -> Option<OutputFormat> {
         Commands::Stats(args) | Commands::Status(args) => args.format.map(Into::into),
         Commands::Schema(args) => args.format.map(Into::into),
         Commands::Dep { command } => match command {
-            beads_rust::cli::DepCommands::List(args) => args.format.map(Into::into),
-            beads_rust::cli::DepCommands::Tree(_)
-            | beads_rust::cli::DepCommands::Add(_)
-            | beads_rust::cli::DepCommands::Import(_)
-            | beads_rust::cli::DepCommands::Remove(_)
-            | beads_rust::cli::DepCommands::Cycles(_) => None,
+            beads::cli::DepCommands::List(args) => args.format.map(Into::into),
+            beads::cli::DepCommands::Tree(_)
+            | beads::cli::DepCommands::Add(_)
+            | beads::cli::DepCommands::Import(_)
+            | beads::cli::DepCommands::Remove(_)
+            | beads::cli::DepCommands::Cycles(_) => None,
         },
         Commands::Query { command } => match command {
-            beads_rust::cli::QueryCommands::Run(args) => args.filters.format,
-            beads_rust::cli::QueryCommands::Save(_)
-            | beads_rust::cli::QueryCommands::List
-            | beads_rust::cli::QueryCommands::Delete(_) => None,
+            beads::cli::QueryCommands::Run(args) => args.filters.format,
+            beads::cli::QueryCommands::Save(_)
+            | beads::cli::QueryCommands::List
+            | beads::cli::QueryCommands::Delete(_) => None,
         },
         _ => None,
     }
@@ -1629,7 +1620,7 @@ fn emit_read_only_doctor_write_lock_diagnostic(
         "{lock_display} is not writable by owner; br doctor cannot acquire the startup workspace lock for live inspection"
     );
     let exit_code =
-        beads_rust::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::FindingsPresent;
+        beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::FindingsPresent;
 
     if json_mode {
         let payload = if robot_triage {
@@ -1696,7 +1687,7 @@ fn emit_read_only_doctor_live_write_lock_diagnostic(
         "Workspace advisory lock at {lock_display} is owned by another process; doctor did not inspect live state"
     );
     let exit_code =
-        beads_rust::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost;
+        beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost;
 
     if json_mode {
         let payload = if robot_triage {
@@ -1734,7 +1725,7 @@ fn read_only_doctor_live_write_lock_triage_payload(
         "P1",
         "live_owner",
         None,
-        beads_rust::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost,
+        beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost,
     )
 }
 
@@ -1752,7 +1743,7 @@ fn read_only_doctor_write_lock_triage_payload(
         "P2",
         "owner_not_writable",
         Some(remediation),
-        beads_rust::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::FindingsPresent,
+        beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::FindingsPresent,
     )
 }
 
@@ -1765,11 +1756,9 @@ fn read_only_doctor_startup_triage_payload(
     severity: &str,
     reason: &str,
     remediation: Option<&str>,
-    exit_code: beads_rust::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode,
+    exit_code: beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode,
 ) -> serde_json::Value {
-    use beads_rust::cli::commands::doctor_subsystems::surface::{
-        TriageFinding, build_triage_envelope,
-    };
+    use beads::cli::commands::doctor_subsystems::surface::{TriageFinding, build_triage_envelope};
 
     let envelope = build_triage_envelope(
         0,
@@ -1840,7 +1829,7 @@ fn read_only_doctor_live_write_lock_payload(
     startup_error: &str,
 ) -> serde_json::Value {
     let exit_code =
-        beads_rust::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost;
+        beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost;
     serde_json::json!({
         "ok": false,
         "exit_code": exit_code.as_i32(),
@@ -1989,8 +1978,8 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn make_create_args() -> beads_rust::cli::CreateArgs {
-        beads_rust::cli::CreateArgs {
+    fn make_create_args() -> beads::cli::CreateArgs {
+        beads::cli::CreateArgs {
             title: Some("test-title".to_string()),
             title_flag: None,
             type_: None,
@@ -2112,7 +2101,7 @@ mod tests {
         );
         assert_eq!(
             ctx.startup_write_lock_timeout(&doctor_read_only.command),
-            Some(beads_rust::sync::default_write_lock_timeout_ms()),
+            Some(beads::sync::default_write_lock_timeout_ms()),
             "plain doctor should keep the normal startup lock timeout"
         );
     }
@@ -2757,7 +2746,7 @@ mod tests {
         let db_path = beads_dir.join("beads.db");
         let jsonl_path = beads_dir.join("issues.jsonl");
         let authority = Arc::new(
-            beads_rust::sync::blocking_database_family_write_lock_with_timeout(
+            beads::sync::blocking_database_family_write_lock_with_timeout(
                 &beads_dir,
                 &db_path,
                 Some(1_000),
@@ -2813,14 +2802,14 @@ mod tests {
             fs::create_dir_all(&beads_dir).unwrap();
             let db_path = beads_dir.join("beads.db");
             let jsonl_path = beads_dir.join("issues.jsonl");
-            let mut storage = beads_rust::storage::SqliteStorage::open(&db_path).unwrap();
+            let mut storage = beads::storage::SqliteStorage::open(&db_path).unwrap();
             storage.set_metadata(key, value).unwrap();
             drop(storage);
             fs::write(&jsonl_path, b"{\"id\":\"br-existing\"}\n").unwrap();
             let database_before = fs::read(&db_path).unwrap();
             let jsonl_before = fs::read(&jsonl_path).unwrap();
             let authority = Arc::new(
-                beads_rust::sync::blocking_database_family_write_lock_with_timeout(
+                beads::sync::blocking_database_family_write_lock_with_timeout(
                     &beads_dir,
                     &db_path,
                     Some(1_000),
@@ -2866,7 +2855,7 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).expect("create beads dir");
         let database_path = beads_dir.join("beads.db");
         let guard = Arc::new(
-            beads_rust::sync::blocking_database_family_write_lock_with_timeout(
+            beads::sync::blocking_database_family_write_lock_with_timeout(
                 &beads_dir,
                 &database_path,
                 Some(0),
@@ -2898,7 +2887,7 @@ mod tests {
     #[test]
     fn is_mutating_command_detects_mutations() {
         let create_cmd = Commands::Create(make_create_args());
-        let list_cmd = Commands::List(beads_rust::cli::ListArgs::default());
+        let list_cmd = Commands::List(beads::cli::ListArgs::default());
         assert!(is_mutating_command(&create_cmd));
         assert!(!is_mutating_command(&list_cmd));
     }
@@ -3335,8 +3324,7 @@ mod tests {
 
         assert!(storage_result.is_none());
 
-        let first_storage =
-            beads_rust::storage::SqliteStorage::open(&first_db).expect("open first db");
+        let first_storage = beads::storage::SqliteStorage::open(&first_db).expect("open first db");
         assert_eq!(first_storage.count_issues().expect("count first db"), 1);
         assert!(
             !second_db.exists(),

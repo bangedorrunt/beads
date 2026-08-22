@@ -1,6 +1,6 @@
 //! End-to-end tests for `br sync --reconcile` (additive JSONL reconciliation).
 //!
-//! Covers the beads_rust-3r45 acceptance bar: the false-equal cached-hash
+//! Covers the beads-3r45 acceptance bar: the false-equal cached-hash
 //! state, the CASS-shaped recovery fixture (183 creates / 5 updates / all
 //! events preserved), timestamp classification, tombstone protection,
 //! relation preservation, orphan handling, malformed input, dry-run
@@ -25,8 +25,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use beads::storage::SqliteStorage;
+use beads::sync::{
     ImportConfig, METADATA_JSONL_CONTENT_HASH, METADATA_JSONL_MTIME, METADATA_JSONL_SIZE,
     METADATA_LAST_IMPORT_TIME, apply_sync_reconcile, compute_jsonl_hash, plan_sync_reconcile,
 };
@@ -90,7 +90,7 @@ fn hash_files_under(dir: &Path) -> BTreeMap<String, String> {
                     if let Ok(contents) = fs::read(&path) {
                         let mut digest = Sha256::new();
                         digest.update(&contents);
-                        map.insert(rel, beads_rust::util::hex_encode(&digest.finalize()));
+                        map.insert(rel, beads::util::hex_encode(&digest.finalize()));
                     }
                 } else if path.is_dir() {
                     visit(&path, base, map);
@@ -416,7 +416,7 @@ fn import_only_heals_false_equal_and_dry_run_sees_it() {
         "updated preview ids"
     );
 
-    // `beads_rust-jdmh`: the stored-hash shortcut is no longer blind — the
+    // `beads-jdmh`: the stored-hash shortcut is no longer blind — the
     // coverage invariant rejects the uncovered hash match and the plain
     // import falls through and heals the divergence additively.
     let import = run_br(&ws, ["sync", "--import-only", "--json"], "blind_import");
@@ -1388,7 +1388,7 @@ fn synthetic_row(template: &str, index: usize) -> String {
     )
 }
 
-/// The exact CASS-tracker shape from beads_rust-3r45: DB holds 1,732 issues
+/// The exact CASS-tracker shape from beads-3r45: DB holds 1,732 issues
 /// and 315 audit events; the canonical JSONL holds 1,915 issues — 183
 /// JSONL-only rows plus 5 shared rows that are strictly newer — and the
 /// stored content hash matches the file byte-for-byte (false-equal).
@@ -1481,7 +1481,7 @@ fn cass_shaped_fixture_recovers_exactly() {
     plant_false_equal_metadata(&ws);
 
     // Note: a plain `--import-only` would no longer be blind here — the
-    // `beads_rust-jdmh` coverage invariant rejects the uncovered hash match
+    // `beads-jdmh` coverage invariant rejects the uncovered hash match
     // and heals the state — so this fixture goes straight to reconcile to
     // keep the divergence intact for the receipt assertions.
 

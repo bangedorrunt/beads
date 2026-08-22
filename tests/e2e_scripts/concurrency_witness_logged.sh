@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/e2e_scripts/concurrency_witness_logged.sh
 #
-# beads_rust-mjmk: concurrency-witness-refresh harness.
+# beads-mjmk: concurrency-witness-refresh harness.
 #
 # Drives N concurrent `br list` reads + 1 `br update` write against a shared
 # workspace, captures stderr per-process, asserts the post-update state is

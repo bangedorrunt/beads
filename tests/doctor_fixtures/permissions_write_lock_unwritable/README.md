@@ -10,7 +10,7 @@
   bit -> plain `br doctor --json` emits a doctor report with
   `permissions.write_lock` -> `--repair` returns `concurrency_lost` -> undo is
   a no-op and the file remains read-only.
-- **Environment skip (beads_rust-ypwu)**: the detect stage re-checks the
+- **Environment skip (beads-ypwu)**: the detect stage re-checks the
   planted precondition before running doctor and exits 3 (the suite's skip
   protocol) when the environment cannot hold it: the lock vanished or became
   a non-regular file, the filesystem dropped the 0444 mode bits, or the

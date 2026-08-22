@@ -3,9 +3,9 @@
 //! These tests exercise the sync invariant that JSONL export followed by import
 //! preserves the canonical issue payload and content hashes.
 
-use beads_rust::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use beads::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
+use beads::storage::SqliteStorage;
+use beads::sync::{
     ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl, read_issues_from_jsonl,
 };
 use chrono::{Duration, TimeZone, Utc};
@@ -440,7 +440,7 @@ proptest! {
 
         let original = populate_storage(&case);
         let first_export = export_to_jsonl(&original, &first_path, &ExportConfig::default()).unwrap();
-        let first_issues = beads_rust::sync::read_issues_from_jsonl(&first_path).unwrap();
+        let first_issues = beads::sync::read_issues_from_jsonl(&first_path).unwrap();
         let first_hashes = hash_map(&first_export.issue_hashes);
         let source_hash = first_hashes
             .get(&case.source.id)
@@ -454,7 +454,7 @@ proptest! {
         prop_assert_eq!(import_result.imported_count, 2);
 
         let second_export = export_to_jsonl(&imported, &second_path, &ExportConfig::default()).unwrap();
-        let second_issues = beads_rust::sync::read_issues_from_jsonl(&second_path).unwrap();
+        let second_issues = beads::sync::read_issues_from_jsonl(&second_path).unwrap();
         let second_hashes = hash_map(&second_export.issue_hashes);
 
         prop_assert_eq!(

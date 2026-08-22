@@ -7,8 +7,8 @@
 //! - Mutates the .git directory
 //!
 //! This is a critical safety invariant documented in:
-//! - beads_rust-0v1.2.4: "Guarantee no git operations are executed by br sync"
-//! - beads_rust-0v1.3.3: "Regression test: sync never runs git or creates commits"
+//! - beads-0v1.2.4: "Guarantee no git operations are executed by br sync"
+//! - beads-0v1.3.3: "Regression test: sync never runs git or creates commits"
 
 #![allow(
     clippy::items_after_statements,
@@ -43,7 +43,7 @@ fn visit_dir(dir: &Path, base: &Path, hash_map: &mut BTreeMap<String, String>) {
                 if let Ok(contents) = fs::read(&path) {
                     let mut digest = Sha256::new();
                     digest.update(&contents);
-                    let hash = beads_rust::util::hex_encode(&digest.finalize());
+                    let hash = beads::util::hex_encode(&digest.finalize());
                     hash_map.insert(rel_path, hash);
                 }
             } else if path.is_dir() {
@@ -1137,7 +1137,7 @@ fn regression_sync_never_touches_source_files() {
             let content = fs::read(p).unwrap();
             let mut hasher = Sha256::new();
             hasher.update(&content);
-            (p.clone(), beads_rust::util::hex_encode(&hasher.finalize()))
+            (p.clone(), beads::util::hex_encode(&hasher.finalize()))
         })
         .collect();
 
@@ -1166,7 +1166,7 @@ fn regression_sync_never_touches_source_files() {
             let content = fs::read(p).unwrap();
             let mut hasher = Sha256::new();
             hasher.update(&content);
-            (p.clone(), beads_rust::util::hex_encode(&hasher.finalize()))
+            (p.clone(), beads::util::hex_encode(&hasher.finalize()))
         })
         .collect();
 
@@ -1199,7 +1199,7 @@ fn regression_sync_never_touches_source_files() {
 }
 
 // ============================================================================
-// COMPREHENSIVE INTEGRATION TEST: beads_rust-0v1.3.2
+// COMPREHENSIVE INTEGRATION TEST: beads-0v1.3.2
 // Verifies sync operations only touch allowed files in .beads/
 // ============================================================================
 
@@ -1343,7 +1343,7 @@ impl FileTreeSnapshot {
                     if let Ok(contents) = fs::read(&path) {
                         let mut hasher = Sha256::new();
                         hasher.update(&contents);
-                        let hash = beads_rust::util::hex_encode(&hasher.finalize());
+                        let hash = beads::util::hex_encode(&hasher.finalize());
                         let size = contents.len() as u64;
                         files.insert(rel_path, (hash, size));
                     }
@@ -1554,7 +1554,7 @@ impl FileTreeDiff {
 
 /// Integration test: sync export/import only touches allowed files.
 ///
-/// This test implements beads_rust-0v1.3.2:
+/// This test implements beads-0v1.3.2:
 /// - Creates a temp repo with source files in various directories
 /// - Takes complete file tree snapshot before sync
 /// - Runs sync export and import operations
@@ -2097,7 +2097,7 @@ fn integration_sync_manifest_only_touches_allowed_files() {
 }
 
 // ============================================================================
-// beads_rust-yyxo: additional sync-safety regression tests (added 2026-05-09)
+// beads-yyxo: additional sync-safety regression tests (added 2026-05-09)
 // Per SYNC_SAFETY_INVARIANTS.md PC-1, PC-3, PC-RECOVERY, NGI-3.
 // Each test emits tracing-style eprintln! lines per phase so the test log
 // alone tells the story.

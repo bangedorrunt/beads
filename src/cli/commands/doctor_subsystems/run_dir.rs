@@ -132,7 +132,7 @@ pub fn create_run_dir(repo_root: &Path) -> Result<RunDir, BeadsError> {
         )));
     }
 
-    // Round-5 fresh-eyes follow-through (`beads_rust-dfjs`): when
+    // Round-5 fresh-eyes follow-through (`beads-dfjs`): when
     // `BR_DOCTOR_RUNS_DIR` is set the run artifacts live OUTSIDE
     // `<repo>/.doctor/`, so adding `.doctor/` to `<repo>/.gitignore`
     // would be a surprise mutation against the parent tree without
@@ -268,7 +268,7 @@ fn update_latest_symlink(latest_link: &Path, target: &Path) -> Result<(), BeadsE
 /// Ensure `<repo>/.gitignore` contains a `.doctor/` ignore rule. Adds
 /// it idempotently; never removes or rewrites unrelated entries.
 ///
-/// ## Chokepoint carveout (`beads_rust-dfjs`)
+/// ## Chokepoint carveout (`beads-dfjs`)
 ///
 /// This is the **sole pre-chokepoint write** in the doctor pipeline.
 /// The chokepoint requires a run-dir; the run-dir lives at
@@ -287,7 +287,7 @@ fn update_latest_symlink(latest_link: &Path, target: &Path) -> Result<(), BeadsE
 ///    reader sees either the old or the new contents, never a torn
 ///    write. (TOCTOU between the read and the persist is bounded by
 ///    the workspace write lock that `--repair` holds; see
-///    `beads_rust-sexc` round-4 wiring.)
+///    `beads-sexc` round-4 wiring.)
 /// 3. **Test isolation**: callers that set `BR_DOCTOR_RUNS_DIR` (CI,
 ///    `br doctor undo`, fixtures) cause `create_run_dir` to skip this
 ///    call entirely, so no parent-tree `.gitignore` is mutated when
@@ -636,7 +636,7 @@ mod tests {
         assert_eq!(fallback, outer.path().join(".doctor").join("runs"));
     }
 
-    /// Round-5 fresh-eyes follow-through (`beads_rust-dfjs`):
+    /// Round-5 fresh-eyes follow-through (`beads-dfjs`):
     /// `ensure_doctor_in_gitignore` is the SOLE pre-chokepoint write
     /// in the doctor pipeline. If `.doctor/` is already in
     /// `.gitignore`, the function must be a no-op — idempotent,
@@ -669,7 +669,7 @@ mod tests {
         );
     }
 
-    /// Fresh-eyes follow-up on `beads_rust-dfjs`: if `.gitignore`
+    /// Fresh-eyes follow-up on `beads-dfjs`: if `.gitignore`
     /// cannot be read/written as a regular file, the doctor must not
     /// pretend run-dir creation succeeded. Otherwise the public
     /// success contract ("`.gitignore` contains `.doctor/`") is false,
@@ -746,7 +746,7 @@ mod tests {
         );
     }
 
-    /// Round-5 fresh-eyes follow-through (`beads_rust-dfjs`): when
+    /// Round-5 fresh-eyes follow-through (`beads-dfjs`): when
     /// `BR_DOCTOR_RUNS_DIR` redirects the runs directory, the
     /// gitignore touch must be skipped so that test fixtures, CI
     /// sandboxes, and `br doctor undo` (which builds a fresh run-dir
@@ -793,7 +793,7 @@ mod tests {
             "ensure_doctor_in_gitignore must have exactly two call sites in \
              production code: its own definition and the gated call from \
              create_run_dir. A third call is the contract violation \
-             beads_rust-dfjs warned about."
+             beads-dfjs warned about."
         );
     }
 }

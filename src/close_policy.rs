@@ -39,7 +39,7 @@ pub const ENV_MODEL: &str = "BR_MODEL";
 /// hard-failing the parse: a single typo in `policy.yaml` used to take
 /// down `br close` for every operator on the project, with no recovery
 /// path (even `--bypass-policy` couldn't help because the parse fires
-/// before bypass logic runs). See beads_rust#302.
+/// before bypass logic runs). See beads#302.
 ///
 /// Unknown fields surface via [`load_for_beads_dir`], which emits a
 /// `tracing::warn!` listing every unknown key it discovered. Operators
@@ -77,7 +77,7 @@ const fn default_true() -> bool {
 /// Close-time policy gates.
 ///
 /// Unknown fields are tolerated and surfaced via `tracing::warn!` at load
-/// time (see `PolicyDocument` doc-comment and beads_rust#302).
+/// time (see `PolicyDocument` doc-comment and beads#302).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ClosePolicy {
@@ -91,7 +91,7 @@ pub struct ClosePolicy {
     /// status to `in_progress`.
     pub forbid_self_close_after_in_progress: ToggleGate,
     /// Reject closes when the issue has a `blocks` edge to a dependent that
-    /// is currently in `deferred` status (beads_rust#303). Closing a prereq
+    /// is currently in `deferred` status (beads#303). Closing a prereq
     /// is the natural touch-point that forces the closer to confront every
     /// deferred dependent before the prereq disappears from the graph.
     pub forbid_close_with_deferred_dependents: ToggleGate,
@@ -2408,7 +2408,7 @@ pub const GATE_FORBID_CLOSE_WITH_DEFERRED_DEPENDENTS: &str =
     "forbid_close_with_deferred_dependents";
 
 /// Build the policy violation for the `forbid_close_with_deferred_dependents`
-/// gate (beads_rust#303), given the issue being closed and the IDs of its
+/// gate (beads#303), given the issue being closed and the IDs of its
 /// dependents (issues with a `blocks` edge *from* `issue_id`) that are
 /// currently in `deferred` status.
 ///
@@ -2617,7 +2617,7 @@ fn parse_unchecked_box(line: &str) -> Option<String> {
 /// file exists but cannot be read or parsed — never silently downgrades a
 /// broken config to "permissive."
 ///
-/// # Unknown fields (beads_rust#302)
+/// # Unknown fields (beads#302)
 ///
 /// Close-policy structs deliberately accept unknown fields rather than
 /// hard-failing the parse. A typo or project-local experimental gate
@@ -2661,7 +2661,7 @@ pub fn load_for_beads_dir(beads_dir: &Path) -> Result<PolicyDocument> {
                 policy_path = %path.display(),
                 unknown_fields = ?unknown,
                 "policy.yaml contains {} unknown field(s) under close_policy structs; \
-                 these were ignored (beads_rust#302). Check for typos: {}",
+                 these were ignored (beads#302). Check for typos: {}",
                 unknown.len(),
                 unknown.join(", "),
             );
@@ -3265,7 +3265,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Deferred-dependents gate (beads_rust#303)
+    // Deferred-dependents gate (beads#303)
     // =========================================================================
 
     #[test]
@@ -3455,7 +3455,7 @@ allow_bypass: false
         assert!(policy.close_policy.is_active());
     }
 
-    /// beads_rust#302: unknown fields used to hard-fail and take down `br
+    /// beads#302: unknown fields used to hard-fail and take down `br
     /// close` project-wide. They are now tolerated — the parse succeeds and
     /// the unknown keys surface via [`detect_unknown_policy_fields`].
     #[test]
@@ -3474,7 +3474,7 @@ allow_bypass: false
         assert_eq!(unknown, vec!["unknown_key".to_string()]);
     }
 
-    /// beads_rust#302: unknown fields nested under `close_policy:` (the
+    /// beads#302: unknown fields nested under `close_policy:` (the
     /// regression class the issue specifically called out — a typo or
     /// experimental gate) must also be tolerated and surfaced as a dotted
     /// path so operators can find them.
@@ -3700,7 +3700,7 @@ close_policy:
         assert_eq!(violations[0].gate, "typed_references_required_kind_missing");
     }
 
-    /// Drift guard for beads_rust#302: `PolicyNode::child_table()` is a
+    /// Drift guard for beads#302: `PolicyNode::child_table()` is a
     /// hand-maintained mirror of the typed close-policy struct fields. If a
     /// new field is added to one of the structs without also being added
     /// to the table, `detect_unknown_policy_fields` will fire a
@@ -3737,7 +3737,7 @@ close_policy:
                     "PolicyNode::{node:?}::child_table() is missing key `{field}` declared on \
                      struct `{struct_name}`. `detect_unknown_policy_fields` would emit a \
                      FALSE-POSITIVE 'unknown field' warning on every canonical policy.yaml that \
-                     uses this field. Add the entry to `child_table()` (see beads_rust#302).",
+                     uses this field. Add the entry to `child_table()` (see beads#302).",
                 );
             }
         }
@@ -3813,7 +3813,7 @@ close_policy:
                     "PolicyNode::{node:?}::child_table() lists key `{key}` that does not exist \
                      on struct `{struct_name}`. A typo of this key in policy.yaml would NOT be \
                      reported as unknown even though it is silently ignored by the typed parse \
-                     (see beads_rust#302).",
+                     (see beads#302).",
                 );
             }
         }
@@ -4736,7 +4736,7 @@ workflow:
     }
 
     // =========================================================================
-    // Workflow gate engine (issue #312, layer 2 / beads_rust#319)
+    // Workflow gate engine (issue #312, layer 2 / beads#319)
     // =========================================================================
 
     /// Parse the full gate schema from the issue spec and assert it round-trips

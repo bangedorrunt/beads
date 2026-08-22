@@ -6,8 +6,8 @@
 //! - **Benchmark**: Time commands, capture RSS, produce metrics
 //!
 //! Related beads:
-//! - beads_rust-ir0t: Scenario DSL + normalization rules for conformance
-//! - beads_rust-ag35: EPIC: Exhaustive E2E + Conformance + Benchmark Harness
+//! - beads-ir0t: Scenario DSL + normalization rules for conformance
+//! - beads-ag35: EPIC: Exhaustive E2E + Conformance + Benchmark Harness
 
 #![allow(dead_code, clippy::similar_names)]
 
@@ -741,7 +741,7 @@ pub struct RunStatistics {
 }
 
 // ============================================================================
-// BENCHMARK HELPERS (beads_rust-owu6)
+// BENCHMARK HELPERS (beads-owu6)
 // ============================================================================
 
 /// Measure peak RSS from /proc/<pid>/status on Linux.
@@ -1328,7 +1328,7 @@ impl Scenario {
 }
 
 // ============================================================================
-// SCENARIO FILTER (beads_rust-o1az)
+// SCENARIO FILTER (beads-o1az)
 // ============================================================================
 
 /// Filter for selecting scenarios by tags.
@@ -3220,7 +3220,7 @@ pub mod catalog {
         // Per the post-#292 doctor contract (commits 96c3fad2, 1c3c4fe1):
         // any non-OK check — WARN or ERROR — now flips `ok` to false and
         // exits 1. The stress harness legitimately produces WARN-level
-        // finding (RUST_LOG=beads_rust=debug set by the test runner).
+        // finding (RUST_LOG=beads=debug set by the test runner).
         // This does not degrade the
         // workspace's semantic health, so the e2e test asserts
         // `workspace_health == "healthy"` on the JSON payload rather
@@ -3428,7 +3428,7 @@ mod tests {
     }
 
     // ========================================================================
-    // ScenarioFilter tests (beads_rust-o1az)
+    // ScenarioFilter tests (beads-o1az)
     // ========================================================================
 
     #[test]
@@ -3571,7 +3571,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Cross-platform normalization tests (beads_rust-lsht)
+    // Cross-platform normalization tests (beads-lsht)
     // ========================================================================
 
     #[test]
@@ -3703,7 +3703,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Scenario DSL + Normalization + Comparator tests (beads_rust-nh50)
+    // Scenario DSL + Normalization + Comparator tests (beads-nh50)
     // ========================================================================
 
     // --- Array Sorting Tests ---
@@ -3871,13 +3871,13 @@ mod tests {
     fn test_id_normalization_preserves_prefix() {
         let rules = NormalizationRules::conformance_default();
         let mut value = serde_json::json!({
-            "id": "beads_rust-task-abcd1234"
+            "id": "beads-task-abcd1234"
         });
 
         rules.apply(&mut value);
 
         // Prefix before last dash should be preserved
-        assert_eq!(value["id"], "beads_rust-task-HASH");
+        assert_eq!(value["id"], "beads-task-HASH");
     }
 
     #[test]

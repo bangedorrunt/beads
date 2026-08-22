@@ -79,23 +79,21 @@ fn default_filter(verbosity: u8, quiet: bool) -> String {
 
     // fsqlite's internal submodules (btree cells, VDBE steps, cx checkpoints,
     // pager I/O) fire at `debug` for every row and page touched — enabling
-    // them unfiltered drowns out beads_rust's own logs by many orders of
+    // them unfiltered drowns out beads's own logs by many orders of
     // magnitude on bulk imports. Keep fsqlite at `error` for default debug
     // builds; `-v` raises it to `warn`, and `-vv`/higher opt into more detail.
     match verbosity {
         0 => {
             if cfg!(debug_assertions) {
-                "beads_rust=debug,fsqlite=error".to_string()
+                "beads=debug,fsqlite=error".to_string()
             } else {
                 "error".to_string()
             }
         }
-        1 => "beads_rust=debug,fsqlite=warn".to_string(),
-        2 => {
-            "beads_rust=debug,fsqlite=info,fsqlite_btree=warn,fsqlite_vdbe=warn,fsqlite_pager=warn"
-                .to_string()
-        }
-        _ => "beads_rust=trace,fsqlite=debug,fsqlite_btree=info,fsqlite_vdbe=info".to_string(),
+        1 => "beads=debug,fsqlite=warn".to_string(),
+        2 => "beads=debug,fsqlite=info,fsqlite_btree=warn,fsqlite_vdbe=warn,fsqlite_pager=warn"
+            .to_string(),
+        _ => "beads=trace,fsqlite=debug,fsqlite_btree=info,fsqlite_vdbe=info".to_string(),
     }
 }
 
@@ -105,7 +103,7 @@ pub fn init_test_logging() {
 
     INIT.call_once(|| {
         tracing_subscriber::fmt()
-            .with_env_filter("beads_rust=debug,test=debug")
+            .with_env_filter("beads=debug,test=debug")
             .with_test_writer()
             .try_init()
             .ok();
@@ -126,25 +124,25 @@ mod tests {
 
     #[test]
     fn default_filter_varies_with_verbosity() {
-        assert_eq!(default_filter(1, false), "beads_rust=debug,fsqlite=warn");
-        assert_eq!(default_filter(0, false), "beads_rust=debug,fsqlite=error");
+        assert_eq!(default_filter(1, false), "beads=debug,fsqlite=warn");
+        assert_eq!(default_filter(0, false), "beads=debug,fsqlite=error");
         assert_eq!(
             default_filter(2, false),
-            "beads_rust=debug,fsqlite=info,fsqlite_btree=warn,fsqlite_vdbe=warn,fsqlite_pager=warn"
+            "beads=debug,fsqlite=info,fsqlite_btree=warn,fsqlite_vdbe=warn,fsqlite_pager=warn"
         );
         assert_eq!(
             default_filter(3, false),
-            "beads_rust=trace,fsqlite=debug,fsqlite_btree=info,fsqlite_vdbe=info"
+            "beads=trace,fsqlite=debug,fsqlite_btree=info,fsqlite_vdbe=info"
         );
     }
 
     #[test]
     fn resolve_env_filter_prefers_rust_log() {
         let filter =
-            resolve_env_filter_with_override(0, false, Some("beads_rust=trace")).expect("filter");
+            resolve_env_filter_with_override(0, false, Some("beads=trace")).expect("filter");
         let rendered = filter.to_string();
         assert!(
-            rendered.contains("beads_rust=trace"),
+            rendered.contains("beads=trace"),
             "expected env override to include trace, got {rendered}"
         );
     }
@@ -156,7 +154,7 @@ mod tests {
             resolve_env_filter_with_override(1, false, Some("[invalid")).expect("fallback filter");
         let rendered = filter.to_string();
         assert!(
-            rendered.contains("beads_rust=debug"),
+            rendered.contains("beads=debug"),
             "expected fallback filter, got {rendered}"
         );
     }

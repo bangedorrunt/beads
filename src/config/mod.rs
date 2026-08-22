@@ -1,4 +1,4 @@
-//! Configuration management for `beads_rust`.
+//! Configuration management for `beads`.
 //!
 //! Configuration sources and precedence (highest wins):
 //! 1. CLI overrides
@@ -14,6 +14,8 @@ pub mod routing;
 use crate::error::{BeadsError, Result, ResultExt};
 use crate::model::{IssueType, Priority};
 use crate::storage::SqliteStorage;
+use crate::storage::SqliteValue;
+use crate::storage::db::DbError;
 use crate::sync::path::validate_sync_path_with_external;
 use crate::sync::{
     ExpectedJsonlSourceRef, ExportConfig, ImportConfig, ImportResult, JsonlSourceSnapshot,
@@ -30,8 +32,6 @@ use crate::util::id::{
     split_prefix_remainder,
 };
 use chrono::Utc;
-use fsqlite_error::FrankenError;
-use fsqlite_types::SqliteValue;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -1280,16 +1280,16 @@ fn should_attempt_jsonl_recovery(open_err: &BeadsError, db_path: &Path, jsonl_pa
     matches!(
         open_err,
         BeadsError::Database(
-            FrankenError::DatabaseCorrupt { .. }
-                | FrankenError::NotADatabase { .. }
-                | FrankenError::WalCorrupt { .. }
-                | FrankenError::ShortRead { .. }
-                | FrankenError::TableExists { .. }
-                | FrankenError::IndexExists { .. }
+            DbError::DatabaseCorrupt { .. }
+                | DbError::NotADatabase { .. }
+                | DbError::WalCorrupt { .. }
+                | DbError::ShortRead { .. }
+                | DbError::TableExists { .. }
+                | DbError::IndexExists { .. }
         )
     ) || matches!(
         open_err,
-        BeadsError::Database(FrankenError::Internal(detail))
+        BeadsError::Database(DbError::Internal(detail))
             if is_recoverable_database_internal_error(detail)
     ) || matches!(
         open_err,
@@ -1299,7 +1299,7 @@ fn should_attempt_jsonl_recovery(open_err: &BeadsError, db_path: &Path, jsonl_pa
         // error rather than a corruption variant, but it is exactly the
         // structural damage a JSONL rebuild repairs: recovery backs the whole
         // family up and recreates it.
-        BeadsError::Database(FrankenError::Io(io_err))
+        BeadsError::Database(DbError::Io(io_err))
             if io_err.kind() == std::io::ErrorKind::IsADirectory
     )
 }
@@ -1312,7 +1312,7 @@ fn should_attempt_jsonl_recovery_after_open(
     should_attempt_jsonl_recovery(probe_err, db_path, jsonl_path)
         || matches!(
             probe_err,
-            BeadsError::Database(FrankenError::QueryReturnedMultipleRows)
+            BeadsError::Database(DbError::QueryReturnedMultipleRows)
         )
 }
 
@@ -4135,7 +4135,7 @@ pub fn no_auto_flush_from_layer(layer: &ConfigLayer) -> Option<bool> {
 /// caller can keep the default-enabled behavior unchanged.
 ///
 /// This is the storage-policy switch requested in
-/// <https://github.com/Dicklesworthstone/beads_rust/issues/293> — operators who
+/// <https://github.com/Dicklesworthstone/beads/issues/293> — operators who
 /// want `issues.jsonl` to be the single durable state file can flip this and
 /// stop the `.br_history/` directory from being created.
 /// Resolve an override for the `.br_history` snapshot throttle (#313) from the
@@ -5809,8 +5809,8 @@ fn yaml_scalar_to_string(value: &serde_yml::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::franken_sync::Connection;
     use crate::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
+    use crate::storage::Connection;
     use crate::storage::SqliteStorage;
     use chrono::Utc;
     use tempfile::TempDir;
@@ -6165,7 +6165,7 @@ labels:
     }
 
     // ==================== Additional Config Unit Tests ====================
-    // Tests for beads_rust-7h9: Config unit tests - Layered configuration
+    // Tests for beads-7h9: Config unit tests - Layered configuration
 
     #[test]
     fn precedence_default_is_lowest() {
@@ -7390,7 +7390,7 @@ routing:
     }
 
     // ==================== JSONL Discovery Tests ====================
-    // Tests for beads_rust-ndl: JSONL discovery + metadata.json handling
+    // Tests for beads-ndl: JSONL discovery + metadata.json handling
 
     #[test]
     fn discover_jsonl_prefers_issues_over_legacy() {
@@ -7657,28 +7657,28 @@ routing:
         fs::write(&jsonl_path, "{}\n").expect("write jsonl");
 
         assert!(should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::DatabaseCorrupt {
+            &BeadsError::Database(DbError::DatabaseCorrupt {
                 detail: "bad page".to_string()
             }),
             &db_path,
             &jsonl_path
         ));
         assert!(should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::NotADatabase {
+            &BeadsError::Database(DbError::NotADatabase {
                 path: db_path.clone()
             }),
             &db_path,
             &jsonl_path
         ));
         assert!(should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::WalCorrupt {
+            &BeadsError::Database(DbError::WalCorrupt {
                 detail: "bad wal".to_string()
             }),
             &db_path,
             &jsonl_path
         ));
         assert!(should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::ShortRead {
+            &BeadsError::Database(DbError::ShortRead {
                 expected: 4096,
                 actual: 12
             }),
@@ -7686,21 +7686,21 @@ routing:
             &jsonl_path
         ));
         assert!(should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::TableExists {
+            &BeadsError::Database(DbError::TableExists {
                 name: "blocked_issues_cache".to_string()
             }),
             &db_path,
             &jsonl_path
         ));
         assert!(should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::IndexExists {
+            &BeadsError::Database(DbError::IndexExists {
                 name: "idx_blocked_cache_blocked_at".to_string()
             }),
             &db_path,
             &jsonl_path
         ));
         assert!(should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::Internal(
+            &BeadsError::Database(DbError::Internal(
                 "malformed database schema (blocked_issues_cache) - table \"blocked_issues_cache\" already exists"
                     .to_string()
             )),
@@ -7708,14 +7708,14 @@ routing:
             &jsonl_path
         ));
         assert!(should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::Internal(
+            &BeadsError::Database(DbError::Internal(
                 "database disk image is malformed".to_string()
             )),
             &db_path,
             &jsonl_path
         ));
         assert!(should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::Internal(
+            &BeadsError::Database(DbError::Internal(
                 "row 13 missing from index idx_issues_list_active_order".to_string()
             )),
             &db_path,
@@ -7723,24 +7723,24 @@ routing:
         ));
 
         assert!(!should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::SchemaChanged),
+            &BeadsError::Database(DbError::SchemaChanged),
             &db_path,
             &jsonl_path
         ));
         assert!(!should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::CannotOpen {
+            &BeadsError::Database(DbError::CannotOpen {
                 path: db_path.clone()
             }),
             &db_path,
             &jsonl_path
         ));
         assert!(!should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::Busy),
+            &BeadsError::Database(DbError::Busy),
             &db_path,
             &jsonl_path
         ));
         assert!(!should_attempt_jsonl_recovery(
-            &BeadsError::Database(FrankenError::Internal(
+            &BeadsError::Database(DbError::Internal(
                 "constraint verification failed".to_string()
             )),
             &db_path,
@@ -7887,7 +7887,7 @@ routing:
 
         create_malformed_blocked_cache_db(&db_path);
         let issue = Issue {
-            id: "beads_rust-3h0h".to_string(),
+            id: "beads-3h0h".to_string(),
             title: "Auto-recover malformed blocked_issues_cache schema from JSONL".to_string(),
             status: Status::InProgress,
             priority: Priority::CRITICAL,
@@ -7910,7 +7910,7 @@ routing:
             open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
         let recovered_issue = storage_ctx
             .storage
-            .get_issue("beads_rust-3h0h")
+            .get_issue("beads-3h0h")
             .expect("query issue")
             .expect("issue should exist after malformed-schema recovery");
 
@@ -9132,13 +9132,12 @@ routing:
         let _ = fs::remove_file(&journal_path);
 
         let prefix = with_database_family_snapshot(&db_path, |snapshot_db_path| {
-            let conn = crate::franken_sync::Connection::open(
-                snapshot_db_path.to_string_lossy().into_owned(),
-            )?;
+            let conn =
+                crate::storage::Connection::open(snapshot_db_path.to_string_lossy().into_owned())?;
             let row = conn.query_row("SELECT value FROM config WHERE key = 'issue_prefix'")?;
             Ok(row
                 .get(0)
-                .and_then(fsqlite_types::SqliteValue::as_text)
+                .and_then(crate::storage::SqliteValue::as_text)
                 .map(str::to_string))
         })
         .expect("read snapshot");
@@ -9672,7 +9671,7 @@ routing:
 
     #[test]
     fn quarantine_truncated_wal_sidecar_leaves_zero_byte_wal_in_place() {
-        // Regression for beads_rust#291. A 0-byte WAL is the documented
+        // Regression for beads#291. A 0-byte WAL is the documented
         // post-`PRAGMA wal_checkpoint(TRUNCATE)` resting state, which
         // SqliteStorage::Drop runs on every mutating br invocation. The
         // pre-fix heuristic quarantined that healthy hand-off as corruption

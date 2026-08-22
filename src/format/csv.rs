@@ -1,4 +1,4 @@
-//! CSV formatting for `beads_rust`.
+//! CSV formatting for `beads`.
 //!
 //! Provides CSV output for list/export commands. Handles proper escaping
 //! of fields containing commas, quotes, or newlines.

@@ -369,12 +369,12 @@ pub struct SyncStatus {
     /// `recoverable` / `unsafe`) computed from the cheap signals this
     /// command already evaluates: file-state probes plus the
     /// DB↔JSONL drift booleans above. Same write-gate vocabulary as
-    /// `br doctor --json` (beads_rust#334; docs/reliability/HEALTH_CONTRACT.md).
+    /// `br doctor --json` (beads#334; docs/reliability/HEALTH_CONTRACT.md).
     pub workspace_health: String,
     /// Anomaly evidence backing `workspace_health`, in the same shape
     /// doctor emits (`anomalies[].code` / `severity` / `message`).
     pub reliability_audit: ReliabilityAuditRecord,
-    /// DB↔JSONL coverage probe (`beads_rust-jdmh`). Absent when the JSONL
+    /// DB↔JSONL coverage probe (`beads-jdmh`). Absent when the JSONL
     /// is missing or unreadable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage: Option<SyncCoverageProbe>,
@@ -1735,7 +1735,7 @@ fn contains_git_dir(path: &Path) -> bool {
 }
 
 /// Classify workspace health from the cheap signals available in
-/// sync-status context (beads_rust#334): the file-state probes shared
+/// sync-status context (beads#334): the file-state probes shared
 /// with doctor (`classify_file_state`: DB header, sidecars, conflict
 /// markers, orphaned locks) plus the DB↔JSONL drift booleans the
 /// command already computed. This intentionally does NOT run the full
@@ -1757,7 +1757,7 @@ fn classify_sync_status_workspace(
     WorkspaceClassification::from_anomalies(anomalies)
 }
 
-/// Cheap DB↔JSONL coverage probe (`beads_rust-jdmh`).
+/// Cheap DB↔JSONL coverage probe (`beads-jdmh`).
 ///
 /// The stored-hash shortcut proves the JSONL bytes are unchanged since the
 /// last *recorded* import — not that this database ever ingested them. Stored
@@ -3327,7 +3327,7 @@ fn execute_import(
             // Check if JSONL content hash matches
             let current_hash = source_content_hash.clone();
             let coverage_probe = if current_hash == stored {
-                // Coverage invariant (`beads_rust-jdmh`): a matching stored
+                // Coverage invariant (`beads-jdmh`): a matching stored
                 // hash proves the JSONL bytes are unchanged since the last
                 // *recorded* import, not that this DB ingested them. If the
                 // exportable DB issue count disagrees with the JSONL's

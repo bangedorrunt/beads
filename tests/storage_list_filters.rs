@@ -14,8 +14,8 @@
 
 mod common;
 
-use beads_rust::model::{IssueType, Priority, Status};
-use beads_rust::storage::ListFilters;
+use beads::model::{IssueType, Priority, Status};
+use beads::storage::ListFilters;
 use common::{fixtures::IssueBuilder, test_db};
 
 // ============================================================================

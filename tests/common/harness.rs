@@ -157,7 +157,7 @@ impl Default for ArtifactConfig {
 }
 
 // ============================================================================
-// RUNNER POLICY (beads_rust-enep)
+// RUNNER POLICY (beads-enep)
 // ============================================================================
 
 /// Parallelism mode for scenario execution.
@@ -1533,7 +1533,7 @@ mod tests {
     }
 
     // ========================================================================
-    // RunnerPolicy tests (beads_rust-enep)
+    // RunnerPolicy tests (beads-enep)
     // ========================================================================
 
     #[test]

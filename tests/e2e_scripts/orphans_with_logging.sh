@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/e2e_scripts/orphans_with_logging.sh
 #
-# beads_rust-750p: e2e harness for `br orphans` with detailed structured
+# beads-750p: e2e harness for `br orphans` with detailed structured
 # logging. Sets up a workspace with a JSONL newer than the DB, then runs
 # `br orphans --json` with RUST_LOG=info and verifies the auto-import
 # happened before the scan.

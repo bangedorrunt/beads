@@ -3,7 +3,7 @@
 //! Tests the br installer script for platform detection, version resolution,
 //! checksum verification, and various installation scenarios.
 //!
-//! Related bead: beads_rust-1g0q (Installer script: multi-platform binary downloader)
+//! Related bead: beads-1g0q (Installer script: multi-platform binary downloader)
 //!
 //! Test Categories:
 //! - Platform detection

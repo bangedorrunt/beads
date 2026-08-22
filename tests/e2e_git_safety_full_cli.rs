@@ -1,6 +1,6 @@
 //! Comprehensive git safety regression tests for the full br CLI.
 //!
-//! This test suite implements beads_rust-k1px:
+//! This test suite implements beads-k1px:
 //! - E2E assertions that NO br command invokes git operations or touches .git
 //! - Run representative commands across the full CLI surface
 //! - Validate .git tree is unchanged after each command batch
@@ -28,7 +28,7 @@ fn hash_file(path: &Path) -> Option<String> {
     fs::read(path).ok().map(|contents| {
         let mut hasher = Sha256::new();
         hasher.update(&contents);
-        beads_rust::util::hex_encode(&hasher.finalize())
+        beads::util::hex_encode(&hasher.finalize())
     })
 }
 

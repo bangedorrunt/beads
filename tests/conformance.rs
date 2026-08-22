@@ -48,7 +48,7 @@ macro_rules! skip_if_no_bd {
     };
 }
 
-/// Issue ID prefix forced on **both** workspaces at init (`beads_rust-f175`).
+/// Issue ID prefix forced on **both** workspaces at init (`beads-f175`).
 ///
 /// Both tools derive a prefix from their working directory when none is given,
 /// and this harness deliberately gives them different directories
@@ -158,7 +158,7 @@ where
     cmd.current_dir(cwd);
     cmd.args(args);
     cmd.env("NO_COLOR", "1");
-    cmd.env("RUST_LOG", "beads_rust=debug");
+    cmd.env("RUST_LOG", "beads=debug");
     cmd.env("RUST_BACKTRACE", "1");
     cmd.env("HOME", cwd);
 
@@ -394,14 +394,14 @@ fn env_flag(name: &str) -> bool {
 fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
-    beads_rust::util::hex_encode(&hasher.finalize())
+    beads::util::hex_encode(&hasher.finalize())
 }
 
 #[test]
 fn conformance_content_hash_matches_length_prefixed_br_fixture() {
-    use beads_rust::model::{IssueType, Priority, Status};
+    use beads::model::{IssueType, Priority, Status};
 
-    let hash = beads_rust::util::content_hash_from_parts(
+    let hash = beads::util::content_hash_from_parts(
         "Fix authentication bug",
         Some("Users are getting logged out unexpectedly"),
         Some("Use token refresh"),
@@ -737,7 +737,7 @@ where
 
 /// Count the issues in a `--json` payload, tolerating both output shapes.
 ///
-/// `beads_rust-ecr6`: br and bd do not agree on the envelope. `bd list --json`
+/// `beads-ecr6`: br and bd do not agree on the envelope. `bd list --json`
 /// and `br ready|blocked|search --json` return a bare array, but
 /// `br list --json` returns `{"issues":[…],"total":…,"limit":…,"offset":…,
 /// "has_more":…}`. The harness compared counts with
@@ -813,7 +813,7 @@ fn normalize_value(value: &mut Value) {
                     // truncated any prefix that itself contains one — a
                     // directory-derived prefix like `beads-rust` normalized to
                     // `beads-NORMALIZED`, silently discarding the rest
-                    // (`beads_rust-f175`).
+                    // (`beads-f175`).
                     if let Some(s) = val.as_str() {
                         if let Some(dash_pos) = s.rfind('-') {
                             let prefix = &s[..dash_pos];
@@ -2096,7 +2096,7 @@ fn conformance_ready_json_shape() {
 
     // Every other key matches exactly. The sole shape difference is `labels`:
     // br emits `"labels": []` for an issue with no labels, bd v0.46.0 omits the
-    // key entirely. Verified against a real bd on 2026-07-25 (`beads_rust-ecr6`).
+    // key entirely. Verified against a real bd on 2026-07-25 (`beads-ecr6`).
     // Excluding just that key keeps the rest of the ready payload shape under
     // live comparison.
     let br_val: Value = serde_json::from_str(&br_json).expect("br json");
@@ -7616,7 +7616,7 @@ fn conformance_close_with_reason() {
 }
 
 // ============================================================================
-// DEPENDENCY COMMAND CONFORMANCE TESTS (beads_rust-v740)
+// DEPENDENCY COMMAND CONFORMANCE TESTS (beads-v740)
 // ============================================================================
 
 /// Helper function to extract an issue ID from JSON output (handles both object and array formats)
@@ -9057,7 +9057,7 @@ fn conformance_stats_empty() {
         &bd_json,
         // `draft_issues` is a br-only summary field with no bd v0.46.0
         // counterpart, verified against a real bd on 2026-07-25
-        // (`beads_rust-ecr6`). Excluding just that key keeps every other stats
+        // (`beads-ecr6`). Excluding just that key keeps every other stats
         // counter under live comparison, rather than ignoring the whole test.
         &CompareMode::FieldsExcluded(vec![
             "average_lead_time_hours".to_string(),
@@ -9116,7 +9116,7 @@ fn conformance_stats_mixed() {
         &bd_json,
         // `draft_issues` is a br-only summary field with no bd v0.46.0
         // counterpart, verified against a real bd on 2026-07-25
-        // (`beads_rust-ecr6`). Excluding just that key keeps every other stats
+        // (`beads-ecr6`). Excluding just that key keeps every other stats
         // counter under live comparison, rather than ignoring the whole test.
         &CompareMode::FieldsExcluded(vec![
             "average_lead_time_hours".to_string(),
@@ -9169,7 +9169,7 @@ fn conformance_stats_with_deps() {
         &bd_json,
         // `draft_issues` is a br-only summary field with no bd v0.46.0
         // counterpart, verified against a real bd on 2026-07-25
-        // (`beads_rust-ecr6`). Excluding just that key keeps every other stats
+        // (`beads-ecr6`). Excluding just that key keeps every other stats
         // counter under live comparison, rather than ignoring the whole test.
         &CompareMode::FieldsExcluded(vec![
             "average_lead_time_hours".to_string(),
@@ -9208,7 +9208,7 @@ fn conformance_stats_json_shape() {
     let bd_val: Value = serde_json::from_str(&bd_json).expect("bd json");
 
     // See the sibling stats tests: `draft_issues` is a br-only summary field
-    // with no bd v0.46.0 counterpart (`beads_rust-ecr6`).
+    // with no bd v0.46.0 counterpart (`beads-ecr6`).
     let excluded = vec![
         "average_lead_time_hours".to_string(),
         "draft_issues".to_string(),
@@ -10310,7 +10310,7 @@ fn conformance_config_invalid_key() {
 }
 
 // ============================================================================
-// REMAINING CRUD CONFORMANCE TESTS (beads_rust-j6tq)
+// REMAINING CRUD CONFORMANCE TESTS (beads-j6tq)
 // ============================================================================
 
 // --- close tests ---
@@ -10760,7 +10760,7 @@ fn conformance_reopen_tombstone_error() {
 }
 
 // ===========================================================================
-// EPIC COMMAND CONFORMANCE TESTS (beads_rust-xewv)
+// EPIC COMMAND CONFORMANCE TESTS (beads-xewv)
 // ===========================================================================
 
 #[test]
@@ -11331,7 +11331,7 @@ fn conformance_epic_nested() {
 }
 
 // ===========================================================================
-// GRAPH COMMAND CONFORMANCE TESTS (beads_rust-xewv)
+// GRAPH COMMAND CONFORMANCE TESTS (beads-xewv)
 // ===========================================================================
 
 #[test]
@@ -11366,7 +11366,7 @@ fn conformance_graph_no_deps() {
 }
 
 /// INTENTIONAL DIVERGENCE — `br graph <id>` walks the graph in the opposite
-/// direction to `bd graph <id>` (`beads_rust-mf72`).
+/// direction to `bd graph <id>` (`beads-mf72`).
 ///
 /// After `br dep add A B` (A depends on B), `br graph A` returns just A with no
 /// edges, while `br graph B` returns `{"nodes":[B,A],"edges":[["A","B"]]}`. br
@@ -11379,7 +11379,7 @@ fn conformance_graph_no_deps() {
 /// These three tests assert bd's direction and so can never pass. Verified by
 /// hand against a real bd v0.46.0 on 2026-07-25.
 #[test]
-#[ignore = "beads_rust-mf72: br graph shows dependents by design; bd shows dependencies"]
+#[ignore = "beads-mf72: br graph shows dependents by design; bd shows dependencies"]
 fn conformance_graph_simple_dep() {
     skip_if_no_bd!();
     common::init_test_logging();
@@ -11424,9 +11424,9 @@ fn conformance_graph_simple_dep() {
 }
 
 /// See `conformance_graph_simple_dep` — same direction divergence
-/// (`beads_rust-mf72`).
+/// (`beads-mf72`).
 #[test]
-#[ignore = "beads_rust-mf72: br graph shows dependents by design; bd shows dependencies"]
+#[ignore = "beads-mf72: br graph shows dependents by design; bd shows dependencies"]
 fn conformance_graph_complex_deps() {
     skip_if_no_bd!();
     common::init_test_logging();
@@ -11492,9 +11492,9 @@ fn conformance_graph_complex_deps() {
 }
 
 /// See `conformance_graph_simple_dep` — same direction divergence
-/// (`beads_rust-mf72`).
+/// (`beads-mf72`).
 #[test]
-#[ignore = "beads_rust-mf72: br graph shows dependents by design; bd shows dependencies"]
+#[ignore = "beads-mf72: br graph shows dependents by design; bd shows dependencies"]
 fn conformance_graph_all_flag() {
     skip_if_no_bd!();
     common::init_test_logging();
@@ -11631,7 +11631,7 @@ fn conformance_graph_json_shape() {
 }
 
 // ===========================================================================
-// AUDIT COMMAND CONFORMANCE TESTS (beads_rust-xewv)
+// AUDIT COMMAND CONFORMANCE TESTS (beads-xewv)
 // ===========================================================================
 
 #[test]
@@ -13168,7 +13168,7 @@ fn conformance_sync_base_snapshot_created_after_sync() {
 /// `beads.base.jsonl`"; br's non-invasive design never runs git and requires an
 /// explicit direction, so it does not write a base snapshot there. The test then
 /// trips its own `(Some, None)` mismatch arm. Verified against a real bd v0.46.0
-/// on 2026-07-25 (`beads_rust-ecr6`).
+/// on 2026-07-25 (`beads-ecr6`).
 #[test]
 #[ignore = "bare `sync` writes beads.base.jsonl on bd via its git-commit path; br is intentionally non-invasive"]
 fn conformance_sync_base_snapshot_content_matches() {
@@ -13670,7 +13670,7 @@ fn conformance_sync_status_shows_prefix_info() {
 }
 
 // ---------------------------------------------------------------------------
-// Harness self-tests (`beads_rust-f175`, `beads_rust-ywot`)
+// Harness self-tests (`beads-f175`, `beads-ywot`)
 //
 // These exercise the comparison machinery itself and need no `bd`, so they run
 // on every host — including the ones where every `conformance_*` test skips.
@@ -13678,7 +13678,7 @@ fn conformance_sync_status_shows_prefix_info() {
 
 #[test]
 fn issue_count_reads_both_envelope_shapes() {
-    // `beads_rust-ywot`: the bug this guards against is that
+    // `beads-ywot`: the bug this guards against is that
     // `Value::as_array()` returns None for br's paginated object, so every
     // `br list --json` count read as 0 — failing loudly where bd returned rows
     // and, worse, passing vacuously where it did not.

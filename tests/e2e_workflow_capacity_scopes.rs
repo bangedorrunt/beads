@@ -1,5 +1,5 @@
 //! End-to-end coverage for multi-agent capacity scopes (GitHub #384
-//! phase 5, bead beads_rust-8nbk.5).
+//! phase 5, bead beads-8nbk.5).
 //!
 //! Drives the real `br` binary: actor-scoped limits partition admission per
 //! `--actor`, harness/session scopes key on `BR_HARNESS`/`BR_SESSION`
@@ -282,7 +282,7 @@ fn gh384_acceptance_matrix_names_real_tests() {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_')
             && segment.contains('_')
-            && !segment.starts_with("beads_rust-")
+            && !segment.starts_with("beads-")
         {
             names.push(segment.to_string());
         }

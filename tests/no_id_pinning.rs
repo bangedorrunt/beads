@@ -1,13 +1,13 @@
 //! ID-pinning anti-pattern lint as a cargo test.
 //!
-//! Created 2026-05-09 for beads_rust-s5se (audit-driven cleanup).
+//! Created 2026-05-09 for beads-s5se (audit-driven cleanup).
 //!
-//! Detects the anti-pattern uncovered by `beads_rust-jsgu`: tests that
+//! Detects the anti-pattern uncovered by `beads-jsgu`: tests that
 //! `assert_eq!` on generated content-hash IDs (e.g. `"test-c75c9ac8"`)
 //! instead of asserting on the relative ordering / invariants. These
 //! tests break whenever the ID generator's hash function changes.
 //!
-//! ## Policy (from `beads_rust-lnqc`'s audit doc)
+//! ## Policy (from `beads-lnqc`'s audit doc)
 //!
 //! The current codebase has 0 true ID-pinning hits. This lint is preventive:
 //! it fails CI if a NEW test introduces the anti-pattern.

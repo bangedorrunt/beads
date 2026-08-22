@@ -1,11 +1,11 @@
 mod common;
 
-use beads_rust::franken_sync::Connection;
-use beads_rust::model::{DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::{ListFilters, ReadyFilters, ReadySortPolicy};
+use beads::model::{DependencyType, Issue, IssueType, Priority, Status};
+use beads::storage::Connection;
+use beads::storage::SqliteValue;
+use beads::storage::{ListFilters, ReadyFilters, ReadySortPolicy};
 use chrono::{Duration, Utc};
 use common::{fixtures, test_db, test_db_with_dir};
-use fsqlite_types::SqliteValue;
 use std::collections::HashSet;
 
 fn table_names(conn: &Connection) -> HashSet<String> {
@@ -331,7 +331,7 @@ fn list_filters_respect_title_priority_and_closed() {
 
 // ============================================================================
 // List Filters: Comprehensive Test Suite
-// Tests for beads_rust-6ug: Storage unit tests: List filters and query combinations
+// Tests for beads-6ug: Storage unit tests: List filters and query combinations
 // ============================================================================
 
 #[test]
@@ -809,7 +809,7 @@ fn list_filters_limit() {
 }
 
 // ============================================================================
-// Combined Filter Tests (15+ combinations as per beads_rust-6ug requirements)
+// Combined Filter Tests (15+ combinations as per beads-6ug requirements)
 // ============================================================================
 
 #[test]

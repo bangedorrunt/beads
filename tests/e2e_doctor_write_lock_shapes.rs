@@ -1,5 +1,5 @@
 //! E2E coverage for non-regular `.beads/.write.lock` nodes
-//! (bead `beads_rust-5sej`).
+//! (bead `beads-5sej`).
 //!
 //! The symlink shape is exercised through the doctor fixture suite
 //! (`tests/doctor_fixtures/write_lock_symlink_node/`): startup follows the

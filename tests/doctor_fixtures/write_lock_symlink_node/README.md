@@ -1,6 +1,6 @@
 # write_lock_symlink_node
 
-**FM:** `fm-concurrency_primitives-orphaned-write-lock` (bead `beads_rust-5sej`) — detect-only.
+**FM:** `fm-concurrency_primitives-orphaned-write-lock` (bead `beads-5sej`) — detect-only.
 
 ## Shape
 

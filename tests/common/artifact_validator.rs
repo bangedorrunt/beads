@@ -3,7 +3,7 @@
 //! Validates JSONL event logs, snapshot files, and summaries against the
 //! documented schema in `docs/ARTIFACT_LOG_SCHEMA.md`.
 //!
-//! Task: beads_rust-r23m
+//! Task: beads-r23m
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

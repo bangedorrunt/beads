@@ -83,7 +83,7 @@ fn write_single_issue_jsonl(workspace: &BrWorkspace, issue: &Value) {
 }
 
 fn last_touched_path(workspace: &BrWorkspace) -> PathBuf {
-    beads_rust::util::last_touched_path(&workspace.root.join(".beads"))
+    beads::util::last_touched_path(&workspace.root.join(".beads"))
 }
 
 fn switch_workspace_to_custom_database(workspace: &BrWorkspace, database_name: &str) {

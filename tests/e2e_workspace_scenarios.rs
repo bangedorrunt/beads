@@ -9,7 +9,7 @@
 //!
 //! Uses the new harness infrastructure for artifact logging.
 //!
-//! Task: beads_rust-6esx
+//! Task: beads-6esx
 
 mod common;
 
@@ -568,7 +568,7 @@ fn scenario_long_lived_single_workspace_stress_suite() {
     // any non-OK check — WARN or ERROR — now flips top-level `ok` to
     // false and exits 1. The stress harness legitimately produces a
     // benign WARN finding (the test runner sets
-    // `RUST_LOG=beads_rust=debug`, which trips `rust_log`). Since #378,
+    // `RUST_LOG=beads=debug`, which trips `rust_log`). Since #378,
     // `sync --flush-only` also refreshes the merge anchor
     // `beads.base.jsonl` and `base_jsonl.missing_post_flush` no longer
     // warns for verifiably in-sync workspaces. None of

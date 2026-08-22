@@ -25,7 +25,7 @@
 //! # Run cold/warm benchmarks (requires bd installed)
 //! cargo test --test bench_cold_warm -- --ignored --nocapture
 //!
-//! # Quick run on beads_rust dataset only
+//! # Quick run on beads dataset only
 //! cargo test --test bench_cold_warm cold_warm_quick -- --ignored --nocapture
 //!
 //! # With filesystem cache drop (requires sudo)
@@ -760,7 +760,7 @@ fn cold_warm_full() {
     }
 }
 
-/// Quick cold/warm benchmark on `beads_rust` only.
+/// Quick cold/warm benchmark on `beads` only.
 #[test]
 #[ignore = "run with: cargo test --test bench_cold_warm cold_warm_quick -- --ignored --nocapture"]
 fn cold_warm_quick() {
@@ -788,7 +788,7 @@ fn cold_warm_quick() {
             print_results(&benchmark);
         }
         Err(e) => {
-            panic!("Failed to benchmark beads_rust: {e}");
+            panic!("Failed to benchmark beads: {e}");
         }
     }
 }

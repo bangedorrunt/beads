@@ -1,4 +1,4 @@
-//! Validation helpers for `beads_rust`.
+//! Validation helpers for `beads`.
 //!
 //! These routines enforce classic bd data constraints and return
 //! structured validation errors without mutating storage.

@@ -249,8 +249,8 @@ fn requested_target_ids(args: &ShowArgs, beads_dir: &Path) -> Result<Vec<String>
 }
 
 /// Populate each issue's `inherited_context` field with the ancestor
-/// `agent_context` blocks (beads_rust#297) so JSON/TOON output carries the
-/// same governing context that text mode renders (beads_rust#430).
+/// `agent_context` blocks (beads#297) so JSON/TOON output carries the
+/// same governing context that text mode renders (beads#430).
 ///
 /// No-op unless the project has opted in to inherited-context emission.
 /// Prefers the caller's preloaded storage; falls back to a transient
@@ -314,7 +314,7 @@ fn execute_inner(
     if matches!(ctx.mode(), OutputMode::Quiet) {
         return Ok(());
     }
-    // beads_rust#430: structured output must carry the same inherited
+    // beads#430: structured output must carry the same inherited
     // governing context that text mode renders, as a structured field.
     if matches!(
         output_format,
@@ -336,7 +336,7 @@ fn execute_inner(
             ctx.toon_with_stats(&details_list, args.stats);
         }
         crate::cli::OutputFormat::Text | crate::cli::OutputFormat::Csv => {
-            // beads_rust#297: emit inherited governing context for each
+            // beads#297: emit inherited governing context for each
             // bead before its own details, when the project has opted
             // in. Prefer the caller's preloaded storage; fall back to
             // opening a transient read connection so the feature works
@@ -355,7 +355,7 @@ fn execute_inner(
             let inheritance_storage: Option<&SqliteStorage> = preloaded_storage
                 .or_else(|| preloaded_storage_ctx.map(|ctx| &ctx.storage))
                 .or_else(|| transient_ctx.as_ref().map(|ctx| &ctx.storage));
-            // beads_rust#351: when showing several siblings, each child's
+            // beads#351: when showing several siblings, each child's
             // ancestor chain resolves independently, so the same epic/parent
             // block would be re-rendered once per sibling. Dedup across the
             // whole invocation: each inherited source is emitted exactly

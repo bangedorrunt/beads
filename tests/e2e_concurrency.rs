@@ -5,14 +5,14 @@
 //! - --lock-timeout behavior and proper error codes
 //! - Concurrent read-only operations succeed
 //!
-//! Related: beads_rust-uahy
+//! Related: beads-uahy
 
 mod common;
 
 use assert_cmd::Command;
-use beads_rust::franken_sync::Connection;
+use beads::storage::Connection;
+use beads::storage::SqliteValue;
 use common::dataset_registry::{DatasetRegistry, IsolatedDataset, KnownDataset};
-use fsqlite_types::SqliteValue;
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::path::Path;
@@ -79,7 +79,7 @@ where
     cmd.env("RUST_BACKTRACE", "1");
     cmd.env("HOME", root);
     // Hermetic $PATH: dual `br` installs otherwise trip the br_path_dupes
-    // doctor warning inside spawned doctor runs (beads_rust-ozdh class).
+    // doctor warning inside spawned doctor runs (beads-ozdh class).
     cmd.env("PATH", common::cli::deduplicated_br_path());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -909,7 +909,7 @@ fn e2e_read_command_witness_refresh_waits_for_write_lock() {
         .expect("delete jsonl_size witness");
     conn.execute("INSERT INTO metadata (key, value) VALUES ('jsonl_size', '0')")
         .expect("write stale jsonl_size witness");
-    // beads_rust-mjmk: also corrupt jsonl_content_hash so the staleness probe
+    // beads-mjmk: also corrupt jsonl_content_hash so the staleness probe
     // actually concludes the JSONL is newer. compute_jsonl_newer_impl falls
     // back to hash comparison when size mismatches; if the hash still matches
     // the actual JSONL, the probe returns "not newer" and the read command
@@ -1207,15 +1207,15 @@ fn e2e_parallel_read_only_commands_serialize_without_busy_on_drop() {
 
     let registry = DatasetRegistry::new();
     if !registry.is_available(KnownDataset::BeadsRust) {
-        eprintln!("skipping: beads_rust dataset is unavailable in this environment");
+        eprintln!("skipping: beads dataset is unavailable in this environment");
         return;
     }
 
     let isolated =
-        IsolatedDataset::from_dataset(KnownDataset::BeadsRust).expect("copy beads_rust dataset");
+        IsolatedDataset::from_dataset(KnownDataset::BeadsRust).expect("copy beads dataset");
     isolated
         .migrate_to_current_schema()
-        .expect("migrate isolated beads_rust dataset");
+        .expect("migrate isolated beads dataset");
     let root = isolated.root.clone();
 
     let create = run_br_in_dir(

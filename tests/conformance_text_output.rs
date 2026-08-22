@@ -1,5 +1,5 @@
 #![allow(clippy::all, clippy::pedantic, clippy::nursery)]
-//! Conformance Tests: Text Output Parity (beads_rust-g1ig)
+//! Conformance Tests: Text Output Parity (beads-g1ig)
 //!
 //! These tests verify br (Rust) produces identical human-readable text output
 //! to bd (Go) for stable commands with color/whitespace normalization.
@@ -800,11 +800,11 @@ mod normalization_tests {
 
     #[test]
     fn test_normalize_issue_ids() {
-        let input = "Issue bd-abc123 depends on beads_rust-xyz789";
+        let input = "Issue bd-abc123 depends on beads-xyz789";
         let result = normalize_text_for_conformance(input);
         assert!(result.contains("ISSUE_ID"));
         assert!(!result.contains("bd-abc123"));
-        assert!(!result.contains("beads_rust-xyz789"));
+        assert!(!result.contains("beads-xyz789"));
     }
 
     #[test]

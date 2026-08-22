@@ -1,4 +1,4 @@
-//! Shared utilities for `beads_rust`.
+//! Shared utilities for `beads`.
 //!
 //! Common functionality used across modules:
 //! - Content hashing (SHA256)

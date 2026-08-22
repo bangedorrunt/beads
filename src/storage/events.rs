@@ -1,4 +1,4 @@
-//! Event storage operations for `beads_rust`.
+//! Event storage operations for `beads`.
 //!
 //! This module implements the audit event system with:
 //! - Event insertion (atomic with mutations)
@@ -7,9 +7,8 @@
 //!
 //! Events are local DB only - never exported to JSONL.
 
-use crate::franken_sync::{Connection, Row};
+use crate::storage::{Connection, Row, SqliteValue};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-use fsqlite_types::SqliteValue;
 
 use crate::error::{BeadsError, Result};
 use crate::model::{Event, EventType};
@@ -524,7 +523,7 @@ pub fn init_events_table(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::franken_sync::Connection;
+    use crate::storage::Connection;
     use crate::storage::schema::execute_batch;
 
     fn setup_test_db() -> Connection {

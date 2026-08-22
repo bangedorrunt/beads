@@ -3,8 +3,8 @@
 //! If issue x is in `ready()` and we claim x (set status=in_progress + assignee),
 //! then x must NOT appear in subsequent `ready()` results.
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::{IssueUpdate, ReadyFilters, ReadySortPolicy, SqliteStorage};
+use beads::model::{Issue, IssueType, Priority, Status};
+use beads::storage::{IssueUpdate, ReadyFilters, ReadySortPolicy, SqliteStorage};
 use chrono::{TimeZone, Utc};
 use proptest::prelude::*;
 

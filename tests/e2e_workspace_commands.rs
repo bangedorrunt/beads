@@ -1,11 +1,11 @@
 //! E2E tests for workspace initialization and diagnostic commands.
 //!
 //! Tests init, config, doctor, info, where, and version commands.
-//! Part of beads_rust-6esx.
+//! Part of beads-6esx.
 
 mod common;
 
-use beads_rust::franken_sync::Connection;
+use beads::storage::Connection;
 use common::cli::{BrWorkspace, extract_json_payload, parse_list_issues, run_br, run_br_with_env};
 use serde_json::Value;
 use std::fs;

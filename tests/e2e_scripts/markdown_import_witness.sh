@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/e2e_scripts/markdown_import_witness.sh
 #
-# beads_rust-44rc: full markdown-import lifecycle harness with structured
+# beads-44rc: full markdown-import lifecycle harness with structured
 # logging. Creates a markdown file with N issues, imports, verifies counts +
 # titles, then round-trips via JSONL flush + reimport.
 #

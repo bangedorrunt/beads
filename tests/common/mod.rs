@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
-use beads_rust::storage::SqliteStorage;
+use beads::storage::SqliteStorage;
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::Instant;
 use tempfile::TempDir;
@@ -57,7 +57,7 @@ pub fn workspace_replay_test_guard() -> std::sync::MutexGuard<'static, ()> {
 
 pub fn init_test_logging() {
     INIT.call_once(|| {
-        beads_rust::logging::init_test_logging();
+        beads::logging::init_test_logging();
     });
 }
 

@@ -25,7 +25,7 @@
       "outcome": "success"
     }
   ],
-  "source_hint": "Models the DB/JSONL mismatch class called out in beads_rust-rsei.2.1.",
+  "source_hint": "Models the DB/JSONL mismatch class called out in beads-rsei.2.1.",
   "notes": [
     "Useful for future replay tests that need to distinguish stale export drift from hard corruption.",
     "The JSONL payload stays syntactically valid so classification depends on cross-store comparison."

@@ -1,6 +1,6 @@
 mod common;
 
-use beads_rust::storage::SqliteStorage;
+use beads::storage::SqliteStorage;
 use common::cli::{BrWorkspace, extract_json_payload, run_br, run_br_with_env};
 use serde_json::Value;
 use std::fs;

@@ -25,7 +25,7 @@ assert_lock_preserved() {
 
 case "$stage" in
   detect)
-    # Precondition re-check (beads_rust-ypwu): the fixture plants a regular
+    # Precondition re-check (beads-ypwu): the fixture plants a regular
     # 0444 `.write.lock` and needs the OS to actually refuse this uid write
     # access to it. Environments where permission bits do not bind — root,
     # CAP_DAC_OVERRIDE container sandboxes (some CI/remote build workers),

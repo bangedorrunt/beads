@@ -159,11 +159,11 @@ pub struct IssueDetails {
     /// local parent-child children (GitHub #384 phase 3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollup: Option<RollupSummary>,
-    /// Inherited governing context from ancestor beads (beads_rust#297).
+    /// Inherited governing context from ancestor beads (beads#297).
     /// Present only when the project has opted in to inherited-context
     /// emission and an ancestor supplies `agent_context`; populated for
     /// JSON/TOON output so structured consumers receive the same governing
-    /// context that text mode renders (beads_rust#430).
+    /// context that text mode renders (beads#430).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inherited_context: Vec<crate::inheritance::InheritedBlock>,
 }

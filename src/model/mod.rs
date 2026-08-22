@@ -1,4 +1,4 @@
-//! Core data types for `beads_rust`.
+//! Core data types for `beads`.
 //!
 //! This module defines the fundamental types used throughout the application:
 //! - `Issue` - The core work item
@@ -558,7 +558,7 @@ pub struct Issue {
     /// `source_repo`: this field uniquely identifies the workspace on
     /// the machine that produced the issue, which is what multi-repo
     /// fleet automation needs to route beads back to the right
-    /// directory (see beads_rust#289). Two clones of the same repo
+    /// directory (see beads#289). Two clones of the same repo
     /// under `~/Developer/foo` vs `~/Developer/scratch/foo` collide on
     /// `source_repo` but disagree here. Optional — older databases and
     /// hand-edited JSONL records without this field are valid.
@@ -566,7 +566,7 @@ pub struct Issue {
     pub source_repo_path: Option<String>,
 
     /// Canonical-JSON governing instructions inherited by descendant
-    /// beads (beads_rust#297). When set on an ancestor and the project
+    /// beads (beads#297). When set on an ancestor and the project
     /// has `inherited_context.enabled = true` in `.beads/config.yaml`,
     /// `br update --status in_progress` / `--claim` and `br show` emit
     /// the ancestor's `agent_context` alongside the child's normal

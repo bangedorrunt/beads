@@ -15,8 +15,8 @@
 
 mod common;
 
-use beads_rust::util::hex_encode;
-use beads_rust::write_combining::{
+use beads::util::hex_encode;
+use beads::write_combining::{
     BatchLimits, CombinedOutputMode, CompatibleMutation, MutationEnvelope, plan_batch,
 };
 use serde::{Deserialize, Serialize};

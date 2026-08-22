@@ -1,14 +1,14 @@
 //! E2E coverage for `br sync --status --json`:
 //!
-//! - beads_rust-0v1.2.4: stable `git_export` compatibility slot that never
+//! - beads-0v1.2.4: stable `git_export` compatibility slot that never
 //!   probes VCS and points to the explicit `br vcs-status` command.
-//! - beads_rust#334: `workspace_health` + `reliability_audit` fields in
+//! - beads#334: `workspace_health` + `reliability_audit` fields in
 //!   the same write-gate vocabulary as `br doctor --json`.
 
 mod common;
 
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use beads::storage::SqliteStorage;
+use beads::sync::{
     METADATA_JSONL_CONTENT_HASH, METADATA_JSONL_MTIME, METADATA_JSONL_SIZE,
     METADATA_LAST_EXPORT_TIME, METADATA_LAST_IMPORT_TIME, compute_jsonl_hash,
 };

@@ -1066,13 +1066,13 @@ mod tests {
             holder: "TopazFox".to_string(),
             path_pattern: "src/coordination.rs".to_string(),
             exclusive: true,
-            reason: Some("beads_rust-sc6u optional snapshot work".to_string()),
+            reason: Some("beads-sc6u optional snapshot work".to_string()),
             expires_ts: now() + Duration::minutes(30),
             released_ts: None,
-            thread_id: Some("beads_rust-sc6u".to_string()),
+            thread_id: Some("beads-sc6u".to_string()),
         }];
         let evidence = reservation_evidence_from_snapshots(
-            "beads_rust-sc6u",
+            "beads-sc6u",
             Some("TopazFox"),
             &[],
             Some(&reservations),
@@ -1108,10 +1108,10 @@ mod tests {
             reason: Some("different bead".to_string()),
             expires_ts: now() + Duration::minutes(30),
             released_ts: None,
-            thread_id: Some("beads_rust-other".to_string()),
+            thread_id: Some("beads-other".to_string()),
         }];
         let evidence = reservation_evidence_from_snapshots(
-            "beads_rust-sc6u",
+            "beads-sc6u",
             Some("TopazFox"),
             &[],
             Some(&reservations),
@@ -1134,13 +1134,13 @@ mod tests {
         }];
         let comments = vec![Comment {
             id: 1,
-            issue_id: "beads_rust-sc6u".to_string(),
+            issue_id: "beads-sc6u".to_string(),
             author: "TopazFox".to_string(),
             body: "files: src/coordination.rs".to_string(),
             created_at: now(),
         }];
         let evidence = reservation_evidence_from_snapshots(
-            "beads_rust-sc6u",
+            "beads-sc6u",
             Some("TopazFox"),
             &comments,
             Some(&reservations),

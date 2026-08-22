@@ -1,7 +1,7 @@
-use beads_rust::cli::CreateArgs;
-use beads_rust::cli::commands::create;
-use beads_rust::config::CliOverrides;
-use beads_rust::output::OutputContext;
+use beads::cli::CreateArgs;
+use beads::cli::commands::create;
+use beads::config::CliOverrides;
+use beads::output::OutputContext;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;

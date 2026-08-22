@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/e2e_scripts/ready_ordering_witness.sh
 #
-# beads_rust-jsgu: e2e ordering witness for `br ready --json`.
+# beads-jsgu: e2e ordering witness for `br ready --json`.
 #
 # Creates a workspace with explicit P0/P1/P2/P3 issues at known ages, runs
 # `br ready --json`, parses the result, asserts ordering invariants.

@@ -155,7 +155,7 @@ fn evaluate_close_policy(
 
     let mut violations = close_policy::evaluate(policy, &evidence);
 
-    // Deferred-dependents gate (beads_rust#303). Storage-backed, so it lives
+    // Deferred-dependents gate (beads#303). Storage-backed, so it lives
     // here rather than in the pure `close_policy::evaluate`. We only query when
     // the gate is enabled to avoid a dependency lookup per close otherwise.
     if policy.forbid_close_with_deferred_dependents.enabled {
@@ -203,7 +203,7 @@ fn evaluate_close_policy(
 /// Collect the IDs of issues that have a `blocks` edge *from* `issue_id`
 /// (i.e. depend on `issue_id` as a prerequisite) and are currently in
 /// `deferred` status. Used by the `forbid_close_with_deferred_dependents`
-/// gate (beads_rust#303).
+/// gate (beads#303).
 ///
 /// Edge direction: a `blocks` dependency row
 /// `(issue_id=DEP, depends_on_id=PREREQ)` means "PREREQ blocks DEP" / "DEP
@@ -1519,7 +1519,7 @@ mod tests {
     #[test]
     fn test_closed_issue_all_fields() {
         let issue = ClosedIssue {
-            id: "beads_rust-xyz".to_string(),
+            id: "beads-xyz".to_string(),
             title: "Multi-word title with special chars: <>&".to_string(),
             status: "closed".to_string(),
             closed_at: "2026-12-31T23:59:59Z".to_string(),
@@ -1527,7 +1527,7 @@ mod tests {
         };
         let json = serde_json::to_string(&issue).unwrap();
         let parsed: ClosedIssue = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.id, "beads_rust-xyz");
+        assert_eq!(parsed.id, "beads-xyz");
         assert!(parsed.title.contains("<>&"));
         assert_eq!(parsed.status, "closed");
         assert!(parsed.closed_at.contains("2026-12-31"));
@@ -2428,7 +2428,7 @@ mod tests {
     }
 
     // =========================================================================
-    // forbid_close_with_deferred_dependents gate (beads_rust#303)
+    // forbid_close_with_deferred_dependents gate (beads#303)
     // =========================================================================
 
     const DEFERRED_DEPENDENTS_POLICY: &str =
@@ -2651,7 +2651,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Workflow gate enforcement at close (issue #312, layer 2 / beads_rust#319)
+    // Workflow gate enforcement at close (issue #312, layer 2 / beads#319)
     // =========================================================================
 
     const GATE_POLICY_YAML: &str = r#"workflow:

@@ -1,4 +1,4 @@
-//! JSONL import/export for `beads_rust`.
+//! JSONL import/export for `beads`.
 //!
 //! This module handles:
 //! - Export: `SQLite` -> JSONL (for git tracking)
@@ -25,13 +25,13 @@ pub(crate) use path::{
 
 use crate::error::{BeadsError, Result};
 use crate::model::{Comment, Dependency, DependencyType, Issue};
-use crate::storage::{EventAttribution, SqliteStorage};
+use crate::storage::SqliteValue;
+use crate::storage::{DbError, EventAttribution, SqliteStorage};
 use crate::sync::history::HistoryConfig;
 use crate::util::id::{IdConfig, IdGenerator, parse_id};
 use crate::util::progress::{create_progress_bar, create_spinner};
 use crate::validation::{CommentValidator, IssueValidator};
 use chrono::{DateTime, Utc};
-use fsqlite_types::SqliteValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -8084,7 +8084,7 @@ pub(crate) fn apply_additive_reconcile(
 }
 
 // ============================================================================
-// PREFLIGHT CHECKS (beads_rust-0v1.2.7)
+// PREFLIGHT CHECKS (beads-0v1.2.7)
 // ============================================================================
 
 /// Status of a preflight check.
@@ -12771,8 +12771,7 @@ fn insert_new_import_issue(storage: &SqliteStorage, issue: &Issue) -> Result<boo
     match storage.insert_new_issue_for_import_in_tx(issue) {
         Ok(_) => Ok(true),
         Err(BeadsError::Database(
-            fsqlite_error::FrankenError::PrimaryKeyViolation
-            | fsqlite_error::FrankenError::UniqueViolation { .. },
+            DbError::PrimaryKeyViolation | DbError::UniqueViolation { .. },
         )) => {
             tracing::debug!(
                 id = %issue.id,
@@ -12852,7 +12851,7 @@ pub fn compute_jsonl_hash(path: &Path) -> Result<String> {
 }
 
 // ============================================================================
-// Additive Reconciliation (beads_rust-3r45)
+// Additive Reconciliation (beads-3r45)
 // ============================================================================
 
 /// Schema marker for `br sync --reconcile` receipts.
@@ -14541,8 +14540,8 @@ fn scan_jsonl_for_tombstone_filter_from_reader(
 mod tests {
     use super::*;
     use crate::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
+    use crate::storage::SqliteValue;
     use chrono::Utc;
-    use fsqlite_types::SqliteValue;
     use std::collections::HashMap;
     use std::io::{self, Write};
     #[cfg(unix)]
@@ -20258,7 +20257,7 @@ mod tests {
     }
 
     // ============================================================================
-    // PREFLIGHT TESTS (beads_rust-0v1.2.7)
+    // PREFLIGHT TESTS (beads-0v1.2.7)
     // ============================================================================
 
     #[test]
@@ -20466,7 +20465,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Preflight Guardrail Tests (beads_rust-1quj)
+    // Preflight Guardrail Tests (beads-1quj)
     // ========================================================================
 
     #[test]

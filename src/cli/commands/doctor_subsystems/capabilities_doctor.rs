@@ -232,7 +232,7 @@ impl DoctorCapabilities {
 
 /// Detector registry — populated from the canonical `check_*` family
 /// in `src/cli/commands/doctor.rs`. Phase 10 cold-prober finding
-/// (`beads_rust-3idn`): a cold agent reading
+/// (`beads-3idn`): a cold agent reading
 /// `br doctor capabilities --format json` previously saw `detectors:
 /// []` and read it as "the contract is half-wired". This list pins
 /// the agent-visible name of every detector the flat `br doctor`
@@ -342,7 +342,7 @@ fn build_detector_registry() -> Vec<DetectorEntry> {
 
 /// Fixer registry — one entry per `repair_*` path currently wired in
 /// `src/cli/commands/doctor.rs`. Phase 10 cold-prober finding
-/// (`beads_rust-3idn`): with this populated, an agent can list every
+/// (`beads-3idn`): with this populated, an agent can list every
 /// fixer the doctor can apply under `--repair` without reading source.
 ///
 /// `auto_fixable: true` means `--repair` will attempt the fix without
@@ -351,7 +351,7 @@ fn build_detector_registry() -> Vec<DetectorEntry> {
 /// `mutates: true` means the fixer routes writes through the
 /// `mutate()` chokepoint (per WP1+WP3 contract); `false` flags the
 /// few legacy paths that still bypass the chokepoint (see
-/// `beads_rust-8fud` for the migration plan). The final element is the
+/// `beads-8fud` for the migration plan). The final element is the
 /// fixer's `--only`/`--skip` filter-id set (see
 /// [`FixerEntry::filter_ids`]); the drift gate
 /// `every_fixer_filter_gate_id_is_advertised_in_capabilities` in
@@ -529,7 +529,7 @@ const EARLY_CHOKEPOINT_FIXER_ROWS: &[FixerRow] = &[
     ),
     // Pass-8 cycle 61: backfill schema-declared defaults into NULL
     // NOT-NULL columns via Op::DbExec (previously missing from the
-    // registry entirely — beads_rust-oow2).
+    // registry entirely — beads-oow2).
     (
         "doctor.null_defaults_backfill",
         "schemas",
@@ -559,7 +559,7 @@ fn legacy_fixer_rows() -> &'static [FixerRow] {
         ),
         // The partial-index REINDEX pass repairs "row N missing from
         // index" warnings, which surface under the integrity checks —
-        // not `db.recoverable_anomalies` (corrected: beads_rust-oow2).
+        // not `db.recoverable_anomalies` (corrected: beads-oow2).
         (
             "doctor.repair_partial_indexes",
             "caches_indexes",
@@ -579,7 +579,7 @@ fn legacy_fixer_rows() -> &'static [FixerRow] {
         // Pass-10 cycle 62: VACUUM on db bloat. Requires the explicit
         // `--unsafe-auto-fix` opt-in on top of `--repair`, hence
         // auto_fixable=false (previously missing from the registry
-        // entirely — beads_rust-oow2).
+        // entirely — beads-oow2).
         (
             "doctor.db_bloat_vacuum",
             "caches_indexes",
@@ -731,7 +731,7 @@ mod tests {
         assert!(
             ops.iter()
                 .any(|o| o["name"] == "db_migrate" && o["fully_routed"] == true),
-            "db_migrate must be advertised as fully routed (beads_rust-folg)"
+            "db_migrate must be advertised as fully routed (beads-folg)"
         );
         for op in ops {
             assert!(op["params"].is_array(), "op.params must be an array: {op}");
@@ -741,7 +741,7 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn capabilities_detectors_and_fixers_are_populated() {
-        // Phase 10 cold-prober finding (`beads_rust-3idn`): a cold
+        // Phase 10 cold-prober finding (`beads-3idn`): a cold
         // agent must see the actual detector + fixer registries, not
         // empty arrays. Lock the floor so future refactors can't
         // silently drop entries back to [].

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/e2e_scripts/parent_child_lifecycle.sh
 #
-# beads_rust-uelt: full lifecycle E2E for parent-child semantics under the
+# beads-uelt: full lifecycle E2E for parent-child semantics under the
 # new single-parent contract (commit 6ccbc3d6 fix(storage): reject second
 # parent-child parent).
 #

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/e2e_scripts/slug_round_trip.sh
 #
-# beads_rust-l6xl: full lifecycle round-trip for the `--slug` feature
+# beads-l6xl: full lifecycle round-trip for the `--slug` feature
 # (commit 5c0af3d4 / PR #283).
 #
 # Walks: create with slug → show → update → close → orphans (with a

@@ -20,9 +20,9 @@
 
 mod common;
 
-use beads_rust::model::Issue;
-use beads_rust::storage::{ListFilters, SqliteStorage};
-use beads_rust::sync::{ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl};
+use beads::model::Issue;
+use beads::storage::{ListFilters, SqliteStorage};
+use beads::sync::{ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl};
 use common::cli::{BrRun, BrWorkspace, extract_json_payload, parse_created_id, run_br};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -210,7 +210,7 @@ fn collect_files_recursive(base: &Path, current: &Path, files: &mut BTreeMap<Str
                     .to_string_lossy()
                     .to_string();
                 let content = fs::read(&path).unwrap_or_default();
-                let hash = beads_rust::util::hex_encode(&Sha256::digest(&content));
+                let hash = beads::util::hex_encode(&Sha256::digest(&content));
                 files.insert(relative, hash);
             } else if path.is_dir() {
                 collect_files_recursive(base, &path, files);
@@ -228,7 +228,7 @@ fn create_test_issue(id: &str, title: &str) -> Issue {
 fn compute_file_hash(path: &Path) -> Option<String> {
     if path.exists() {
         let content = fs::read(path).ok()?;
-        Some(beads_rust::util::hex_encode(&Sha256::digest(&content)))
+        Some(beads::util::hex_encode(&Sha256::digest(&content)))
     } else {
         None
     }

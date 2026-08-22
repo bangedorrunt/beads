@@ -11,9 +11,9 @@
 //! - Prune with zero keep deletes everything
 //! - Rapid backups with distinct content all preserved
 //!
-//! Related bead: beads_rust-2xbh
+//! Related bead: beads-2xbh
 
-use beads_rust::sync::history::{
+use beads::sync::history::{
     BackupEntry, HistoryConfig, backup_before_export, list_backups, prune_backups,
 };
 use chrono::{Duration, Utc};

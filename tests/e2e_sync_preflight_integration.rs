@@ -1,6 +1,6 @@
 //! Integration tests for sync preflight safety checks.
 //!
-//! These tests implement beads_rust-0v1.3.5:
+//! These tests implement beads-0v1.3.5:
 //! - Import aborts on conflict markers
 //! - Import aborts on unsafe paths
 //! - No files are modified on preflight failure
@@ -25,8 +25,8 @@
 
 mod common;
 
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use beads::storage::SqliteStorage;
+use beads::sync::{
     ExportConfig, ImportConfig, PreflightCheckStatus, preflight_export, preflight_import,
 };
 use common::cli::{BrWorkspace, run_br};

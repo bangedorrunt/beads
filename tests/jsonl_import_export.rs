@@ -1,8 +1,8 @@
 mod common;
 
-use beads_rust::model::{Comment, DependencyType, Issue, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use beads::model::{Comment, DependencyType, Issue, Priority, Status};
+use beads::storage::SqliteStorage;
+use beads::sync::{
     ExportConfig, ImportConfig, export_to_jsonl, finalize_export, import_from_jsonl,
     read_issues_from_jsonl,
 };

@@ -696,13 +696,13 @@ fn e2e_label_persistence_jsonl() {
 }
 
 // =============================================================================
-// Harness + Dataset Registry Tests (beads_rust-2vb0)
+// Harness + Dataset Registry Tests (beads-2vb0)
 // =============================================================================
 //
 // These tests use the full E2E harness with artifact logging and the dataset
 // registry to test label commands against real datasets.
 
-/// Check if the beads_rust dataset is available (has beads.db)
+/// Check if the beads dataset is available (has beads.db)
 fn beads_rust_dataset_available() -> bool {
     DatasetRegistry::new().is_available(KnownDataset::BeadsRust)
 }
@@ -782,25 +782,23 @@ fn e2e_harness_label_list_all_fresh() {
     ws.finish(true);
 }
 
-/// Test label list-all with real dataset (beads_rust)
+/// Test label list-all with real dataset (beads)
 #[test]
 fn e2e_harness_label_list_all_real_dataset() {
     use std::process::Command;
     let _log = common::test_log("e2e_harness_label_list_all_real_dataset");
 
     if !beads_rust_dataset_available() {
-        eprintln!(
-            "Skipping e2e_harness_label_list_all_real_dataset: beads_rust dataset not available"
-        );
+        eprintln!("Skipping e2e_harness_label_list_all_real_dataset: beads dataset not available");
         return;
     }
 
-    // Create isolated copy of beads_rust dataset
+    // Create isolated copy of beads dataset
     let isolated = IsolatedDataset::from_dataset(KnownDataset::BeadsRust)
-        .expect("should create isolated beads_rust");
+        .expect("should create isolated beads");
     isolated
         .migrate_to_current_schema()
-        .expect("migrate isolated beads_rust dataset");
+        .expect("migrate isolated beads dataset");
 
     // Run list-all on the isolated dataset
     let output = Command::new(assert_cmd::cargo::cargo_bin!("br"))
@@ -844,7 +842,7 @@ fn e2e_harness_label_list_all_real_dataset() {
     }
 
     // Log result for debugging
-    eprintln!("Found {} labels in beads_rust dataset", labels.len());
+    eprintln!("Found {} labels in beads dataset", labels.len());
 }
 
 /// Test label rename with TestWorkspace harness (fresh workspace with artifacts)
@@ -935,7 +933,7 @@ fn e2e_harness_label_rename_fresh() {
     ws.finish(true);
 }
 
-/// Test label rename on real dataset (beads_rust)
+/// Test label rename on real dataset (beads)
 /// This test runs rename on an isolated copy of the real dataset
 #[test]
 fn e2e_harness_label_rename_real_dataset() {
@@ -943,18 +941,16 @@ fn e2e_harness_label_rename_real_dataset() {
     let _log = common::test_log("e2e_harness_label_rename_real_dataset");
 
     if !beads_rust_dataset_available() {
-        eprintln!(
-            "Skipping e2e_harness_label_rename_real_dataset: beads_rust dataset not available"
-        );
+        eprintln!("Skipping e2e_harness_label_rename_real_dataset: beads dataset not available");
         return;
     }
 
-    // Create isolated copy of beads_rust dataset
+    // Create isolated copy of beads dataset
     let isolated = IsolatedDataset::from_dataset(KnownDataset::BeadsRust)
-        .expect("should create isolated beads_rust");
+        .expect("should create isolated beads");
     isolated
         .migrate_to_current_schema()
-        .expect("migrate isolated beads_rust dataset");
+        .expect("migrate isolated beads dataset");
 
     // First, list all labels to find one we can rename
     let list_output = Command::new(assert_cmd::cargo::cargo_bin!("br"))

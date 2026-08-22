@@ -1,6 +1,6 @@
 //! Property-based tests for parent-child invariants.
 //!
-//! Created 2026-05-09 for beads_rust-uelt (audit-driven cleanup).
+//! Created 2026-05-09 for beads-uelt (audit-driven cleanup).
 //!
 //! Properties verified:
 //!   - prop_every_issue_has_at_most_one_parent (single-parent invariant under any sequence of dep adds/removes/set_parent calls)
@@ -8,8 +8,8 @@
 
 #![allow(clippy::items_after_statements)]
 
-use beads_rust::model::{DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
+use beads::model::{DependencyType, Issue, IssueType, Priority, Status};
+use beads::storage::SqliteStorage;
 use chrono::Utc;
 use proptest::prelude::*;
 

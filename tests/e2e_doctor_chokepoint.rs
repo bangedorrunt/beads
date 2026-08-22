@@ -31,10 +31,10 @@
 mod common;
 
 use assert_cmd::Command;
-use beads_rust::cli::commands::doctor_subsystems::mutate::{
+use beads::cli::commands::doctor_subsystems::mutate::{
     Capabilities, DbArg, MutateContext, Op, mutate,
 };
-use beads_rust::franken_sync::Connection;
+use beads::storage::Connection;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -57,7 +57,7 @@ fn br_cmd(cwd: &Path) -> Command {
     cmd.env("HOME", cwd);
     // Hermetic $PATH: a developer host with two `br` installs (install
     // script + cargo install) otherwise trips the `br_path_dupes` doctor
-    // warning inside every spawned doctor run (beads_rust-ozdh).
+    // warning inside every spawned doctor run (beads-ozdh).
     cmd.env("PATH", common::cli::deduplicated_br_path());
     // Strip any inherited beads / bd env that might redirect storage.
     for (key, _) in std::env::vars_os() {
@@ -145,7 +145,7 @@ fn is_runtime_lock_sidecar_name(rel: &Path) -> bool {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
-    beads_rust::util::hex_encode(&h.finalize())
+    beads::util::hex_encode(&h.finalize())
 }
 
 /// Locate the single run-dir under `<root>/.doctor/runs/`. Panics if
@@ -204,7 +204,7 @@ fn doctor_check<'a>(payload: &'a Value, name: &str) -> &'a Value {
 
 fn seed_blocked_cache_db(db_path: &Path, blocked_by: &str) {
     let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
-    beads_rust::storage::schema::apply_schema(&conn).expect("apply current schema");
+    beads::storage::schema::apply_schema(&conn).expect("apply current schema");
     conn.execute(
         "CREATE TABLE IF NOT EXISTS blocked_issues_cache (
             issue_id TEXT PRIMARY KEY,
@@ -232,7 +232,7 @@ fn db_user_version(db_path: &Path) -> i64 {
         .query_row("PRAGMA user_version")
         .expect("read user_version")
         .get(0)
-        .and_then(fsqlite_types::SqliteValue::as_integer)
+        .and_then(beads::storage::SqliteValue::as_integer)
         .expect("integer user_version");
     let _ = conn.close();
     version
@@ -305,11 +305,11 @@ fn single_cache_row(db_path: &Path) -> (String, String) {
         rows.len()
     );
     let issue_id = match rows[0].get(0) {
-        Some(fsqlite_types::value::SqliteValue::Text(s)) => s.to_string(),
+        Some(beads::storage::SqliteValue::Text(s)) => s.clone(),
         other => panic!("unexpected issue_id value: {other:?}"),
     };
     let blocked_by = match rows[0].get(1) {
-        Some(fsqlite_types::value::SqliteValue::Text(s)) => s.to_string(),
+        Some(beads::storage::SqliteValue::Text(s)) => s.clone(),
         other => panic!("unexpected blocked_by value: {other:?}"),
     };
     let _ = conn.close();
@@ -1026,7 +1026,7 @@ fn chokepoint_db_exec_undo_replay() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 9 (round-3 fresh-eyes follow-through, bead `beads_rust-sexc`):
+// Test 9 (round-3 fresh-eyes follow-through, bead `beads-sexc`):
 // `br doctor --repair` must serialize against concurrent mutating br
 // invocations via the workspace `.beads/.write.lock`. The detection
 // surface is the structured `ConcurrencyLost` exit code (5) from
@@ -1140,7 +1140,7 @@ fn chokepoint_repair_acquires_workspace_lock() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 9b (Phase-10 cold-prober follow-through, bead `beads_rust-mbpq`):
+// Test 9b (Phase-10 cold-prober follow-through, bead `beads-mbpq`):
 // `br doctor --repair --dry-run` (and `--repair` in general) must refuse
 // IMMEDIATELY with exit 5 when another process holds the workspace lock,
 // NOT block up to --lock-timeout. The agent contract is "try-lock or
@@ -1222,7 +1222,7 @@ fn chokepoint_repair_dry_run_refuses_on_lock_contention() {
     drop(lock_file);
 }
 
-/// Round-5 fresh-eyes follow-through (`beads_rust-73ux`):
+/// Round-5 fresh-eyes follow-through (`beads-73ux`):
 /// `refuse_gates::run_all` must run BEFORE any fixer / `mutate()` call
 /// in the `--repair` flow. Plant a DB whose on-disk
 /// `PRAGMA user_version` is higher than the binary's
@@ -1424,7 +1424,7 @@ fn chokepoint_repair_indexes_refuse_gate_blocks_downgrade() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 11 (Phase-10 cold-prober follow-through, bead `beads_rust-s7nx`):
+// Test 11 (Phase-10 cold-prober follow-through, bead `beads-s7nx`):
 // `br doctor` (flat, no --repair) in a directory that does not contain a
 // `.beads/` workspace must exit with code 66 (`no_input`) per the
 // documented exit-code dictionary — NOT exit 0 or 1. The companion
@@ -1462,7 +1462,7 @@ fn chokepoint_doctor_in_non_beads_dir_exits_no_input() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 12 (bead `beads_rust-8fud`): remaining legacy DB repair paths
+// Test 12 (bead `beads-8fud`): remaining legacy DB repair paths
 // (VACUUM, REINDEX, blocked-cache rebuild) route through the
 // chokepoint's `record_legacy_op` helper, so any disk mutation under
 // those fixers must produce a `legacy_op` line in `actions.jsonl` with
@@ -1901,7 +1901,7 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
     assert_eq!(plan_json["from_version"], 14);
     assert_eq!(
         plan_json["to_version"],
-        beads_rust::storage::schema::CURRENT_SCHEMA_VERSION
+        beads::storage::schema::CURRENT_SCHEMA_VERSION
     );
     let token = plan_json["plan_token"]
         .as_str()
@@ -1941,7 +1941,7 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
         .to_string();
     assert_eq!(
         db_user_version(&db_path),
-        i64::from(beads_rust::storage::schema::CURRENT_SCHEMA_VERSION)
+        i64::from(beads::storage::schema::CURRENT_SCHEMA_VERSION)
     );
     let run_dir = root
         .join(".beads/.br_recovery/schema-migrations")
@@ -1980,7 +1980,7 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
     );
     assert_eq!(
         db_user_version(&db_path),
-        i64::from(beads_rust::storage::schema::CURRENT_SCHEMA_VERSION)
+        i64::from(beads::storage::schema::CURRENT_SCHEMA_VERSION)
     );
 
     let undo = br_cmd(&root)

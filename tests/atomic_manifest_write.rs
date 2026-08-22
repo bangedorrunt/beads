@@ -1,4 +1,4 @@
-//! Regression tests for atomic manifest writing (beads_rust-jnxv).
+//! Regression tests for atomic manifest writing (beads-jnxv).
 //!
 //! Verifies that `.manifest.json` is written atomically via temp file +
 //! fsync + durable_rename, so a crash or interruption never leaves a

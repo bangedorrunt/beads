@@ -3980,7 +3980,7 @@ mod tests {
     }
 
     // ========================================================================
-    // beads_rust-yyxo: tests for sync-safety invariants under SYNC_SAFETY_INVARIANTS.md
+    // beads-yyxo: tests for sync-safety invariants under SYNC_SAFETY_INVARIANTS.md
     // PC-1, PC-3, PC-RECOVERY (added 2026-05-09 by audit-2026-05-09)
     // ========================================================================
 

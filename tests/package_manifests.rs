@@ -271,7 +271,7 @@ fn test_cargo_metadata() {
 ///
 /// Without `--locked`, `cargo install` resolves a fresh dependency graph that
 /// can require compiler features newer than the deliberately pinned nightly.
-/// Git installs must also select `beads_rust` because the repository contains
+/// Git installs must also select `beads` because the repository contains
 /// a second Cargo package for fuzzing.
 #[test]
 fn test_source_install_documentation_uses_locked_resolution() {
@@ -288,9 +288,8 @@ fn test_source_install_documentation_uses_locked_resolution() {
         let logical_lines = content.replace("\\\n", " ");
 
         for (line_index, line) in logical_lines.lines().enumerate() {
-            let is_git_source_install = line.contains(
-                "cargo install --git https://github.com/Dicklesworthstone/beads_rust.git",
-            );
+            let is_git_source_install =
+                line.contains("cargo install --git https://github.com/Dicklesworthstone/beads.git");
             let is_source_install =
                 line.contains("cargo install --path .") || is_git_source_install;
             if is_source_install {
@@ -303,9 +302,9 @@ fn test_source_install_documentation_uses_locked_resolution() {
             if is_git_source_install {
                 assert!(
                     line.contains(
-                        "cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust",
+                        "cargo install --git https://github.com/Dicklesworthstone/beads.git beads",
                     ),
-                    "{path}:{} git source-install command must select the beads_rust package: {line}",
+                    "{path}:{} git source-install command must select the beads package: {line}",
                     line_index + 1
                 );
             }

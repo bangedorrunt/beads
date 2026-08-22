@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fixture: write_lock_symlink_node
-# FM: fm-concurrency_primitives-orphaned-write-lock (beads_rust-5sej) — detect-only.
+# FM: fm-concurrency_primitives-orphaned-write-lock (beads-5sej) — detect-only.
 #
 # Replaces `.beads/.write.lock` with a symlink to a sibling regular file.
 # Startup `OpenOptions` follows the symlink, so the workspace still opens —

@@ -29,7 +29,7 @@ pub struct CreateConfig {
     pub source_repo: Option<String>,
     /// Absolute canonical path of the source repository, populated alongside
     /// `source_repo` so fleet automation can disambiguate two clones of the
-    /// same repo at different paths on the same machine (beads_rust#289).
+    /// same repo at different paths on the same machine (beads#289).
     /// `None` when `canonicalize` of the beads-dir parent failed.
     pub source_repo_path: Option<String>,
 }
@@ -68,7 +68,7 @@ pub(crate) fn canonical_source_repo(beads_dir: &Path) -> Option<String> {
 /// Distinct from [`canonical_source_repo`], which returns just the
 /// basename. Used by fleet automation to disambiguate two clones of
 /// the same repo at different paths on the same machine (see
-/// beads_rust#289). Falls back to `None` if `canonicalize` fails —
+/// beads#289). Falls back to `None` if `canonicalize` fails —
 /// the caller treats the field as optional and leaves it unset, which
 /// matches the schema contract (`source_repo_path TEXT` nullable).
 pub(crate) fn canonical_source_repo_path(beads_dir: &Path) -> Option<String> {
@@ -458,7 +458,7 @@ pub fn create_issue_impl(
     let defer_until = parse_optional_date(args.defer.as_deref())?;
     // Parse/validate the governing agent context BEFORE any mutation so
     // invalid context leaves no issue row, event, dirty marker, or JSONL
-    // record behind (beads_rust#408). Reuses the update parser so create and
+    // record behind (beads#408). Reuses the update parser so create and
     // update accept identical forms (inline JSON, @file.json, @file.yaml,
     // empty string). For create, "clear" and "absent" both mean NULL.
     let initial_agent_context =

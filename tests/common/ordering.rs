@@ -1,6 +1,6 @@
 //! Test helpers for invariant-based ordering assertions.
 //!
-//! Created 2026-05-09 for beads_rust-jsgu (audit-driven cleanup).
+//! Created 2026-05-09 for beads-jsgu (audit-driven cleanup).
 //!
 //! These helpers replace the **anti-pattern of pinning generated IDs in
 //! ordered-result assertions**. The audit identified `storage_ready::
@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use beads_rust::model::{Issue, Priority};
+use beads::model::{Issue, Priority};
 use std::fmt::Debug;
 
 /// Assert that `items`, when projected via `key_fn`, are in ascending order.
@@ -112,7 +112,7 @@ pub fn assert_no_duplicate_ids(issues: &[Issue]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beads_rust::model::{IssueType, Status};
+    use beads::model::{IssueType, Status};
     use chrono::{Duration, TimeZone, Utc};
 
     fn make_issue(id: &str, priority: Priority, age_offset_secs: i64) -> Issue {

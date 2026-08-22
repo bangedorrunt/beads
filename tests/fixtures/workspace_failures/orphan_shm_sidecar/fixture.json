@@ -25,7 +25,7 @@
       "outcome": "status_db_newer"
     }
   ],
-  "source_hint": "Complements the WAL-without-SHM fixture with the opposite external sidecar-pruning shape from beads_rust-rsei.3.3.",
+  "source_hint": "Complements the WAL-without-SHM fixture with the opposite external sidecar-pruning shape from beads-rsei.3.3.",
   "notes": [
     "The database and JSONL content are otherwise healthy so the fixture isolates the orphaned SHM sidecar.",
     "Current posture is degraded but repairable: doctor reports the sidecar mismatch and doctor --repair quarantines the stray sidecar."

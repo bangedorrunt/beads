@@ -59,7 +59,7 @@ pub mod r#where;
 pub mod upgrade;
 
 pub(crate) const GITHUB_REPO_OWNER: &str = "Dicklesworthstone";
-pub(crate) const GITHUB_REPO_NAME: &str = "beads_rust";
+pub(crate) const GITHUB_REPO_NAME: &str = "beads";
 
 #[must_use]
 pub(crate) fn github_latest_release_api_url() -> String {
@@ -283,7 +283,7 @@ pub(super) fn finalize_batched_blocked_cache_refresh(
 /// (case-insensitive), meaning "every status" — the same convention
 /// `br lint --status all` uses. Without this, `all` would parse as the
 /// custom status literal `Custom("all")` and silently match nothing
-/// (beads_rust-6ilv).
+/// (beads-6ilv).
 pub(super) fn status_filter_requests_all(statuses: &[String]) -> bool {
     statuses
         .iter()
@@ -607,12 +607,12 @@ mod tests {
     };
     use crate::config::{CliOverrides, OpenStorageResult, open_storage_with_cli};
     use crate::error::BeadsError;
-    use crate::franken_sync::Connection;
     use crate::model::Issue;
+    use crate::storage::Connection;
     use crate::storage::SqliteStorage;
+    use crate::storage::db::DbError;
     use crate::sync::{ExportConfig, export_to_jsonl_with_policy};
     use chrono::Utc;
-    use fsqlite_error::FrankenError;
     use std::fs;
     use std::path::Path;
     use tempfile::TempDir;
@@ -829,7 +829,7 @@ mod tests {
             |_storage| {
                 attempts += 1;
                 if attempts == 1 {
-                    Err(BeadsError::Database(FrankenError::DatabaseCorrupt {
+                    Err(BeadsError::Database(DbError::DatabaseCorrupt {
                         detail: "synthetic corruption".to_string(),
                     }))
                 } else {
@@ -879,7 +879,7 @@ mod tests {
                 if attempts == 1 {
                     // First attempt: a recoverable corruption error that does NOT
                     // commit. The staged attribution must NOT be consumed.
-                    Err(BeadsError::Database(FrankenError::DatabaseCorrupt {
+                    Err(BeadsError::Database(DbError::DatabaseCorrupt {
                         detail: "synthetic corruption".to_string(),
                     }))
                 } else {
@@ -916,10 +916,10 @@ mod tests {
     #[test]
     fn mutation_recovery_can_be_signaled_by_probe_after_constraint_style_error() {
         let (_temp, storage_ctx) = storage_ctx_with_exported_issue();
-        let operation_err = BeadsError::Database(FrankenError::Internal(
+        let operation_err = BeadsError::Database(DbError::Internal(
             "constraint verification failed".to_string(),
         ));
-        let probe_err = BeadsError::Database(FrankenError::Internal(
+        let probe_err = BeadsError::Database(DbError::Internal(
             "database disk image is malformed".to_string(),
         ));
 

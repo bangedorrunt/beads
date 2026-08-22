@@ -15,7 +15,7 @@ const MAX_FALLBACK_NONCE: u32 = 2000;
 /// Default ID generation configuration.
 #[derive(Debug, Clone)]
 pub struct IdConfig {
-    /// Issue ID prefix (e.g., "bd", "`beads_rust`").
+    /// Issue ID prefix (e.g., "bd", "`beads`").
     pub prefix: String,
     /// Minimum hash length.
     pub min_hash_length: usize,
@@ -1694,7 +1694,7 @@ mod tests {
     }
 
     // ========================================================================
-    // beads_rust-l6xl: post-`--slug` audit unit tests (added 2026-05-09)
+    // beads-l6xl: post-`--slug` audit unit tests (added 2026-05-09)
     // Per the bead's required NEW unit tests.
     // ========================================================================
 

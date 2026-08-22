@@ -648,7 +648,7 @@ fn cold_warm_benchmark_full() {
         ],
     };
 
-    // Use beads_rust dataset for testing
+    // Use beads dataset for testing
     let dataset = KnownDataset::BeadsRust;
     if !dataset.beads_dir().exists() {
         println!("Dataset {} not available", dataset.name());

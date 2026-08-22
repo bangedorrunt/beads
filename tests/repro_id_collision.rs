@@ -1,4 +1,4 @@
-use beads_rust::util::id::{IdConfig, IdGenerator};
+use beads::util::id::{IdConfig, IdGenerator};
 use chrono::Utc;
 
 #[test]

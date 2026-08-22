@@ -2,11 +2,11 @@
 
 use crate::error::{BeadsError, Result};
 use crate::format::{IssueDetails, IssueWithDependencyMetadata, RollupSummary};
-use crate::franken_sync::Connection;
-use crate::franken_sync::compat::{OpenFlags, open_with_flags};
 use crate::model::{
     Comment, Dependency, DependencyType, Event, EventType, Issue, IssueType, Priority, Status,
 };
+use crate::storage::db::compat::{OpenFlags, open_with_flags};
+use crate::storage::db::{Connection, DbError, Row, SqliteValue};
 use crate::storage::events::get_events;
 use crate::storage::schema::CURRENT_SCHEMA_VERSION;
 use crate::storage::schema::{
@@ -21,8 +21,6 @@ use crate::sync::{
 use crate::util::id::{normalize_prefix, parse_id};
 use crate::validation::{CommentValidator, ISSUE_LABEL_MAX_COUNT, IssueValidator, LabelValidator};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
-use fsqlite_error::FrankenError;
-use fsqlite_types::SqliteValue;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
@@ -1516,7 +1514,7 @@ enum SearchIssueProjection {
 /// Shared case-insensitive needle match used by every `br search` query path.
 ///
 /// Matches the issue's title, description, and id, plus the bodies of its
-/// comments (beads_rust#416): agent workflows put durable handoffs and
+/// comments (beads#416): agent workflows put durable handoffs and
 /// decisions in comments, so a comment-only token must still be findable.
 /// Binds four identical lowercase needle parameters.
 const SEARCH_NEEDLE_PREDICATE: &str = "(instr(lower(title), ?) > 0 \
@@ -1593,7 +1591,7 @@ impl ReadyIssueProjection {
         }
     }
 
-    fn parse_row(self, row: &fsqlite::Row) -> Result<Issue> {
+    fn parse_row(self, row: &Row) -> Result<Issue> {
         match self {
             Self::Full => SqliteStorage::issue_from_row(row),
             Self::Command => SqliteStorage::ready_issue_from_row(row),
@@ -1625,7 +1623,7 @@ impl SearchIssueProjection {
         }
     }
 
-    fn parse_issue(self, row: &fsqlite::Row) -> Result<Issue> {
+    fn parse_issue(self, row: &Row) -> Result<Issue> {
         match self {
             Self::Full => SqliteStorage::issue_from_row(row),
             Self::CommandText => SqliteStorage::search_command_issue_from_row(row),
@@ -1674,7 +1672,7 @@ impl BlockedIssueProjection {
     const fn cached_blocked_by_index(self) -> usize {
         match self {
             // Bumped from 37 → 38 after `agent_context` was appended
-            // to the Full SELECT at position 37 (beads_rust#297).
+            // to the Full SELECT at position 37 (beads#297).
             // Source_repo_path is at 36, agent_context is at 37, so
             // bc.blocked_by lands at 38 in the joined projection.
             Self::Full => 38,
@@ -1682,7 +1680,7 @@ impl BlockedIssueProjection {
         }
     }
 
-    fn parse_issue(self, row: &fsqlite::Row) -> Result<Issue> {
+    fn parse_issue(self, row: &Row) -> Result<Issue> {
         match self {
             Self::Full => SqliteStorage::issue_from_row(row),
             Self::Command => SqliteStorage::blocked_command_issue_from_row(row),
@@ -2020,7 +2018,7 @@ impl SqliteStorage {
             &[SqliteValue::from(key)],
         ) {
             Ok(row) => Ok(row.get(0).and_then(SqliteValue::as_text) == Some(expected)),
-            Err(fsqlite_error::FrankenError::QueryReturnedNoRows) => Ok(false),
+            Err(DbError::QueryReturnedNoRows) => Ok(false),
             Err(error) => Err(error.into()),
         }
     }
@@ -2449,10 +2447,8 @@ impl SqliteStorage {
                 Ok(storage) => return Ok(storage),
                 Err(error) => {
                     remove_temp_db_files(&path);
-                    let retryable = matches!(
-                        &error,
-                        BeadsError::Database(FrankenError::CannotOpen { .. })
-                    );
+                    let retryable =
+                        matches!(&error, BeadsError::Database(DbError::CannotOpen { .. }));
                     if !retryable || attempt + 1 == OPEN_ATTEMPTS {
                         return Err(error);
                     }
@@ -2847,7 +2843,7 @@ impl SqliteStorage {
 
     fn rollback_failure_error(
         original_error: BeadsError,
-        rollback_error: &FrankenError,
+        rollback_error: &DbError,
         cause: &str,
     ) -> BeadsError {
         BeadsError::WithContext {
@@ -2860,7 +2856,7 @@ impl SqliteStorage {
 
     fn rollback_result_error(
         original_error: BeadsError,
-        rollback_result: std::result::Result<usize, FrankenError>,
+        rollback_result: std::result::Result<usize, DbError>,
         cause: &str,
     ) -> BeadsError {
         match rollback_result {
@@ -4065,7 +4061,7 @@ impl SqliteStorage {
     }
 
     fn capacity_exemption_record_from_row(
-        row: &fsqlite::Row,
+        row: &Row,
         now: chrono::DateTime<Utc>,
     ) -> Option<crate::close_policy::CapacityExemptionRecord> {
         let text = |index: usize| {
@@ -5623,7 +5619,7 @@ impl SqliteStorage {
                         },
                     );
                 }
-                Err(FrankenError::QueryReturnedNoRows) => {}
+                Err(DbError::QueryReturnedNoRows) => {}
                 Err(error) => return Err(error.into()),
             }
         }
@@ -6140,7 +6136,7 @@ impl SqliteStorage {
                         id: issue.id.clone(),
                     });
                 }
-                Err(FrankenError::QueryReturnedNoRows) => {}
+                Err(DbError::QueryReturnedNoRows) => {}
                 Err(error) => return Err(error.into()),
             }
 
@@ -6398,7 +6394,7 @@ impl SqliteStorage {
                 .to_string()
         };
 
-        let stmt = conn.prepare(&neighbor_sql)?;
+        let mut stmt = conn.prepare(&neighbor_sql)?;
 
         let mut visited = HashSet::new();
         // Level-synchronous BFS: process all nodes at one depth before moving
@@ -6418,7 +6414,6 @@ impl SqliteStorage {
                     SqliteValue::from(node.as_str()),
                     SqliteValue::from(node.as_str()),
                 ])?;
-
                 for row in &rows {
                     if let Some(neighbor) = row.get(0).and_then(SqliteValue::as_text) {
                         if neighbor == issue_id {
@@ -6799,7 +6794,7 @@ impl SqliteStorage {
                 &[SqliteValue::from(id)],
             ) {
                 Ok(row) => row.get(0).and_then(SqliteValue::as_text).map(String::from),
-                Err(FrankenError::QueryReturnedNoRows) => None,
+                Err(DbError::QueryReturnedNoRows) => None,
                 Err(error) => return Err(error.into()),
             };
             let trimmed = current_assignee
@@ -7198,7 +7193,7 @@ impl SqliteStorage {
                             (!trimmed.is_empty()).then_some(trimmed)
                         })
                         .unwrap_or_else(|| "<unknown>".to_string()),
-                    Err(FrankenError::QueryReturnedNoRows) => "<unknown>".to_string(),
+                    Err(DbError::QueryReturnedNoRows) => "<unknown>".to_string(),
                     Err(error) => return Err(error.into()),
                 };
                 return Err(BeadsError::validation(
@@ -7488,7 +7483,7 @@ impl SqliteStorage {
         ";
         let row = match conn.query_row_with_params(sql, &[SqliteValue::from(id)]) {
             Ok(row) => row,
-            Err(FrankenError::QueryReturnedNoRows) => return Ok(None),
+            Err(DbError::QueryReturnedNoRows) => return Ok(None),
             Err(error) => return Err(error.into()),
         };
         let issue = Self::issue_from_row(&row)?;
@@ -8378,7 +8373,7 @@ impl SqliteStorage {
         let labels_or = filters.labels_or.as_deref().unwrap_or(&[]);
         // fsqlite 0.3.6 regression: `SELECT COUNT(*) ... WHERE id IN
         // (SELECT ... GROUP BY ... HAVING ...)` evaluates to NULL (minimal
-        // repro in the frankensqlite escalation, beads_rust-ro3m), which
+        // repro in the frankensqlite escalation, beads-ro3m), which
         // `unwrap_or(0)` below would silently report as zero. The bare
         // membership subquery is unaffected, so multi-label AND counting
         // routes through the two-step candidate-ids path instead of the
@@ -13380,7 +13375,7 @@ impl SqliteStorage {
             &[SqliteValue::from(issue_id)],
         ) {
             Ok(row) => Ok(row.get(0).and_then(SqliteValue::as_text).map(String::from)),
-            Err(FrankenError::QueryReturnedNoRows) => Ok(None),
+            Err(DbError::QueryReturnedNoRows) => Ok(None),
             Err(error) => Err(error.into()),
         }
     }
@@ -13512,7 +13507,7 @@ impl SqliteStorage {
                     return Ok(u32::try_from(last_child).unwrap_or(0).saturating_add(1));
                 }
             }
-            Err(fsqlite_error::FrankenError::QueryReturnedNoRows) => {}
+            Err(DbError::QueryReturnedNoRows) => {}
             Err(e) => return Err(e.into()),
         }
 
@@ -13562,7 +13557,7 @@ impl SqliteStorage {
             &[SqliteValue::from(parent_id)],
         ) {
             Ok(row) => row.get(0).and_then(SqliteValue::as_integer).unwrap_or(0),
-            Err(fsqlite_error::FrankenError::QueryReturnedNoRows) => 0,
+            Err(DbError::QueryReturnedNoRows) => 0,
             Err(e) => return Err(e.into()),
         };
 
@@ -13737,7 +13732,7 @@ impl SqliteStorage {
     /// Mirror of [`Self::get_blocking_dependents_for_issue_ids`]: for each id,
     /// the issues it *depends on* rather than the issues that depend on it.
     ///
-    /// Backs `br graph --dependencies` (`beads_rust-mf72`), which answers "what
+    /// Backs `br graph --dependencies` (`beads-mf72`), which answers "what
     /// is blocking this?" where the default walk answers "what does closing
     /// this unblock?". The two queries are exact inverses, including the
     /// `parent-child` special case, which the dependents query deliberately
@@ -14012,7 +14007,7 @@ impl SqliteStorage {
             &[SqliteValue::from(key)],
         ) {
             Ok(row) => Ok(row.get(0).and_then(SqliteValue::as_text).map(String::from)),
-            Err(FrankenError::QueryReturnedNoRows) => Ok(None),
+            Err(DbError::QueryReturnedNoRows) => Ok(None),
             Err(error) => Err(error.into()),
         }
     }
@@ -14427,7 +14422,7 @@ impl SqliteStorage {
                     .to_string();
                 Ok(Some((hash, exported)))
             }
-            Err(FrankenError::QueryReturnedNoRows) => Ok(None),
+            Err(DbError::QueryReturnedNoRows) => Ok(None),
             Err(error) => Err(error.into()),
         }
     }
@@ -14544,7 +14539,7 @@ impl SqliteStorage {
                 .and_then(SqliteValue::as_text)
                 .filter(|value| !value.is_empty())
                 .map(String::from)),
-            Err(FrankenError::QueryReturnedNoRows) => Ok(None),
+            Err(DbError::QueryReturnedNoRows) => Ok(None),
             Err(error) => Err(error.into()),
         }
     }
@@ -14576,7 +14571,7 @@ impl SqliteStorage {
                 .and_then(SqliteValue::as_text)
                 .filter(|value| !value.is_empty())
                 .map(String::from),
-            Err(FrankenError::QueryReturnedNoRows) => None,
+            Err(DbError::QueryReturnedNoRows) => None,
             Err(error) => return Err(error.into()),
         };
         let mut ids: Vec<String> = match existing {
@@ -14966,7 +14961,7 @@ impl SqliteStorage {
         })
     }
 
-    fn issue_from_row(row: &fsqlite::Row) -> Result<Issue> {
+    fn issue_from_row(row: &Row) -> Result<Issue> {
         let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
@@ -15047,7 +15042,7 @@ impl SqliteStorage {
         })
     }
 
-    fn ready_issue_from_row(row: &fsqlite::Row) -> Result<Issue> {
+    fn ready_issue_from_row(row: &Row) -> Result<Issue> {
         let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
@@ -15112,7 +15107,7 @@ impl SqliteStorage {
         })
     }
 
-    fn blocked_command_issue_from_row(row: &fsqlite::Row) -> Result<Issue> {
+    fn blocked_command_issue_from_row(row: &Row) -> Result<Issue> {
         let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
@@ -15177,7 +15172,7 @@ impl SqliteStorage {
         })
     }
 
-    fn stale_command_issue_from_row(row: &fsqlite::Row) -> Result<Issue> {
+    fn stale_command_issue_from_row(row: &Row) -> Result<Issue> {
         let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
@@ -15242,7 +15237,7 @@ impl SqliteStorage {
         })
     }
 
-    fn lint_command_issue_from_row(row: &fsqlite::Row) -> Result<Issue> {
+    fn lint_command_issue_from_row(row: &Row) -> Result<Issue> {
         let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
@@ -15301,7 +15296,7 @@ impl SqliteStorage {
         })
     }
 
-    fn search_command_issue_from_row(row: &fsqlite::Row) -> Result<Issue> {
+    fn search_command_issue_from_row(row: &Row) -> Result<Issue> {
         let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
@@ -15366,7 +15361,7 @@ impl SqliteStorage {
         })
     }
 
-    fn command_summary_issue_from_row(row: &fsqlite::Row) -> Result<Issue> {
+    fn command_summary_issue_from_row(row: &Row) -> Result<Issue> {
         let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
@@ -15425,7 +15420,7 @@ impl SqliteStorage {
         })
     }
 
-    fn stats_issue_from_row(row: &fsqlite::Row) -> Result<StatsIssueRow> {
+    fn stats_issue_from_row(row: &Row) -> Result<StatsIssueRow> {
         let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
@@ -15466,7 +15461,7 @@ impl SqliteStorage {
         })
     }
 
-    fn stats_summary_issue_from_row(row: &fsqlite::Row) -> Result<StatsIssueRow> {
+    fn stats_summary_issue_from_row(row: &Row) -> Result<StatsIssueRow> {
         let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
@@ -15495,7 +15490,7 @@ impl SqliteStorage {
         })
     }
 
-    fn changelog_issue_from_row(row: &fsqlite::Row) -> Result<ChangelogIssueRow> {
+    fn changelog_issue_from_row(row: &Row) -> Result<ChangelogIssueRow> {
         let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
@@ -15578,8 +15573,8 @@ impl SqliteStorage {
 }
 
 fn finish_issue_mutation_write_probe(
-    probe_result: std::result::Result<usize, FrankenError>,
-    rollback_result: std::result::Result<usize, FrankenError>,
+    probe_result: std::result::Result<usize, DbError>,
+    rollback_result: std::result::Result<usize, DbError>,
 ) -> Result<()> {
     match (probe_result, rollback_result) {
         // A zero-row probe update means the target issue was not
@@ -15592,7 +15587,7 @@ fn finish_issue_mutation_write_probe(
         // diagnostic as the source while explicitly reporting that the
         // connection's transaction state is now unknown.
         (Ok(0), rollback) => {
-            let original_error = BeadsError::Database(FrankenError::Internal(
+            let original_error = BeadsError::Database(DbError::Internal(
                 "write probe did not find issue inside mutation transaction".to_string(),
             ));
             Err(SqliteStorage::rollback_result_error(
@@ -15860,7 +15855,7 @@ pub struct IssueUpdate {
     /// See #289. Use `update --source-repo-path` for ad-hoc repair after a
     /// repo is moved/copied to a new machine.
     pub source_repo_path: Option<Option<String>>,
-    /// Set inherited governing-instructions JSON (beads_rust#297).
+    /// Set inherited governing-instructions JSON (beads#297).
     /// `Some(Some(s))` writes the JSON string `s`; `Some(None)` clears
     /// the field back to `NULL`. `None` means "do not touch this field".
     /// Validation happens at the CLI boundary; storage is opaque TEXT.
@@ -16082,7 +16077,7 @@ fn parse_issue_type(s: Option<&str>) -> IssueType {
 }
 
 fn dependency_metadata_from_row(
-    row: &fsqlite::Row,
+    row: &Row,
     row_role: &str,
     allow_external_placeholder: bool,
 ) -> Result<IssueWithDependencyMetadata> {
@@ -16620,7 +16615,7 @@ impl SqliteStorage {
     ///
     /// Returns an error if the database query fails.
     pub fn get_dependencies_full(&self, issue_id: &str) -> Result<Vec<crate::model::Dependency>> {
-        let stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(
             "SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
              FROM dependencies
              WHERE issue_id = ?
@@ -17109,7 +17104,7 @@ impl SqliteStorage {
             &[SqliteValue::from(external_ref)],
         ) {
             Ok(row) => Ok(Some(Self::issue_from_row(&row)?)),
-            Err(FrankenError::QueryReturnedNoRows) => Ok(None),
+            Err(DbError::QueryReturnedNoRows) => Ok(None),
             Err(error) => Err(error.into()),
         }
     }
@@ -17132,7 +17127,7 @@ impl SqliteStorage {
             &[SqliteValue::from(content_hash)],
         ) {
             Ok(row) => Ok(Some(Self::issue_from_row(&row)?)),
-            Err(FrankenError::QueryReturnedNoRows) => Ok(None),
+            Err(DbError::QueryReturnedNoRows) => Ok(None),
             Err(error) => Err(error.into()),
         }
     }
@@ -17366,14 +17361,14 @@ impl SqliteStorage {
             &[SqliteValue::from(issue.id.as_str())],
         ) {
             Ok(_) => true,
-            Err(FrankenError::QueryReturnedNoRows) => false,
+            Err(DbError::QueryReturnedNoRows) => false,
             Err(error) => return Err(error.into()),
         };
 
         if issue_exists {
             let rows = self.update_issue_row_for_import(issue, &timestamps)?;
             if rows == 0 {
-                return Err(BeadsError::Database(FrankenError::Internal(format!(
+                return Err(BeadsError::Database(DbError::Internal(format!(
                     "import update did not find existing issue {}",
                     issue.id
                 ))));
@@ -18478,13 +18473,13 @@ impl SqliteStorage {
     }
 }
 
-fn is_import_comment_id_collision(error: &FrankenError) -> bool {
+fn is_import_comment_id_collision(error: &DbError) -> bool {
     matches!(
         error,
-        FrankenError::PrimaryKeyViolation | FrankenError::UniqueViolation { .. }
+        DbError::PrimaryKeyViolation | DbError::UniqueViolation { .. }
     ) || matches!(
         error,
-        FrankenError::Internal(message)
+        DbError::Internal(message)
             if message.contains("VDBE halted with code 19")
                 && (message.contains("PRIMARY KEY constraint failed")
                     || message.contains("UNIQUE constraint failed"))
@@ -18600,9 +18595,7 @@ fn insert_comment_row(conn: &Connection, issue_id: &str, author: &str, text: &st
     Ok(comment_id)
 }
 
-fn gate_result_record_from_row(
-    row: &fsqlite::Row,
-) -> Result<crate::close_policy::GateResultRecord> {
+fn gate_result_record_from_row(row: &Row) -> Result<crate::close_policy::GateResultRecord> {
     let required_text = |index: usize, name: &str| {
         row.get(index)
             .and_then(SqliteValue::as_text)
@@ -18642,7 +18635,7 @@ fn fetch_comment(conn: &Connection, comment_id: i64) -> Result<Comment> {
         &[SqliteValue::from(comment_id)],
     ) {
         Ok(row) => row,
-        Err(FrankenError::QueryReturnedNoRows) => {
+        Err(DbError::QueryReturnedNoRows) => {
             return Err(BeadsError::Config(format!(
                 "comment {comment_id} not found after insert"
             )));
@@ -18652,7 +18645,7 @@ fn fetch_comment(conn: &Connection, comment_id: i64) -> Result<Comment> {
     comment_from_row(&row)
 }
 
-fn comment_from_row(row: &fsqlite::Row) -> Result<Comment> {
+fn comment_from_row(row: &Row) -> Result<Comment> {
     let id = row
         .get(0)
         .and_then(SqliteValue::as_integer)
@@ -22639,7 +22632,7 @@ mod tests {
         assert!(storage.may_have_blocked_command_results().unwrap());
     }
 
-    /// Regression for beads_rust#285. The issue reported that `br close`
+    /// Regression for beads#285. The issue reported that `br close`
     /// persisted to JSONL but not to the SQLite store and that the
     /// dirty-tracker stayed empty — meaning the JSONL→DB→JSONL
     /// reconciliation never fired for the row. Pins both halves of
@@ -28622,7 +28615,7 @@ mod tests {
     fn test_finish_issue_mutation_write_probe_composes_zero_row_and_rollback_errors() {
         let err = finish_issue_mutation_write_probe(
             Ok(0),
-            Err(FrankenError::Internal("rollback failed".to_string())),
+            Err(DbError::Internal("rollback failed".to_string())),
         )
         .expect_err("zero-row probe and rollback failure must both surface");
         let message = err.to_string();
@@ -29053,9 +29046,9 @@ mod tests {
 
     #[test]
     fn test_diag_data_visibility() {
-        use fsqlite_types::value::SqliteValue;
+        use crate::storage::SqliteValue;
         // Simplest possible reproduction
-        let conn = crate::franken_sync::Connection::open(":memory:".to_string()).unwrap();
+        let conn = crate::storage::Connection::open(":memory:".to_string()).unwrap();
         conn.execute("CREATE TABLE t (k TEXT, v TEXT)").unwrap();
         conn.execute_with_params(
             "INSERT INTO t VALUES (?, ?)",
@@ -29069,7 +29062,7 @@ mod tests {
             .unwrap();
         eprintln!(
             "[DIAG] 1. count(*) no WHERE: {:?}",
-            r1.first().map(fsqlite::Row::values)
+            r1.first().map(Row::values)
         );
 
         // 2: count with literal WHERE
@@ -29078,7 +29071,7 @@ mod tests {
             .unwrap();
         eprintln!(
             "[DIAG] 2. count(*) literal WHERE: {:?}",
-            r2.first().map(fsqlite::Row::values)
+            r2.first().map(Row::values)
         );
 
         // 3: count with bind WHERE
@@ -29099,7 +29092,7 @@ mod tests {
             .unwrap();
         eprintln!(
             "[DIAG] 3. count(*) bind WHERE: {:?}",
-            r3.first().map(fsqlite::Row::values)
+            r3.first().map(Row::values)
         );
 
         // Also get EXPLAIN for the working non-aggregate version
@@ -29119,7 +29112,7 @@ mod tests {
             .unwrap();
         eprintln!(
             "[DIAG] 4. select k bind WHERE: {:?}",
-            r4.first().map(fsqlite::Row::values)
+            r4.first().map(Row::values)
         );
 
         // 5: count(k) with bind WHERE
@@ -29131,7 +29124,7 @@ mod tests {
             .unwrap();
         eprintln!(
             "[DIAG] 5. count(k) bind WHERE: {:?}",
-            r5.first().map(fsqlite::Row::values)
+            r5.first().map(Row::values)
         );
 
         // 6: count with bind WHERE but no match
@@ -29143,7 +29136,7 @@ mod tests {
             .unwrap();
         eprintln!(
             "[DIAG] 6. count(*) bind WHERE no match: {:?}",
-            r6.first().map(fsqlite::Row::values)
+            r6.first().map(Row::values)
         );
 
         let c = r3
@@ -29157,9 +29150,9 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn test_diag_root_page_visibility() {
-        use fsqlite_types::value::SqliteValue;
+        use crate::storage::SqliteValue;
         // Create full beads schema and check which root pages are accessible
-        let conn = crate::franken_sync::Connection::open(":memory:".to_string()).unwrap();
+        let conn = crate::storage::Connection::open(":memory:".to_string()).unwrap();
 
         // Apply schema step by step, checking after each table
         let tables = vec![(
@@ -29310,7 +29303,7 @@ mod tests {
 
         // Also try: incrementally create indexes and check count(*) after each
         eprintln!("[ROOT-DIAG] --- Incremental index creation with count check ---");
-        let conn2 = crate::franken_sync::Connection::open(":memory:".to_string()).unwrap();
+        let conn2 = crate::storage::Connection::open(":memory:".to_string()).unwrap();
         conn2
             .execute("CREATE TABLE t (a TEXT, b TEXT, c TEXT, d TEXT, e TEXT)")
             .unwrap();
@@ -29342,7 +29335,7 @@ mod tests {
 
         // Test multi-insert with explicit transactions
         eprintln!("[ROOT-DIAG] --- Multi-insert test ---");
-        let conn3 = crate::franken_sync::Connection::open(":memory:".to_string()).unwrap();
+        let conn3 = crate::storage::Connection::open(":memory:".to_string()).unwrap();
         conn3
             .execute("CREATE TABLE ev (id INTEGER PRIMARY KEY AUTOINCREMENT, msg TEXT)")
             .unwrap();
@@ -29384,7 +29377,7 @@ mod tests {
         }
 
         // Also test without explicit transactions (autocommit)
-        let conn4 = crate::franken_sync::Connection::open(":memory:".to_string()).unwrap();
+        let conn4 = crate::storage::Connection::open(":memory:".to_string()).unwrap();
         conn4
             .execute("CREATE TABLE ev2 (id INTEGER PRIMARY KEY AUTOINCREMENT, msg TEXT)")
             .unwrap();
@@ -29425,7 +29418,7 @@ mod tests {
 
         // Test events-like table with indexes and WHERE+ORDER BY
         eprintln!("[ROOT-DIAG] --- Events-like test ---");
-        let conn5 = crate::franken_sync::Connection::open(":memory:".to_string()).unwrap();
+        let conn5 = crate::storage::Connection::open(":memory:".to_string()).unwrap();
         conn5
             .execute("CREATE TABLE issues2 (id TEXT PRIMARY KEY, title TEXT)")
             .unwrap();
@@ -31633,7 +31626,7 @@ mod tests {
     fn test_finish_issue_mutation_write_probe_returns_rollback_error_when_cleanup_fails() {
         let result = finish_issue_mutation_write_probe(
             Ok(1),
-            Err(FrankenError::Internal("rollback failed".to_string())),
+            Err(DbError::Internal("rollback failed".to_string())),
         );
 
         let err = result.expect_err("rollback failure should surface");
@@ -31646,8 +31639,8 @@ mod tests {
     #[test]
     fn test_finish_issue_mutation_write_probe_composes_write_and_rollback_errors() {
         let result = finish_issue_mutation_write_probe(
-            Err(FrankenError::Internal("write failed".to_string())),
-            Err(FrankenError::Internal("rollback failed".to_string())),
+            Err(DbError::Internal("write failed".to_string())),
+            Err(DbError::Internal("rollback failed".to_string())),
         );
 
         let err = result.expect_err("write and rollback failures should surface");
@@ -31812,7 +31805,7 @@ mod tests {
 
     #[test]
     fn test_parse_datetime_value_rejects_blob() {
-        let v = SqliteValue::Blob(std::sync::Arc::from(b"bad".as_slice()));
+        let v = SqliteValue::Blob(b"bad".to_vec());
         assert!(parse_datetime_value(Some(&v)).is_err());
         assert!(parse_opt_datetime_value(Some(&v)).is_err());
     }
@@ -32168,7 +32161,7 @@ mod tests {
     /// `PRAGMA wal_checkpoint(TRUNCATE)` is fsqlite's responsibility
     /// — its checkpoint executor decides whether the file is
     /// truncated to zero or retained as a zero-frame header — and
-    /// keeping that detail out of beads_rust's regression suite
+    /// keeping that detail out of beads's regression suite
     /// avoids a false alarm whenever fsqlite revises its WAL
     /// teardown.
     #[test]
@@ -32219,7 +32212,7 @@ mod tests {
         );
     }
 
-    /// Regression test for beads_rust-ok70: verify that status-change updates
+    /// Regression test for beads-ok70: verify that status-change updates
     /// complete successfully and the blocked cache is rebuilt without SQL parse
     /// errors, even when the dependency graph is complex (parent-child chains,
     /// cross-blocking, multiple epic parents).
@@ -32341,7 +32334,7 @@ mod tests {
         );
     }
 
-    /// Regression test for beads_rust-m06q: closing a blocker and then
+    /// Regression test for beads-m06q: closing a blocker and then
     /// immediately updating the newly-unblocked dependent must not trigger a
     /// UNIQUE constraint violation in blocked_issues_cache.
     #[test]
@@ -32403,7 +32396,7 @@ mod tests {
         );
     }
 
-    /// Extended regression for beads_rust-m06q: multiple blockers closed in
+    /// Extended regression for beads-m06q: multiple blockers closed in
     /// sequence with interleaved claims must not produce duplicate cache rows.
     #[test]
     fn test_multiple_close_claim_cycles_no_unique_violation() {

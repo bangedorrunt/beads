@@ -3,24 +3,24 @@
 //! The snapshot intentionally masks volatile timestamps while preserving the
 //! row shape, event sequence, content hash, and JSONL field layout.
 
-use beads_rust::franken_sync::Connection;
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::{IssueUpdate, SqliteStorage};
+use beads::model::{Issue, IssueType, Priority, Status};
+use beads::storage::Connection;
+use beads::storage::SqliteValue;
+use beads::storage::{IssueUpdate, SqliteStorage};
 use chrono::{TimeZone, Utc};
-use fsqlite_types::SqliteValue;
 use insta::assert_snapshot;
 use serde_json::Value;
 use std::fmt::Write;
 use tempfile::TempDir;
 
-fn value_text(row: &fsqlite::Row, idx: usize) -> String {
+fn value_text(row: &beads::storage::Row, idx: usize) -> String {
     row.get(idx)
         .and_then(SqliteValue::as_text)
         .unwrap_or("")
         .to_string()
 }
 
-fn value_i64(row: &fsqlite::Row, idx: usize) -> i64 {
+fn value_i64(row: &beads::storage::Row, idx: usize) -> i64 {
     row.get(idx).and_then(SqliteValue::as_integer).unwrap_or(0)
 }
 
@@ -180,7 +180,7 @@ fn golden_create_update_close_sqlite_rows_and_jsonl() {
     push_events_snapshot(&mut snapshot, &conn);
 
     let mut jsonl = Vec::new();
-    beads_rust::sync::export_to_writer(&storage, &mut jsonl).expect("export JSONL");
+    beads::sync::export_to_writer(&storage, &mut jsonl).expect("export JSONL");
     writeln!(snapshot, "jsonl:").unwrap();
     snapshot.push_str(&normalized_jsonl(&jsonl));
 

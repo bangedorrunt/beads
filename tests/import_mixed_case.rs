@@ -4,10 +4,10 @@
 //! strings ("In_Progress", "BUG", "INPROGRESS") to canonical enum
 //! values, and that content hashes remain stable after round-trip.
 
-use beads_rust::model::{IssueType, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl};
-use beads_rust::util::ContentHashable;
+use beads::model::{IssueType, Status};
+use beads::storage::SqliteStorage;
+use beads::sync::{ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl};
+use beads::util::ContentHashable;
 use std::fs;
 use tempfile::TempDir;
 

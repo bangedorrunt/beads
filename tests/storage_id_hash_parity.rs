@@ -11,11 +11,11 @@
 
 use chrono::{TimeZone, Utc};
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::util::id::{
+use beads::model::{Issue, IssueType, Priority, Status};
+use beads::util::id::{
     IdConfig, IdGenerator, compute_id_hash, generate_id_seed, is_valid_id_format, parse_id,
 };
-use beads_rust::util::{ContentHashable, content_hash, content_hash_from_parts};
+use beads::util::{ContentHashable, content_hash, content_hash_from_parts};
 
 // =============================================================================
 // ID GENERATION FIXTURES
@@ -246,8 +246,8 @@ fn id_parsing_fixtures() {
     assert_eq!(hyphen.hash, "abc123");
 
     // Project-style prefix (common in real usage)
-    let project = parse_id("beads_rust-3ea7").unwrap();
-    assert_eq!(project.prefix, "beads_rust");
+    let project = parse_id("beads-3ea7").unwrap();
+    assert_eq!(project.prefix, "beads");
     assert_eq!(project.hash, "3ea7");
 
     // Invalid IDs should fail
@@ -830,7 +830,7 @@ fn prefix_change_id_generation() {
 /// Test prefix validation in parsing.
 #[test]
 fn prefix_validation_parsing() {
-    use beads_rust::util::id::validate_prefix;
+    use beads::util::id::validate_prefix;
 
     // Matching prefix
     assert!(validate_prefix("bd-abc123", "bd", &[]).is_ok());
@@ -842,6 +842,6 @@ fn prefix_validation_parsing() {
     let err = validate_prefix("wrong-abc123", "bd", &[]).unwrap_err();
     assert!(matches!(
         err,
-        beads_rust::error::BeadsError::PrefixMismatch { .. }
+        beads::error::BeadsError::PrefixMismatch { .. }
     ));
 }

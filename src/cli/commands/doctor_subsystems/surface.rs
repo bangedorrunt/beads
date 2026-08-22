@@ -196,7 +196,7 @@ Contract version: **br.doctor.contract.v1**
 
 `br doctor` is a diagnose-and-(optionally)-repair surface designed for AI
 agents. Every disk write under `--repair` flows through a single
-[`mutate()`](https://docs.rs/beads_rust) chokepoint that records a verbatim
+[`mutate()`](https://docs.rs/beads) chokepoint that records a verbatim
 backup, an `actions.jsonl` audit line, and an `undo.sh` fallback before
 touching any byte of state.
 
@@ -1011,7 +1011,7 @@ fn restore_one(
 /// All snapshots inside ONE record are replayed inside ONE transaction
 /// so the restore is atomic across tables.
 fn restore_db_exec(repo_root: &Path, record: &StoredActionRecord, target: PathBuf) -> UndoStep {
-    use crate::franken_sync::Connection;
+    use crate::storage::Connection;
 
     if record.db_snapshots.is_empty() {
         return UndoStep {
@@ -1145,7 +1145,7 @@ fn validate_db_snapshot_envelopes(
 }
 
 fn replay_db_snapshot_envelopes(
-    conn: &crate::franken_sync::Connection,
+    conn: &crate::storage::Connection,
     envelopes: &[DbSnapshotEnvelope],
 ) -> std::result::Result<(), String> {
     for env in envelopes {
@@ -1156,7 +1156,7 @@ fn replay_db_snapshot_envelopes(
 }
 
 fn delete_db_snapshot_region(
-    conn: &crate::franken_sync::Connection,
+    conn: &crate::storage::Connection,
     env: &DbSnapshotEnvelope,
 ) -> std::result::Result<(), String> {
     let predicate = env.predicate.as_deref().unwrap_or("").trim();
@@ -1172,10 +1172,10 @@ fn delete_db_snapshot_region(
 }
 
 fn insert_db_snapshot_rows(
-    conn: &crate::franken_sync::Connection,
+    conn: &crate::storage::Connection,
     env: &DbSnapshotEnvelope,
 ) -> std::result::Result<(), String> {
-    use fsqlite_types::value::SqliteValue;
+    use crate::storage::SqliteValue;
 
     if env.rows.is_empty() {
         return Ok(());
@@ -1205,7 +1205,7 @@ fn insert_db_snapshot_rows(
 }
 
 fn finish_db_replay(
-    conn: crate::franken_sync::Connection,
+    conn: crate::storage::Connection,
     record: &StoredActionRecord,
     replay_result: std::result::Result<(), String>,
 ) -> UndoStep {
@@ -1342,8 +1342,8 @@ fn workspace_relative_path(repo_root: &Path, rel: &str) -> std::result::Result<P
 /// Mirrors the inverse of `mutate.rs::sqlite_value_to_json`.
 fn json_to_sqlite_value(
     val: &serde_json::Value,
-) -> std::result::Result<fsqlite_types::value::SqliteValue, String> {
-    use fsqlite_types::value::SqliteValue;
+) -> std::result::Result<crate::storage::SqliteValue, String> {
+    use crate::storage::SqliteValue;
     match val {
         serde_json::Value::Null => Ok(SqliteValue::Null),
         serde_json::Value::Bool(b) => Ok(SqliteValue::Integer(i64::from(*b))),
@@ -1356,12 +1356,12 @@ fn json_to_sqlite_value(
                 Err(format!("non-finite number {n}"))
             }
         }
-        serde_json::Value::String(s) => Ok(SqliteValue::Text(s.clone().into())),
+        serde_json::Value::String(s) => Ok(SqliteValue::Text(s.clone())),
         serde_json::Value::Object(map) => {
             // {"$blob_hex": "..."} encoding from the snapshot writer.
             if let Some(serde_json::Value::String(hex)) = map.get("$blob_hex") {
                 let bytes = decode_hex(hex).map_err(|e| format!("blob hex decode: {e}"))?;
-                return Ok(SqliteValue::Blob(bytes.into()));
+                return Ok(SqliteValue::Blob(bytes));
             }
             Err(format!("unsupported object shape in snapshot: {map:?}"))
         }

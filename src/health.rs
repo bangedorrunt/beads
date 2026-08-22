@@ -84,7 +84,7 @@ pub enum AnomalyClass {
     /// information to enumerate which ids live on which side. Both
     /// stores can have equal cardinality while still disagreeing on
     /// which specific issues exist — the count-only check passes in
-    /// that case, the set check does not. See beads_rust#286.
+    /// that case, the set check does not. See beads#286.
     DbJsonlIdSetMismatch {
         only_db_count: usize,
         only_jsonl_count: usize,

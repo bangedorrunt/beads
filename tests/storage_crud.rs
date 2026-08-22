@@ -6,8 +6,8 @@
 
 mod common;
 
-use beads_rust::model::{Comment, DependencyType, EventType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::{IssueUpdate, SqliteStorage};
+use beads::model::{Comment, DependencyType, EventType, Issue, IssueType, Priority, Status};
+use beads::storage::{IssueUpdate, SqliteStorage};
 use chrono::{Duration, Utc};
 use common::{fixtures, test_db, test_db_with_dir};
 
@@ -654,7 +654,7 @@ fn deleted_issues_excluded_from_list() {
         .delete_issue(&issue2.id, "deleter", "removed", None)
         .unwrap();
 
-    let filters = beads_rust::storage::ListFilters::default();
+    let filters = beads::storage::ListFilters::default();
     let listed = storage.list_issues(&filters).unwrap();
 
     let ids: Vec<_> = listed.iter().map(|i| i.id.clone()).collect();
@@ -740,7 +740,7 @@ fn failed_create_does_not_persist() {
 
     // Only one issue should exist
     let all_issues = storage
-        .list_issues(&beads_rust::storage::ListFilters::default())
+        .list_issues(&beads::storage::ListFilters::default())
         .unwrap();
     assert_eq!(all_issues.len(), 1);
 }

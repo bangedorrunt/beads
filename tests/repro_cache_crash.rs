@@ -1,7 +1,7 @@
 mod common;
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
+use beads::model::{Issue, IssueType, Priority, Status};
+use beads::storage::SqliteStorage;
 use chrono::Utc;
 use common::cli::{BrWorkspace, extract_json_payload, run_br};
 use std::fs;
@@ -65,7 +65,7 @@ fn make_issue(id: &str, title: &str) -> Issue {
 }
 
 // ----------------------------------------------------------------------------
-// beads_rust-uelt: 2026-05-09 audit-driven rewrite
+// beads-uelt: 2026-05-09 audit-driven rewrite
 //
 // The original test (`test_rebuild_blocked_cache_crash_with_multiple_parents`)
 // was written for an API that allowed multiple parent-child edges per issue.
@@ -82,7 +82,7 @@ fn make_issue(id: &str, title: &str) -> Issue {
 //   2. test_rebuild_blocked_cache_after_parent_clear
 //   3. test_dep_add_second_parent_returns_validation_error_with_clear_message
 //
-// Fixture IDs migrated from `bd-` to `br-` per beads_rust-6plg sibling work.
+// Fixture IDs migrated from `bd-` to `br-` per beads-6plg sibling work.
 // ----------------------------------------------------------------------------
 
 /// uelt #1: child A has parent B; replace parent with C; rebuild blocked cache;

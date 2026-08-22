@@ -1,5 +1,5 @@
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
+use beads::model::{Issue, IssueType, Priority, Status};
+use beads::storage::SqliteStorage;
 use chrono::Utc;
 
 fn create_issue(id: &str, title: &str, issue_type: IssueType) -> Issue {

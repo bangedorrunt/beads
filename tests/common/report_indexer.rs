@@ -3,7 +3,7 @@
 //! Generates human-friendly HTML/Markdown reports from test artifacts for faster triage.
 //! Summarizes per-suite results, durations, failures, and artifact paths.
 //!
-//! Task: beads_rust-x7on
+//! Task: beads-x7on
 
 #![allow(clippy::cast_precision_loss)] // Expected for percentage calculations
 #![allow(clippy::format_push_string)] // Clearer than write! for string building

@@ -107,7 +107,7 @@ fn write_snapshot_files(workspace: &BrWorkspace) -> (String, String) {
                 "holder": "AmberLion",
                 "path_pattern": "src/cli/commands/coordination.rs",
                 "exclusive": true,
-                "reason": "beads_rust-sc6u fixture for bd-stale",
+                "reason": "beads-sc6u fixture for bd-stale",
                 "expires_ts": "2099-01-01T01:00:00Z",
                 "released_ts": null,
                 "thread_id": "bd-stale"

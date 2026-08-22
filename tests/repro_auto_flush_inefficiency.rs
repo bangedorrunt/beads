@@ -1,8 +1,8 @@
 mod common;
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{auto_flush, compute_jsonl_hash, read_issues_from_jsonl};
+use beads::model::{Issue, IssueType, Priority, Status};
+use beads::storage::SqliteStorage;
+use beads::sync::{auto_flush, compute_jsonl_hash, read_issues_from_jsonl};
 use chrono::Utc;
 use common::cli::{BrWorkspace, parse_created_id, run_br};
 use std::collections::{BTreeMap, BTreeSet};
@@ -51,7 +51,7 @@ fn test_auto_flush_optimizes_no_content_change() {
     // NOTE: This relies on the fact that we haven't exported the intermediate state.
 
     // Change title
-    let update_change = beads_rust::storage::IssueUpdate {
+    let update_change = beads::storage::IssueUpdate {
         title: Some("Changed Title".to_string()),
         ..Default::default()
     };
@@ -60,7 +60,7 @@ fn test_auto_flush_optimizes_no_content_change() {
         .unwrap();
 
     // Revert title
-    let update_revert = beads_rust::storage::IssueUpdate {
+    let update_revert = beads::storage::IssueUpdate {
         title: Some("Test Issue".to_string()),
         ..Default::default()
     };
@@ -162,7 +162,7 @@ fn test_auto_flush_preserves_unrelated_existing_jsonl_lines() {
     storage
         .update_issue(
             "bd-1",
-            &beads_rust::storage::IssueUpdate {
+            &beads::storage::IssueUpdate {
                 title: Some("Updated".to_string()),
                 ..Default::default()
             },
@@ -173,7 +173,7 @@ fn test_auto_flush_preserves_unrelated_existing_jsonl_lines() {
     let result = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
     assert!(result.flushed);
 
-    let issues = beads_rust::sync::read_issues_from_jsonl(&jsonl_path).unwrap();
+    let issues = beads::sync::read_issues_from_jsonl(&jsonl_path).unwrap();
     let ids = issues
         .iter()
         .map(|issue| issue.id.as_str())
@@ -241,7 +241,7 @@ fn test_auto_flush_keeps_jsonl_id_sorted_after_creates() {
     storage
         .update_issue(
             "bd-r48",
-            &beads_rust::storage::IssueUpdate {
+            &beads::storage::IssueUpdate {
                 title: Some("Renamed".to_string()),
                 ..Default::default()
             },

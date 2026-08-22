@@ -813,7 +813,7 @@ mod tests {
     fn test_build_filters_status_all_matches_every_status() {
         init_logging();
         // `--status all` must never silently parse as the custom status
-        // literal `Custom("all")` and match nothing (beads_rust-6ilv).
+        // literal `Custom("all")` and match nothing (beads-6ilv).
         for value in ["all", "ALL", " All "] {
             let args = cli::ListArgs {
                 status: vec![value.to_string()],

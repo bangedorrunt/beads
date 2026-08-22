@@ -6,8 +6,8 @@
 
 mod common;
 
-use beads_rust::model::{DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
+use beads::model::{DependencyType, Issue, IssueType, Priority, Status};
+use beads::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 #[allow(unused_imports)]
 use common::ordering::{
     assert_contains_exactly_one, assert_hybrid_ordered, assert_no_duplicate_ids,

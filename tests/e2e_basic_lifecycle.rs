@@ -1,19 +1,19 @@
 mod common;
 
+use beads::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
 #[cfg(target_os = "linux")]
-use beads_rust::franken_sync::Connection;
-use beads_rust::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
+use beads::storage::Connection;
+use beads::storage::SqliteStorage;
 #[cfg(target_os = "linux")]
-use beads_rust::sync::{blocking_jsonl_family_write_lock_with_timeout, blocking_write_lock};
+use beads::storage::SqliteValue;
+#[cfg(target_os = "linux")]
+use beads::sync::{blocking_jsonl_family_write_lock_with_timeout, blocking_write_lock};
 use chrono::Utc;
 use common::cli::{
     BrRun, BrWorkspace, extract_json_payload, parse_json_value, parse_list_issues, run_br,
     run_br_smoke_at_root_with_env,
 };
 use common::isolated_workspace_failure_fixture;
-#[cfg(target_os = "linux")]
-use fsqlite_types::SqliteValue;
 use serde_json::Value;
 #[cfg(target_os = "linux")]
 use sha2::{Digest, Sha256};
@@ -330,7 +330,7 @@ fn e2e_list_and_count_status_all_matches_every_status() {
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    // `--status all` must return every issue (beads_rust-6ilv: it used to
+    // `--status all` must return every issue (beads-6ilv: it used to
     // parse as the literal custom status "all" and silently match nothing).
     let list = run_br(
         &workspace,
@@ -404,7 +404,7 @@ fn run_sync_merge_with_exhausted_publication_names(
     clear_br_env_for_std_command(&mut cmd);
     cmd.env("BR_HISTORY_MIN_INTERVAL_SECS", "0");
     cmd.env("NO_COLOR", "1");
-    cmd.env("RUST_LOG", "beads_rust=debug");
+    cmd.env("RUST_LOG", "beads=debug");
     cmd.env("RUST_BACKTRACE", "1");
     cmd.env("HOME", &workspace.root);
     cmd.stdout(Stdio::piped());
@@ -738,7 +738,7 @@ fn json_stdout_write_failure_exits_with_io_error() {
     cmd.args(["list", "--json", "--no-auto-import", "--no-auto-flush"]);
     clear_br_env_for_std_command(&mut cmd);
     cmd.env("NO_COLOR", "1");
-    cmd.env("RUST_LOG", "beads_rust=debug");
+    cmd.env("RUST_LOG", "beads=debug");
     cmd.env("RUST_BACKTRACE", "1");
     cmd.env("HOME", &workspace.root);
     cmd.stdout(Stdio::from(dev_full));
@@ -1530,8 +1530,7 @@ fn e2e_sync_merge_resume_reuses_receipt_tombstone_cutoff() {
         .expect("seed boundary tombstone");
 
     let mut base_bytes = Vec::new();
-    beads_rust::sync::export_to_writer(&storage, &mut base_bytes)
-        .expect("export canonical merge base");
+    beads::sync::export_to_writer(&storage, &mut base_bytes).expect("export canonical merge base");
     drop(storage);
     fs::write(&base_path, &base_bytes).expect("write merge base");
 
@@ -1648,7 +1647,7 @@ fn e2e_sync_merge_resume_reuses_receipt_tombstone_cutoff() {
     );
 
     let mut receipt_reviewed_bytes = Vec::new();
-    beads_rust::sync::export_to_writer(&storage, &mut receipt_reviewed_bytes)
+    beads::sync::export_to_writer(&storage, &mut receipt_reviewed_bytes)
         .expect("reconstruct receipt-reviewed bytes from committed database");
     drop(storage);
     assert_eq!(
@@ -1665,7 +1664,7 @@ fn e2e_sync_merge_resume_reuses_receipt_tombstone_cutoff() {
     );
     let reviewed_digest = Sha256::digest(&receipt_reviewed_bytes);
     assert_eq!(
-        beads_rust::util::hex_encode(&reviewed_digest),
+        beads::util::hex_encode(&reviewed_digest),
         committed_receipt["jsonl_after_raw_sha256"]
             .as_str()
             .expect("receipt raw hash"),

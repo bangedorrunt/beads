@@ -368,7 +368,7 @@ where
     cmd.current_dir(cwd);
     cmd.args(args);
     cmd.env("NO_COLOR", "1");
-    cmd.env("RUST_LOG", "beads_rust=debug");
+    cmd.env("RUST_LOG", "beads=debug");
     cmd.env("RUST_BACKTRACE", "1");
     cmd.env("HOME", cwd);
 

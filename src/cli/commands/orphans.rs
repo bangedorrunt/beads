@@ -123,7 +123,7 @@ fn execute_inner(
     beads_dir: &Path,
     preloaded_storage_ctx: Option<&config::OpenStorageResult>,
 ) -> Result<()> {
-    // beads_rust-750p: ordinary orphans scans must auto-import a newer JSONL
+    // beads-750p: ordinary orphans scans must auto-import a newer JSONL
     // before scanning issue state, so JSONL-only closures (e.g. from `git
     // pull`) are reflected in the orphan list. An explicit read-only fast
     // open (`--no-auto-import --no-auto-flush`) instead preserves that

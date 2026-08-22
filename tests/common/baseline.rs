@@ -18,7 +18,7 @@
 //! ```ignore
 //! let config = RegressionConfig::from_env();
 //! let baselines = BaselineStore::load_or_default(&config.baseline_file);
-//! let result = baselines.check_regression("list", "beads_rust", &comparison, &config);
+//! let result = baselines.check_regression("list", "beads", &comparison, &config);
 //! println!("{}", result);
 //! ```
 
@@ -611,7 +611,7 @@ mod tests {
 
     #[test]
     fn test_regression_check_no_baseline() {
-        let result = RegressionResult::no_baseline("list", "beads_rust", 0.5, None);
+        let result = RegressionResult::no_baseline("list", "beads", 0.5, None);
         assert!(!result.is_regression);
         assert_eq!(result.status, RegressionStatus::Ok);
         assert!(result.baseline_ratio.is_none());
@@ -630,7 +630,7 @@ mod tests {
         };
 
         // Current is 0.4 (better than baseline 0.5)
-        let result = RegressionResult::check("list", "beads_rust", 0.4, None, &baseline, &config);
+        let result = RegressionResult::check("list", "beads", 0.4, None, &baseline, &config);
         assert!(!result.is_regression);
         assert_eq!(result.status, RegressionStatus::Ok);
         assert!(result.reason.contains("faster"));
@@ -649,7 +649,7 @@ mod tests {
         };
 
         // Current is 0.55 (10% worse than baseline 0.5, within 20% threshold)
-        let result = RegressionResult::check("list", "beads_rust", 0.55, None, &baseline, &config);
+        let result = RegressionResult::check("list", "beads", 0.55, None, &baseline, &config);
         assert!(!result.is_regression);
         assert_eq!(result.status, RegressionStatus::Ok);
     }
@@ -667,7 +667,7 @@ mod tests {
         };
 
         // Current is 0.7 (40% worse than baseline 0.5, exceeds 20% threshold)
-        let result = RegressionResult::check("list", "beads_rust", 0.7, None, &baseline, &config);
+        let result = RegressionResult::check("list", "beads", 0.7, None, &baseline, &config);
         assert!(result.is_regression);
         assert_eq!(result.status, RegressionStatus::Regression);
     }

@@ -1,8 +1,7 @@
 //! Database schema definitions and migration logic.
 
-use crate::franken_sync::Connection;
+use crate::storage::{Connection, Row, SqliteValue};
 use chrono::Utc;
-use fsqlite_types::SqliteValue;
 
 use crate::error::{BeadsError, Result};
 use crate::model::{IssueType, Priority, Status};
@@ -799,7 +798,7 @@ fn connection_user_version(conn: &Connection) -> Result<u32> {
     Ok(row
         .get(0)
         .and_then(|v| match v {
-            fsqlite_types::value::SqliteValue::Integer(n) => u32::try_from(*n).ok(),
+            SqliteValue::Integer(n) => u32::try_from(*n).ok(),
             _ => None,
         })
         .unwrap_or(0))
@@ -992,7 +991,7 @@ pub fn run_migrations_atomic(conn: &Connection, from: u32, target_version: u32) 
     let current = row
         .get(0)
         .and_then(|v| match v {
-            fsqlite_types::value::SqliteValue::Integer(n) => u32::try_from(*n).ok(),
+            SqliteValue::Integer(n) => u32::try_from(*n).ok(),
             _ => None,
         })
         .unwrap_or(0);
@@ -1010,7 +1009,7 @@ pub fn run_migrations_atomic(conn: &Connection, from: u32, target_version: u32) 
         .query_row("PRAGMA user_version")?
         .get(0)
         .and_then(|v| match v {
-            fsqlite_types::value::SqliteValue::Integer(n) => u32::try_from(*n).ok(),
+            SqliteValue::Integer(n) => u32::try_from(*n).ok(),
             _ => None,
         })
         .unwrap_or(0);
@@ -1134,7 +1133,7 @@ const ISSUE_COLUMNS: &[(&str, &str)] = &[
     // Appended at the end so SQLite's ALTER TABLE ADD COLUMN on existing DBs
     // produces the same final column order as a fresh SCHEMA_SQL build.
     ("source_repo_path", "TEXT"),
-    // beads_rust#297: inherited governing instructions, JSON-stored.
+    // beads#297: inherited governing instructions, JSON-stored.
     // Append-at-end keeps EXPECTED_ISSUE_COLUMN_ORDER aligned for fresh
     // and migrated databases.
     ("agent_context", "TEXT"),
@@ -2001,7 +2000,7 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
     // here can create duplicate column definitions on some engines.
 
     // v10: Ensure source_repo_path column is present on the issues table
-    // (beads_rust#289) for migration paths that call `run_migrations` directly
+    // (beads#289) for migration paths that call `run_migrations` directly
     // and therefore skip `run_pre_schema_migrations`/`ensure_columns`. Without
     // this guard, a direct v9 -> v10 migration could stamp user_version=10 with
     // the column still missing, and the next open would fast-path past schema
@@ -2019,12 +2018,12 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         && !column_exists(conn, "issues", "source_repo_path")
     {
         tracing::info!(
-            "Migrating database to schema version 10 (source_repo_path on issues - beads_rust#289)"
+            "Migrating database to schema version 10 (source_repo_path on issues - beads#289)"
         );
         conn.execute("ALTER TABLE issues ADD COLUMN source_repo_path TEXT")?;
     }
 
-    // Migration v10 -> v11 (beads_rust#297): add `agent_context TEXT` to
+    // Migration v10 -> v11 (beads#297): add `agent_context TEXT` to
     // `issues` for inherited governing instructions emitted on
     // `br update --status in_progress` / `--claim` and `br show`.
     // Pure additive — existing rows get NULL and existing consumers ignore
@@ -2037,21 +2036,19 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         && !column_exists(conn, "issues", "agent_context")
     {
         tracing::info!(
-            "Migrating database to schema version 11 (agent_context on issues - beads_rust#297)"
+            "Migrating database to schema version 11 (agent_context on issues - beads#297)"
         );
         conn.execute("ALTER TABLE issues ADD COLUMN agent_context TEXT")?;
     }
 
-    // Migration v11 -> v12 (beads_rust#319): add the `gate_results` table for
+    // Migration v11 -> v12 (beads#319): add the `gate_results` table for
     // workflow gate engine (#312, layer 2). Pure additive — a new table, no
     // existing-row rewrite. Idempotent via CREATE TABLE IF NOT EXISTS, so it
     // is safe to run on every open regardless of `user_version`. The canonical
     // DDL also lives in SCHEMA_SQL for fresh databases; re-asserting here keeps
     // upgraded databases in lock-step.
     if user_version < 12 {
-        tracing::info!(
-            "Migrating database to schema version 12 (gate_results table - beads_rust#319)"
-        );
+        tracing::info!("Migrating database to schema version 12 (gate_results table - beads#319)");
         execute_batch(
             conn,
             r"
@@ -2071,7 +2068,7 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         )?;
     }
 
-    // Migration v12 -> v13 (beads_rust#312, Layer 3 capture-only): add Tier 1
+    // Migration v12 -> v13 (beads#312, Layer 3 capture-only): add Tier 1
     // attribution columns (`agent_name`, `harness`, `model`) to the `events`
     // table so create/update/status-mutating commands can record self-reported
     // agent identity as an audit trail. Pure additive, nullable columns — no
@@ -2080,7 +2077,7 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
     // skips columns that already exist, mirroring the v10/v11 ADD COLUMN guards.
     if user_version < 13 && table_exists(conn, "events") {
         tracing::info!(
-            "Migrating database to schema version 13 (events attribution columns - beads_rust#312)"
+            "Migrating database to schema version 13 (events attribution columns - beads#312)"
         );
         ensure_columns(conn, "events", EVENT_COLUMNS)?;
     }
@@ -2630,17 +2627,17 @@ fn rebuild_content_hashes_for_current_format(conn: &Connection) -> Result<usize>
     }
 }
 
-fn row_text(row: &fsqlite::Row, index: usize) -> Option<String> {
+fn row_text(row: &Row, index: usize) -> Option<String> {
     row.get(index)
         .and_then(SqliteValue::as_text)
         .map(str::to_string)
 }
 
-fn row_optional_text(row: &fsqlite::Row, index: usize) -> Option<String> {
+fn row_optional_text(row: &Row, index: usize) -> Option<String> {
     row_text(row, index).filter(|value| !value.is_empty())
 }
 
-fn row_bool(row: &fsqlite::Row, index: usize) -> bool {
+fn row_bool(row: &Row, index: usize) -> bool {
     row.get(index).is_some_and(|value| {
         value.as_integer().map_or_else(
             || value.as_text().is_some_and(|text| text != "0"),
@@ -2653,7 +2650,7 @@ fn row_bool(row: &fsqlite::Row, index: usize) -> bool {
 mod tests {
     use super::*;
     use crate::error::BeadsError;
-    use crate::franken_sync::Connection;
+    use crate::storage::Connection;
     use std::collections::HashSet;
     use tempfile::TempDir;
 
@@ -3466,7 +3463,7 @@ mod tests {
         }
     }
 
-    /// Regression for beads_rust#290: legacy DBs that pre-date the
+    /// Regression for beads#290: legacy DBs that pre-date the
     /// `marked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` definition
     /// kept `dirty_issues.marked_at` as a plain NOT NULL column with no
     /// default. The v7 migration's `INSERT INTO dirty_issues (issue_id)`

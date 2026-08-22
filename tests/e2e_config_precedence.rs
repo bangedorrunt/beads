@@ -2,7 +2,7 @@ use std::fs;
 
 mod common;
 
-use beads_rust::storage::SqliteStorage;
+use beads::storage::SqliteStorage;
 use common::cli::{BrWorkspace, run_br, run_br_with_env};
 
 #[test]

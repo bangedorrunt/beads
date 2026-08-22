@@ -1,6 +1,6 @@
 //! Fuzz and edge-case tests for JSONL corruption and path traversal.
 //!
-//! These tests implement beads_rust-0v1.3.4:
+//! These tests implement beads-0v1.3.4:
 //! - Malformed JSONL is rejected safely
 //! - Path traversal attempts are blocked
 //! - Conflict markers are detected and rejected
@@ -17,7 +17,7 @@
 
 mod common;
 
-use beads_rust::storage::SqliteStorage;
+use beads::storage::SqliteStorage;
 use common::cli::{BrWorkspace, run_br};
 use serde_json::Value;
 use std::fs;

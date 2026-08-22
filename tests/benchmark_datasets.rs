@@ -1,7 +1,7 @@
 //! Real Dataset Benchmarks: br (Rust) vs bd (Go) Performance on Real Data
 //!
 //! This module benchmarks both implementations on actual beads datasets from
-//! real projects (beads_rust, beads_viewer, coding_agent_session_search, brenner_bot).
+//! real projects (beads, beads_viewer, coding_agent_session_search, brenner_bot).
 //!
 //! Run with: cargo test benchmark_dataset --release -- --nocapture --ignored
 //!
@@ -1228,7 +1228,7 @@ fn benchmark_dataset_full() {
     }
 }
 
-/// Quick benchmark on beads_rust only for CI
+/// Quick benchmark on beads only for CI
 #[test]
 fn benchmark_dataset_quick() {
     init_test_logging();
@@ -1245,7 +1245,7 @@ fn benchmark_dataset_quick() {
         }
         QuickBenchmarkReadiness::MissingDataset => {
             eprintln!(
-                "Skipping benchmark_dataset_quick: beads_rust dataset not available \
+                "Skipping benchmark_dataset_quick: beads dataset not available \
                  (no untracked .beads/beads.db in this checkout)"
             );
             return;
@@ -1259,7 +1259,7 @@ fn benchmark_dataset_quick() {
         timed_runs: 3,
     };
 
-    // Just benchmark beads_rust as a quick sanity check
+    // Just benchmark beads as a quick sanity check
     let result = benchmark_dataset(KnownDataset::BeadsRust, &config);
     assert!(result.is_some(), "BeadsRust benchmark should succeed");
 

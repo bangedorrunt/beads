@@ -12,7 +12,7 @@
 //! - Structural parity checking (status, priority, deps, labels, counts)
 //!
 //! Related beads:
-//! - beads_rust-4vzm: Conformance harness: mutating workflows (normalized)
+//! - beads-4vzm: Conformance harness: mutating workflows (normalized)
 
 mod common;
 

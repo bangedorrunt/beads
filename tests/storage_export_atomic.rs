@@ -9,7 +9,7 @@
 //! - Export content is valid JSONL on every line
 //! - Successive exports are idempotent (same content → same hash)
 //!
-//! Related bead: beads_rust-3hls
+//! Related bead: beads-3hls
 
 #![allow(
     clippy::too_many_lines,
@@ -19,9 +19,9 @@
 
 mod common;
 
-use beads_rust::model::Issue;
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{ExportConfig, export_to_jsonl};
+use beads::model::Issue;
+use beads::storage::SqliteStorage;
+use beads::sync::{ExportConfig, export_to_jsonl};
 use sha2::{Digest, Sha256};
 use std::fs;
 #[cfg(unix)]
@@ -74,7 +74,7 @@ fn setup_beads_dir(temp: &TempDir) -> std::path::PathBuf {
 
 fn compute_file_hash(path: &Path) -> String {
     let content = fs::read(path).unwrap();
-    beads_rust::util::hex_encode(&Sha256::digest(&content))
+    beads::util::hex_encode(&Sha256::digest(&content))
 }
 
 fn default_config(beads_dir: &Path) -> ExportConfig {

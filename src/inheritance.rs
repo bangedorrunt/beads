@@ -1,4 +1,4 @@
-//! Inherited agent context (beads_rust#297).
+//! Inherited agent context (beads#297).
 //!
 //! When a descendant bead is shown or transitioned into `in_progress`
 //! (via `br update --status in_progress` or `--claim`), the bead's

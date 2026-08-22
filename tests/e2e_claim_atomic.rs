@@ -1,7 +1,7 @@
 //! Atomic claim guard tests — verifies TOCTOU-safe claiming via IMMEDIATE transactions.
 
-use beads_rust::model::{Priority, Status};
-use beads_rust::storage::{IssueUpdate, SqliteStorage};
+use beads::model::{Priority, Status};
+use beads::storage::{IssueUpdate, SqliteStorage};
 use chrono::{TimeZone, Utc};
 use std::path::Path;
 use std::sync::{Arc, Barrier};
@@ -10,12 +10,12 @@ use std::thread;
 /// Helper to create a minimal issue for testing.
 fn seed_issue(storage: &mut SqliteStorage, id: &str, assignee: Option<&str>) {
     let t = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-    let issue = beads_rust::model::Issue {
+    let issue = beads::model::Issue {
         id: id.to_string(),
         title: format!("Test issue {id}"),
         status: Status::Open,
         priority: Priority(2),
-        issue_type: beads_rust::model::IssueType::Task,
+        issue_type: beads::model::IssueType::Task,
         created_at: t,
         updated_at: t,
         assignee: assignee.map(str::to_string),

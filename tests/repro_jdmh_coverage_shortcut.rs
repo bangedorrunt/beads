@@ -1,4 +1,4 @@
-//! Regression: `beads_rust-jdmh` — `sync --status` and the `--import-only`
+//! Regression: `beads-jdmh` — `sync --status` and the `--import-only`
 //! stored-hash shortcut asserted health without verifying the DB actually
 //! covers the JSONL issue set.
 //!
@@ -15,8 +15,8 @@
 mod common;
 
 use assert_cmd::Command;
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{METADATA_JSONL_CONTENT_HASH, compute_jsonl_hash};
+use beads::storage::SqliteStorage;
+use beads::sync::{METADATA_JSONL_CONTENT_HASH, compute_jsonl_hash};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;

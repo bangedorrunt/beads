@@ -6,9 +6,9 @@
 
 mod common;
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use beads::model::{Issue, IssueType, Priority, Status};
+use beads::storage::SqliteStorage;
+use beads::sync::{
     ExportConfig, ImportConfig, OrphanMode, compute_jsonl_hash, compute_staleness,
     ensure_no_conflict_markers, export_to_jsonl, import_from_jsonl, preflight_import,
 };

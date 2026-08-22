@@ -54,7 +54,7 @@
 //! verbatim `beads.db.pre-migrate` snapshot, `PRAGMA user_version ==
 //! from` precondition gate, then
 //! [`crate::storage::schema::run_migrations_atomic`]. Failure restores
-//! the DB file from the snapshot. `beads_rust-folg` closed when the
+//! the DB file from the snapshot. `beads-folg` closed when the
 //! public hook landed.
 //!
 //! ## Crate-internal-only
@@ -198,7 +198,7 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         affected_predicate: Option<String>,
     },
-    /// Run a versioned schema migration end-to-end. WP4 + `beads_rust-folg`:
+    /// Run a versioned schema migration end-to-end. WP4 + `beads-folg`:
     /// the chokepoint snapshots `beads.db.pre-migrate` verbatim, verifies
     /// `PRAGMA user_version == from`, then drives
     /// [`crate::storage::schema::run_migrations_atomic`]. Failure restores
@@ -210,7 +210,7 @@ pub enum Op {
 }
 
 /// Lightweight stand-in for a SQL bind value. WP4 wires this through
-/// the chokepoint by converting to [`fsqlite_types::value::SqliteValue`]
+/// the chokepoint by converting to [`crate::storage::SqliteValue`]
 /// at the SQL boundary; callers can therefore stay independent of the
 /// fsqlite type stack.
 #[derive(Debug, Clone, Serialize)]
@@ -232,14 +232,14 @@ impl DbArg {
     /// Convert into the `fsqlite` type system. Used at the chokepoint's
     /// SQL boundary; not exposed publicly because it leaks the
     /// underlying engine type.
-    fn to_sqlite_value(&self) -> fsqlite_types::value::SqliteValue {
-        use fsqlite_types::value::SqliteValue;
+    fn to_sqlite_value(&self) -> crate::storage::SqliteValue {
+        use crate::storage::SqliteValue;
         match self {
             Self::Null => SqliteValue::Null,
             Self::I64(n) => SqliteValue::Integer(*n),
             Self::F64(f) => SqliteValue::Float(*f),
             Self::Text(s) => SqliteValue::Text(s.as_str().into()),
-            Self::Blob(b) => SqliteValue::Blob(std::sync::Arc::from(b.as_slice())),
+            Self::Blob(b) => SqliteValue::Blob(b.clone()),
         }
     }
 }
@@ -701,7 +701,7 @@ pub fn mutate(ctx: &MutateContext, path: &Path, op: Op) -> Result<ActionResult, 
 ///    before any SQL runs.
 ///    For `DbMigrate`: snapshot the entire DB file verbatim to
 ///    `<run-dir>/backups/db/beads.db.pre-migrate`.
-/// 3. Open a writable `crate::franken_sync::Connection`, run the work inside
+/// 3. Open a writable `crate::storage::Connection`, run the work inside
 ///    the migration hook. On any error, restore from the pre-migrate
 ///    snapshot and return without writing an `actions.jsonl` line.
 /// 4. Compute `after_hash` from the post-COMMIT DB file SHA-256.
@@ -746,7 +746,7 @@ fn mutate_db(
             let predicate_for_snapshot = affected_predicate.clone();
             let tables_for_snapshot = affected_tables.clone();
             let sql_owned = sql.clone();
-            let args_owned: Vec<fsqlite_types::value::SqliteValue> =
+            let args_owned: Vec<crate::storage::SqliteValue> =
                 args.iter().map(DbArg::to_sqlite_value).collect();
 
             run_db_exec(
@@ -874,7 +874,7 @@ fn sha256_file_hex_prefixed(path: &Path) -> std::io::Result<String> {
 ///
 /// ## Single-connection contract (round-2 fresh-eyes fix)
 ///
-/// The snapshot SELECTs run on the **same** `crate::franken_sync::Connection` and
+/// The snapshot SELECTs run on the **same** `crate::storage::Connection` and
 /// **inside** the same `BEGIN IMMEDIATE` transaction as the mutating
 /// SQL. This closes the dual-connection race window that existed when
 /// snapshotting used a separate connection: an external writer could
@@ -891,11 +891,11 @@ fn run_db_exec(
     db_path: &Path,
     backups_db: &Path,
     sql: &str,
-    args: &[fsqlite_types::value::SqliteValue],
+    args: &[crate::storage::SqliteValue],
     affected_tables: &[String],
     affected_predicate: Option<&str>,
 ) -> Result<Vec<DbSnapshotArtifact>, BeadsError> {
-    use crate::franken_sync::Connection;
+    use crate::storage::Connection;
 
     // Pre-flight identifier validation so we fail fast before opening
     // the DB connection. Mirrors the protection on the SELECT path.
@@ -989,7 +989,7 @@ pub(crate) struct DbSnapshotArtifact {
 }
 
 fn snapshot_db_table(
-    conn: &crate::franken_sync::Connection,
+    conn: &crate::storage::Connection,
     backups_db: &Path,
     table: &str,
     affected_predicate: Option<&str>,
@@ -1002,7 +1002,7 @@ fn snapshot_db_table(
     };
 
     let column_names = collect_column_names(conn, table)?;
-    let stmt = conn.prepare(&select_sql)?;
+    let mut stmt = conn.prepare(&select_sql)?;
     let rows = stmt.query()?;
     let mut json_rows: Vec<serde_json::Value> = Vec::with_capacity(rows.len());
     for row in &rows {
@@ -1011,7 +1011,7 @@ fn snapshot_db_table(
             let val = row
                 .get(i)
                 .cloned()
-                .unwrap_or(fsqlite_types::value::SqliteValue::Null);
+                .unwrap_or(crate::storage::SqliteValue::Null);
             obj.insert(name.clone(), sqlite_value_to_json(&val));
         }
         json_rows.push(serde_json::Value::Object(obj));
@@ -1110,10 +1110,10 @@ fn validate_identifier(ident: &str) -> Result<(), BeadsError> {
 /// Resolve the column-name vector for `table` via `PRAGMA
 /// table_info`. Returns an error if the table does not exist.
 fn collect_column_names(
-    conn: &crate::franken_sync::Connection,
+    conn: &crate::storage::Connection,
     table: &str,
 ) -> Result<Vec<String>, BeadsError> {
-    use fsqlite_types::value::SqliteValue;
+    use crate::storage::SqliteValue;
     validate_identifier(table)?;
     let rows = conn.query(&format!("PRAGMA table_info({table})"))?;
     if rows.is_empty() {
@@ -1125,7 +1125,7 @@ fn collect_column_names(
     // PRAGMA table_info: cid, name, type, notnull, dflt_value, pk
     for row in &rows {
         if let Some(SqliteValue::Text(name)) = row.get(1) {
-            names.push(name.to_string());
+            names.push(name.clone());
         } else {
             return Err(BeadsError::internal(format!(
                 "doctor: PRAGMA table_info({table}) returned non-text column name"
@@ -1138,14 +1138,14 @@ fn collect_column_names(
 /// JSON-encode a single `SqliteValue`. NULL→null, Integer→number,
 /// Float→number, Text→string, Blob→`{"$blob_b64": "..."}` to keep the
 /// JSON faithful.
-fn sqlite_value_to_json(val: &fsqlite_types::value::SqliteValue) -> serde_json::Value {
-    use fsqlite_types::value::SqliteValue;
+fn sqlite_value_to_json(val: &crate::storage::SqliteValue) -> serde_json::Value {
+    use crate::storage::SqliteValue;
     match val {
         SqliteValue::Null => serde_json::Value::Null,
         SqliteValue::Integer(n) => serde_json::Value::from(*n),
         SqliteValue::Float(f) => serde_json::Number::from_f64(*f)
             .map_or(serde_json::Value::Null, serde_json::Value::Number),
-        SqliteValue::Text(s) => serde_json::Value::String(s.to_string()),
+        SqliteValue::Text(s) => serde_json::Value::String(s.clone()),
         SqliteValue::Blob(b) => {
             // Hex-encode rather than base64 so the snapshot has no
             // additional dependency on a base64 crate. Restore is via
@@ -1175,8 +1175,8 @@ fn run_db_migrate(
     from: u32,
     to: u32,
 ) -> Result<Option<()>, BeadsError> {
-    use crate::franken_sync::Connection;
-    use fsqlite_types::value::SqliteValue;
+    use crate::storage::Connection;
+    use crate::storage::SqliteValue;
 
     if to <= from {
         return Err(BeadsError::internal(format!(
@@ -1508,7 +1508,7 @@ where
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::franken_sync::Connection;
+    use crate::storage::Connection;
     use std::io::BufRead;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
@@ -2025,7 +2025,7 @@ mod tests {
         let rows = conn.query("SELECT COUNT(*) FROM sample_widgets").unwrap();
         assert_eq!(
             rows[0].get(0).and_then(|v| match v {
-                fsqlite_types::value::SqliteValue::Integer(n) => Some(*n),
+                crate::storage::SqliteValue::Integer(n) => Some(*n),
                 _ => None,
             }),
             Some(1),
@@ -2079,7 +2079,7 @@ mod tests {
         let conn = Connection::open(db.to_string_lossy().into_owned()).unwrap();
         let row = conn.query_row("PRAGMA user_version").unwrap();
         let v = match row.get(0) {
-            Some(fsqlite_types::value::SqliteValue::Integer(n)) => *n,
+            Some(crate::storage::SqliteValue::Integer(n)) => *n,
             _ => -1,
         };
         assert_eq!(v, 5, "user_version must not change after refusal");
@@ -2154,7 +2154,7 @@ mod tests {
             let conn = Connection::open(db.to_string_lossy().into_owned()).unwrap();
             let row = conn.query_row("PRAGMA user_version").unwrap();
             let v = match row.get(0) {
-                Some(fsqlite_types::value::SqliteValue::Integer(n)) => u32::try_from(*n).unwrap(),
+                Some(crate::storage::SqliteValue::Integer(n)) => u32::try_from(*n).unwrap(),
                 _ => 0,
             };
             assert_eq!(
@@ -2177,7 +2177,7 @@ mod tests {
 
         // actions.jsonl records the op and the version transition; the
         // `migration_logic_not_yet_routed` warning is GONE now that
-        // beads_rust-folg has wired schema.rs through the chokepoint.
+        // beads-folg has wired schema.rs through the chokepoint.
         let log = fs::read_to_string(&actions_path).unwrap();
         let line = log.lines().next().expect("expected one action line");
         let v: serde_json::Value = serde_json::from_str(line).unwrap();

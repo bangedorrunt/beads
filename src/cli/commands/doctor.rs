@@ -10,11 +10,13 @@ use crate::cli::commands::doctor_subsystems::refuse_gates::{self, GateOutcome};
 use crate::cli::commands::doctor_subsystems::run_dir::{self, RunDir};
 use crate::config;
 use crate::error::{BeadsError, Result};
-use crate::franken_sync::{Connection, Row};
 use crate::health::{AnomalyClass, ReliabilityAuditRecord, WorkspaceClassification};
 use crate::output::OutputContext;
 use crate::storage::SqliteStorage;
+use crate::storage::SqliteValue;
+use crate::storage::db::DbError;
 use crate::storage::sqlite::PendingSyncMergeInspection;
+use crate::storage::{Connection, Row};
 #[cfg(test)]
 use crate::sync::METADATA_SYNC_MERGE_PENDING_LEGACY;
 use crate::sync::{
@@ -28,8 +30,6 @@ use crate::sync::{
     validate_sync_path, validate_sync_path_with_external,
 };
 use chrono::{NaiveDate, Utc};
-use fsqlite_error::FrankenError;
-use fsqlite_types::SqliteValue;
 use rich_rust::prelude::*;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -443,7 +443,7 @@ const JSONL_REBUILD_REPEAT_ERROR_PREFIX: &str =
     "Cannot repair: previous JSONL rebuild verification failed";
 /// Emitted when `--dry-run` declines the rebuild. Nothing failed and neither
 /// store is implicated, so it is surfaced verbatim rather than being wrapped in
-/// a repair-failure message (`beads_rust-krdi`).
+/// a repair-failure message (`beads-krdi`).
 const JSONL_REBUILD_DRY_RUN_SKIP_MESSAGE: &str =
     "doctor --repair --dry-run skipped JSONL rebuild; no database writes were applied";
 const JSONL_REBUILD_VERIFICATION_FAILED_SUFFIX: &str = ".verification-failed.json";
@@ -629,7 +629,7 @@ fn emit_concurrency_lost(beads_dir: &Path, err: &BeadsError, ctx: &OutputContext
     }
 }
 
-/// Round-5 fresh-eyes follow-through (`beads_rust-73ux`): emit the
+/// Round-5 fresh-eyes follow-through (`beads-73ux`): emit the
 /// structured refusal envelope when a WP1 [`refuse_gates`] gate refuses
 /// to allow `--repair` to proceed.
 ///
@@ -1418,7 +1418,7 @@ fn append_doctor_check_anomalies(check: &CheckResult, anomalies: &mut Vec<Anomal
         "sync.metadata" => {
             append_sync_metadata_anomalies(check, anomalies);
         }
-        // `beads_rust-a53h`: the *aged* check is what identifies stale
+        // `beads-a53h`: the *aged* check is what identifies stale
         // artifacts. Its sibling `db.recovery_artifacts` is information-only
         // and lists every preserved backup regardless of age (see
         // `check_recovery_artifacts_aged`'s doc comment), so driving the
@@ -1871,7 +1871,7 @@ fn is_pending_export_only_sync_metadata(check: &CheckResult) -> bool {
 ///   backups past the TTL.
 /// - `rust_log` (WARN): a nag about the *caller's* `RUST_LOG` environment,
 ///   unrelated to database health.
-/// - `sync.metadata` (WARN), pending-export direction only (`beads_rust-a53h`):
+/// - `sync.metadata` (WARN), pending-export direction only (`beads-a53h`):
 ///   the rebuild reconstructs the database from JSONL and then restores any
 ///   unflushed tombstones that the JSONL does not carry, so the fresh database
 ///   is legitimately ahead of the export with no `last_export_time` recorded.
@@ -1896,7 +1896,7 @@ fn is_benign_post_rebuild_finding(check: &CheckResult) -> bool {
         // A database rebuild cannot change $PATH, so treating the warning as
         // a verification failure made `--repair` exit 7 on dual-install
         // hosts even when the rebuilt database was fully healthy
-        // (beads_rust-ozdh). The warning still surfaces in the report.
+        // (beads-ozdh). The warning still surfaces in the report.
         "db.recovery_artifacts" | "rust_log" | "br_path_dupes" => true,
         "sync.metadata" => is_pending_export_only_sync_metadata(check),
         _ => false,
@@ -2573,7 +2573,7 @@ const RECOVERY_AGED_TTL_DAYS: u64 = 30;
 /// `truncated`, and the reported byte count becomes a lower bound.
 const FOREIGN_DEBRIS_SCAN_LIMIT: usize = 4096;
 
-/// `beads_rust-jwrr`: recovery copies left inside `.beads/` by something other
+/// `beads-jwrr`: recovery copies left inside `.beads/` by something other
 /// than br.
 ///
 /// br writes exactly two directories — `.br_recovery/` and `.br_history/` —
@@ -2831,8 +2831,8 @@ fn push_inspection_error(
 
 fn build_issue_write_probe_check(
     issue_id: &str,
-    update_result: std::result::Result<usize, FrankenError>,
-    rollback_result: std::result::Result<usize, FrankenError>,
+    update_result: std::result::Result<usize, DbError>,
+    rollback_result: std::result::Result<usize, DbError>,
 ) -> CheckResult {
     let mut details = serde_json::json!({ "issue_id": issue_id });
 
@@ -3154,7 +3154,7 @@ fn jsonl_rebuild_root_error(err: &BeadsError) -> &BeadsError {
 /// or locked — not because anything is wrong with the JSONL.
 ///
 /// The engine surfaces this as `unable to open database file`
-/// ([`FrankenError::CannotOpen`]) when a second `br` process, an editor plugin,
+/// ([`DbError::CannotOpen`]) when a second `br` process, an editor plugin,
 /// or an MCP `br serve` session already holds the workspace. Matching on the
 /// variants rather than on message text keeps this stable across engine
 /// wording changes.
@@ -3163,10 +3163,10 @@ fn is_database_unavailable_failure(err: &BeadsError) -> bool {
         BeadsError::DatabaseLocked { .. } => true,
         BeadsError::Database(inner) => matches!(
             inner,
-            FrankenError::CannotOpen { .. }
-                | FrankenError::DatabaseLocked { .. }
-                | FrankenError::LockFailed { .. }
-                | FrankenError::Busy
+            DbError::CannotOpen { .. }
+                | DbError::DatabaseLocked { .. }
+                | DbError::LockFailed { .. }
+                | DbError::Busy
         ),
         _ => false,
     }
@@ -3185,7 +3185,7 @@ fn is_jsonl_content_failure(err: &BeadsError) -> bool {
 
 /// Build the operator-facing message for a failed JSONL rebuild.
 ///
-/// `beads_rust-krdi`: this was a single residual bucket that appended "The
+/// `beads-krdi`: this was a single residual bucket that appended "The
 /// JSONL file may be corrupt. Try manually editing the JSONL to fix invalid
 /// records." to every error that was not an authority refusal — and that
 /// bucket is structurally the set of failures which are *not* JSONL
@@ -4565,7 +4565,7 @@ fn fix_db_bloat_via_vacuum_if_warned_under_write_authority(
             true
         }
         Err(err) => {
-            // `beads_rust-ymik`: log unconditionally. `ctx.warning` is
+            // `beads-ymik`: log unconditionally. `ctx.warning` is
             // suppressed in JSON mode, so a VACUUM the operator explicitly
             // opted into with `--unsafe-auto-fix` could fail and leave no
             // trace anywhere in the payload — after which the repair reports
@@ -4588,7 +4588,7 @@ fn fix_db_bloat_via_vacuum_if_warned_under_write_authority(
 /// [`fix_db_bloat_via_vacuum_if_warned`] under the chokepoint's
 /// legacy-mutation wrapper so the DB family is snapshotted for undo.
 ///
-/// `beads_rust-ote7`: this used to run an in-place `VACUUM`, which the engine
+/// `beads-ote7`: this used to run an in-place `VACUUM`, which the engine
 /// refuses on any database whose header page count disagrees with its file
 /// length — "database image header page count 360 does not match file length
 /// page count 4968" — i.e. exactly the bloated databases this fixer exists to
@@ -6749,7 +6749,7 @@ fn check_dirty_bitmap_divergence(conn: &Connection, checks: &mut Vec<CheckResult
             .iter()
             .filter_map(|row| row.values().first().cloned())
             .filter_map(|v| match v {
-                SqliteValue::Text(s) => Some(s.to_string()),
+                SqliteValue::Text(s) => Some(s.clone()),
                 _ => None,
             })
             .collect(),
@@ -6868,7 +6868,7 @@ fn check_comments_orphans(conn: &Connection, checks: &mut Vec<CheckResult>) {
             .iter()
             .filter_map(|row| row.values().first().cloned())
             .filter_map(|v| match v {
-                SqliteValue::Text(s) => Some(s.to_string()),
+                SqliteValue::Text(s) => Some(s.clone()),
                 _ => None,
             })
             .collect(),
@@ -6983,7 +6983,7 @@ fn check_labels_orphans(conn: &Connection, checks: &mut Vec<CheckResult>) {
             .iter()
             .filter_map(|row| row.values().first().cloned())
             .filter_map(|v| match v {
-                SqliteValue::Text(s) => Some(s.to_string()),
+                SqliteValue::Text(s) => Some(s.clone()),
                 _ => None,
             })
             .collect(),
@@ -7216,7 +7216,7 @@ fn push_recoverable_anomalies_check(checks: &mut Vec<CheckResult>, findings: &[S
     }
 }
 
-/// beads_rust-m3mi: flag closed beads whose `close_reason` matches a
+/// beads-m3mi: flag closed beads whose `close_reason` matches a
 /// well-known audit-suspect pattern (e.g. "Forced close due to cycle"),
 /// unless the bead carries an `audit-historical-cycle-close-YYYY-MM-DD` label
 /// which acts as the explicit triage escape hatch.
@@ -7818,7 +7818,7 @@ fn check_issue_write_probe(conn: &Connection, checks: &mut Vec<CheckResult>) {
             .get(0)
             .and_then(SqliteValue::as_text)
             .map(ToString::to_string),
-        Err(FrankenError::QueryReturnedNoRows) => None,
+        Err(DbError::QueryReturnedNoRows) => None,
         Err(err) => {
             push_check(
                 checks,
@@ -8013,7 +8013,7 @@ fn integrity_check_messages(rows: &[Vec<SqliteValue>]) -> Vec<String> {
 }
 
 /// Classify a stuck merge artifact filename for the `jsonl.merge_artifacts`
-/// details payload (beads_rust#344/#328): `.left.jsonl` / `.right.jsonl`
+/// details payload (beads#344/#328): `.left.jsonl` / `.right.jsonl`
 /// variants are the local/remote halves of an interrupted `br sync --merge`;
 /// any other `.base.jsonl` variant (the canonical `beads.base.jsonl` anchor
 /// is excluded before this runs) is a stale base snapshot.
@@ -8051,7 +8051,7 @@ fn check_merge_artifacts(
             || name.contains(".left.jsonl")
             || name.contains(".right.jsonl")
         {
-            // beads_rust#344/#328: carry per-file classification plus a
+            // beads#344/#328: carry per-file classification plus a
             // cheap conflict-marker scan so agents can distinguish a
             // benign leftover from a half-merged file without opening it.
             let path = entry.path();
@@ -8306,7 +8306,7 @@ fn check_root_gitignore(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
 ///
 /// This is the FM `fm-routes_external-routes-jsonl-corrupt` (P1) detector
 /// in the pass-1 archaeology — unblocks the `routes_external` subsystem's
-/// fixture suite (`beads_rust-gl1m`).
+/// fixture suite (`beads-gl1m`).
 ///
 /// Detect-only. The doctor never auto-rewrites `routes.jsonl` because the
 /// operator's intent for cross-project routing is unknowable from the
@@ -8775,7 +8775,7 @@ fn rust_log_default_volume() -> RustLogVolume {
 ///   on perfectly fine setups.
 /// - No probe-write (a probe write would technically be a side
 ///   effect; the spec calls for a future `Op::ProbeOnly` chokepoint
-///   channel we have not yet shipped — `beads_rust-probe-only` is the
+///   channel we have not yet shipped — `beads-probe-only` is the
 ///   tracking work).
 #[cfg(unix)]
 fn check_permissions_beads_dir(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
@@ -9239,7 +9239,7 @@ fn push_metadata_json_drift(
 
 /// Detector: the running `br` binary's compile-time
 /// `CARGO_PKG_VERSION` matches the `version` field of any `Cargo.toml`
-/// whose `[package].name == "beads_rust"` reachable upward from
+/// whose `[package].name == "beads"` reachable upward from
 /// `beads_dir`. Pass-1 archaeology filed
 /// `fm-external_artifacts-binary-version-mismatch` (P1): an operator
 /// rebuilds br in-tree but a stale older binary remains on PATH,
@@ -9248,7 +9248,7 @@ fn push_metadata_json_drift(
 /// Detect-only and conservative. The doctor cannot replace its own
 /// running binary; that is `br upgrade`'s job. We only emit a warn
 /// when:
-///   1. A reachable `Cargo.toml` declares `name = "beads_rust"`.
+///   1. A reachable `Cargo.toml` declares `name = "beads"`.
 ///   2. Its `version` field parses as a valid semver.
 ///   3. The running binary's `CARGO_PKG_VERSION` parses as semver.
 ///   4. The tree-version is STRICTLY GREATER than the binary-version
@@ -9263,12 +9263,12 @@ fn push_metadata_json_drift(
 ///   detector / spec).
 /// - No GitHub-latest-release comparison (offline-by-default skill
 ///   policy; live network calls would be opt-in via `--online`).
-/// - If no `beads_rust` Cargo.toml is reachable, the detector emits
+/// - If no `beads` Cargo.toml is reachable, the detector emits
 ///   `ok` with `not_in_beads_rust_repo: true` — the common operator
 ///   case is running br outside its own source tree.
 ///
 /// Status mapping:
-/// - `ok` — versions match, OR no reachable beads_rust Cargo.toml,
+/// - `ok` — versions match, OR no reachable beads Cargo.toml,
 ///   OR either version is unparseable (silent — the operator's
 ///   tree may be using a non-semver tag).
 /// - `warn` — tree version > binary version. Surfaces both
@@ -9278,14 +9278,14 @@ fn check_binary_version_mismatch(beads_dir: &Path, checks: &mut Vec<CheckResult>
     let binary_version_str = env!("CARGO_PKG_VERSION");
 
     // Walk upward from beads_dir.parent() looking for a Cargo.toml
-    // whose [package].name == "beads_rust".
+    // whose [package].name == "beads".
     let Some(repo_root) = find_beads_rust_repo_root(beads_dir) else {
         push_check(
             checks,
             "binary_version",
             CheckStatus::Ok,
             Some(format!(
-                "Running br {binary_version_str}; no beads_rust Cargo.toml reachable from .beads/ — not flagging"
+                "Running br {binary_version_str}; no beads Cargo.toml reachable from .beads/ — not flagging"
             )),
             Some(serde_json::json!({
                 "binary_version": binary_version_str,
@@ -9303,7 +9303,7 @@ fn check_binary_version_mismatch(beads_dir: &Path, checks: &mut Vec<CheckResult>
             "binary_version",
             CheckStatus::Ok,
             Some(format!(
-                "Running br {binary_version_str}; beads_rust Cargo.toml at {} has no readable version",
+                "Running br {binary_version_str}; beads Cargo.toml at {} has no readable version",
                 cargo_toml_path.display(),
             )),
             Some(serde_json::json!({
@@ -9345,7 +9345,7 @@ fn check_binary_version_mismatch(beads_dir: &Path, checks: &mut Vec<CheckResult>
             "binary_version",
             CheckStatus::Warn,
             Some(format!(
-                "Running br {binary_version_str} but beads_rust Cargo.toml at {} declares {tree_version_str}. \
+                "Running br {binary_version_str} but beads Cargo.toml at {} declares {tree_version_str}. \
                  Rebuild + reinstall to pick up the newer tree.",
                 cargo_toml_path.display(),
             )),
@@ -9381,12 +9381,12 @@ fn check_binary_version_mismatch(beads_dir: &Path, checks: &mut Vec<CheckResult>
 
 /// Walk upward from `start` looking for the containing Rust package.
 /// Returns its root only when the nearest package-bearing `Cargo.toml`
-/// declares `[package].name == "beads_rust"`.
+/// declares `[package].name == "beads"`.
 ///
 /// A manifest for another package is a repository boundary, even when that
-/// package happens to live somewhere below a beads_rust checkout (for example,
+/// package happens to live somewhere below a beads checkout (for example,
 /// a test fixture rooted under `target/`). Continuing beyond that boundary can
-/// misidentify an unrelated workspace as beads_rust and emit a false version
+/// misidentify an unrelated workspace as beads and emit a false version
 /// mismatch warning. Workspace-only manifests have no package identity, so the
 /// search may continue past them. The walk is bounded at 32 levels to avoid
 /// pathological symlink loops.
@@ -9395,7 +9395,7 @@ fn find_beads_rust_repo_root(start: &Path) -> Option<PathBuf> {
     for _ in 0..32 {
         let candidate = current.join("Cargo.toml");
         if let Some(name) = read_cargo_toml_package_name(&candidate) {
-            return (name == "beads_rust").then_some(current);
+            return (name == "beads").then_some(current);
         }
         let parent = current.parent()?;
         if parent == current {
@@ -9504,7 +9504,7 @@ const DEFAULT_STALE_LOCK_THRESHOLD_SECS: u64 = 300;
 /// - `warn` — mtime in the future (clock skew), or mtime older than the
 ///   threshold AND the probe could not run.
 /// - `error` — the node is not a regular file (symlink, directory, fifo,
-///   device, socket): fail closed (beads_rust-5sej). Startup would follow
+///   device, socket): fail closed (beads-5sej). Startup would follow
 ///   a symlink here, so the shape itself is the defect. Classified from
 ///   lstat only; the target is never traversed and the node never moved.
 fn check_orphaned_write_lock(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
@@ -9515,7 +9515,7 @@ fn check_orphaned_write_lock(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
         return;
     };
 
-    // Fail closed on any non-regular node (beads_rust-5sej): startup's
+    // Fail closed on any non-regular node (beads-5sej): startup's
     // `OpenOptions` on the lock path follows a symlink, so a symlinked
     // `.write.lock` silently relocates mutual exclusion to the target
     // inode, and a directory/fifo/device node breaks acquisition
@@ -11014,7 +11014,7 @@ fn push_matching_count_id_delta_check(
 }
 
 // ============================================================================
-// SYNC SAFETY CHECKS (beads_rust-0v1.2.6)
+// SYNC SAFETY CHECKS (beads-0v1.2.6)
 // ============================================================================
 
 /// Check if the JSONL path is within the sync allowlist.
@@ -11343,7 +11343,7 @@ fn check_sync_metadata(
             );
         }
         (true, false) => {
-            // beads_rust#330: report the pending-import direction at the
+            // beads#330: report the pending-import direction at the
             // same advisory severity as the pending-export direction so
             // the two drift directions are consistent.
             //
@@ -11405,7 +11405,7 @@ fn check_sync_metadata(
     }
 }
 
-/// Recovery handler for `br doctor --repair-indexes` (beads_rust#288).
+/// Recovery handler for `br doctor --repair-indexes` (beads#288).
 ///
 /// Walks every user index attached to the `issues` table family and
 /// runs `REINDEX "<name>"` inside a single transaction with a verbatim
@@ -11710,7 +11710,7 @@ impl WalCheckpointStats {
     }
 }
 
-fn wal_checkpoint_truncate_complete(conn: &Connection) -> std::result::Result<bool, FrankenError> {
+fn wal_checkpoint_truncate_complete(conn: &Connection) -> std::result::Result<bool, DbError> {
     let rows = conn.query("PRAGMA wal_checkpoint(TRUNCATE)")?;
     let Some(row) = rows.first() else {
         return Ok(false);
@@ -12567,7 +12567,7 @@ fn inspect_existing_doctor_database(
         // Pass-5 cycle 36: orphan rows in dependencies (issue_id side only;
         // depends_on_id intentionally unguarded for cross-repo refs).
         check_dependencies_orphans(&conn, checks);
-        // beads_rust-m3mi: audit-suspect close_reasons (warn level)
+        // beads-m3mi: audit-suspect close_reasons (warn level)
         check_suspect_close_reasons(&conn, checks);
         // issue #311: flag issues whose status falls outside a strict
         // workflow.statuses set (no-op unless configured).
@@ -12672,7 +12672,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             checks,
         };
         print_report(&report, ctx)?;
-        // Phase 10 cold-prober finding (`beads_rust-s7nx`): missing
+        // Phase 10 cold-prober finding (`beads-s7nx`): missing
         // .beads/ is the canonical `no_input` (66) condition per the
         // documented exit-code dictionary. `br doctor health` already
         // returns 66 for this case; the flat `br doctor` path used to
@@ -12715,7 +12715,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         }
     };
 
-    // Round-3 fresh-eyes finding (`beads_rust-sexc`): every other mutating
+    // Round-3 fresh-eyes finding (`beads-sexc`): every other mutating
     // subcommand (`update`, `delete`, `close`, `dep`, `label`, …) routes its
     // writes through `acquire_routed_workspace_write_lock` so concurrent
     // processes cannot tear the on-disk DB family. `--repair` performs the
@@ -12762,7 +12762,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             }
             Some(Arc::clone(authority))
         } else {
-            // Phase 10 cold-prober finding (`beads_rust-mbpq` P0):
+            // Phase 10 cold-prober finding (`beads-mbpq` P0):
             // the documented contract is "try-lock or refuse with
             // exit 5 (concurrency_lost)" — NOT "block up to
             // --lock-timeout then refuse". Concurrency between two
@@ -12798,7 +12798,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         None
     };
 
-    // Round-5 fresh-eyes follow-through (`beads_rust-73ux`): the WP1
+    // Round-5 fresh-eyes follow-through (`beads-73ux`): the WP1
     // refuse-unsafe gates (schema-version-downgrade,
     // recovery-fingerprint-integrity) must run BEFORE any
     // run-dir creation, fixer dispatch, or `mutate()` call — they are
@@ -13902,9 +13902,9 @@ fn emit_flat_robot_triage(report: &DoctorReport) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::franken_sync::Connection;
     use crate::health::{AnomalyClass, WorkspaceHealth};
     use crate::model::{Issue, IssueType, Priority, Status};
+    use crate::storage::Connection;
     use crate::storage::SqliteStorage;
     use assert_cmd::Command as AssertCommand;
     use chrono::Utc;
@@ -18178,7 +18178,7 @@ mod tests {
         assert_eq!(ratio, Some(20));
     }
 
-    /// `beads_rust-jwrr`: `.beads/` accumulates manual backups from other tools
+    /// `beads-jwrr`: `.beads/` accumulates manual backups from other tools
     /// and ad-hoc agent sessions. br must surface them without claiming them as
     /// its own and without failing an otherwise healthy workspace.
     #[test]
@@ -18307,7 +18307,7 @@ mod tests {
         ));
     }
 
-    /// `beads_rust-ote7`: `vacuum_database` must compact a database that carries
+    /// `beads-ote7`: `vacuum_database` must compact a database that carries
     /// whole zero pages past its logical end — the exact shape `db_bloat` fires
     /// on. In-place `VACUUM` refuses those with "database image header page
     /// count N does not match file length page count M", and the refusal used
@@ -19483,7 +19483,7 @@ mod tests {
         }
     }
 
-    /// Drift gate (beads_rust-oow2): every `fm-` id the runtime fixer
+    /// Drift gate (beads-oow2): every `fm-` id the runtime fixer
     /// gates consult via `FixerFilter::allows` must be advertised in the
     /// capabilities envelope's `fixers[].filter_ids` — that field is the
     /// documented vocabulary for `--only`/`--skip`, and an unadvertised
@@ -19744,7 +19744,7 @@ mod tests {
 
     #[test]
     fn test_merge_artifacts_warn_carries_classification_and_recovery() {
-        // beads_rust#344/#328: the warn's details must classify each
+        // beads#344/#328: the warn's details must classify each
         // flagged artifact, scan it for conflict markers, and point at the
         // canonical JSONL plus the structured recovery actions.
         let temp = TempDir::new().unwrap();
@@ -21009,7 +21009,7 @@ mod tests {
         assert!(
             matches!(check.status, CheckStatus::Warn),
             "pending-import is an advisory Warn, matching the pending-export \
-             direction (beads_rust#330): {check:?}"
+             direction (beads#330): {check:?}"
         );
         assert_eq!(
             check.message.as_deref(),
@@ -21027,7 +21027,7 @@ mod tests {
 
     #[test]
     fn test_check_sync_metadata_empty_jsonl_pending_import_stays_ok() -> Result<()> {
-        // beads_rust#330 regression guard: a fresh `br init` leaves an
+        // beads#330 regression guard: a fresh `br init` leaves an
         // empty issues.jsonl whose mtime trails the DB, so `jsonl_newer`
         // reads true with nothing to import. That benign state must stay
         // Ok so `br doctor` keeps exiting 0 on a brand-new workspace.
@@ -21746,7 +21746,7 @@ mod tests {
         let check = build_issue_write_probe_check(
             "bd-probe",
             Ok(1),
-            Err(FrankenError::Internal("rollback failed".to_string())),
+            Err(DbError::Internal("rollback failed".to_string())),
         );
 
         assert!(matches!(check.status, CheckStatus::Error));
@@ -21786,7 +21786,7 @@ mod tests {
         let check = build_issue_write_probe_check(
             "bd-probe",
             Ok(0),
-            Err(FrankenError::Internal("rollback failed".to_string())),
+            Err(DbError::Internal("rollback failed".to_string())),
         );
 
         assert!(matches!(check.status, CheckStatus::Error));
@@ -21816,7 +21816,7 @@ mod tests {
     fn test_build_issue_write_probe_check_preserves_write_failure() {
         let check = build_issue_write_probe_check(
             "bd-probe",
-            Err(FrankenError::Internal("write failed".to_string())),
+            Err(DbError::Internal("write failed".to_string())),
             Ok(0),
         );
 
@@ -22033,11 +22033,11 @@ mod tests {
 
     #[test]
     fn locked_database_failure_does_not_blame_the_jsonl() {
-        // beads_rust-krdi: when another process holds the workspace the engine
+        // beads-krdi: when another process holds the workspace the engine
         // reports "unable to open database file". The old residual bucket told
         // the operator the export was corrupt and to hand-edit it — advice that
         // is both wrong and destructive to a healthy file.
-        let err = BeadsError::Database(FrankenError::CannotOpen {
+        let err = BeadsError::Database(DbError::CannotOpen {
             path: PathBuf::from("/tmp/ws/.beads/beads.db"),
         });
         assert_eq!(
@@ -22050,13 +22050,13 @@ mod tests {
 
         // The other ways the workspace can be held are classified the same way.
         for held in [
-            BeadsError::Database(FrankenError::DatabaseLocked {
+            BeadsError::Database(DbError::DatabaseLocked {
                 path: PathBuf::from("/tmp/ws/.beads/beads.db"),
             }),
-            BeadsError::Database(FrankenError::LockFailed {
+            BeadsError::Database(DbError::LockFailed {
                 detail: "F_SETLK contention beyond busy_timeout".to_string(),
             }),
-            BeadsError::Database(FrankenError::Busy),
+            BeadsError::Database(DbError::Busy),
         ] {
             assert!(
                 is_database_unavailable_failure(&held),
@@ -22129,7 +22129,7 @@ mod tests {
 
     #[test]
     fn dry_run_skip_is_reported_as_skipped_not_as_a_failure() {
-        // beads_rust-krdi: `--repair --dry-run` declined to write. Nothing
+        // beads-krdi: `--repair --dry-run` declined to write. Nothing
         // failed, so it must not be wrapped in a repair-failure message.
         let err = BeadsError::Config(JSONL_REBUILD_DRY_RUN_SKIP_MESSAGE.to_string());
         let outcome = jsonl_rebuild_failure_outcome(&err);
@@ -22703,7 +22703,7 @@ mod tests {
                 CheckResult {
                     name: "rust_log".to_string(),
                     status: CheckStatus::Warn,
-                    message: Some("RUST_LOG=beads_rust=debug is verbose".to_string()),
+                    message: Some("RUST_LOG=beads=debug is verbose".to_string()),
                     details: None,
                 },
                 CheckResult {
@@ -22803,7 +22803,7 @@ mod tests {
 
     #[test]
     fn jsonl_rebuild_verification_tolerates_pending_export_after_rebuild() {
-        // beads_rust-a53h: a rebuild restores unflushed tombstones that the
+        // beads-a53h: a rebuild restores unflushed tombstones that the
         // JSONL does not carry, so the fresh database is legitimately ahead of
         // the export with no last_export_time recorded. That is the repair
         // preserving local state, not a defect, and it must not make a
@@ -22934,7 +22934,7 @@ mod tests {
 
     #[test]
     fn fresh_recovery_backups_are_not_classified_as_stale() {
-        // beads_rust-a53h: `db.recovery_artifacts` is information-only and
+        // beads-a53h: `db.recovery_artifacts` is information-only and
         // lists every preserved backup regardless of age, including the one the
         // running repair just wrote. Only the TTL-based `.aged` sibling may
         // claim artifacts are stale.
@@ -23037,7 +23037,7 @@ mod tests {
     }
 
     // ========================================================================
-    // beads_rust-m3mi: audit.suspect_close_reasons check tests (added 2026-05-09)
+    // beads-m3mi: audit.suspect_close_reasons check tests (added 2026-05-09)
     // ========================================================================
 
     fn closed_issue_with_reason(id: &str, title: &str, reason: &str) -> Issue {
@@ -23806,8 +23806,8 @@ mod tests {
     fn rust_log_volume_classifies_per_module_directive_with_info_as_noisy() {
         // Per-module directives that ask for info/debug/trace must
         // still trip the warn — that's the real-world footgun (a
-        // developer leaves `beads_rust=info` set and forgets).
-        let v = rust_log_volume(Some("beads_rust=info"));
+        // developer leaves `beads=info` set and forgets).
+        let v = rust_log_volume(Some("beads=info"));
         match v {
             RustLogVolume::Noisy { reason } => assert_eq!(reason, "directive_info"),
             RustLogVolume::Quiet => panic!("expected Noisy, got {v:?}"),
@@ -23816,7 +23816,7 @@ mod tests {
 
     #[test]
     fn rust_log_volume_classifies_target_only_directive_as_noisy() {
-        let v = rust_log_volume(Some("beads_rust"));
+        let v = rust_log_volume(Some("beads"));
         match v {
             RustLogVolume::Noisy { reason } => assert_eq!(reason, "directive_target_only"),
             RustLogVolume::Quiet => panic!("expected Noisy, got {v:?}"),
@@ -23826,7 +23826,7 @@ mod tests {
     #[test]
     fn rust_log_volume_classifies_composite_with_one_noisy_directive_as_noisy() {
         // First directive is quiet, second is noisy → overall noisy.
-        let v = rust_log_volume(Some("warn,beads_rust=debug"));
+        let v = rust_log_volume(Some("warn,beads=debug"));
         match v {
             RustLogVolume::Noisy { reason } => assert_eq!(reason, "directive_debug"),
             RustLogVolume::Quiet => panic!("expected Noisy, got {v:?}"),
@@ -23835,7 +23835,7 @@ mod tests {
 
     #[test]
     fn rust_log_volume_classifies_composite_with_target_only_directive_as_noisy() {
-        let v = rust_log_volume(Some("error,beads_rust"));
+        let v = rust_log_volume(Some("error,beads"));
         match v {
             RustLogVolume::Noisy { reason } => assert_eq!(reason, "directive_target_only"),
             RustLogVolume::Quiet => panic!("expected Noisy, got {v:?}"),
@@ -23853,7 +23853,7 @@ mod tests {
 
     #[test]
     fn rust_log_volume_classifies_composite_all_quiet_as_quiet() {
-        let v = rust_log_volume(Some("error,fsqlite=warn,beads_rust=off"));
+        let v = rust_log_volume(Some("error,fsqlite=warn,beads=off"));
         assert_eq!(v, RustLogVolume::Quiet);
     }
 
@@ -24271,7 +24271,7 @@ mod tests {
     fn parse_cargo_toml_package_field_finds_version() {
         let body = r#"
 [package]
-name = "beads_rust"
+name = "beads"
 version = "0.2.6"
 edition = "2024"
 "#;
@@ -24281,7 +24281,7 @@ edition = "2024"
         );
         assert_eq!(
             parse_cargo_toml_package_field(body, "name").as_deref(),
-            Some("beads_rust")
+            Some("beads")
         );
     }
 
@@ -24289,7 +24289,7 @@ edition = "2024"
     fn parse_cargo_toml_package_field_ignores_other_sections() {
         let body = r#"
 [package]
-name = "beads_rust"
+name = "beads"
 version = "0.2.6"
 
 [dependencies]
@@ -24303,7 +24303,7 @@ name = "other"
         );
         assert_eq!(
             parse_cargo_toml_package_field(body, "name").as_deref(),
-            Some("beads_rust")
+            Some("beads")
         );
     }
 
@@ -24311,7 +24311,7 @@ name = "other"
     fn parse_cargo_toml_package_field_handles_inline_comments() {
         let body = r#"
 [package]
-name = "beads_rust"
+name = "beads"
 version = "0.2.6"  # release candidate
 "#;
         assert_eq!(
@@ -24324,7 +24324,7 @@ version = "0.2.6"  # release candidate
     fn parse_cargo_toml_package_field_returns_none_for_missing() {
         let body = r#"
 [package]
-name = "beads_rust"
+name = "beads"
 "#;
         assert!(parse_cargo_toml_package_field(body, "version").is_none());
     }
@@ -24332,7 +24332,7 @@ name = "beads_rust"
     #[test]
     fn find_beads_rust_repo_root_finds_self() {
         // The .beads_dir we pass is /tmp/<dir>/.beads where
-        // <dir>/Cargo.toml has name = "beads_rust".
+        // <dir>/Cargo.toml has name = "beads".
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -24340,7 +24340,7 @@ name = "beads_rust"
         fs::write(
             &cargo,
             r#"[package]
-name = "beads_rust"
+name = "beads"
 version = "0.99.0"
 edition = "2024"
 "#,
@@ -24353,14 +24353,14 @@ edition = "2024"
     #[test]
     fn find_beads_rust_repo_root_returns_none_for_other_repo() {
         let tmp = TempDir::new().unwrap();
-        // Model an unrelated package nested beneath a beads_rust checkout.
+        // Model an unrelated package nested beneath a beads checkout.
         // This is also what happens when TMPDIR points inside the checkout:
         // the nearest package manifest must stop the search before the outer
-        // beads_rust manifest can produce a false-positive match.
+        // beads manifest can produce a false-positive match.
         fs::write(
             tmp.path().join("Cargo.toml"),
             r#"[package]
-name = "beads_rust"
+name = "beads"
 version = "0.99.0"
 "#,
         )
@@ -24394,7 +24394,7 @@ version = "1.0.0"
         let check = find_check(&checks, "binary_version").expect("binary_version present");
         assert!(
             matches!(check.status, CheckStatus::Ok),
-            "no beads_rust Cargo.toml reachable should be Ok; got {:?}",
+            "no beads Cargo.toml reachable should be Ok; got {:?}",
             check.status
         );
     }
@@ -24409,7 +24409,7 @@ version = "1.0.0"
         fs::write(
             tmp.path().join("Cargo.toml"),
             r#"[package]
-name = "beads_rust"
+name = "beads"
 version = "99.99.99"
 edition = "2024"
 "#,
@@ -24444,7 +24444,7 @@ edition = "2024"
         fs::write(
             tmp.path().join("Cargo.toml"),
             r#"[package]
-name = "beads_rust"
+name = "beads"
 version = "0.0.1"
 edition = "2024"
 "#,
@@ -24470,7 +24470,7 @@ edition = "2024"
         fs::write(
             tmp.path().join("Cargo.toml"),
             r#"[package]
-name = "beads_rust"
+name = "beads"
 version = "2026-05-11-abc123"
 "#,
         )
@@ -24517,7 +24517,7 @@ version = "2026-05-11-abc123"
         );
     }
 
-    /// beads_rust-5sej: a symlinked lock node is the defect itself (startup
+    /// beads-5sej: a symlinked lock node is the defect itself (startup
     /// `OpenOptions` follows it), so doctor fails closed with a typed
     /// diagnostic instead of deferring to a detector that does not exist.
     #[test]
@@ -24552,7 +24552,7 @@ version = "2026-05-11-abc123"
         assert!(target.exists());
     }
 
-    /// beads_rust-5sej: a directory in the lock slot breaks acquisition
+    /// beads-5sej: a directory in the lock slot breaks acquisition
     /// outright and must fail closed with the same typed diagnostic.
     #[test]
     fn check_orphaned_write_lock_directory_fails_closed() {
@@ -24572,7 +24572,7 @@ version = "2026-05-11-abc123"
         assert!(beads_dir.join(".write.lock").is_dir());
     }
 
-    /// beads_rust-5sej: the permissions probe defers to the write_lock
+    /// beads-5sej: the permissions probe defers to the write_lock
     /// check for non-regular nodes instead of silently reporting Ok with
     /// no message.
     #[test]
@@ -24674,7 +24674,7 @@ version = "2026-05-11-abc123"
     }
 
     // -----------------------------------------------------------------
-    // id-set divergence detection (beads_rust#286)
+    // id-set divergence detection (beads#286)
     // -----------------------------------------------------------------
 
     /// Helper for the id-delta tests: insert a row into the `issues`
@@ -24743,7 +24743,7 @@ version = "2026-05-11-abc123"
     }
 
     // -----------------------------------------------------------------
-    // br doctor --repair-indexes (beads_rust#288)
+    // br doctor --repair-indexes (beads#288)
     // -----------------------------------------------------------------
 
     #[test]

@@ -1,7 +1,7 @@
 //! E2E tests for environment variable overrides and path handling.
 //!
 //! Tests `BEADS_DIR`, `BEADS_JSONL`, `BD_ACTOR`, and no-db mode interactions.
-//! Part of beads_rust-9ks6.
+//! Part of beads-9ks6.
 
 mod common;
 

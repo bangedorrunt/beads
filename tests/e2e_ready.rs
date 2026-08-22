@@ -1010,7 +1010,7 @@ fn ready_cli_priority_p_format() {
 }
 
 // ============================================================================
-// beads_rust-jsgu: invariant-based e2e ordering tests (added 2026-05-09)
+// beads-jsgu: invariant-based e2e ordering tests (added 2026-05-09)
 // Pairs with the unit-level rewrite in tests/storage_ready.rs::ready_sort_*
 // (those exercise the storage API directly; these exercise the full CLI).
 // ============================================================================

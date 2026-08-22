@@ -3,7 +3,7 @@
 //! Covers SYNC_SAFETY_INVARIANTS.md PC-1, PC-3, PC-RECOVERY, and the hard
 //! invariant NGI-3 (git-path rejection).
 //!
-//! Created 2026-05-09 for beads_rust-yyxo (audit-driven test cleanup).
+//! Created 2026-05-09 for beads-yyxo (audit-driven test cleanup).
 //!
 //! Property summary:
 //!   For ANY filename `f` and any path `p` constructed under the workspace,
@@ -19,9 +19,7 @@
 //!
 //! Note: this is a *test crate* — no production-code dependency on proptest.
 
-use beads_rust::sync::path::{
-    PathValidation, validate_sync_path, validate_sync_path_with_external,
-};
+use beads::sync::path::{PathValidation, validate_sync_path, validate_sync_path_with_external};
 use proptest::prelude::*;
 use std::path::PathBuf;
 use tempfile::TempDir;

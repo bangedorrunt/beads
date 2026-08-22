@@ -692,7 +692,7 @@ fn collect_single_graph(
     })
 }
 
-/// Which way `br graph <id>` walks the dependency edges (`beads_rust-mf72`).
+/// Which way `br graph <id>` walks the dependency edges (`beads-mf72`).
 ///
 /// The default is [`Self::Dependents`] — "what does closing this unblock?" —
 /// which is the triage question and a deliberate divergence from classic `bd`.
@@ -1680,7 +1680,7 @@ mod tests {
     #[test]
     fn test_graph_node_all_fields_present() {
         let node = GraphNode {
-            id: "beads_rust-abc123".to_string(),
+            id: "beads-abc123".to_string(),
             title: "Complex title with special chars: <>&".to_string(),
             status: "in_progress".to_string(),
             priority: 0,
@@ -1691,7 +1691,7 @@ mod tests {
 
         // Parse back to verify all fields
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["id"], "beads_rust-abc123");
+        assert_eq!(parsed["id"], "beads-abc123");
         assert_eq!(parsed["title"], "Complex title with special chars: <>&");
         assert_eq!(parsed["status"], "in_progress");
         assert_eq!(parsed["priority"], 0);
@@ -2547,7 +2547,7 @@ mod tests {
         );
     }
 
-    /// `beads_rust-mf72`: `--dependencies` walks the inverse of the default
+    /// `beads-mf72`: `--dependencies` walks the inverse of the default
     /// direction, so `br graph <blocked-issue> --dependencies` finally shows
     /// what is blocking it. Edges keep their canonical `(dependent,
     /// dependency)` orientation in both directions.

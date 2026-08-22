@@ -1,5 +1,5 @@
-use beads_rust::model::{DependencyType, Issue, IssueType};
-use beads_rust::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
+use beads::model::{DependencyType, Issue, IssueType};
+use beads::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 use chrono::Utc;
 
 #[test]

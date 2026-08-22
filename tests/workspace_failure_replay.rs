@@ -92,7 +92,7 @@ fn prepare_current_duplicate_config_rows(fixture: &FixtureWorkspace) {
     import_current_database(fixture, "duplicate_config_rows_current_schema_import");
 
     let db_path = fixture.beads_dir.join("beads.db");
-    let connection = beads_rust::franken_sync::Connection::open(db_path.display().to_string())
+    let connection = beads::storage::Connection::open(db_path.display().to_string())
         .expect("open current duplicate-config fixture database");
     connection
         .execute("DELETE FROM config WHERE key = 'issue_prefix'")
@@ -238,7 +238,7 @@ fn preserve_generated_artifact(fixture: &FixtureWorkspace, path: &Path) {
 }
 
 fn mark_database_needs_flush(db_path: &Path) {
-    let connection = beads_rust::franken_sync::Connection::open(db_path.display().to_string())
+    let connection = beads::storage::Connection::open(db_path.display().to_string())
         .expect("open current fixture database for DB-newer witness");
     connection
         .execute("DELETE FROM metadata WHERE key = 'needs_flush'")

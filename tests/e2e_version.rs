@@ -1,7 +1,7 @@
 //! E2E tests for the version command.
 //!
 //! Tests the `br version` command and its flags: --check, --short, --json.
-//! Part of beads_rust-1hof.
+//! Part of beads-1hof.
 
 mod common;
 

@@ -82,7 +82,7 @@ pub enum KnownDataset {
 impl KnownDataset {
     pub const fn name(self) -> &'static str {
         match self {
-            Self::BeadsRust => "beads_rust",
+            Self::BeadsRust => "beads",
             Self::BeadsViewer => "beads_viewer",
             Self::CodingAgentSessionSearch => "coding_agent_session_search",
             Self::BrennerBot => "brenner_bot",
@@ -730,7 +730,7 @@ fn hash_beads_directory(beads_dir: &Path) -> std::io::Result<String> {
         }
     }
 
-    Ok(beads_rust::util::hex_encode(&hasher.finalize())[..16].to_string())
+    Ok(beads::util::hex_encode(&hasher.finalize())[..16].to_string())
 }
 
 fn normalize_source_commit(value: &str) -> Option<String> {
@@ -792,7 +792,7 @@ fn get_git_commit(repo_path: &Path) -> Option<String> {
 }
 
 // =============================================================================
-// Dataset Override Support (beads_rust-b4nj)
+// Dataset Override Support (beads-b4nj)
 // =============================================================================
 
 /// Configuration for dataset override.
@@ -915,7 +915,7 @@ pub fn isolated_from_override(
 }
 
 // =============================================================================
-// Dataset Integrity Guard (beads_rust-b4nj)
+// Dataset Integrity Guard (beads-b4nj)
 // =============================================================================
 
 /// Integrity verification result.
@@ -1075,7 +1075,7 @@ impl DatasetIntegrityGuard {
 }
 
 // =============================================================================
-// Provenance Logging (beads_rust-b4nj)
+// Provenance Logging (beads-b4nj)
 // =============================================================================
 
 /// Full provenance information for a test run.
@@ -1217,14 +1217,14 @@ mod tests {
     fn isolated_beads_rust_or_skip(test_name: &str) -> Option<IsolatedDataset> {
         let registry = DatasetRegistry::new();
         if !registry.is_available(KnownDataset::BeadsRust) {
-            eprintln!("Skipping {test_name}: beads_rust dataset not available (no beads.db in CI)");
+            eprintln!("Skipping {test_name}: beads dataset not available (no beads.db in CI)");
             return None;
         }
 
         match IsolatedDataset::from_dataset(KnownDataset::BeadsRust) {
             Ok(isolated) => Some(isolated),
             Err(error) => {
-                eprintln!("Skipping {test_name}: failed to copy beads_rust dataset: {error}");
+                eprintln!("Skipping {test_name}: failed to copy beads dataset: {error}");
                 None
             }
         }
@@ -1233,7 +1233,7 @@ mod tests {
     #[test]
     fn test_registry_creation() {
         let registry = DatasetRegistry::new();
-        // beads_rust may not be available in CI (no beads.db)
+        // beads may not be available in CI (no beads.db)
         // Just verify the registry can be created
         let _ = registry.is_available(KnownDataset::BeadsRust);
     }
@@ -1249,7 +1249,7 @@ mod tests {
         assert!(isolated.beads_dir.join("beads.db").exists());
 
         // Verify metadata was captured
-        assert_eq!(isolated.metadata.name, "beads_rust");
+        assert_eq!(isolated.metadata.name, "beads");
         assert!(isolated.metadata.issue_count > 0);
         assert!(isolated.metadata.copy_duration.is_some());
     }
@@ -1266,7 +1266,7 @@ mod tests {
         assert!(!isolated.beads_dir.exists());
     }
 
-    /// Helper to check if `beads_rust` dataset is available (has `beads.db`)
+    /// Helper to check if `beads` dataset is available (has `beads.db`)
     fn beads_rust_available() -> bool {
         DatasetRegistry::new().is_available(KnownDataset::BeadsRust)
     }
@@ -1274,7 +1274,7 @@ mod tests {
     #[test]
     fn test_source_integrity_check() {
         if !beads_rust_available() {
-            eprintln!("Skipping test_source_integrity_check: beads_rust dataset not available");
+            eprintln!("Skipping test_source_integrity_check: beads dataset not available");
             return;
         }
 
@@ -1286,20 +1286,20 @@ mod tests {
     }
 
     // =========================================================================
-    // DatasetIntegrityGuard tests (beads_rust-b4nj)
+    // DatasetIntegrityGuard tests (beads-b4nj)
     // =========================================================================
 
     #[test]
     fn test_integrity_guard_creation() {
         if !beads_rust_available() {
-            eprintln!("Skipping test_integrity_guard_creation: beads_rust dataset not available");
+            eprintln!("Skipping test_integrity_guard_creation: beads dataset not available");
             return;
         }
 
         let guard =
             DatasetIntegrityGuard::new(KnownDataset::BeadsRust).expect("should create guard");
 
-        assert_eq!(guard.dataset_name(), "beads_rust");
+        assert_eq!(guard.dataset_name(), "beads");
         assert!(!guard.original_hash().is_empty());
         assert!(!guard.fully_verified()); // Not yet verified
     }
@@ -1307,9 +1307,7 @@ mod tests {
     #[test]
     fn test_integrity_guard_verify_before() {
         if !beads_rust_available() {
-            eprintln!(
-                "Skipping test_integrity_guard_verify_before: beads_rust dataset not available"
-            );
+            eprintln!("Skipping test_integrity_guard_verify_before: beads dataset not available");
             return;
         }
 
@@ -1324,9 +1322,7 @@ mod tests {
     #[test]
     fn test_integrity_guard_verify_after() {
         if !beads_rust_available() {
-            eprintln!(
-                "Skipping test_integrity_guard_verify_after: beads_rust dataset not available"
-            );
+            eprintln!("Skipping test_integrity_guard_verify_after: beads dataset not available");
             return;
         }
 
@@ -1347,7 +1343,7 @@ mod tests {
     #[test]
     fn test_integrity_guard_to_json() {
         if !beads_rust_available() {
-            eprintln!("Skipping test_integrity_guard_to_json: beads_rust dataset not available");
+            eprintln!("Skipping test_integrity_guard_to_json: beads dataset not available");
             return;
         }
 
@@ -1358,7 +1354,7 @@ mod tests {
         guard.verify_after();
 
         let json = guard.to_json();
-        assert_eq!(json["dataset_name"], "beads_rust");
+        assert_eq!(json["dataset_name"], "beads");
         assert_eq!(json["verified_before"], true);
         assert_eq!(json["verified_after"], true);
         assert!(json["original_hash"].is_string());
@@ -1380,7 +1376,7 @@ mod tests {
     }
 
     // =========================================================================
-    // DatasetOverride tests (beads_rust-b4nj)
+    // DatasetOverride tests (beads-b4nj)
     // =========================================================================
 
     #[test]
@@ -1402,14 +1398,14 @@ mod tests {
     #[test]
     fn test_isolated_from_override() {
         if !beads_rust_available() {
-            eprintln!("Skipping test_isolated_from_override: beads_rust dataset not available");
+            eprintln!("Skipping test_isolated_from_override: beads dataset not available");
             return;
         }
 
-        // Use beads_rust as the override source (we know it exists)
+        // Use beads as the override source (we know it exists)
         let override_cfg = DatasetOverride::new(
             KnownDataset::BeadsRust.source_path(),
-            "testing override with beads_rust",
+            "testing override with beads",
         )
         .with_name("override_test");
 
@@ -1421,7 +1417,7 @@ mod tests {
         assert!(isolated.metadata.is_override);
         assert_eq!(
             isolated.metadata.override_reason,
-            Some("testing override with beads_rust".to_string())
+            Some("testing override with beads".to_string())
         );
         assert!(isolated.metadata.issue_count > 0);
     }
@@ -1515,7 +1511,7 @@ mod tests {
     }
 
     // =========================================================================
-    // DatasetProvenance tests (beads_rust-b4nj)
+    // DatasetProvenance tests (beads-b4nj)
     // =========================================================================
 
     #[test]
@@ -1609,14 +1605,14 @@ mod tests {
     }
 
     // =========================================================================
-    // run_with_integrity tests (beads_rust-b4nj)
+    // run_with_integrity tests (beads-b4nj)
     // =========================================================================
 
     #[test]
     fn test_run_with_integrity() {
         let registry = DatasetRegistry::new();
         if !registry.is_available(KnownDataset::BeadsRust) {
-            eprintln!("Skipping test_run_with_integrity: beads_rust dataset not available");
+            eprintln!("Skipping test_run_with_integrity: beads dataset not available");
             return;
         }
 
@@ -1639,7 +1635,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Metadata enhancement tests (beads_rust-b4nj)
+    // Metadata enhancement tests (beads-b4nj)
     // =========================================================================
 
     #[test]

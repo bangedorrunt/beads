@@ -56,7 +56,7 @@ feature
 
     // Verify labels on First Issue using JSON output.
     //
-    // beads_rust-44rc rewrite (2026-05-09): originally pinned the
+    // beads-44rc rewrite (2026-05-09): originally pinned the
     // pretty-printed JSON format `"title": "First Issue"` (with a space
     // after `:`). After commit `f26bf73f fix(output): fail on stdout
     // serialization errors` and the streaming-perf migration in
@@ -128,7 +128,7 @@ bug
     assert!(payload.contains("\"Two\""));
 }
 
-/// beads_rust#304: `### Agent Context` maps to the issue's `agent_context`
+/// beads#304: `### Agent Context` maps to the issue's `agent_context`
 /// field and surfaces in `--json` output when set; issues without the
 /// section omit the field.
 #[test]

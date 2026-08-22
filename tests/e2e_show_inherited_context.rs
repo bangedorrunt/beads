@@ -1,7 +1,7 @@
 //! E2E coverage for inherited governing context on `br show`
-//! (beads_rust#297, beads_rust#351).
+//! (beads#297, beads#351).
 //!
-//! beads_rust#351 regression: when several siblings beneath the same
+//! beads#351 regression: when several siblings beneath the same
 //! epic are shown in one invocation, the shared ancestor block used to
 //! be re-rendered once per sibling because each child's ancestor chain
 //! resolves independently. The contract is now: each inherited source
@@ -91,7 +91,7 @@ fn e2e_show_two_siblings_emits_shared_inherited_context_once() {
         count_occurrences(&show.stdout, &header_marker),
         1,
         "shared inherited block must be emitted exactly once for sibling \
-         children (beads_rust#351), got output:\n{}",
+         children (beads#351), got output:\n{}",
         show.stdout
     );
     assert_eq!(
@@ -153,7 +153,7 @@ fn e2e_show_single_child_still_emits_inherited_context() {
 
 #[test]
 fn e2e_show_json_carries_inherited_context_as_structured_field() {
-    // beads_rust#430: JSON output must carry the same inherited governing
+    // beads#430: JSON output must carry the same inherited governing
     // context that text mode renders, as a structured field.
     let _log = common::test_log("e2e_show_json_carries_inherited_context_as_structured_field");
     let workspace = init_workspace();
@@ -176,7 +176,7 @@ fn e2e_show_json_carries_inherited_context_as_structured_field() {
         .and_then(serde_json::Value::as_array)
         .unwrap_or_else(|| {
             panic!(
-                "inherited_context field missing from JSON output (beads_rust#430):\n{}",
+                "inherited_context field missing from JSON output (beads#430):\n{}",
                 show.stdout
             )
         });
@@ -201,7 +201,7 @@ fn e2e_show_json_carries_inherited_context_as_structured_field() {
 
 #[test]
 fn e2e_show_toon_carries_inherited_context() {
-    // beads_rust#430: TOON output parity with text mode.
+    // beads#430: TOON output parity with text mode.
     let _log = common::test_log("e2e_show_toon_carries_inherited_context");
     let workspace = init_workspace();
     let (epic_id, child_a, _child_b) = epic_with_two_children(&workspace);
@@ -215,7 +215,7 @@ fn e2e_show_toon_carries_inherited_context() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
     assert!(
         show.stdout.contains("inherited_context"),
-        "TOON output must include the inherited_context field (beads_rust#430):\n{}",
+        "TOON output must include the inherited_context field (beads#430):\n{}",
         show.stdout
     );
     assert!(
@@ -261,7 +261,7 @@ fn e2e_show_without_opt_in_emits_no_inherited_context() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
     assert!(
         !show.stdout.contains("Inherited context"),
-        "inherited context emission is opt-in (beads_rust#297):\n{}",
+        "inherited context emission is opt-in (beads#297):\n{}",
         show.stdout
     );
 }

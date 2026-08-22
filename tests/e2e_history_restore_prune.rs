@@ -7,7 +7,7 @@
 //! - Prune with various retention policies
 //! - Full artifact logging for debugging
 //!
-//! Acceptance criteria from beads_rust-2y18:
+//! Acceptance criteria from beads-2y18:
 //! - Both commands have E2E test coverage
 //! - Tests verify backup integrity before/after operations
 //! - Error handling tested (corrupt backup, missing files)
@@ -97,7 +97,7 @@ fn read_file_bytes(workspace: &BrWorkspace, relative_path: &str) -> Vec<u8> {
     fs::read(&path).unwrap_or_default()
 }
 
-/// Check if beads_rust dataset is available for testing.
+/// Check if beads dataset is available for testing.
 fn is_dataset_available() -> bool {
     DatasetRegistry::new().is_available(KnownDataset::BeadsRust)
 }
@@ -532,18 +532,16 @@ fn e2e_history_restore_with_real_dataset() {
     let _log = common::test_log("e2e_history_restore_with_real_dataset");
 
     if !is_dataset_available() {
-        eprintln!(
-            "Skipping e2e_history_restore_with_real_dataset: beads_rust dataset not available"
-        );
+        eprintln!("Skipping e2e_history_restore_with_real_dataset: beads dataset not available");
         return;
     }
 
     // Create isolated workspace from real dataset
-    let isolated = IsolatedDataset::from_dataset(KnownDataset::BeadsRust)
-        .expect("should copy beads_rust dataset");
+    let isolated =
+        IsolatedDataset::from_dataset(KnownDataset::BeadsRust).expect("should copy beads dataset");
     isolated
         .migrate_to_current_schema()
-        .expect("migrate isolated beads_rust dataset");
+        .expect("migrate isolated beads dataset");
 
     // Write test summary for debugging
     let _summary_path = isolated.write_summary().expect("write summary");
@@ -614,16 +612,16 @@ fn e2e_history_prune_with_real_dataset() {
     let _log = common::test_log("e2e_history_prune_with_real_dataset");
 
     if !is_dataset_available() {
-        eprintln!("Skipping e2e_history_prune_with_real_dataset: beads_rust dataset not available");
+        eprintln!("Skipping e2e_history_prune_with_real_dataset: beads dataset not available");
         return;
     }
 
     // Create isolated workspace from real dataset
-    let isolated = IsolatedDataset::from_dataset(KnownDataset::BeadsRust)
-        .expect("should copy beads_rust dataset");
+    let isolated =
+        IsolatedDataset::from_dataset(KnownDataset::BeadsRust).expect("should copy beads dataset");
     isolated
         .migrate_to_current_schema()
-        .expect("migrate isolated beads_rust dataset");
+        .expect("migrate isolated beads dataset");
 
     let workspace = BrWorkspace {
         temp_dir: isolated.temp_dir,

@@ -34,7 +34,7 @@
 
 mod common;
 
-use beads_rust::util::hex_encode;
+use beads::util::hex_encode;
 use common::artifact_validator::{
     ArtifactValidator, PerfEvidenceBinary, PerfEvidenceCommand, PerfEvidenceComparison,
     PerfEvidenceDataset, PerfEvidenceEnvVar, PerfEvidenceEnvironment, PerfEvidenceGit,
