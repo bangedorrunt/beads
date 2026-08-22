@@ -1101,7 +1101,13 @@ pub fn blocking_database_family_write_lock_with_timeout(
         total_timeout_ms.saturating_sub(elapsed_ms)
     };
     let routed_database_path = reject_unsafe_database_routing_leaf(database_path)?;
-    let workspace_lock_path = beads_dir.join(".write.lock");
+    // Record the workspace lock path through the CANONICAL beads dir so
+    // retained-authority identity checks compare equal regardless of which
+    // route form (raw $TMPDIR prefix vs resolved) the caller used to acquire
+    // the lock — both name the same physical file.
+    let canonical_beads_dir =
+        fs::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+    let workspace_lock_path = canonical_beads_dir.join(".write.lock");
     let workspace_lock = blocking_write_lock_with_timeout(beads_dir, Some(remaining_timeout_ms()))?;
     let canonical_database_path = canonical_database_authority_key(database_path)?;
     let authority_path = database_write_authority_path(database_path)?;

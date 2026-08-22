@@ -2491,7 +2491,13 @@ impl SqliteStorage {
     ///
     /// Returns an error if any DROP/CREATE statement fails.
     pub fn reset_data_tables(&mut self) -> Result<()> {
-        self.with_write_transaction(|storage| storage.reset_data_tables_in_tx())
+        self.with_write_transaction(|storage| storage.reset_data_tables_in_tx())?;
+        // Safety-level PRAGMAs cannot run inside a transaction under real
+        // SQLite ("Safety level may not be changed inside a transaction"),
+        // so the runtime pragma restoration happens after COMMIT. fsqlite
+        // tolerated the in-transaction form; rusqlite does not.
+        crate::storage::schema::apply_runtime_pragmas(&self.conn)?;
+        Ok(())
     }
 
     fn reset_data_tables_in_tx(&self) -> Result<()> {
@@ -2517,10 +2523,10 @@ impl SqliteStorage {
             ",
         )?;
         // Recreate with full schema (config/metadata already exist, IF NOT EXISTS is safe).
-        // Use apply_runtime_compatible_schema rather than apply_schema because we are
-        // mid-session: the connection is already open with correct pragmas and we only
-        // need to restore the DDL without re-running heavier first-open migrations.
-        apply_runtime_compatible_schema(&self.conn)?;
+        // Use the DDL-only variant rather than apply_runtime_compatible_schema because we
+        // are mid-transaction here: safety-level PRAGMAs are rejected by real SQLite
+        // inside a transaction and are re-applied by reset_data_tables after COMMIT.
+        crate::storage::schema::apply_runtime_compatible_schema_ddl(&self.conn)?;
         Ok(())
     }
 
@@ -25943,12 +25949,13 @@ mod tests {
                 .unwrap()
         );
 
+        // rusqlite's execute() rejects multi-statement SQL; run each
+        // statement separately (the PRAGMA first, so the FK-exempt insert
+        // lands).
+        storage.conn.execute("PRAGMA foreign_keys = OFF").unwrap();
         storage
             .conn
-            .execute(
-                "PRAGMA foreign_keys = OFF;
-                 INSERT INTO labels (issue_id, label) VALUES ('bd-stale', 'old-label');",
-            )
+            .execute("INSERT INTO labels (issue_id, label) VALUES ('bd-stale', 'old-label');")
             .unwrap();
 
         assert!(

@@ -1568,7 +1568,16 @@ fn validate_sync_paths(
         )));
     }
 
-    let is_external = !jsonl_path.starts_with(&canonical_beads);
+    // External means outside the tree under EITHER route form: workspaces
+    // legitimately live under symlinked system prefixes (macOS
+    // /var -> /private/var), so a raw path that prefixes against the
+    // operator-facing beads_dir is internal even when its canonical form
+    // differs. Component-wise `starts_with` keeps `.beads-evil` from
+    // matching `.beads`. The resolution probe covers the inverse mix: a
+    // RAW operator path over a CANONICAL beads_dir (BEADS_JSONL env values
+    // are not pre-canonicalized).
+    let is_external = !crate::sync::path::resolves_under_route(&jsonl_path, &canonical_beads)
+        && !crate::sync::path::resolves_under_route(&jsonl_path, beads_dir);
     if is_external && !allow_external_jsonl {
         warn!(
             path = %jsonl_path.display(),
@@ -1596,7 +1605,11 @@ fn validate_sync_paths(
         )));
     }
 
-    validate_sync_path_with_external(&jsonl_path, &canonical_beads, allow_external_jsonl)?;
+    // Pass the RAW beads_dir: the callee re-canonicalizes internally and
+    // classifies internal-vs-external across both route forms, so a raw
+    // $TMPDIR prefix (/var/...) must not be misread as external just
+    // because this caller already holds the canonical form.
+    validate_sync_path_with_external(&jsonl_path, beads_dir, allow_external_jsonl)?;
 
     debug!(
         jsonl_path = %jsonl_path.display(),
@@ -1658,9 +1671,10 @@ fn validate_operator_requested_sync_path(beads_dir: &Path, jsonl_path: &Path) ->
         // /var -> /private/var under $TMPDIR workspaces) are common to both
         // sides — canonical_beads already resolves them — so judging their
         // link targets here would refuse every such workspace.
-        if !(candidate.starts_with(beads_dir) && candidate != beads_dir)
-            && !(candidate.starts_with(&canonical_beads) && candidate != canonical_beads)
-        {
+        let below_raw = candidate.starts_with(beads_dir) && candidate != beads_dir;
+        let below_canonical =
+            candidate.starts_with(&canonical_beads) && candidate != canonical_beads;
+        if !below_raw && !below_canonical {
             continue;
         }
         let Ok(metadata) = fs::symlink_metadata(&candidate) else {

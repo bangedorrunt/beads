@@ -257,6 +257,27 @@ fn resolve_symlink_target_for_validation(link_path: &Path, target: &Path) -> Pat
 ///
 /// * `PathValidation::Allowed` if path does not target git
 /// * `PathValidation::GitPathAttempt` if path contains `.git` component
+/// True when `path` prefixes against `dir` in either route form: raw,
+/// canonicalized, or raw-with-a-canonicalized-parent (for not-yet-existing
+/// leaves under a symlinked system prefix like macOS /var -> /private/var).
+#[must_use]
+pub fn resolves_under_route(path: &Path, dir: &Path) -> bool {
+    if path.starts_with(dir) {
+        return true;
+    }
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    let Ok(canonical_parent) = std::fs::canonicalize(parent) else {
+        return false;
+    };
+    let mut resolved = canonical_parent;
+    if let Some(leaf) = path.file_name() {
+        resolved.push(leaf);
+    }
+    resolved.starts_with(dir)
+}
+
 #[must_use]
 pub fn validate_no_git_path(path: &Path) -> PathValidation {
     fn has_git_component(candidate: &Path) -> bool {
@@ -661,12 +682,28 @@ pub fn validate_sync_path_with_external(
     // internal branch, whose validate_sync_path re-normalizes and runs the
     // symlink-escape checks itself.
     let normalized_resolved = normalize_path_lexically(&resolved_path);
-    let is_internal = path.starts_with(beads_dir)
-        || path.starts_with(&canonical_beads)
+    // A not-yet-existing leaf under a symlinked system prefix (BEADS_JSONL
+    // pointing into a $TMPDIR workspace) still classifies as internal:
+    // resolve the nearest existing ancestor and compare that route.
+    let canonical_parent_route =
+        std::fs::canonicalize(resolved_path.parent().unwrap_or_else(|| Path::new("/")))
+            .ok()
+            .map(|parent| {
+                let mut resolved = parent;
+                if let Some(leaf) = resolved_path.file_name() {
+                    resolved.push(leaf);
+                }
+                resolved
+            });
+    let is_internal = resolves_under_route(path, beads_dir)
+        || resolves_under_route(path, &canonical_beads)
         || resolved_path.starts_with(beads_dir)
         || resolved_path.starts_with(&canonical_beads)
         || normalized_resolved.as_deref().is_some_and(|normalized| {
             normalized.starts_with(beads_dir) || normalized.starts_with(&canonical_beads)
+        })
+        || canonical_parent_route.as_deref().is_some_and(|resolved| {
+            resolved.starts_with(beads_dir) || resolved.starts_with(&canonical_beads)
         });
 
     // CRITICAL: Git paths are ALWAYS rejected, even with allow_external. Do
@@ -776,8 +813,8 @@ pub fn require_safe_sync_overwrite_path(
     } else {
         path.to_path_buf()
     };
-    let is_internal = resolved_path.starts_with(beads_dir)
-        || resolved_path.starts_with(&canonical_beads)
+    let is_internal = resolves_under_route(resolved_path.as_path(), beads_dir)
+        || resolves_under_route(resolved_path.as_path(), &canonical_beads)
         || path.starts_with(beads_dir)
         || path.starts_with(&canonical_beads);
 

@@ -1031,11 +1031,20 @@ pub fn run_migrations_atomic(conn: &Connection, from: u32, target_version: u32) 
 pub(crate) fn apply_runtime_compatible_schema(conn: &Connection) -> Result<()> {
     // The table layouts are already safe to operate on, so we can skip the
     // heavier pre-schema rebuilds and just restore any missing canonical DDL.
+    apply_runtime_compatible_schema_ddl(conn)?;
+    apply_runtime_pragmas(conn)?;
+    Ok(())
+}
+
+/// DDL-only variant of [`apply_runtime_compatible_schema`]: restores schema
+/// and stamps `user_version` WITHOUT touching safety-level PRAGMAs, which
+/// real SQLite rejects inside an open transaction (callers that run this
+/// mid-transaction must invoke [`apply_runtime_pragmas`] after COMMIT).
+pub(crate) fn apply_runtime_compatible_schema_ddl(conn: &Connection) -> Result<()> {
     execute_batch(conn, SCHEMA_SQL)?;
     run_migrations(conn, false)?;
     conn.execute(&format!("PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))
         .map_err(BeadsError::Database)?;
-    apply_runtime_pragmas(conn)?;
     Ok(())
 }
 

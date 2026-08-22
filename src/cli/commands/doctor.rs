@@ -21226,15 +21226,30 @@ mod tests {
 
     #[test]
     fn test_repair_recoverable_db_state_skips_repair_for_valid_wal_without_shm() -> Result<()> {
-        // WAL-without-SHM is an informational Ok for FrankenSQLite compatibility.
-        // repair_recoverable_db_state should NOT attempt any repair for this condition.
+        // A leftover WAL without its SHM sibling is an informational Ok under
+        // real SQLite (the SHM is removed before the WAL when a writer exits
+        // uncleanly). repair_recoverable_db_state should NOT attempt any
+        // repair for this condition.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir)?;
         let db_path = beads_dir.join("beads.db");
-        fs::write(&db_path, b"not a sqlite database")?;
+
+        // Build a REAL database and detach its WAL: write through a live
+        // connection, stash the -wal aside, close cleanly (checkpoints and
+        // removes -wal/-shm), then reattach the stashed -wal. The result is
+        // a valid database family with a WAL but no SHM.
         let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
-        fs::write(&wal_path, b"frankensqlite wal without shm")?;
+        let detached_wal = temp.path().join("detached-wal");
+        {
+            let mut storage = SqliteStorage::open(&db_path).unwrap();
+            storage
+                .create_issue(&sample_issue("bd-wal-no-shm", "real wal fixture"), "tester")
+                .unwrap();
+            fs::copy(&wal_path, &detached_wal)?;
+        }
+        assert!(!wal_path.exists(), "clean close must remove the -wal");
+        fs::copy(&detached_wal, &wal_path)?;
 
         let mut checks = Vec::new();
         check_database_sidecars(&db_path, &mut checks)?;
@@ -21258,11 +21273,16 @@ mod tests {
         );
         assert!(
             repair.quarantined_artifacts.is_empty(),
-            "valid FrankenSQLite WAL should not be quarantined"
+            "valid leftover WAL should not be quarantined"
         );
+        // Real SQLite consumes a leftover WAL on the next clean open+close
+        // (checkpoint-on-close removes -wal/-shm), so "untouched bytes" is
+        // not an achievable contract once any repair pass opens the store.
+        // The no-repair contract is: nothing quarantined, database intact.
+        let post = SqliteStorage::open(&db_path).unwrap();
         assert!(
-            wal_path.exists(),
-            "valid FrankenSQLite WAL should remain untouched"
+            post.get_issue("bd-wal-no-shm").unwrap().is_some(),
+            "database must stay fully readable across the skipped repair"
         );
         Ok(())
     }

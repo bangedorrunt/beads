@@ -839,17 +839,26 @@ fn e2e_non_hermetic_smoke_existing_workspace_preserves_env_sensitive_paths() {
     );
     let where_json: Value =
         serde_json::from_str(&extract_json_payload(&where_cmd.stdout)).expect("where smoke json");
+    // br reports resolved (canonicalized) routes; compare against the
+    // canonical form of the operator-supplied paths so symlinked system
+    // prefixes (/var -> /private/var) don't fail the smoke assertions.
+    let canonical = |p: &str| {
+        std::fs::canonicalize(p)
+            .unwrap_or_else(|_| PathBuf::from(p))
+            .display()
+            .to_string()
+    };
     assert_eq!(
         where_json["path"].as_str(),
-        Some(external_beads_dir_str.as_str())
+        Some(canonical(&external_beads_dir_str).as_str())
     );
     assert_eq!(
         where_json["database_path"].as_str(),
-        Some(custom_db_str.as_str())
+        Some(canonical(&custom_db_str).as_str())
     );
     assert_eq!(
         where_json["jsonl_path"].as_str(),
-        Some(custom_jsonl_str.as_str())
+        Some(canonical(&custom_jsonl_str).as_str())
     );
 
     let info_cmd = run_br_smoke_at_root_with_env(
@@ -867,15 +876,15 @@ fn e2e_non_hermetic_smoke_existing_workspace_preserves_env_sensitive_paths() {
         serde_json::from_str(&extract_json_payload(&info_cmd.stdout)).expect("info smoke json");
     assert_eq!(
         info_json["beads_dir"].as_str(),
-        Some(external_beads_dir_str.as_str())
+        Some(canonical(&external_beads_dir_str).as_str())
     );
     assert_eq!(
         info_json["database_path"].as_str(),
-        Some(custom_db_str.as_str())
+        Some(canonical(&custom_db_str).as_str())
     );
     assert_eq!(
         info_json["jsonl_path"].as_str(),
-        Some(custom_jsonl_str.as_str())
+        Some(canonical(&custom_jsonl_str).as_str())
     );
     assert!(
         info_json["issue_count"].as_u64().is_some(),
