@@ -15624,7 +15624,6 @@ fn remove_temp_db_files(path: &Path) {
     }
 }
 
-
 fn database_header_user_version(path: &Path) -> Option<u32> {
     if path == Path::new(":memory:") || !path.is_file() {
         return None;

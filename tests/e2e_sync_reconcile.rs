@@ -468,9 +468,7 @@ fn dry_run_mutates_no_files_and_is_deterministic() {
     // the engine on EVERY database open, read-only included. Their contents
     // are covered by the hash assertion above; exempt only their stats.
     let strip_ns_sidecars = |m: &BTreeMap<String, (u128, u64)>| -> BTreeMap<String, (u128, u64)> {
-        m.iter()
-            .map(|(k, v)| (k.clone(), *v))
-            .collect()
+        m.iter().map(|(k, v)| (k.clone(), *v)).collect()
     };
     assert_eq!(
         strip_ns_sidecars(&before_stats),
@@ -1118,8 +1116,7 @@ fn apply_touches_only_the_db_family() {
             let db_family = name == "beads.db"
                 || name.starts_with("beads.db-")
                 || name.ends_with("-wal")
-                || name.ends_with("-shm")
-                ;
+                || name.ends_with("-shm");
             let bookkeeping = name == ".write.lock" || name == "last-touched";
             let harness_log = p.starts_with("logs/");
             !(db_family || bookkeeping || harness_log)

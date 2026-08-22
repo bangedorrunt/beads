@@ -57,9 +57,7 @@ fn is_binary(path: &std::path::Path) -> bool {
 }
 
 fn is_transient_sqlite(name: &str) -> bool {
-    name.ends_with("-wal")
-        || name.ends_with("-shm")
-        || name.ends_with("-journal")
+    name.ends_with("-wal") || name.ends_with("-shm") || name.ends_with("-journal")
 }
 
 fn build_directory_listing(beads_dir: &std::path::Path) -> String {

@@ -6114,7 +6114,6 @@ fn fix_config_yaml_secret_mode_if_warned(
     }
 }
 
-
 /// Pass-5 cycle 10: detector for
 /// `fm-observability-doctor-runs-dir-grows-unbounded`.
 ///
@@ -17267,7 +17266,11 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        fs::write(beads_dir.join(".gitignore"), b"*.db\n*.db?*\n*.lock\n*.tmp\n").unwrap();
+        fs::write(
+            beads_dir.join(".gitignore"),
+            b"*.db\n*.db?*\n*.lock\n*.tmp\n",
+        )
+        .unwrap();
 
         let mut checks = Vec::new();
         check_inner_gitignore_present(&beads_dir, &mut checks);
@@ -17300,12 +17303,10 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default();
-        for expected in ["*.db-wal*"] {
-            assert!(
-                missing.iter().any(|p| p == expected),
-                "expected {expected} in missing patterns, got {missing:?}"
-            );
-        }
+        assert!(
+            missing.iter().any(|p| p == "*.db-wal*"),
+            "expected *.db-wal* in missing patterns, got {missing:?}"
+        );
     }
 
     #[test]
