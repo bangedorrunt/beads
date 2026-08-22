@@ -1,18 +1,20 @@
 [
   {
-    "pane_id": "w8G:p1",
-    "name": "flywheel-beads-coder",
-    "profile": "coder",
-    "harness": "opencode",
-    "mail_identity": "YellowMarsh",
+    "pane_id": "w8A:p1",
+    "name": "flywheel-beads-oc",
+    "mail_identity": "GreenStream",
     "skills_injected": false
   },
   {
-    "pane_id": "w8G:p2",
-    "name": "flywheel-beads-coder2",
-    "profile": "coder",
-    "harness": "opencode",
-    "mail_identity": "BlackCompass",
+    "pane_id": "w8A:p2",
+    "name": "flywheel-beads-oc2",
+    "mail_identity": "CobaltMaple",
+    "skills_injected": false
+  },
+  {
+    "pane_id": "w8A:p3",
+    "name": "flywheel-beads-oc3",
+    "mail_identity": "LavenderSalmon",
     "skills_injected": false
   }
 ]

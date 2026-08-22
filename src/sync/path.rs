@@ -243,20 +243,6 @@ fn resolve_symlink_target_for_validation(link_path: &Path, target: &Path) -> Pat
     dunce::canonicalize(&normalized).unwrap_or(normalized)
 }
 
-/// Validates that a path does not target git internals.
-///
-/// This is a hard safety invariant: sync operations NEVER access `.git/` directories.
-/// This check runs regardless of `allow_external` settings.
-///
-/// # Safety Invariants
-///
-/// - NGI-1: br sync NEVER executes git subprocess commands
-/// - NGI-3: br sync NEVER modifies .git/ directory
-///
-/// # Returns
-///
-/// * `PathValidation::Allowed` if path does not target git
-/// * `PathValidation::GitPathAttempt` if path contains `.git` component
 /// True when `path` prefixes against `dir` in either route form: raw,
 /// canonicalized, or raw-with-a-canonicalized-parent (for not-yet-existing
 /// leaves under a symlinked system prefix like macOS /var -> /private/var).
@@ -278,6 +264,20 @@ pub fn resolves_under_route(path: &Path, dir: &Path) -> bool {
     resolved.starts_with(dir)
 }
 
+/// Validates that a path does not target git internals.
+///
+/// This is a hard safety invariant: sync operations NEVER access `.git/` directories.
+/// This check runs regardless of `allow_external` settings.
+///
+/// # Safety Invariants
+///
+/// - NGI-1: br sync NEVER executes git subprocess commands
+/// - NGI-3: br sync NEVER modifies .git/ directory
+///
+/// # Returns
+///
+/// * `PathValidation::Allowed` if path does not target git
+/// * `PathValidation::GitPathAttempt` if path contains `.git` component
 #[must_use]
 pub fn validate_no_git_path(path: &Path) -> PathValidation {
     fn has_git_component(candidate: &Path) -> bool {

@@ -2494,8 +2494,8 @@ impl SqliteStorage {
         self.with_write_transaction(|storage| storage.reset_data_tables_in_tx())?;
         // Safety-level PRAGMAs cannot run inside a transaction under real
         // SQLite ("Safety level may not be changed inside a transaction"),
-        // so the runtime pragma restoration happens after COMMIT. fsqlite
-        // tolerated the in-transaction form; rusqlite does not.
+        // so the runtime pragma restoration happens after COMMIT. The
+        // previous engine tolerated the in-transaction form; rusqlite does not.
         crate::storage::schema::apply_runtime_pragmas(&self.conn)?;
         Ok(())
     }

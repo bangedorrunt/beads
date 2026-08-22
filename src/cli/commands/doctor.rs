@@ -24703,13 +24703,19 @@ version = "2026-05-11-abc123"
         fs::copy(&db_path, &recent).unwrap();
         fs::copy(&db_path, &bad_sibling).unwrap();
 
+        // Age the artifacts portably: GNU `touch -d` does not exist on BSD
+        // hosts, so set mtimes via python3's os.utime instead. Epoch
+        // timestamp is decades in the past, safely past the aging
+        // threshold.
+        let age_script = "import os, sys\nold = 1000000000\nfor path in sys.argv[1:]:\n    os.utime(path, (old, old))\n";
         for path in [&aged, &bad_sibling] {
-            let status = Command::new("touch")
-                .args(["-d", "60 days ago"])
+            let status = Command::new("python3")
+                .arg("-c")
+                .arg(age_script)
                 .arg(path)
                 .status()
                 .unwrap();
-            assert!(status.success(), "touch failed for {}", path.display());
+            assert!(status.success(), "aging failed for {}", path.display());
         }
 
         let report = DoctorReport {
