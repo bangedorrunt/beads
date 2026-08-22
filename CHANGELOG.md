@@ -1,8 +1,8 @@
 # Changelog
 
-All notable changes to **br** (beads\_rust) -- a local-first, non-invasive git issue tracker built in Rust.
+All notable changes to **br** (beads) -- a local-first, non-invasive git issue tracker built in Rust.
 
-Project inception: 2026-01-15. Repository: <https://github.com/Dicklesworthstone/beads_rust>.
+Project inception: 2026-01-15. Repository: <https://github.com/bangedorrunt/beads> (forked from `Dicklesworthstone/beads_rust` at v0.3.2).
 
 This changelog is organized by capability rather than diff order. Each version section groups changes into what they mean for users, not how they fell out of the commit graph. Commit links are live and point to the canonical GitHub URL.
 
@@ -10,8 +10,29 @@ This changelog is organized by capability rather than diff order. Each version s
 
 - **Release** = published GitHub Release with pre-built binaries attached.
 - **Tag** = git tag only (no binaries; used for rapid stabilization cuts during CI iteration).
-- Commit links: `https://github.com/Dicklesworthstone/beads_rust/commit/<HASH>`
-- Release links: `https://github.com/Dicklesworthstone/beads_rust/releases/tag/<TAG>`
+- Commit links: `https://github.com/bangedorrunt/beads/commit/<HASH>`
+- Release links: `https://github.com/bangedorrunt/beads/releases/tag/<TAG>`
+
+---
+
+## [Unreleased]
+
+### Changed
+
+- **Storage engine swapped to rusqlite** (`bundled`): the 15-crate fsqlite
+  family and its asupersync runtime pin are gone; WAL mode, `busy_timeout`
+  contention handling, and `PRAGMA user_version` schema stamping are now
+  native SQLite. The synchronous row API above the engine boundary is
+  unchanged.
+- **Crate renamed** `beads_rust` → `beads` (binary stays `br`). Self-update
+  now checks `bangedorrunt/beads` releases.
+
+### Removed
+
+- The `mcp` feature and `serve` subcommand (fastmcp-rust + asupersync
+  dev-dependency), per ADR-0002 W1.
+- Legacy fsqlite sidecar machinery: namespace-gate/WAL-certificate cleanup,
+  gitignore rules, and doctor detector/fixer for sidecar modes.
 
 ---
 
