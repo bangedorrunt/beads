@@ -31355,7 +31355,33 @@ mod tests {
                 pinned INTEGER,
                 is_template INTEGER,
                 source_repo_path TEXT,
-                agent_context TEXT
+                agent_context TEXT,
+                verify TEXT,
+                principles TEXT,
+                wave INTEGER,
+                pin TEXT,
+                commit_sha TEXT,
+                close_verdict TEXT,
+                ac_shape TEXT NOT NULL DEFAULT 'checkable',
+                blast TEXT NOT NULL DEFAULT 'normal'
+            );
+            CREATE TABLE dependencies (
+                issue_id TEXT NOT NULL,
+                depends_on_id TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'blocks',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (issue_id, depends_on_id)
+            );
+            CREATE TABLE labels (
+                issue_id TEXT NOT NULL,
+                label TEXT NOT NULL
+            );
+            CREATE TABLE comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                issue_id TEXT NOT NULL,
+                author TEXT,
+                body TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE blocked_issues_cache (
                 issue_id TEXT PRIMARY KEY,
