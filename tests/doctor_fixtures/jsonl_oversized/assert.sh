@@ -46,7 +46,7 @@ case "$stage" in
     # Detect-only: the file must not have been truncated to silence the
     # warning, and the warning must still be truthfully present.
     planted=$(cat .fixture_planted_size)
-    size_now=$(stat -c '%s' .beads/issues.jsonl)
+    size_now=$(stat -c '%s' .beads/issues.jsonl 2>/dev/null || stat -f '%z' .beads/issues.jsonl)
     if [ "$size_now" -lt "$planted" ]; then
       echo "ASSERT FAIL[$stage]: --repair shrank the JSONL ($planted -> $size_now); size remediation is operator-only" >&2
       exit 1

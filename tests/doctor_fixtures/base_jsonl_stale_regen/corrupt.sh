@@ -34,8 +34,8 @@ cp .beads/beads.base.jsonl .fixture_baseline_stale
 touch -m -d '2025-01-01 00:00:00' .beads/beads.base.jsonl
 
 # Sanity: live JSONL is newer than the anchor.
-base_mtime=$(stat -c '%Y' .beads/beads.base.jsonl)
-live_mtime=$(stat -c '%Y' .beads/issues.jsonl)
+base_mtime=$(stat -c '%Y' .beads/beads.base.jsonl 2>/dev/null || stat -f '%m' .beads/beads.base.jsonl)
+live_mtime=$(stat -c '%Y' .beads/issues.jsonl 2>/dev/null || stat -f '%m' .beads/issues.jsonl)
 if [ "$base_mtime" -ge "$live_mtime" ]; then
     echo "corrupt.sh: anchor mtime ($base_mtime) is not older than live ($live_mtime)" >&2
     exit 1

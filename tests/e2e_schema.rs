@@ -1127,6 +1127,8 @@ fn compare_text_baseline(relative_path: &str, actual: &str) {
     let path = baseline_path(relative_path);
     let actual = normalize_text_snapshot(actual);
     if should_update_agent_baseline() {
+        fs::create_dir_all(path.parent().expect("baseline parent dir"))
+            .expect("create agent baseline directory");
         fs::write(&path, actual).expect("update agent baseline text snapshot");
         return;
     }
@@ -1150,6 +1152,8 @@ fn compare_json_baseline(relative_path: &str, actual: &str, normalize: fn(&mut V
     if should_update_agent_baseline() {
         let pretty = serde_json::to_string_pretty(&actual)
             .expect("serialize normalized agent baseline JSON snapshot");
+        fs::create_dir_all(path.parent().expect("baseline parent dir"))
+            .expect("create agent baseline directory");
         fs::write(&path, with_trailing_newline(&pretty))
             .expect("update agent baseline JSON snapshot");
         return;
@@ -1176,6 +1180,8 @@ fn compare_toon_baseline(relative_path: &str, actual: &str) {
         normalize_issue_example_snapshot(&mut normalized);
         let toon_value: JsonValue = normalized.into();
         let encoded = toon_rust::encode(toon_value, Some(agent_baseline_toon_encode_options()));
+        fs::create_dir_all(path.parent().expect("baseline parent dir"))
+            .expect("create agent baseline directory");
         fs::write(&path, with_trailing_newline(encoded.trim_end()))
             .expect("update agent baseline TOON snapshot");
         return;
@@ -1209,7 +1215,11 @@ fn agent_baseline_toon_encode_options() -> EncodeOptions {
 
 #[cfg(feature = "self_update")]
 fn baseline_path(relative_path: &str) -> PathBuf {
+    // agent_baseline/ at the manifest root was deleted in 2454a990; the
+    // baselines live under tests/snapshots/ now. Do NOT recreate the old dir.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("snapshots")
         .join("agent_baseline")
         .join(relative_path)
 }

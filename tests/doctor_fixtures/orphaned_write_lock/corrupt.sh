@@ -11,12 +11,24 @@ target_dir="${1:?usage: corrupt.sh <target_dir>}"
 tool_bin="${TOOL_BIN:-br}"
 
 mkdir -p "$target_dir"
+
+# GNU-only `touch -d` is unavailable on BSD/macOS fixture hosts.
+set_old_mtime() {
+  python3 - "$@" <<'PY'
+import calendar, os, sys
+when = calendar.timegm((2024, 1, 1, 0, 0, 0))
+for path in sys.argv[1:]:
+    os.utime(path, (when, when))
+PY
+}
+
 cd "$target_dir"
 "$tool_bin" init >/dev/null 2>&1
 
 : > .beads/.write.lock
-touch -d '2024-01-01T00:00:00Z' .beads/.write.lock
-stat -c '%d:%i' .beads/.write.lock > .fixture_lock_identity
+set_old_mtime .beads/.write.lock
+{ stat -c '%d:%i' .beads/.write.lock 2>/dev/null \
+    || stat -f '%d:%i' .beads/.write.lock; } > .fixture_lock_identity
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

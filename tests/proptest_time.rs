@@ -6,7 +6,7 @@
 //! - Invalid formats are rejected
 //! - Keywords parse to future/past times as expected
 
-use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, Timelike, Utc};
 use proptest::prelude::*;
 use tracing::info;
 
@@ -215,10 +215,14 @@ proptest! {
         prop_assert!(result.is_ok(), "Simple date should parse: {date}");
 
         let parsed = result.unwrap();
+        // Contract: bare dates mean 09:00 LOCAL on that calendar date; UTC
+        // day fields shift on hosts where local 09:00 maps to the previous
+        // UTC day, so round-trip through Local before comparing.
+        let local = parsed.with_timezone(&Local);
         let year_i32 = i32::try_from(year).expect("year fits i32");
-        prop_assert_eq!(parsed.year(), year_i32, "Year should match");
-        prop_assert_eq!(parsed.month(), month, "Month should match");
-        prop_assert_eq!(parsed.day(), day, "Day should match");
+        prop_assert_eq!(local.year(), year_i32, "Year should match");
+        prop_assert_eq!(local.month(), month, "Month should match");
+        prop_assert_eq!(local.day(), day, "Day should match");
     }
 
     /// Property: Invalid unit letters are rejected

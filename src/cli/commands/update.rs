@@ -1466,7 +1466,7 @@ mod tests {
     use crate::model::{Issue, IssueType, Priority, Status};
     use crate::output::{OutputContext, OutputMode};
     use crate::storage::SqliteStorage;
-    use chrono::{Datelike, Timelike};
+    use chrono::{Datelike, Local, Timelike};
     use std::fs;
     use tempfile::TempDir;
     use tracing::info;
@@ -1579,9 +1579,11 @@ mod tests {
         let result = parse_date("2024-01-15");
         assert!(result.is_ok());
         let date = result.unwrap();
-        assert_eq!(date.year(), 2024);
-        assert_eq!(date.month(), 1);
-        assert_eq!(date.day(), 15);
+        // Contract: bare dates mean 09:00 LOCAL; assert in local time.
+        let local = date.with_timezone(&Local);
+        assert_eq!(local.year(), 2024);
+        assert_eq!(local.month(), 1);
+        assert_eq!(local.day(), 15);
         info!("test_parse_date_partial_date: assertions passed");
     }
 

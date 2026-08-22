@@ -25,7 +25,7 @@ cd "$target_dir"
 # Record the pre-padding size so post_undo can shrink the retained
 # workspace back down after a fully-passed run (the padding is APPENDED,
 # so truncating to this size restores the original bytes exactly).
-stat -c '%s' .beads/issues.jsonl > .fixture_prepad_size
+stat -c '%s' .beads/issues.jsonl 2>/dev/null || stat -f '%z' .beads/issues.jsonl > .fixture_prepad_size
 
 python3 <<'PY'
 line = b" " * (1024 * 1024) + b"\n"
@@ -35,7 +35,7 @@ with open(".beads/issues.jsonl", "ab") as f:
 PY
 
 # Sanity: the padded file must exceed the 100MB threshold.
-size=$(stat -c '%s' .beads/issues.jsonl)
+size=$(stat -c '%s' .beads/issues.jsonl 2>/dev/null || stat -f '%z' .beads/issues.jsonl)
 if [ "$size" -le $((100 * 1024 * 1024)) ]; then
   echo "corrupt: padded JSONL is only $size bytes (<=100MB threshold)" >&2
   exit 1
@@ -55,7 +55,7 @@ sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_baseline/issues.json
 tar --exclude=.fixture_baseline --exclude='*/issues.jsonl' -cf .fixture_baseline/state.tar .
 # Guard the exclusion: a tar that silently captured the padding anyway
 # would reintroduce the double-cost.
-tar_size=$(stat -c '%s' .fixture_baseline/state.tar)
+tar_size=$(stat -c '%s' .fixture_baseline/state.tar 2>/dev/null || stat -f '%z' .fixture_baseline/state.tar)
 if [ "$tar_size" -gt $((10 * 1024 * 1024)) ]; then
   echo "corrupt: baseline tar is $tar_size bytes; issues.jsonl exclusion failed" >&2
   exit 1

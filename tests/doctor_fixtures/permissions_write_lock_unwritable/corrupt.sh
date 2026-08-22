@@ -13,7 +13,7 @@ cd "$target_dir"
 : > .beads/.write.lock
 chmod 0444 .beads/.write.lock
 
-mode=$(stat -c '%a' .beads/.write.lock)
+mode=$(stat -c '%a' .beads/.write.lock 2>/dev/null || stat -f '%Lp' .beads/.write.lock)
 if [ "$mode" != "444" ]; then
   echo "corrupt.sh: expected .write.lock mode 444, got $mode" >&2
   exit 1

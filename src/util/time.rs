@@ -328,6 +328,7 @@ fn local_to_utc_opt(naive_dt: &chrono::NaiveDateTime) -> Option<DateTime<Utc>> {
 mod tests {
     use super::*;
     use chrono::Datelike;
+    use chrono::Timelike;
 
     #[test]
     fn test_parse_flexible_rfc3339() {
@@ -364,9 +365,21 @@ mod tests {
     #[test]
     fn test_parse_flexible_simple_date() {
         let result = parse_flexible_timestamp("2025-06-20", "test").unwrap();
-        assert_eq!(result.year(), 2025);
-        assert_eq!(result.month(), 6);
-        assert_eq!(result.day(), 20);
+        // Contract: bare dates mean 09:00 LOCAL on the given calendar date.
+        // Asserting UTC day fields breaks on hosts where local 09:00 maps to
+        // the previous UTC day (UTC+10 or later, e.g. Australia/Melbourne).
+        let local = result.with_timezone(&Local);
+        assert_eq!(local.year(), 2025);
+        assert_eq!(local.month(), 6);
+        assert_eq!(local.day(), 20);
+        // 09:00 local; 10 when a DST gap swallowed the nominal time.
+        let tod = local.time();
+        assert!(
+            tod.hour() == 9 || tod.hour() == 10,
+            "expected ~09:00 local, got {}:{:02}",
+            tod.hour(),
+            tod.minute()
+        );
     }
 
     #[test]

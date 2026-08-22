@@ -42,7 +42,7 @@ chmod 0444 .gitignore
 
 # Record the pre-corruption mode so post_undo can verify byte-deterministic
 # restoration by the chokepoint snapshot.
-stat -c '%a' .gitignore > .fixture_baseline_mode
+{ stat -c '%a' .gitignore 2>/dev/null || stat -f '%Lp' .gitignore; } > .fixture_baseline_mode
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

@@ -12,6 +12,17 @@ target_dir="${1:?usage: corrupt.sh <target_dir>}"
 tool_bin="${TOOL_BIN:-br}"
 
 mkdir -p "$target_dir"
+
+# GNU-only `touch -d` is unavailable on BSD/macOS fixture hosts.
+set_old_mtime() {
+  python3 - "$@" <<'PY'
+import calendar, os, sys
+when = calendar.timegm((2024, 1, 1, 0, 0, 0))
+for path in sys.argv[1:]:
+    os.utime(path, (when, when))
+PY
+}
+
 cd "$target_dir"
 
 "$tool_bin" init >/dev/null 2>&1
@@ -36,7 +47,7 @@ for i in $(seq -w 1 55); do
   mkdir -p "$run_dir"
   printf '{"schema_version":"br.doctor.report.v1","run_id":"seed%s","exit_code":0}\n' "$i" > "$run_dir/report.json"
   : > "$run_dir/actions.jsonl"
-  touch -d "2024-01-01T00:00:00Z" "$run_dir" "$run_dir/report.json" "$run_dir/actions.jsonl"
+  set_old_mtime "$run_dir" "$run_dir/report.json" "$run_dir/actions.jsonl"
 done
 
 printf '55\n' > .fixture_expected_runs

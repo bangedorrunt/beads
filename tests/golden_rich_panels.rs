@@ -175,7 +175,11 @@ fn run_rich_br(root: &Path, width: usize, args: &[&str]) -> String {
 
     let mut cmd = Command::new("script");
     cmd.current_dir(root);
-    cmd.args(["-q", "-e", "-c", &command_line, "/dev/null"]);
+    // Portable pseudo-terminal invocation: BSD script(1) (macOS) has no
+    // -c/-e flags; both GNU and BSD accept `script -q FILE sh -c LINE`.
+    // Child failures surface via the golden comparison below instead of
+    // script's exit status.
+    cmd.args(["-q", "/dev/null", "sh", "-c", &command_line]);
     clear_inherited_br_env(&mut cmd);
     cmd.env("HOME", root);
     cmd.env("COLUMNS", width.to_string());
@@ -257,7 +261,16 @@ fn replace_preserving_width(input: &str, regex: &Regex, placeholder: &str) -> St
 
 fn normalize_rich_output(raw: &str) -> String {
     let normalized_newlines = raw.replace("\r\n", "\n").replace('\r', "\n");
-    let without_script_markers = normalized_newlines
+    // BSD script(1) (macOS) writes a literal "^D" caret marker plus
+    // backspace (0x08) erasures where GNU script emits nothing; strip both
+    // before width-sensitive asserts.
+    let without_eot = normalized_newlines.replace('\u{08}', "");
+    let without_caret_d = without_eot
+        .lines()
+        .map(|line| line.strip_prefix("^D").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let without_script_markers = without_caret_d
         .lines()
         .filter(|line| !line.starts_with("Script started") && !line.starts_with("Script done"))
         .collect::<Vec<_>>()

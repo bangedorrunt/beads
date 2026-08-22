@@ -48,8 +48,16 @@ fn init_history_diff_workspace() -> BrWorkspace {
 
 fn normalize_history_output(raw: &str, workspace: &BrWorkspace) -> String {
     let workspace_root = workspace.root.to_string_lossy().replace('\\', "/");
+    // br canonicalizes paths before printing (R1 policy), so on macOS the
+    // output carries the /private/var symlink-resolved form while
+    // workspace.root is the /var/folders spelling. Substitute BOTH so the
+    // golden stays host-independent.
+    let canonical_root = std::fs::canonicalize(&workspace.root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| workspace_root.clone());
     raw.trim_end()
         .replace('\\', "/")
+        .replace(&canonical_root, "$WORKSPACE")
         .replace(&workspace_root, "$WORKSPACE")
 }
 

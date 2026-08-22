@@ -1992,7 +1992,19 @@ mod tests {
         fs::create_dir_all(&beads_dir).expect("beads dir");
         let file_name = OsString::from_vec(b"issues-\xff.jsonl".to_vec());
         let path = beads_dir.join(&file_name);
-        fs::write(&path, b"{\"id\":\"bd-x\"}\n").expect("jsonl");
+        if let Err(error) = fs::write(&path, b"{\"id\":\"bd-x\"}\n") {
+            // APFS rejects non-UTF-8 filenames outright (errno 92,
+            // "Illegal byte sequence"); the fixture needs a
+            // raw-bytes filesystem such as Linux ext4 to construct.
+            if error.raw_os_error() == Some(92) {
+                eprintln!(
+                    "[skip] filesystem rejects non-UTF-8 filenames ({error}); \
+                     lossy-conversion probe requires ext4-style storage"
+                );
+                return;
+            }
+            panic!("create non-UTF-8 jsonl leaf: {error}");
+        }
 
         let init = Command::new("git")
             .args(["init", "--initial-branch=main"])

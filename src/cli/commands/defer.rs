@@ -1108,9 +1108,12 @@ mod tests {
     #[test]
     fn test_parse_defer_time_simple_date() {
         let result = parse_flexible_timestamp("2025-06-20", "defer_until").unwrap();
-        assert_eq!(result.year(), 2025);
-        assert_eq!(result.month(), 6);
-        assert_eq!(result.day(), 20);
+        // Contract: 09:00 LOCAL on that date; assert in local time so this
+        // holds on hosts where local 09:00 is the previous UTC day.
+        let local = result.with_timezone(&Local);
+        assert_eq!(local.year(), 2025);
+        assert_eq!(local.month(), 6);
+        assert_eq!(local.day(), 20);
     }
 
     #[test]

@@ -16,7 +16,7 @@ assert_lock_preserved() {
     echo "ASSERT FAIL[$stage]: .beads/.write.lock became a symlink" >&2
     exit 1
   fi
-  mode=$(stat -c '%a' .beads/.write.lock)
+  mode=$(stat -c '%a' .beads/.write.lock 2>/dev/null || stat -f '%Lp' .beads/.write.lock)
   if [ "$mode" != "444" ]; then
     echo "ASSERT FAIL[$stage]: .beads/.write.lock mode changed to $mode" >&2
     exit 1
@@ -37,7 +37,7 @@ case "$stage" in
       echo "SKIP[$stage]: planted .beads/.write.lock is missing or not a regular file before doctor ran; the harness environment did not preserve the fixture state" >&2
       exit 3
     fi
-    mode=$(stat -c '%a' .beads/.write.lock)
+    mode=$(stat -c '%a' .beads/.write.lock 2>/dev/null || stat -f '%Lp' .beads/.write.lock)
     if [ "$mode" != "444" ]; then
       echo "SKIP[$stage]: planted .write.lock mode is $mode (expected 444) before doctor ran; the filesystem did not preserve the fixture's permission bits" >&2
       exit 3

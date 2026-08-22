@@ -1525,6 +1525,7 @@ mod tests {
     use crate::logging::init_test_logging;
     use crate::util::id::IdConfig;
     use chrono::Datelike;
+    use chrono::Local;
     use tracing::info;
 
     // Helper to create basic args
@@ -1984,9 +1985,12 @@ mod tests {
         let date = result.unwrap();
         assert!(date.is_some());
         let dt = date.unwrap();
-        assert_eq!(dt.year(), 2026);
-        assert_eq!(dt.month(), 12);
-        assert_eq!(dt.day(), 31);
+        // Contract: bare dates mean 09:00 LOCAL on that calendar date; UTC
+        // fields shift with the host timezone, so assert in local time.
+        let local = dt.with_timezone(&Local);
+        assert_eq!(local.year(), 2026);
+        assert_eq!(local.month(), 12);
+        assert_eq!(local.day(), 31);
         info!("test_parse_optional_date_simple_date: assertions passed");
     }
 
@@ -2046,8 +2050,10 @@ mod tests {
         let date = result.unwrap();
         assert!(date.is_some());
         let dt = date.unwrap();
-        assert_eq!(dt.month(), 2);
-        assert_eq!(dt.day(), 29);
+        // Assert in local time: UTC day fields shift on hosts east of UTC.
+        let local = dt.with_timezone(&Local);
+        assert_eq!(local.month(), 2);
+        assert_eq!(local.day(), 29);
         info!("test_parse_optional_date_leap_year: assertions passed");
     }
 

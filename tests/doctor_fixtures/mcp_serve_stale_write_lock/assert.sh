@@ -31,7 +31,8 @@ assert_lock_artifacts_preserved() {
         exit 1
     }
     expected_identity=$(cat .fixture_lock_identity)
-    actual_identity=$(stat -c '%d:%i' .beads/.write.lock)
+    actual_identity=$(stat -c '%d:%i' .beads/.write.lock 2>/dev/null \
+    || stat -f '%d:%i' .beads/.write.lock)
     if [ "$actual_identity" != "$expected_identity" ]; then
         echo "ASSERT FAIL[$stage]: lock identity changed $expected_identity -> $actual_identity" >&2
         exit 1

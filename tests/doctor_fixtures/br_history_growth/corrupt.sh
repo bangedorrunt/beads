@@ -8,6 +8,17 @@ target_dir="${1:?usage: corrupt.sh <target_dir>}"
 tool_bin="${TOOL_BIN:-br}"
 
 mkdir -p "$target_dir"
+
+# GNU-only `touch -d` is unavailable on BSD/macOS fixture hosts.
+set_old_mtime() {
+  python3 - "$@" <<'PY'
+import calendar, os, sys
+when = calendar.timegm((2024, 1, 1, 0, 0, 0))
+for path in sys.argv[1:]:
+    os.utime(path, (when, when))
+PY
+}
+
 cd "$target_dir"
 
 "$tool_bin" init >/dev/null 2>&1
@@ -34,7 +45,7 @@ for i in $(seq 1 105); do
   label="$(printf '%03d' "$i")"
   backup=".beads/.br_history/issues.${stamp}.jsonl"
   printf '{"id":"bd-history-%s","title":"history snapshot %s"}\n' "$label" "$label" > "$backup"
-  touch -d "2024-01-01T00:00:00Z" "$backup"
+  set_old_mtime "$backup"
 done
 
 printf '105\n' > .fixture_expected_history
