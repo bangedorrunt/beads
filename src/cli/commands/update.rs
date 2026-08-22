@@ -207,7 +207,7 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
     let (updated_issues, render_items, ordered_resolved_ids, mut capacity_warnings) =
         if routed_batches.iter().any(|batch| batch.is_external) {
             let normalized_local_beads_dir =
-                dunce::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
+                crate::sync::path::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
             let mut prepared_routes = Vec::new();
             let mut routed_updated_issues = Vec::new();
             let mut routed_render_items = Vec::new();
@@ -217,7 +217,7 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
                 let mut batch_args = args.clone();
                 batch_args.ids.clone_from(&batch.issue_inputs);
 
-                let normalized_batch_beads_dir = dunce::canonicalize(&batch.beads_dir)
+                let normalized_batch_beads_dir = crate::sync::path::canonicalize(&batch.beads_dir)
                     .unwrap_or_else(|_| batch.beads_dir.clone());
                 let mut batch_cli = cli.clone();
                 // Routed projects must resolve their own metadata-defined DB path

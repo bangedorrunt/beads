@@ -307,7 +307,7 @@ pub fn follow_redirects(start: &Path, max_depth: usize) -> Result<PathBuf> {
 }
 
 fn canonicalize_redirect_path(path: &Path) -> PathBuf {
-    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    crate::sync::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Resolve the target beads directory for an issue ID.
@@ -419,9 +419,9 @@ fn resolve_route_entry(
     // Follow redirects
     let final_path = follow_redirects(&target_path, 10)?;
     let normalized_final_path =
-        dunce::canonicalize(&final_path).unwrap_or_else(|_| final_path.clone());
-    let normalized_local_beads_dir =
-        dunce::canonicalize(local_beads_dir).unwrap_or_else(|_| local_beads_dir.to_path_buf());
+        crate::sync::path::canonicalize(&final_path).unwrap_or_else(|_| final_path.clone());
+    let normalized_local_beads_dir = crate::sync::path::canonicalize(local_beads_dir)
+        .unwrap_or_else(|_| local_beads_dir.to_path_buf());
 
     // Determine if external
     let is_external = normalized_final_path != normalized_local_beads_dir;
@@ -685,7 +685,10 @@ mod tests {
         fs::write(beads_dir.join("redirect"), ".").unwrap();
 
         let resolved = follow_redirects(&beads_dir, 10).unwrap();
-        assert_eq!(resolved, dunce::canonicalize(&beads_dir).unwrap());
+        assert_eq!(
+            resolved,
+            crate::sync::path::canonicalize(&beads_dir).unwrap()
+        );
     }
 
     #[test]
@@ -760,8 +763,8 @@ mod tests {
 
         let result = resolve_route("fe-abc", &local_beads).unwrap();
         // Canonicalize for comparison since paths may contain ".."
-        let result_canonical = dunce::canonicalize(&result.beads_dir).unwrap();
-        let target_canonical = dunce::canonicalize(&target_beads).unwrap();
+        let result_canonical = crate::sync::path::canonicalize(&result.beads_dir).unwrap();
+        let target_canonical = crate::sync::path::canonicalize(&target_beads).unwrap();
         assert_eq!(result_canonical, target_canonical);
         assert!(result.is_external);
         assert_eq!(result.project_path, Some("../frontend".to_string()));
@@ -817,7 +820,7 @@ mod tests {
         .unwrap();
 
         let result = resolve_route("self-abc", &local_beads).unwrap();
-        let local_canonical = dunce::canonicalize(&local_beads).unwrap();
+        let local_canonical = crate::sync::path::canonicalize(&local_beads).unwrap();
 
         assert_eq!(result.beads_dir, local_canonical);
         assert!(!result.is_external);
@@ -848,7 +851,7 @@ mod tests {
         assert_eq!(batches.len(), 1);
         assert_eq!(
             batches[0].beads_dir,
-            dunce::canonicalize(&external_beads).unwrap()
+            crate::sync::path::canonicalize(&external_beads).unwrap()
         );
         assert!(batches[0].is_external);
         assert_eq!(

@@ -487,13 +487,13 @@ fn execute_routed(
     local_beads_dir: &Path,
     routed_batches: Vec<config::routing::RoutedIssueBatch>,
 ) -> Result<()> {
-    let normalized_local_beads_dir =
-        dunce::canonicalize(local_beads_dir).unwrap_or_else(|_| local_beads_dir.to_path_buf());
+    let normalized_local_beads_dir = crate::sync::path::canonicalize(local_beads_dir)
+        .unwrap_or_else(|_| local_beads_dir.to_path_buf());
     let mut prepared_routes = Vec::with_capacity(routed_batches.len());
 
     for batch in routed_batches {
-        let normalized_batch_beads_dir =
-            dunce::canonicalize(&batch.beads_dir).unwrap_or_else(|_| batch.beads_dir.clone());
+        let normalized_batch_beads_dir = crate::sync::path::canonicalize(&batch.beads_dir)
+            .unwrap_or_else(|_| batch.beads_dir.clone());
         let mut batch_cli = cli.clone();
         batch_cli.db = if normalized_batch_beads_dir == normalized_local_beads_dir {
             cli.db.clone()

@@ -1544,7 +1544,7 @@ fn validate_sync_paths(
     );
     validate_operator_requested_sync_path(beads_dir, jsonl_path)?;
 
-    let canonical_beads = dunce::canonicalize(beads_dir).map_err(|e| {
+    let canonical_beads = crate::sync::path::canonicalize(beads_dir).map_err(|e| {
         BeadsError::Config(format!(
             "Failed to resolve .beads directory {}: {e}",
             beads_dir.display()
@@ -1639,7 +1639,7 @@ fn validate_operator_requested_sync_path(beads_dir: &Path, jsonl_path: &Path) ->
         ));
     }
 
-    let canonical_beads = dunce::canonicalize(beads_dir).map_err(|e| {
+    let canonical_beads = crate::sync::path::canonicalize(beads_dir).map_err(|e| {
         BeadsError::Config(format!(
             "Failed to resolve .beads directory {}: {e}",
             beads_dir.display()
@@ -1698,8 +1698,8 @@ fn validate_operator_requested_sync_path(beads_dir: &Path, jsonl_path: &Path) ->
                 .unwrap_or_else(|| Path::new(""))
                 .join(target)
         };
-        let canonical_target =
-            dunce::canonicalize(&absolute_target).unwrap_or_else(|_| absolute_target.clone());
+        let canonical_target = crate::sync::path::canonicalize(&absolute_target)
+            .unwrap_or_else(|_| absolute_target.clone());
         if !canonical_target.starts_with(&canonical_beads) {
             return Err(BeadsError::Config(format!(
                 "Refusing to use JSONL path through symlink escaping .beads: {} -> {}",
@@ -1730,7 +1730,7 @@ fn resolve_requested_sync_path(jsonl_path: &Path) -> Result<PathBuf> {
 
 fn resolve_sync_parent_path(jsonl_parent: &Path) -> Result<PathBuf> {
     if jsonl_parent.exists() {
-        return dunce::canonicalize(jsonl_parent).map_err(|e| {
+        return crate::sync::path::canonicalize(jsonl_parent).map_err(|e| {
             BeadsError::Config(format!(
                 "JSONL directory is not accessible: {} ({e})",
                 jsonl_parent.display()

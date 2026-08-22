@@ -568,9 +568,10 @@ impl SyncSafetyValidator {
         }
 
         // Canonicalize if possible, otherwise use the path as-is
-        let canonical_path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let canonical_path =
+            crate::sync::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let canonical_beads =
-            dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+            crate::sync::path::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
 
         // Check if path starts with beads_dir
         if !canonical_path.starts_with(&canonical_beads) {

@@ -8400,7 +8400,8 @@ pub fn preflight_export(
     // Check 2: Output path validation (PC-1, PC-2, PC-3, NGI-3)
     if let Some(ref beads_dir) = config.beads_dir {
         // Determine if the path is external (outside .beads/)
-        let canonical_beads = dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.clone());
+        let canonical_beads =
+            crate::sync::path::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.clone());
         let is_external =
             !output_path.starts_with(beads_dir) && !output_path.starts_with(&canonical_beads);
 
@@ -8658,7 +8659,8 @@ fn preflight_import_impl(
     // Check 2: Input path validation (PC-1, PC-2, PC-3, NGI-3)
     if let Some(ref beads_dir) = config.beads_dir {
         // Determine if the path is external (outside .beads/)
-        let canonical_beads = dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.clone());
+        let canonical_beads =
+            crate::sync::path::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.clone());
         let is_external =
             !input_path.starts_with(beads_dir) && !input_path.starts_with(&canonical_beads);
 

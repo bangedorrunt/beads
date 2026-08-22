@@ -214,7 +214,6 @@ dependencies = [
  "clap_complete",
  "criterion",
  "crossterm",
- "dunce",
  "flate2",
  "indicatif",
  "insta",

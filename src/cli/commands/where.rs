@@ -306,13 +306,15 @@ fn render_where_rich(output: &WhereOutput, ctx: &OutputContext) {
 }
 
 fn canonicalize_lossy(path: &Path) -> PathBuf {
-    if let Ok(canonical) = dunce::canonicalize(path) {
+    if let Ok(canonical) = crate::sync::path::canonicalize(path) {
         return canonical;
     }
     // Non-existent leaf: still normalize symlinked prefixes by resolving
     // the nearest existing ancestor, then re-append the remaining tail.
     let mut resolved = match path.parent() {
-        Some(parent) => dunce::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()),
+        Some(parent) => {
+            crate::sync::path::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf())
+        }
         None => PathBuf::from("/"),
     };
     if let Some(leaf) = path.file_name() {

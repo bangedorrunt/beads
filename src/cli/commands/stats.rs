@@ -896,7 +896,7 @@ fn git_repo_context(start: &Path) -> Option<GitRepoContext> {
 }
 
 fn git_repo_context_from_filesystem(start: &Path) -> Option<GitRepoContext> {
-    let mut repo_root = dunce::canonicalize(start).ok()?;
+    let mut repo_root = crate::sync::path::canonicalize(start).ok()?;
 
     loop {
         let git_entry = repo_root.join(".git");
@@ -930,7 +930,7 @@ fn read_gitdir_file(git_file: &Path, repo_root: &Path) -> Option<PathBuf> {
     } else {
         repo_root.join(path)
     };
-    dunce::canonicalize(path).ok()
+    crate::sync::path::canonicalize(&path).ok()
 }
 
 fn read_git_head(git_dir: &Path) -> Option<String> {
@@ -1074,8 +1074,8 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 fn repo_relative_git_path(path: &Path, repo_root: &Path) -> Option<PathBuf> {
-    let canonical_repo_root = dunce::canonicalize(repo_root).ok()?;
-    let canonical_path = dunce::canonicalize(path).ok()?;
+    let canonical_repo_root = crate::sync::path::canonicalize(repo_root).ok()?;
+    let canonical_path = crate::sync::path::canonicalize(path).ok()?;
     canonical_path
         .strip_prefix(&canonical_repo_root)
         .ok()

@@ -210,7 +210,7 @@ fn symlink_escape_for_existing_ancestor(
         // Judge the FULLY RESOLVED location of the ancestor, not the raw
         // link-target text: a chain of links that lands back inside the
         // tree (or in its canonical prefix) is harmless.
-        match dunce::canonicalize(ancestor) {
+        match canonicalize(ancestor) {
             Ok(resolved) if resolved.starts_with(canonical_beads) => {}
             Ok(resolved) => {
                 return Some(PathValidation::SymlinkEscape {
@@ -240,7 +240,21 @@ fn resolve_symlink_target_for_validation(link_path: &Path, target: &Path) -> Pat
             .join(target)
     };
     let normalized = normalize_path_lexically(&anchored).unwrap_or(anchored);
-    dunce::canonicalize(&normalized).unwrap_or(normalized)
+    canonicalize(&normalized).unwrap_or(normalized)
+}
+
+/// Single canonicalization entry point for route checks and beads-dir
+/// resolution. Every canonicalization in the crate goes through here so
+/// symlink/`/var`-prefix semantics live in exactly one place (ADR-0002 W3;
+/// see the iyfg symlink-guard repair for why scattered raw calls are a
+/// failure class, not a style choice).
+///
+/// # Errors
+///
+/// Returns the underlying I/O error when the path cannot be canonicalized
+/// (missing component, permission denied, or a symlink loop).
+pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(path)
 }
 
 /// True when `path` prefixes against `dir` in either route form: raw,
@@ -306,7 +320,7 @@ pub fn validate_no_git_path(path: &Path) -> PathValidation {
     // Resolve each existing ancestor. The final path or its immediate parent
     // may not exist yet, but a higher symlinked ancestor can still target .git.
     for ancestor in path.ancestors() {
-        let Ok(canonical_ancestor) = dunce::canonicalize(ancestor) else {
+        let Ok(canonical_ancestor) = canonicalize(ancestor) else {
             continue;
         };
         if has_git_component(&canonical_ancestor) {
@@ -375,7 +389,7 @@ pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
     };
 
     // Canonicalize the beads directory
-    let canonical_beads = match dunce::canonicalize(beads_dir) {
+    let canonical_beads = match canonicalize(beads_dir) {
         Ok(p) => p,
         Err(e) => {
             let result = PathValidation::CanonicalizationFailed {
@@ -439,7 +453,7 @@ pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
     };
 
     // Canonicalize the path (or its parent for new files)
-    let canonical_path = match dunce::canonicalize(&path_to_check) {
+    let canonical_path = match canonicalize(&path_to_check) {
         Ok(p) => p,
         Err(e) => {
             // For non-existent files, we can't canonicalize, so check prefix
@@ -665,8 +679,7 @@ pub fn validate_sync_path_with_external(
 ) -> Result<()> {
     // If a path still points at `.beads/`, keep the stricter internal
     // allowlist and symlink-escape checks even when external JSONL is enabled.
-    let canonical_beads =
-        dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+    let canonical_beads = canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
     let resolved_path = if path.is_relative() {
         std::env::current_dir()
             .map(|cwd| cwd.join(path))
@@ -801,8 +814,7 @@ pub fn require_safe_sync_overwrite_path(
     allow_external: bool,
     operation: &str,
 ) -> Result<()> {
-    let canonical_beads =
-        dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+    let canonical_beads = canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
 
     // Resolve relative paths against cwd so that `.beads/issues.jsonl.<pid>.tmp`
     // is correctly recognized as internal when beads_dir is absolute (#238).
@@ -894,8 +906,7 @@ pub fn validate_temp_file_path(
     beads_dir: &Path,
     allow_external: bool,
 ) -> Result<()> {
-    let canonical_beads =
-        dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+    let canonical_beads = canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
     let temp_is_external =
         !temp_path.starts_with(beads_dir) && !temp_path.starts_with(&canonical_beads);
     let safe_temp = if temp_is_external {
@@ -2004,7 +2015,7 @@ fn absolute_jsonl_source_path(path: &Path) -> Result<PathBuf> {
             // error.
             if let Some(parent) = normalized.parent()
                 && let Some(leaf) = normalized.file_name()
-                && let Ok(resolved_parent) = dunce::canonicalize(parent)
+                && let Ok(resolved_parent) = canonicalize(parent)
             {
                 return Ok(resolved_parent.join(leaf));
             }

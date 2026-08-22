@@ -270,7 +270,7 @@ fn resolve_target(
         .parent()
         .ok_or_else(|| unsafe_target_error("the diagnostic target must include a parent"))?;
     let parent = if lexical_parent.is_dir() {
-        dunce::canonicalize(lexical_parent)
+        crate::sync::path::canonicalize(lexical_parent)
             .map_err(|_| unsafe_target_error("the diagnostic target directory is not accessible"))?
     } else {
         lexical_parent.to_path_buf()
@@ -281,7 +281,8 @@ fn resolve_target(
             "VCS diagnostics refuse targets inside Git metadata",
         ));
     }
-    let canonical_beads = dunce::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
+    let canonical_beads =
+        crate::sync::path::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
     let scope = if path.starts_with(&canonical_beads) {
         PathScope::Workspace
     } else {

@@ -97,7 +97,7 @@ fn execute_routed(
     );
     let quiet = cli.quiet.unwrap_or(false);
     let normalized_local_beads_dir =
-        dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+        crate::sync::path::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
 
     if matches!(
         output_format,
@@ -109,8 +109,8 @@ fn execute_routed(
             batch_args.ids.clone_from(&batch.issue_inputs);
 
             let batch_beads_dir = batch.beads_dir;
-            let normalized_batch_beads_dir =
-                dunce::canonicalize(&batch_beads_dir).unwrap_or_else(|_| batch_beads_dir.clone());
+            let normalized_batch_beads_dir = crate::sync::path::canonicalize(&batch_beads_dir)
+                .unwrap_or_else(|_| batch_beads_dir.clone());
             let use_preloaded = normalized_batch_beads_dir == normalized_local_beads_dir;
             let mut batch_cli = cli_for_routed_workspace(cli, !use_preloaded);
             let routed_write_lock = acquire_routed_workspace_write_lock(
@@ -175,8 +175,8 @@ fn execute_routed(
         let mut batch_args = args.clone();
         batch_args.ids.clone_from(&batch.issue_inputs);
 
-        let normalized_batch_beads_dir =
-            dunce::canonicalize(&batch.beads_dir).unwrap_or_else(|_| batch.beads_dir.clone());
+        let normalized_batch_beads_dir = crate::sync::path::canonicalize(&batch.beads_dir)
+            .unwrap_or_else(|_| batch.beads_dir.clone());
         let use_preloaded = normalized_batch_beads_dir == normalized_local_beads_dir;
         let mut batch_cli = cli_for_routed_workspace(cli, !use_preloaded);
         let routed_write_lock = acquire_routed_workspace_write_lock(

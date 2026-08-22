@@ -239,7 +239,7 @@ impl ConfigPaths {
 }
 
 fn normalize_db_override_path(path: &Path) -> PathBuf {
-    if let Ok(canonical) = dunce::canonicalize(path) {
+    if let Ok(canonical) = crate::sync::path::canonicalize(path) {
         return canonical;
     }
 
@@ -250,7 +250,7 @@ fn normalize_db_override_path(path: &Path) -> PathBuf {
         return path.to_path_buf();
     };
 
-    dunce::canonicalize(parent)
+    crate::sync::path::canonicalize(parent)
         .map(|canonical_parent| canonical_parent.join(file_name))
         .unwrap_or_else(|_| path.to_path_buf())
 }
@@ -393,8 +393,8 @@ fn linked_worktree_primary_beads_dir(workspace_root: &Path, candidate: &Path) ->
     }
     let primary = primary_beads_dir_from_git_file(&git_file)?;
     let same = match (
-        dunce::canonicalize(&primary),
-        dunce::canonicalize(candidate),
+        crate::sync::path::canonicalize(&primary),
+        crate::sync::path::canonicalize(candidate),
     ) {
         (Ok(a), Ok(b)) => a == b,
         _ => primary == *candidate,
@@ -470,7 +470,7 @@ fn primary_beads_dir_from_git_file(git_file: &Path) -> Option<PathBuf> {
                 None
             }
         })?;
-    let common_git_dir = dunce::canonicalize(&common_git_dir).unwrap_or(common_git_dir);
+    let common_git_dir = crate::sync::path::canonicalize(&common_git_dir).unwrap_or(common_git_dir);
     if common_git_dir.file_name()? != ".git" {
         return None;
     }
@@ -4333,12 +4333,13 @@ pub fn implicit_external_jsonl_allowed(
 
 fn path_is_within_beads_dir(path: &Path, beads_dir: &Path) -> bool {
     let canonical_beads =
-        dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+        crate::sync::path::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
 
     let effective_path = if path.exists() {
-        dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+        crate::sync::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     } else if let Some(parent) = path.parent().filter(|parent| parent.exists()) {
-        let canonical_parent = dunce::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        let canonical_parent =
+            crate::sync::path::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
         path.file_name().map_or_else(
             || canonical_parent.clone(),
             |name| canonical_parent.join(name),
@@ -6461,8 +6462,8 @@ labels:
 
         let discovered = discover_beads_dir(Some(&worktree)).expect("discover");
         assert_eq!(
-            dunce::canonicalize(discovered).expect("canon discovered"),
-            dunce::canonicalize(primary_beads).expect("canon primary")
+            crate::sync::path::canonicalize(&discovered).expect("canon discovered"),
+            crate::sync::path::canonicalize(&primary_beads).expect("canon primary")
         );
     }
 
@@ -6483,8 +6484,8 @@ labels:
 
         let discovered = discover_beads_dir(Some(&worktree)).expect("discover");
         assert_eq!(
-            dunce::canonicalize(discovered).expect("canon discovered"),
-            dunce::canonicalize(wt_beads).expect("canon wt beads")
+            crate::sync::path::canonicalize(&discovered).expect("canon discovered"),
+            crate::sync::path::canonicalize(&wt_beads).expect("canon wt beads")
         );
     }
 
@@ -6498,8 +6499,8 @@ labels:
 
         let discovered = discover_beads_dir(Some(&worktree)).expect("discover");
         assert_eq!(
-            dunce::canonicalize(discovered).expect("canon discovered"),
-            dunce::canonicalize(primary_beads).expect("canon primary")
+            crate::sync::path::canonicalize(&discovered).expect("canon discovered"),
+            crate::sync::path::canonicalize(&primary_beads).expect("canon primary")
         );
     }
 
@@ -6522,12 +6523,12 @@ labels:
 
         let discovered = discover_beads_dir(Some(&worktree)).expect("discover");
         assert_eq!(
-            dunce::canonicalize(discovered).expect("canon discovered"),
-            dunce::canonicalize(&elsewhere).expect("canon elsewhere")
+            crate::sync::path::canonicalize(&discovered).expect("canon discovered"),
+            crate::sync::path::canonicalize(&elsewhere).expect("canon elsewhere")
         );
         assert_ne!(
-            dunce::canonicalize(&primary_beads).ok(),
-            dunce::canonicalize(&elsewhere).ok()
+            crate::sync::path::canonicalize(&primary_beads).ok(),
+            crate::sync::path::canonicalize(&elsewhere).ok()
         );
     }
 

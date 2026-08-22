@@ -89,15 +89,15 @@ pub fn execute(
 
     if routed_batches.iter().any(|batch| batch.is_external) {
         let normalized_local_beads_dir =
-            dunce::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
+            crate::sync::path::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
         let mut routed_outcomes = Vec::new();
 
         for batch in routed_batches {
             let mut batch_args = args.clone();
             batch_args.ids.clone_from(&batch.issue_inputs);
 
-            let normalized_batch_beads_dir =
-                dunce::canonicalize(&batch.beads_dir).unwrap_or_else(|_| batch.beads_dir.clone());
+            let normalized_batch_beads_dir = crate::sync::path::canonicalize(&batch.beads_dir)
+                .unwrap_or_else(|_| batch.beads_dir.clone());
             let mut batch_cli = cli.clone();
             batch_cli.db = if normalized_batch_beads_dir == normalized_local_beads_dir {
                 cli.db.clone()

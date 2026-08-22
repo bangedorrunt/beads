@@ -764,7 +764,7 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 fn canonicalize_lossy(path: &Path) -> PathBuf {
-    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    crate::sync::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn info_display_text(value: &str) -> String {

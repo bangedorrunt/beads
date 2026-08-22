@@ -853,10 +853,10 @@ fn current_jsonl_path_for_backup_with_cwd(
         })?;
         let normalized_target = normalize_jsonl_match_path(&target_path, cwd);
         let normalized_active = normalize_jsonl_match_path(active_jsonl_path, cwd);
-        let canonical_target =
-            dunce::canonicalize(&normalized_target).unwrap_or_else(|_| normalized_target.clone());
-        let canonical_active =
-            dunce::canonicalize(&normalized_active).unwrap_or_else(|_| normalized_active.clone());
+        let canonical_target = crate::sync::path::canonicalize(&normalized_target)
+            .unwrap_or_else(|_| normalized_target.clone());
+        let canonical_active = crate::sync::path::canonicalize(&normalized_active)
+            .unwrap_or_else(|_| normalized_active.clone());
         if canonical_target != canonical_active {
             return Err(BeadsError::Config(format!(
                 "Backup target '{}' does not match the active JSONL path '{}'",
@@ -871,7 +871,7 @@ fn current_jsonl_path_for_backup_with_cwd(
 
 fn is_external_jsonl_target(beads_dir: &Path, target_path: &Path) -> bool {
     let canonical_beads =
-        dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+        crate::sync::path::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
     !target_path.starts_with(beads_dir) && !target_path.starts_with(&canonical_beads)
 }
 
@@ -882,8 +882,9 @@ fn is_default_jsonl_target(beads_dir: &Path, target_path: &Path) -> bool {
     }
 
     let canonical_target =
-        dunce::canonicalize(target_path).unwrap_or_else(|_| target_path.to_path_buf());
-    let canonical_default = dunce::canonicalize(&default_target).unwrap_or(default_target);
+        crate::sync::path::canonicalize(target_path).unwrap_or_else(|_| target_path.to_path_buf());
+    let canonical_default =
+        crate::sync::path::canonicalize(&default_target).unwrap_or(default_target);
     canonical_target == canonical_default
 }
 

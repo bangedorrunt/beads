@@ -78,9 +78,6 @@ rich_rust = { version = "0.2.3", features = ["markdown", "json", "backtrace"] }
 # TOON format support (sibling project)
 toon_rust = { version = "0.2.3", package = "tru" }
 
-# Path normalization (strips \\?\ prefix on Windows)
-dunce = "1.0.5"
-
 # Utilities
 regex = "1.13"
 shell-words = "1.1.1"
