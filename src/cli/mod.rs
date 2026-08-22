@@ -2804,6 +2804,12 @@ pub struct CloseArgs {
     /// Reason for bypassing policy gates. Required when `--bypass-policy` is set.
     #[arg(long, value_name = "REASON")]
     pub bypass_reason: Option<String>,
+
+    /// ADR-0001 §5.3: SHA of the commit whose message cites the bead id.
+    /// Required to close unless policy is bypassed by an operator
+    /// (BR_OPERATOR=1). `br` never runs git; the caller supplies the SHA.
+    #[arg(long, value_name = "SHA")]
+    pub commit_sha: Option<String>,
 }
 
 /// Arguments for the reopen command.

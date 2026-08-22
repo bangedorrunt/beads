@@ -192,6 +192,16 @@ pub fn execute(
         write_init_file_if_missing(&config_path, config.as_bytes())?;
     }
 
+    // ADR-0001 §5.3: write the fail-closed default policy. Existing policy
+    // files are never overwritten (operators may have customized gates).
+    let policy_path = beads_dir.join(crate::close_policy::POLICY_FILE_NAME);
+    if !path_entry_exists(&policy_path)? {
+        write_init_file_if_missing(
+            &policy_path,
+            crate::close_policy::DEFAULT_FAIL_CLOSED_POLICY_YAML.as_bytes(),
+        )?;
+    }
+
     // Write .gitignore
     let gitignore_path = beads_dir.join(".gitignore");
     let gitignore_existed = path_entry_exists(&gitignore_path)?;

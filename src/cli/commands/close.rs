@@ -47,6 +47,9 @@ pub struct CloseArgs {
     pub bypass_policy: bool,
     /// Reason for bypass. Required when `bypass_policy = true`.
     pub bypass_reason: Option<String>,
+    /// ADR-0001 §5.3: SHA of the commit whose message cites the bead id.
+    /// Required on close unless policy is bypassed by an operator.
+    pub commit_sha: Option<String>,
 }
 
 impl From<&CliCloseArgs> for CloseArgs {
@@ -63,6 +66,7 @@ impl From<&CliCloseArgs> for CloseArgs {
             model: cli.model.clone(),
             bypass_policy: cli.bypass_policy,
             bypass_reason: cli.bypass_reason.clone(),
+            commit_sha: cli.commit_sha.clone(),
         }
     }
 }
@@ -70,6 +74,10 @@ impl From<&CliCloseArgs> for CloseArgs {
 /// Aggregate of policy gates that fired for a single candidate close.
 struct EvaluatedGates {
     violations: Vec<PolicyViolation>,
+    /// ADR-0001 §5.3: the kebab-case verdict kind whose PASS row legally
+    /// authorized this close (`require_legal_close` path). `None` when no
+    /// legal row exists or the close bypassed policy.
+    close_verdict: Option<String>,
 }
 
 /// Validate the `--bypass-policy` / `--bypass-reason` flag pair before
@@ -132,6 +140,7 @@ fn evaluate_close_policy(
     issue: &Issue,
     args: &CloseArgs,
     close_actor: &str,
+    fail_closed_default: bool,
 ) -> Result<EvaluatedGates> {
     // Look up the in_progress actor only when the gate is enabled — this
     // saves a query per close for repos that don't enable that specific
@@ -197,7 +206,42 @@ fn evaluate_close_policy(
         }
     }
 
-    Ok(EvaluatedGates { violations })
+    // ADR-0001 §5.3 fail-closed close (rpay). Two triggers: an explicit
+    // `require_legal_close: true` rule guarding the transition, or the
+    // fail-closed default (policy.yaml absent, or workflow.strict unset with
+    // no gates configured) on any `-> closed` move.
+    let from = issue.status.as_str();
+    let to = Status::Closed.as_str();
+    let mut close_verdict: Option<String> = None;
+    if !args.bypass_policy
+        && to == "closed"
+        && (fail_closed_default
+            || workflow
+                .gate_rule_for(from, to)
+                .is_some_and(|rule| rule.require_legal_close))
+    {
+        let results = storage.get_scoped_gate_results(issue_id, from, to)?;
+        let input = close_policy::legal_close_input_for_issue_pub(issue.priority.0);
+        close_verdict = results
+            .iter()
+            .filter(|result| result.passed)
+            .find_map(|result| {
+                let kind = crate::verify::VerdictKind::from_gate_name(&result.gate)?;
+                crate::verify::legal_close(kind, &input)
+                    .then(|| kind.gate_name().to_string())
+            });
+        violations.extend(close_policy::evaluate_require_legal_close(
+            issue_id,
+            from,
+            issue.priority.0,
+            &results,
+        ));
+    }
+
+    Ok(EvaluatedGates {
+        violations,
+        close_verdict,
+    })
 }
 
 /// Collect the IDs of issues that have a `blocks` edge *from* `issue_id`
@@ -800,17 +844,51 @@ fn execute_route(
     // Closure-time policy gates (issue #274 Phase 1). Loading happens once per
     // route; if the file is absent the doc is the all-off default.
     let policy_doc = close_policy::load_for_beads_dir(beads_dir)?;
+    // ADR-0001 §5.3: the fail-closed close default applies when the project
+    // has no `.beads/policy.yaml`, or when it never configured workflow
+    // gating (strict unset / no gates). Interim reading until the policy
+    // schema distinguishes "strict explicitly false" (uyb3).
+    let fail_closed_default = !beads_dir.join(close_policy::POLICY_FILE_NAME).exists()
+        || (!policy_doc.workflow.strict && policy_doc.workflow.gates.is_empty());
     // Active when close-policy gates are enabled (issue #274) OR the workflow
-    // gate engine is configured (issue #312, layer 2). The latter must also
-    // trigger per-issue gate evaluation at close time.
+    // gate engine is configured (issue #312, layer 2), OR the fail-closed
+    // close default applies. The latter must also trigger per-issue gate
+    // evaluation at close time.
     let policy_active = policy_doc.close_policy.is_active()
         || policy_doc.workflow.gates_enforced()
-        || !policy_doc.workflow.required_fields.is_empty();
+        || !policy_doc.workflow.required_fields.is_empty()
+        || fail_closed_default;
     let attribution = resolve_attribution_for_close(args, &policy_doc);
     if args.bypass_policy && !policy_doc.allow_bypass {
         return Err(BeadsError::validation(
             "bypass-policy",
             ".beads/policy.yaml has allow_bypass: false; --bypass-policy is disabled",
+        ));
+    }
+    // ADR-0001 §5.3: bypass is an OPERATOR action. Flywheel and agent skills
+    // never set this; only a human operator's environment does.
+    if args.bypass_policy && std::env::var("BR_OPERATOR").as_deref() != Ok("1") {
+        return Err(BeadsError::validation(
+            "bypass-policy",
+            "--bypass-policy requires BR_OPERATOR=1 in the environment (ADR-0001 §5.3); \
+             agents must satisfy the close gates instead",
+        ));
+    }
+    // ADR-0001 §5.3: a legal close carries the SHA of the commit whose
+    // message cites the bead id (`br` never runs git; the caller supplies
+    // it). Bypassed closes are exempt.
+    if !args.bypass_policy
+        && args
+            .commit_sha
+            .as_deref()
+            .map(str::trim)
+            .filter(|sha| !sha.is_empty())
+            .is_none()
+    {
+        return Err(BeadsError::validation(
+            "commit-sha",
+            "--commit-sha <sha> is required to close (the commit message must cite the bead \
+             id); use --bypass-policy with BR_OPERATOR=1 to skip, which requires --bypass-reason",
         ));
     }
 
@@ -992,6 +1070,7 @@ fn execute_route(
                 issue,
                 args,
                 &actor,
+                fail_closed_default,
             )?;
             if !evaluated_gates.violations.is_empty() && !args.bypass_policy {
                 let summary = summarize_violations(&evaluated_gates.violations);
@@ -1044,7 +1123,7 @@ fn execute_route(
             continue;
         }
 
-        let gates_fired = if let Some(evaluated_gates) = policy_evaluations_by_id.get(id) {
+        let mut gates_fired = if let Some(evaluated_gates) = policy_evaluations_by_id.get(id) {
             if !evaluated_gates.violations.is_empty() && args.bypass_policy {
                 emit_bypass_warning(ctx, id, &evaluated_gates.violations);
             }
@@ -1056,6 +1135,22 @@ fn execute_route(
         } else {
             Vec::new()
         };
+        // ADR-0001 §5.3 audit trail: the authorizing verdict kind and the
+        // commit SHA ride in close_metadata's gates JSON until the schema-v18
+        // columns land (uyb3 wires issue.commit_sha / issue.close_verdict).
+        if let Some(evaluated_gates) = policy_evaluations_by_id.get(id)
+            && let Some(verdict) = &evaluated_gates.close_verdict
+        {
+            gates_fired.push(format!("close_verdict={verdict}"));
+        }
+        if let Some(sha) = args
+            .commit_sha
+            .as_deref()
+            .map(str::trim)
+            .filter(|sha| !sha.is_empty())
+        {
+            gates_fired.push(format!("commit_sha={sha}"));
+        }
 
         let now = Utc::now();
         let close_reason = args.reason.clone().unwrap_or_else(|| "done".to_string());
@@ -1336,6 +1431,7 @@ mod tests {
             model: Some("gpt-5".to_string()),
             bypass_policy: true,
             bypass_reason: Some("Manual override approved".to_string()),
+            commit_sha: None,
         };
         assert_eq!(args.ids.len(), 2);
         assert_eq!(args.ids[0], "bd-abc");
@@ -1771,6 +1867,7 @@ mod tests {
             model: Some("model-clone".to_string()),
             bypass_policy: true,
             bypass_reason: Some("Clone bypass reason".to_string()),
+            commit_sha: None,
         };
         let cloned = args.clone();
         assert_eq!(cloned.ids, args.ids);
