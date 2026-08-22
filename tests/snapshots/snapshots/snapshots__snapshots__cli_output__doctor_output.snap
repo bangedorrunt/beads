@@ -11,7 +11,6 @@ OK doctor.runs_creatable
 OK permissions.recovery_dir
 OK permissions.write_lock
 OK permissions.root_gitignore
-OK permissions.db_sidecars
 OK permissions.config_yaml_secrets
 OK br_path_dupes
 OK gitignore.beads_inner_present
@@ -43,7 +42,7 @@ OK wal_size
 OK db.recovery_artifacts
 OK db.recovery_artifacts.aged
 OK db.foreign_recovery_debris
-OK db.sidecars: SHM sidecar at /TMP/.beads/beads.ID-REDACTED is inert beside the WAL (a ID-REDACTED family is expected for frankensqlite; the WAL index lives in process memory)
+OK db.sidecars
 OK schema.tables
 OK schema.columns
 OK db.recoverable_anomalies

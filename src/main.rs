@@ -806,6 +806,11 @@ fn main() {
 
     // Handle command result
     if let Err(e) = result {
+        // handle_error terminates the process; drop the storage family first
+        // so `SqliteStorage::Drop` checkpoints and removes -wal/-shm instead
+        // of leaking them beside the database (#270).
+        drop(storage_result);
+        drop(write_lock);
         handle_error(&e, json_error_mode, color_error_mode);
     }
 

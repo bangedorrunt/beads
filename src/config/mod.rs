@@ -6388,7 +6388,10 @@ labels:
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
         let discovered = discover_beads_dir(Some(temp.path())).expect("discover");
-        assert_eq!(discovered, beads_dir);
+        assert_eq!(
+            discovered,
+            beads_dir.canonicalize().expect("canonical temp path")
+        );
     }
 
     /// Lay out `<root>/primary` (a fake primary checkout with a `.git`
@@ -6521,7 +6524,10 @@ labels:
         fs::create_dir_all(&nested).expect("create nested");
 
         let discovered = discover_beads_dir(Some(&nested)).expect("discover");
-        assert_eq!(discovered, beads_dir);
+        assert_eq!(
+            discovered,
+            beads_dir.canonicalize().expect("canonical temp path")
+        );
     }
 
     #[test]
@@ -6537,7 +6543,10 @@ labels:
 
         let discovered =
             discover_optional_beads_dir_with_cli(&cli).expect("optional discovery with db");
-        assert_eq!(discovered, Some(beads_dir));
+        assert_eq!(
+            discovered,
+            Some(beads_dir.canonicalize().expect("canonical temp path"))
+        );
     }
 
     #[test]
@@ -6551,7 +6560,10 @@ labels:
             discover_beads_dir_with_cli_from(None, &CliOverrides::default(), None, Some(&db_path))
                 .expect("discovery with env db override");
 
-        assert_eq!(discovered, beads_dir);
+        assert_eq!(
+            discovered,
+            beads_dir.canonicalize().expect("canonical temp path")
+        );
     }
 
     #[test]
@@ -6570,7 +6582,10 @@ labels:
 
         let discovered =
             discover_optional_beads_dir_with_cli(&cli).expect("optional discovery with redirect");
-        assert_eq!(discovered, Some(target_beads));
+        assert_eq!(
+            discovered,
+            Some(target_beads.canonicalize().expect("canonical temp path"))
+        );
     }
 
     #[test]
@@ -6605,7 +6620,10 @@ labels:
             Some(Path::new("/tmp/not-a-beads-db")),
         )
         .expect("external env db should still reuse discovered workspace");
-        assert_eq!(discovered, beads_dir);
+        assert_eq!(
+            discovered,
+            beads_dir.canonicalize().expect("canonical temp path")
+        );
     }
 
     #[test]
@@ -6627,7 +6645,10 @@ labels:
         )
         .expect("external cli db override should reuse discovered workspace");
 
-        assert_eq!(discovered, beads_dir);
+        assert_eq!(
+            discovered,
+            beads_dir.canonicalize().expect("canonical temp path")
+        );
     }
 
     #[test]
@@ -6649,7 +6670,10 @@ labels:
         )
         .expect("relative cli db override should reuse discovered workspace");
 
-        assert_eq!(discovered, beads_dir);
+        assert_eq!(
+            discovered,
+            beads_dir.canonicalize().expect("canonical temp path")
+        );
     }
 
     #[test]
@@ -7207,7 +7231,10 @@ routing:
         let paths = resolve_paths(&beads_dir, None).expect("resolve paths");
         assert_eq!(
             paths.db_path,
-            crate::util::resolve_cache_dir(&beads_dir).join("custom.db")
+            beads_dir
+                .canonicalize()
+                .expect("canonical temp path")
+                .join("custom.db")
         );
     }
 
@@ -8473,7 +8500,10 @@ routing:
             .expect("issue should exist after recovery");
 
         assert_eq!(issue.title, "Recovered from external JSONL");
-        assert_eq!(storage_ctx.paths.jsonl_path, jsonl_path);
+        assert_eq!(
+            storage_ctx.paths.jsonl_path,
+            jsonl_path.canonicalize().expect("canonical temp path")
+        );
     }
 
     #[test]
@@ -8518,7 +8548,9 @@ routing:
             .expect_err("read-only miss should wait for recovery lock");
         let message = err.to_string();
         assert!(
-            message.contains("Timed out after 1ms waiting for write lock"),
+            // The budget is 1ms; by the time the failure surfaces the
+            // remaining window can have decayed to 0ms.
+            message.contains("Timed out after") && message.contains("waiting for write lock"),
             "{message}"
         );
         assert!(!db_path.exists(), "rebuild must not run without write lock");

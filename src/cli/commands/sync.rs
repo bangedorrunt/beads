@@ -1653,6 +1653,16 @@ fn validate_operator_requested_sync_path(beads_dir: &Path, jsonl_path: &Path) ->
     let mut candidate = PathBuf::new();
     for component in operator_path.components() {
         candidate.push(component.as_os_str());
+        // Only components strictly BELOW .beads can steer the path out of
+        // the tree. Ancestors shared with .beads itself (e.g. macOS
+        // /var -> /private/var under $TMPDIR workspaces) are common to both
+        // sides — canonical_beads already resolves them — so judging their
+        // link targets here would refuse every such workspace.
+        if !(candidate.starts_with(beads_dir) && candidate != beads_dir)
+            && !(candidate.starts_with(&canonical_beads) && candidate != canonical_beads)
+        {
+            continue;
+        }
         let Ok(metadata) = fs::symlink_metadata(&candidate) else {
             continue;
         };

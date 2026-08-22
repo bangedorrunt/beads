@@ -1,3 +1,6 @@
 [toolchain]
+# Pinned for reproducibility (ADR-0002 W2 verification): this channel builds
+# and tests green with bundled rusqlite 0.40.2, including the stricter clippy
+# lints it adds over floating nightly.
 channel = "nightly-2026-08-20"
 components = ["rustfmt", "clippy"]

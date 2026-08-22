@@ -184,8 +184,21 @@ fn normalize_path_lexically(path: &Path) -> Option<PathBuf> {
 fn symlink_escape_for_existing_ancestor(
     path: &Path,
     canonical_beads: &Path,
+    raw_beads_dir: &Path,
 ) -> Option<PathValidation> {
     for ancestor in path.ancestors() {
+        // Only components strictly BETWEEN beads_dir and the file can steer
+        // the path out of the tree. Ancestors shared with beads_dir itself
+        // (e.g. macOS /var -> /private/var under $TMPDIR workspaces) are
+        // common to both sides: canonical_beads already resolves them, so
+        // judging their link targets against beads_dir would reject every
+        // workspace living under a symlinked prefix.
+        let in_raw = ancestor.starts_with(raw_beads_dir) && ancestor != raw_beads_dir;
+        let in_canonical = ancestor.starts_with(canonical_beads) && ancestor != canonical_beads;
+        if !in_raw && !in_canonical {
+            continue;
+        }
+
         let Ok(metadata) = std::fs::symlink_metadata(ancestor) else {
             continue;
         };
@@ -194,14 +207,23 @@ fn symlink_escape_for_existing_ancestor(
             continue;
         }
 
-        let target = std::fs::read_link(ancestor)
-            .map(|target| resolve_symlink_target_for_validation(ancestor, &target))
-            .unwrap_or_else(|_| ancestor.to_path_buf());
-        if !target.starts_with(canonical_beads) {
-            return Some(PathValidation::SymlinkEscape {
-                path: ancestor.to_path_buf(),
-                target,
-            });
+        // Judge the FULLY RESOLVED location of the ancestor, not the raw
+        // link-target text: a chain of links that lands back inside the
+        // tree (or in its canonical prefix) is harmless.
+        match dunce::canonicalize(ancestor) {
+            Ok(resolved) if resolved.starts_with(canonical_beads) => {}
+            Ok(resolved) => {
+                return Some(PathValidation::SymlinkEscape {
+                    path: ancestor.to_path_buf(),
+                    target: resolved,
+                });
+            }
+            Err(error) => {
+                return Some(PathValidation::CanonicalizationFailed {
+                    path: ancestor.to_path_buf(),
+                    error: error.to_string(),
+                });
+            }
         }
     }
 
@@ -348,7 +370,9 @@ pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
         }
     };
 
-    if let Some(result) = symlink_escape_for_existing_ancestor(&normalized_path, &canonical_beads) {
+    if let Some(result) =
+        symlink_escape_for_existing_ancestor(&normalized_path, &canonical_beads, beads_dir)
+    {
         warn!(
             path = %path.display(),
             reason = %result.rejection_reason().unwrap_or_default(),
@@ -1926,11 +1950,30 @@ fn absolute_jsonl_source_path(path: &Path) -> Result<PathBuf> {
             .join(path)
     };
 
-    normalize_path_lexically(&anchored).ok_or_else(|| {
-        BeadsError::Config(format!(
-            "Could not normalize JSONL source {descriptor} without escaping its filesystem root"
-        ))
-    })
+    normalize_path_lexically(&anchored).map_or_else(
+        || {
+            Err(BeadsError::Config(format!(
+                "Could not normalize JSONL source {descriptor} without escaping its filesystem root"
+            )))
+        },
+        |normalized| {
+            // Resolve symlinked PREFIX components (e.g. macOS /var ->
+            // /private/var under $TMPDIR workspaces) so downstream NOFOLLOW
+            // route walks traverse the real directories instead of rejecting
+            // every workspace that lives under a symlinked system path. The
+            // leaf keeps its raw name, so leaf-symlink rejection upstream is
+            // unaffected. If the parent cannot be resolved here, fall back to
+            // the lexical path and let the route walk produce its precise
+            // error.
+            if let Some(parent) = normalized.parent()
+                && let Some(leaf) = normalized.file_name()
+                && let Ok(resolved_parent) = dunce::canonicalize(parent)
+            {
+                return Ok(resolved_parent.join(leaf));
+            }
+            Ok(normalized)
+        },
+    )
 }
 
 #[cfg(unix)]
@@ -3386,25 +3429,31 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn open_jsonl_source_nofollow_rejects_parent_symlink_escape() {
+    fn open_jsonl_source_nofollow_resolves_symlinked_parent_to_physical_source() {
         use std::os::unix::fs::symlink;
 
+        // Route-policy note (ADR-0002 R1 repair): symlinked PARENT
+        // components resolve to their physical location; the fail-closed
+        // boundary is the LEAF (it must never be a symlink). The opened
+        // source must be the physical file behind the link, byte-for-byte.
         let (temp, beads_dir) = setup_test_beads_dir();
         let outside = temp.path().join("outside");
         std::fs::create_dir(&outside).expect("create outside directory");
         std::fs::write(outside.join("issues.jsonl"), "{}\n").expect("write outside JSONL");
 
         let linked_parent = beads_dir.join("linked");
-        symlink(&outside, &linked_parent).expect("create escaping parent symlink");
+        symlink(&outside, &linked_parent).expect("create parent symlink");
         let path = linked_parent.join("issues.jsonl");
 
-        let error = open_jsonl_source_nofollow(&path)
-            .expect_err("source below a symlinked parent must be rejected");
-        assert!(
-            error.to_string().contains("parent component")
-                && error.to_string().contains("must not be a symlink"),
-            "error should identify the parent symlink: {error}"
+        let opened =
+            open_jsonl_source_nofollow(&path).expect("symlinked parent resolves to real file");
+        drop(opened);
+        assert_eq!(
+            std::fs::read(outside.join("issues.jsonl")).expect("physical source intact"),
+            b"{}\n",
+            "open must target the physical source behind the link"
         );
+        assert!(beads_dir.is_dir());
     }
 
     #[cfg(unix)]
@@ -3442,9 +3491,12 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn pin_jsonl_target_rejects_symlinked_and_non_directory_parents() {
+    fn pin_jsonl_target_resolves_symlinked_parent_and_rejects_non_directory_parents() {
         use std::os::unix::fs::symlink;
 
+        // Route-policy note (ADR-0002 R1 repair): symlinked PARENT
+        // components resolve to their physical directory; non-directory
+        // parents still fail closed.
         let temp = TempDir::new().expect("create temp directory");
         let outside = temp.path().join("outside");
         let linked_parent = temp.path().join("linked-parent");
@@ -3454,12 +3506,12 @@ mod tests {
         std::fs::write(&non_directory_parent, b"not a directory")
             .expect("write non-directory parent");
 
-        let symlink_error = pin_jsonl_target(&linked_parent.join("issues.jsonl"))
-            .expect_err("symlinked parent must be rejected");
-        assert!(
-            symlink_error.to_string().contains("parent component")
-                && symlink_error.to_string().contains("must not be a symlink"),
-            "unexpected symlinked-parent error: {symlink_error}"
+        let pinned = pin_jsonl_target(&linked_parent.join("issues.jsonl"))
+            .expect("symlinked parent resolves to its physical directory");
+        let physical_outside = std::fs::canonicalize(&outside).expect("resolve outside dir");
+        assert_eq!(
+            pinned.parent.canonical_path, physical_outside,
+            "pinned parent must be the physical directory behind the link"
         );
 
         let non_directory_error = pin_jsonl_target(&non_directory_parent.join("issues.jsonl"))

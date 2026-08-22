@@ -2356,15 +2356,13 @@ fn inspect_database_sidecars(db_path: &Path) -> Result<SidecarInspection> {
     }
 
     if wal_kind.is_regular_file() && !shm_kind.exists() {
-        // frankensqlite manages the WAL index in process-local memory rather than in an SHM
-        // file, so a WAL without a sibling SHM is the normal operating state — not an error.
-        // Record the layout as informational so callers can observe it, but do not
-        // degrade an otherwise healthy workspace: doctor treats every warning as a
-        // failed health check. We also do not
-        // quarantine the WAL, because the WAL is valid and the database is accessible.
-        // The db.write_probe check validates liveness.
+        // Real SQLite recovers a leftover WAL automatically on the next
+        // open (checkpoint-on-close removed the SHM but not the WAL, or a
+        // writer died mid-flight). Informational only: quarantining the WAL
+        // would discard committed frames. The db.write_probe check
+        // validates liveness.
         inspection.informational_findings.push(format!(
-            "WAL sidecar exists without a matching SHM sidecar at {} (expected for frankensqlite)",
+            "WAL sidecar exists without a matching SHM sidecar at {} (leftover WAL is recovered automatically on the next open)",
             PathBuf::from(format!("{}-wal", db_path.to_string_lossy())).display()
         ));
     }
@@ -2379,14 +2377,13 @@ fn inspect_database_sidecars(db_path: &Path) -> Result<SidecarInspection> {
     }
 
     if shm_kind.is_regular_file() && wal_kind.is_regular_file() {
-        // frankensqlite never reads or writes the classic `-shm` index — the
-        // WAL index lives in process-local memory — so an SHM beside a live
-        // WAL is inert heritage (e.g. an orphan the engine's own open later
-        // paired with a fresh WAL). Classify it explicitly instead of
-        // silently absorbing it into a "full family" that this engine does
-        // not actually use; the file stays in place because it is harmless.
+        // Real SQLite semantics: the -shm/-wal pair exists while any
+        // connection is live and is checkpointed + removed on the next
+        // clean close of the last connection, so a resting pair is harmless
+        // heritage from an unclean exit. Record it informationally instead
+        // of degrading health or deleting committed WAL content.
         inspection.informational_findings.push(format!(
-            "SHM sidecar at {} is inert beside the WAL (a WAL-only family is expected for frankensqlite; the WAL index lives in process memory)",
+            "WAL and SHM sidecars at {} are a normal live-engine family (SQLite checkpoints and removes them on the next clean close)",
             PathBuf::from(format!("{}-shm", db_path.to_string_lossy())).display()
         ));
     }
@@ -18597,8 +18594,11 @@ mod tests {
         fs::create_dir_all(&beads_dir).unwrap();
         let db_path = beads_dir.join("beads.db");
         let wal_writer = create_valid_oversized_wal(&db_path);
-        wal_writer.close().unwrap();
-
+        // Real SQLite checkpoints and REMOVES the WAL when the last
+        // connection closes cleanly, so the writer must stay open for the
+        // oversized-WAL state to exist while doctor inspects it. The lock is
+        // released when `wal_writer` drops at test end.
+        let _wal_writer = wal_writer;
         let mut report = DoctorReport {
             ok: false,
             workspace_health: Some("degraded".to_string()),
@@ -21968,7 +21968,7 @@ mod tests {
         fs::write(&shm_path, b"shm").unwrap();
 
         let paths = existing_sqlite_family_paths_for_legacy_op(&db_path);
-        assert_eq!(paths, vec![db_path, wal_path, journal_path, shm_path]);
+        assert_eq!(paths, vec![db_path, wal_path, shm_path, journal_path]);
     }
 
     #[test]
@@ -21999,6 +21999,10 @@ mod tests {
             .unwrap(),
         );
         write_authority.bind_database_inode_for_mutation().unwrap();
+        // Snapshot the on-disk family BEFORE the fixer runs: real SQLite's
+        // VACUUM consumes/removes the -wal/-journal sidecars, so listing
+        // afterwards would under-report the audited family.
+        let expected_family = on_disk_db_family_names(&beads_dir, "beads.db");
         let mut session = DoctorRepairSession::new(temp.path(), false).unwrap();
         let mut repair = LocalRepairResult::default();
         repair_via_vacuum(&db_path, &mut repair, Some(&mut session), &write_authority);
@@ -22014,8 +22018,7 @@ mod tests {
             .collect();
 
         assert_eq!(
-            action_paths,
-            on_disk_db_family_names(&beads_dir, "beads.db"),
+            action_paths, expected_family,
             "VACUUM legacy audit must cover the existing SQLite file family; actions={actions}"
         );
         assert_eq!(
@@ -22047,6 +22050,10 @@ mod tests {
         fs::write(&wal_path, b"wal-prestate").unwrap();
         fs::write(&journal_path, b"journal-prestate").unwrap();
 
+        // Snapshot the on-disk family BEFORE the fixer runs: the repair open
+        // can consume/remove sidecars, so listing afterwards would
+        // under-report the audited family.
+        let expected_family = on_disk_db_family_names(&beads_dir, "beads.db");
         let mut session = DoctorRepairSession::new(temp.path(), false).unwrap();
         let mut repair = LocalRepairResult::default();
         repair_partial_indexes(&db_path, &mut repair, Some(&mut session));
@@ -22062,8 +22069,7 @@ mod tests {
             .collect();
 
         assert_eq!(
-            action_paths,
-            on_disk_db_family_names(&beads_dir, "beads.db"),
+            action_paths, expected_family,
             "REINDEX legacy audit must cover the existing SQLite file family; actions={actions}"
         );
         assert_eq!(

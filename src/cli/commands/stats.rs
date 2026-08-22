@@ -2529,7 +2529,10 @@ mod tests {
         .expect("write ref");
 
         let repo_ctx = git_repo_context_from_filesystem(temp.path()).expect("repo context");
-        assert_eq!(repo_ctx.repo_root, temp.path());
+        assert_eq!(
+            repo_ctx.repo_root,
+            temp.path().canonicalize().expect("canonical temp path")
+        );
         assert_eq!(repo_ctx.head, "0123456789abcdef0123456789abcdef01234567");
     }
 
@@ -2553,7 +2556,10 @@ mod tests {
         .expect("write ref");
 
         let repo_ctx = git_repo_context_from_filesystem(&repo_root).expect("repo context");
-        assert_eq!(repo_ctx.repo_root, repo_root);
+        assert_eq!(
+            repo_ctx.repo_root,
+            repo_root.canonicalize().expect("canonical temp path")
+        );
         assert_eq!(repo_ctx.head, "fedcba9876543210fedcba9876543210fedcba98");
     }
 
@@ -2568,7 +2574,10 @@ mod tests {
         git(temp.path(), &["commit", "-q", "-m", "init"]);
 
         let repo_ctx = git_repo_context(temp.path()).expect("repo context");
-        assert_eq!(repo_ctx.repo_root, temp.path());
+        assert_eq!(
+            repo_ctx.repo_root,
+            temp.path().canonicalize().expect("canonical temp path")
+        );
         assert_eq!(
             repo_ctx.head,
             git_stdout(temp.path(), &["rev-parse", "HEAD"])

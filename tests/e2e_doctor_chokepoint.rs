@@ -1515,20 +1515,14 @@ fn legacy_op_audit_for_vacuum_via_page_corruption() {
     let _ = fs::remove_file(root.join(".beads").join("beads.db-wal"));
     let _ = fs::remove_file(root.join(".beads").join("beads.db-shm"));
 
-    // Overwrite a non-header page so `PRAGMA integrity_check` reports
-    // page-level corruption (the trigger for `repair_via_vacuum`).
-    {
-        use std::io::{Seek, SeekFrom, Write};
-
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&db_path)
-            .expect("open db rw");
-        let junk = vec![0xffu8; 200];
-        f.seek(SeekFrom::Start(4096))
-            .expect("seek to page-2 corruption offset");
-        f.write_all(&junk).expect("corrupt page-2");
-    }
+    // Inject orphan pages (engine-agnostic): append zero-filled pages and
+    // stamp the header page-count so `PRAGMA integrity_check` reports benign
+    // "Page N is never used" findings — WARN-level residue that routes to
+    // `repair_via_vacuum`. Writing junk into a fixed byte offset is not
+    // engine-agnostic: under real SQLite, offset 4096 is the issues table's
+    // root page, which flips integrity_check to ERROR and reroutes repair to
+    // a JSONL rebuild instead of the VACUUM flow this test exercises.
+    inject_orphan_pages(&db_path);
 
     // Capture the pre-VACUUM SHA-256 so we can compare to the backup.
     let pre_repair_db_bytes = fs::read(&db_path).expect("read corrupted db");
@@ -1708,26 +1702,101 @@ fn seed_dirty_issue_and_corrupt_db(root: &Path) -> String {
         .expect("dirty issue id")
         .to_string();
 
-    // Drop any WAL/SHM sidecars so the page corruption lands in the
+    // Drop any WAL/SHM sidecars so the corruption lands in the
     // authoritative main DB file rather than being masked by an
     // uncheckpointed overlay. (This does not checkpoint anything — br
     // checkpoints on clean close, so the rows are already in the main
-    // file; removal just discards the empty sidecars.) Same pattern as
-    // the vacuum test above.
+    // file; removal just discards the empty sidecars.)
     let db_path = root.join(".beads").join("beads.db");
     let _ = fs::remove_file(root.join(".beads").join("beads.db-wal"));
     let _ = fs::remove_file(root.join(".beads").join("beads.db-shm"));
-    {
-        use std::os::unix::fs::FileExt;
-        let f = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&db_path)
-            .expect("open db rw");
-        let junk = vec![0xffu8; 200];
-        f.write_at(&junk, 4096).expect("corrupt page-2");
-    }
+    // Corrupt a SECONDARY index page, resolved live from the schema
+    // (engine-agnostic). A fixed offset would be a layout gamble: under
+    // real SQLite offset 4096 is the issues TABLE's root page, whose loss
+    // makes every row unreadable and turns rebuild preservation into a no-op.
+    // Index-page corruption still flips `PRAGMA integrity_check` to ERROR
+    // (triggering the rebuild flow under test) while table rows — including
+    // the unflushed dirty issue this test protects — stay readable.
+    corrupt_secondary_index_page(&db_path);
 
     dirty_id
+}
+
+/// Corrupt the root page of a secondary index, resolving both the page
+/// number and the page size live from the database schema so the injection
+/// stays correct across engine layout changes.
+fn corrupt_secondary_index_page(db_path: &Path) {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let conn = Connection::open(db_path.to_string_lossy().into_owned())
+        .expect("open db for corruption introspection");
+    let row = conn
+        .query_row(
+            "SELECT rootpage, (SELECT page_size FROM pragma_page_size) \
+             FROM sqlite_master WHERE type = 'index' AND name = 'idx_issues_content_hash'",
+        )
+        .expect("resolve idx_issues_content_hash rootpage");
+    let rootpage = row
+        .get(0)
+        .and_then(beads::storage::SqliteValue::as_integer)
+        .expect("rootpage int");
+    let page_size = row
+        .get(1)
+        .and_then(beads::storage::SqliteValue::as_integer)
+        .expect("page_size int");
+    conn.close().expect("close introspection connection");
+
+    let offset = u64::try_from((rootpage - 1) * page_size).expect("non-negative page offset");
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .open(db_path)
+        .expect("open db rw");
+    f.seek(SeekFrom::Start(offset))
+        .expect("seek to index root page");
+    f.write_all(&[0xffu8; 200]).expect("corrupt index page");
+}
+
+/// Append zero-filled pages and stamp the header page-count so
+/// `PRAGMA integrity_check` reports benign "Page N is never used" findings —
+/// the WARN-level residue that routes `doctor --repair` through
+/// `repair_via_vacuum`.
+fn inject_orphan_pages(db_path: &Path) {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let conn = Connection::open(db_path.to_string_lossy().into_owned())
+        .expect("open db for orphan-page introspection");
+    let page_size_row = conn
+        .query_row("SELECT page_size FROM pragma_page_size")
+        .expect("page size");
+    let page_size = usize::try_from(
+        page_size_row
+            .get(0)
+            .and_then(beads::storage::SqliteValue::as_integer)
+            .expect("page_size int"),
+    )
+    .expect("page_size fits usize");
+    conn.close().expect("close introspection connection");
+
+    let file_len = fs::metadata(db_path).expect("stat db").len();
+    let total_pages =
+        usize::try_from(file_len / page_size as u64).expect("page count fits usize") + 2; // 2 appended pages
+
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .open(db_path)
+        .expect("open db rw");
+    f.seek(SeekFrom::End(0)).expect("seek to end");
+    f.write_all(&vec![0u8; page_size * 2][..])
+        .expect("append orphan pages");
+    // Header field at offset 28: database size in pages (big-endian).
+    f.seek(SeekFrom::Start(28))
+        .expect("seek to header page-count field");
+    f.write_all(
+        &u32::try_from(total_pages)
+            .expect("pages fit u32")
+            .to_be_bytes(),
+    )
+    .expect("stamp header page count");
 }
 
 #[test]

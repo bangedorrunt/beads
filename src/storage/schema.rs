@@ -301,10 +301,16 @@ pub const SCHEMA_SQL: &str = r"
     -- Uses ASC on created_at (not DESC) to avoid frankensqlite B-tree ordering
     -- divergence with C sqlite3 integrity_check.  SQLite reverse-scans the ASC
     -- index efficiently for ORDER BY ... created_at DESC queries.
+    --
+    -- The partial predicate MUST stay provable from the list query's WHERE
+    -- clause: INDEXED BY fails with 'no query solution' when the planner
+    -- cannot derive the partial predicate from the query (the OR-form
+    -- '(is_template = 0 OR is_template IS NULL)' is not implied; the
+    -- COALESCE form is).
     CREATE INDEX IF NOT EXISTS idx_issues_list_active_order
         ON issues(priority, created_at)
         WHERE status NOT IN ('closed', 'tombstone')
-        AND (is_template = 0 OR is_template IS NULL);
+        AND COALESCE(is_template, 0) = 0;
 
     -- Dependencies
     CREATE TABLE IF NOT EXISTS dependencies (
@@ -1651,6 +1657,22 @@ fn rebuild_kv_table_without_unique(conn: &Connection, table: &str) -> Result<()>
     Ok(())
 }
 
+/// True when `idx_issues_list_active_order` exists with the legacy OR-form
+/// partial predicate that C SQLite's planner cannot prove from the list
+/// query's WHERE clause (INDEXED BY fails with 'no query solution').
+fn legacy_active_order_index_shape(conn: &Connection) -> bool {
+    let Ok(rows) =
+        conn.query("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_issues_list_active_order'")
+    else {
+        return false;
+    };
+    rows.iter().any(|row| {
+        row.get(0)
+            .and_then(SqliteValue::as_text)
+            .is_some_and(|sql| sql.contains("is_template = 0 OR is_template IS NULL"))
+    })
+}
+
 /// Run pre-schema migrations to fix incompatible old tables.
 ///
 /// This must run BEFORE `execute_batch(SCHEMA_SQL)` because the schema includes
@@ -2125,6 +2147,18 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
 
     // Migration: Add missing indexes for bd parity
     // These use IF NOT EXISTS so they're safe to run multiple times
+
+    // Self-heal idx_issues_list_active_order shape: databases created before
+    // the COALESCE predicate change carry the OR-form partial predicate, which
+    // C SQLite's planner cannot derive from the list query's WHERE clause —
+    // INDEXED BY then fails with 'no query solution'. Detect by SQL text and
+    // drop; the IF NOT EXISTS batch below recreates it in COALESCE form.
+    if legacy_active_order_index_shape(conn) {
+        tracing::info!(
+            "Migrating idx_issues_list_active_order to planner-provable COALESCE partial predicate"
+        );
+        conn.execute("DROP INDEX IF EXISTS idx_issues_list_active_order")?;
+    }
     execute_batch(
         conn,
         r"
@@ -2156,10 +2190,13 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
             ON issues(status, priority, created_at);
 
         -- Common active list path: non-terminal issues sorted by priority/created_at
+        -- (COALESCE predicate: must stay provable from the list query's WHERE
+        -- clause or INDEXED BY fails with 'no query solution'; see the
+        -- initial-schema definition above)
         CREATE INDEX IF NOT EXISTS idx_issues_list_active_order
             ON issues(priority, created_at)
             WHERE status NOT IN ('closed', 'tombstone')
-            AND (is_template = 0 OR is_template IS NULL);
+            AND COALESCE(is_template, 0) = 0;
 
     ",
     )?;

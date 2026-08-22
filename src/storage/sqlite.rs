@@ -2341,9 +2341,17 @@ impl SqliteStorage {
             return Ok(None);
         }
 
+        // Open READ_WRITE (no create): a READ_ONLY connection cannot delete
+        // the -shm/-wal family on close under real SQLite, so every fast-open
+        // command would leave sidecar litter beside the database. A clean
+        // read-write close checkpoints and removes them, keeping the fast
+        // path net-zero on the database family. Open failures (e.g. a
+        // read-only filesystem) fall back to the full recovery open.
         let conn = open_with_flags(
             path.to_string_lossy().as_ref(),
-            OpenFlags::SQLITE_OPEN_READ_ONLY,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_URI,
         )?;
         // Now that the connection is open, consult the effective schema version
         // (WAL-aware) and fall back to the header peek. Reviewed reconciliation
@@ -7947,7 +7955,7 @@ impl SqliteStorage {
                 "SELECT id, title, status, priority, issue_type, created_at, updated_at
                  FROM issues INDEXED BY idx_issues_list_active_order
                  WHERE status NOT IN ('closed', 'tombstone')
-                   AND (is_template = 0 OR is_template IS NULL)
+                   AND COALESCE(is_template, 0) = 0
                    AND priority = ?
                  ORDER BY created_at DESC, id ASC
                  LIMIT ?",

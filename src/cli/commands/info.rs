@@ -875,7 +875,12 @@ mod tests {
         assert!(output.issue_count.is_none());
         assert_eq!(
             output.database_path,
-            beads_dir.join("beads.db").display().to_string()
+            beads_dir
+                .canonicalize()
+                .unwrap_or_else(|_| beads_dir.clone())
+                .join("beads.db")
+                .display()
+                .to_string()
         );
     }
 

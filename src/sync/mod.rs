@@ -949,14 +949,23 @@ fn reject_unsafe_database_routing_leaf(database_path: &Path) -> Result<PathBuf> 
 
 pub(crate) fn reject_symlinked_database_route_components(database_path: &Path) -> Result<()> {
     let absolute = absolute_database_routing_path(database_path)?;
-    for component_path in absolute.ancestors().skip(1) {
+    // Judge the FULLY RESOLVED route, not raw link-target text: workspaces
+    // legitimately live under symlinked system prefixes (macOS
+    // /var -> /private/var under $TMPDIR), and every authority/lock path
+    // derives from the same canonicalization, so requiring each component of
+    // the RESOLVED parent to be a real directory keeps the fail-closed
+    // intent without rejecting those workspaces.
+    let Some(parent) = absolute.parent() else {
+        return Ok(());
+    };
+    let resolved_parent = fs::canonicalize(parent).map_err(|error| {
+        BeadsError::Config(format!(
+            "Could not inspect configured database route {}: {error}",
+            database_path_descriptor(&absolute)
+        ))
+    })?;
+    for component_path in resolved_parent.ancestors().skip(1) {
         match fs::symlink_metadata(component_path) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(BeadsError::Config(format!(
-                    "Refusing configured database route with a symlinked parent component {}",
-                    database_path_descriptor(&absolute)
-                )));
-            }
             Ok(metadata) if !metadata.is_dir() => {
                 return Err(BeadsError::Config(format!(
                     "Refusing configured database route with a non-directory parent component {}",
@@ -15931,7 +15940,13 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn database_family_authority_rejects_symlinked_parent_with_regular_leaf() {
+    fn database_family_authority_resolves_symlinked_parent_route_to_physical_location() {
+        // Route-policy note (ADR-0002 R1 repair): symlinked ANCESTORS are
+        // judged by their fully-resolved location — workspaces legitimately
+        // sit under system prefixes like macOS /var -> /private/var. The
+        // fail-closed boundary is the LEAF: it must be a regular file, and
+        // every derived authority artifact must land beside the PHYSICAL
+        // database, never through the lexical route.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         let outside_dir = temp.path().join("outside");
@@ -15942,22 +15957,33 @@ mod tests {
         drop(SqliteStorage::open(&outside_database).unwrap());
         symlink(&outside_dir, &routed_parent).unwrap();
 
-        let error = blocking_database_family_write_lock_with_timeout(
+        let lock = blocking_database_family_write_lock_with_timeout(
             &beads_dir,
             &routed_parent.join("beads.db"),
             Some(100),
         )
-        .expect_err("a regular database leaf must not hide a symlinked parent route")
-        .to_string();
+        .expect("a symlinked parent route resolves to the physical database");
+        drop(lock);
+        // Authority artifacts live beside the physical database.
+        let authority_artifacts = fs::read_dir(&outside_dir)
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".br-db-write-")
+            });
         assert!(
-            error.contains("symlinked parent component"),
-            "unexpected route error: {error}"
+            authority_artifacts,
+            "authority lock must be created beside the resolved database at {}",
+            outside_dir.display()
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn database_family_authority_rejects_symlinked_parent_with_missing_leaf() {
+    fn database_family_authority_missing_leaf_through_symlink_route_stays_off_the_lexical_path() {
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         let outside_dir = temp.path().join("outside");
@@ -15966,20 +15992,18 @@ mod tests {
         fs::create_dir_all(&outside_dir).unwrap();
         symlink(&outside_dir, &routed_parent).unwrap();
 
-        let error = blocking_database_family_write_lock_with_timeout(
+        let lock = blocking_database_family_write_lock_with_timeout(
             &beads_dir,
             &routed_parent.join("not-yet-created.db"),
             Some(100),
         )
-        .expect_err("a missing database leaf must not hide a symlinked parent route")
-        .to_string();
+        .expect("a missing leaf behind a symlink route still resolves for locking");
+        drop(lock);
+        // Nothing may materialize through the lexical route; any artifacts
+        // belong beside the physical location only.
         assert!(
-            error.contains("symlinked parent component"),
-            "unexpected route error: {error}"
-        );
-        assert!(
-            !outside_dir.join("not-yet-created.db").exists(),
-            "rejected authority acquisition must not materialize the routed leaf"
+            !routed_parent.join("not-yet-created.db").exists(),
+            "lexical route must stay untouched"
         );
     }
 
@@ -16895,7 +16919,10 @@ mod tests {
         assert!(!temp_path.exists());
         assert!(publication.cleanup_durable);
         assert!(publication.retained_recovery_path.is_none());
-        assert_eq!(publication.source.display_path(), output_path);
+        assert_eq!(
+            publication.source.display_path(),
+            output_path.canonicalize().expect("canonical temp path")
+        );
         assert_eq!(publication.source.state_witness(), staged_state);
         assert_eq!(publication.source.content_sha256(), content_sha256);
     }
