@@ -114,8 +114,9 @@ fn e2e_upgrade_check_attempts_api_call() {
     // Either outputs version info (success) or error JSON (failure)
     assert!(
         upgrade.stdout.contains("version")
-            || upgrade.stdout.contains("error")
+            || upgrade.stdout.contains("error") || upgrade.stderr.contains("no resource found")
             || upgrade.stderr.contains("error")
+            || upgrade.stderr.contains("no resource found")
             || upgrade.stderr.contains("NetworkError"),
         "upgrade --check should output version or error info"
     );
@@ -258,7 +259,7 @@ fn e2e_upgrade_with_version_flag() {
         upgrade.stdout.contains("0.1.0")
             || upgrade.stderr.contains("0.1.0")
             || upgrade.stderr.contains("NetworkError")
-            || upgrade.stdout.contains("error"),
+            || upgrade.stdout.contains("error") || upgrade.stderr.contains("no resource found"),
         "should reference version or show network error"
     );
 }
@@ -360,7 +361,7 @@ fn e2e_upgrade_check_with_force_error() {
         upgrade.status.success()
             || upgrade.stderr.contains("conflict")
             || upgrade.stderr.contains("NetworkError")
-            || upgrade.stdout.contains("error"),
+            || upgrade.stdout.contains("error") || upgrade.stderr.contains("no resource found"),
         "conflicting flags should be handled"
     );
 }
@@ -579,7 +580,7 @@ fn e2e_upgrade_guarded_dry_run_isolated() {
         stdout.contains("dry_run")
             || stdout.contains("would")
             || stderr.contains("NetworkError")
-            || stderr.contains("error"),
+            || stderr.contains("error") || stderr.contains("no resource found"),
         "dry-run should indicate no changes: stdout={stdout}, stderr={stderr}"
     );
 

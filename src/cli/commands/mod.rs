@@ -58,7 +58,7 @@ pub mod r#where;
 #[cfg(feature = "self_update")]
 pub mod upgrade;
 
-pub(crate) const GITHUB_REPO_OWNER: &str = "Dicklesworthstone";
+pub(crate) const GITHUB_REPO_OWNER: &str = "bangedorrunt";
 pub(crate) const GITHUB_REPO_NAME: &str = "beads";
 
 #[must_use]
