@@ -20,6 +20,7 @@ use serde::Serialize;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
@@ -235,10 +236,28 @@ fn resolve_target(
 ) -> Result<ResolvedGitTarget> {
     let beads_dir = config::discover_beads_dir_with_cli(cli)?;
     let configured = config::resolve_paths(&beads_dir, cli.db.as_ref())?;
-    let requested = args
-        .jsonl
-        .clone()
-        .unwrap_or_else(|| configured.jsonl_path.clone());
+    let canonical_beads =
+        crate::sync::path::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
+    // Linked-worktree diagnostics (#429 interaction): state discovery
+    // resolves a linked worktree's `.beads` to the primary checkout, but the
+    // effective-config probes must run in the worktree that physically holds
+    // the diagnosed JSONL — or its `extensions.worktreeConfig` values
+    // (core.autocrlf, core.attributesFile, ...) are invisible and the global
+    // HOME config wins.
+    let mut same_repo_worktree = false;
+    let mut requested = args.jsonl.clone();
+    if requested.is_none()
+        && let Some(local_beads) = invocation_worktree_beads_dir(&canonical_beads)
+    {
+        debug!(
+            local_beads = %local_beads.display(),
+            canonical_beads = %canonical_beads.display(),
+            "vcs: using invoking linked worktree for diagnostics"
+        );
+        requested = Some(local_beads.join("issues.jsonl"));
+        same_repo_worktree = true;
+    }
+    let requested = requested.unwrap_or_else(|| configured.jsonl_path.clone());
     let anchored = if requested.is_absolute() {
         requested
     } else {
@@ -281,9 +300,7 @@ fn resolve_target(
             "VCS diagnostics refuse targets inside Git metadata",
         ));
     }
-    let canonical_beads =
-        crate::sync::path::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
-    let scope = if path.starts_with(&canonical_beads) {
+    let scope = if path.starts_with(&canonical_beads) || same_repo_worktree {
         PathScope::Workspace
     } else {
         PathScope::External
@@ -295,8 +312,15 @@ fn resolve_target(
         });
     }
 
+    let label_beads_dir = if same_repo_worktree {
+        path.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or(canonical_beads)
+    } else {
+        canonical_beads
+    };
     let path_label = match scope {
-        PathScope::Workspace => workspace_path_label(&path, &canonical_beads),
+        PathScope::Workspace => workspace_path_label(&path, &label_beads_dir),
         PathScope::External => external_path_descriptor(&path),
     };
     let (source, source_capture_timed_out) = if parent.is_dir() {
@@ -324,6 +348,125 @@ fn unsafe_target_error(reason: &str) -> BeadsError {
         field: "jsonl".to_string(),
         reason: reason.to_string(),
     }
+}
+
+/// Find the invoking worktree's own `.beads` directory when it differs from
+/// the resolved workspace.
+///
+/// State discovery resolves a linked git worktree's `.beads` to the primary
+/// checkout (44c7a6f0 / #429), but VCS diagnostics must honor the effective
+/// git config of the worktree that physically holds the tracked JSONL — its
+/// `extensions.worktreeConfig` values (`core.autocrlf`,
+/// `core.attributesFile`, `core.filemode`) are invisible from the primary.
+///
+/// Returns `Some(local_beads_dir)` only when ALL hold:
+/// - an ancestor of the current directory has a `.beads/issues.jsonl`
+/// - that `.beads` is not the resolved (canonical) one
+/// - the ancestor is a linked worktree of the same repository whose primary
+///   checkout's `.beads` IS the resolved one (verified via the `.git` file's
+///   gitdir/commondir pointers; no git subprocess)
+fn invocation_worktree_beads_dir(canonical_beads: &Path) -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let canonical_cwd = crate::sync::path::canonicalize(&cwd).unwrap_or(cwd);
+
+    let mut cursor: Option<&Path> = Some(canonical_cwd.as_path());
+    while let Some(dir) = cursor {
+        let candidate = dir.join(".beads");
+        if candidate.join("issues.jsonl").is_file() {
+            let same = matches!(
+                crate::sync::path::canonicalize(&candidate).as_deref(),
+                Ok(resolved) if resolved == canonical_beads,
+            ) || candidate == *canonical_beads;
+            if !same && is_linked_worktree_of(dir, canonical_beads) {
+                return Some(candidate);
+            }
+            // Reached the resolved workspace first, or this ancestor is not
+            // a linked worktree of the same repository.
+            return None;
+        }
+        cursor = dir.parent();
+    }
+    None
+}
+
+/// True when `worktree_root` is a linked git worktree whose shared
+/// repository's primary checkout holds `canonical_beads`.
+fn is_linked_worktree_of(worktree_root: &Path, canonical_beads: &Path) -> bool {
+    let git_file = worktree_root.join(".git");
+    if !git_file.is_file() {
+        return false;
+    }
+    let contents = match fs::read_to_string(&git_file) {
+        Ok(contents) => contents,
+        Err(_) => return false,
+    };
+    let Some(gitdir_line) = contents
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:"))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    else {
+        return false;
+    };
+    let raw_gitdir = Path::new(gitdir_line);
+    let gitdir_path = if raw_gitdir.is_absolute() {
+        raw_gitdir.to_path_buf()
+    } else {
+        match git_file.parent() {
+            Some(parent) => parent.join(raw_gitdir),
+            None => return false,
+        }
+    };
+    // The gitdir's commondir file points at the shared `<primary>/.git`;
+    // its parent is the primary working tree.
+    let primary_root = fs::read_to_string(gitdir_path.join("commondir"))
+        .ok()
+        .and_then(|pointer| {
+            let trimmed = pointer.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let raw = Path::new(trimmed);
+            let joined = if raw.is_absolute() {
+                raw.to_path_buf()
+            } else {
+                gitdir_path.join(raw)
+            };
+            // Normalize BEFORE parent(): "../.." must resolve against the
+            // gitdir, not lose a level to a literal-parent parent().
+            lexical_normalize(&joined).parent().map(Path::to_path_buf)
+        })
+        .or_else(|| {
+            let worktrees = gitdir_path.parent()?;
+            (worktrees.file_name()? == "worktrees")
+                .then(|| worktrees.parent().map(Path::to_path_buf))?
+        });
+    let Some(primary_root) = primary_root else {
+        return false;
+    };
+    // commondir pointers are relative ("../.."), so the derived root carries
+    // literal ParentDir components; normalize them before path comparison
+    // (the shared canonicalize helper rejects unnormalized input).
+    let primary_root = lexical_normalize(&primary_root);
+    let primary_beads = primary_root.join(".beads");
+    let resolved = crate::sync::path::canonicalize(&primary_beads);
+    resolved
+        .map(|resolved| resolved == canonical_beads)
+        .unwrap_or(false)
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            component => out.push(component.as_os_str()),
+        }
+    }
+    out
 }
 
 fn contains_git_component(path: &Path) -> bool {
