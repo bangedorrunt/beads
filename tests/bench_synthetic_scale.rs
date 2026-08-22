@@ -1340,12 +1340,29 @@ struct MeasuredCommandOutput {
     peak_rss_bytes: Option<u64>,
 }
 
+/// Probe whether /usr/bin/time is GNU time (-v supported); BSD time(1)
+/// on macOS rejects --version as a command and rejects -v.
+fn gnu_time_available() -> bool {
+    Path::new("/usr/bin/time").is_file()
+        && Command::new("/usr/bin/time")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+}
+
 fn run_measured_br_command(
     br_path: &Path,
     args: &[&str],
     workspace: &Path,
 ) -> std::io::Result<MeasuredCommandOutput> {
-    if Path::new("/usr/bin/time").is_file() {
+    // /usr/bin/time -v is GNU-only; macOS BSD time(1) rejects -v and every
+    // measured operation would fail. Probe once for GNU time and fall back
+    // to unmeasured execution (peak_rss unavailable) on BSD hosts.
+    let gnu_time = gnu_time_available();
+    if gnu_time {
         let output = Command::new("/usr/bin/time") // ubs:ignore - benchmark harness intentionally invokes GNU time for child RSS
             .arg("-v")
             .arg(br_path)
@@ -2835,7 +2852,9 @@ fn synthetic_ci_profile_benchmarks_graph_projection_workloads() {
         );
     }
 
-    if Path::new("/usr/bin/time").is_file() {
+    // RSS evidence is only available when GNU time measured the child;
+    // BSD time(1) hosts (macOS) run unmeasured and skip this assert.
+    if gnu_time_available() {
         let missing_rss = benchmark
             .operations
             .iter()

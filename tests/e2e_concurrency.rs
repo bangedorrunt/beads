@@ -621,8 +621,12 @@ fn e2e_write_lock_contention_respects_lock_timeout() {
         "write lock timeout should not block indefinitely; elapsed={elapsed:?}"
     );
     let combined = format!("{}{}", create.stdout, create.stderr);
+    // The reported millisecond figure is a MEASURED duration, not the
+    // configured bound, so asserting an exact value races (71 vs 75).
+    // Assert the bounded-diagnostic shape instead.
     assert!(
-        combined.contains("Timed out after 75ms")
+        combined.contains("Timed out after")
+            && combined.contains("ms waiting for write lock")
             && combined.contains("write lock")
             && combined.contains(".write.lock"),
         "error should include bounded write-lock diagnostics: {combined}"

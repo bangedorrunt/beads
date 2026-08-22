@@ -279,9 +279,15 @@ fn defer_until_specific_date() {
     let issue = &show_issues[0];
 
     let defer_until = issue["defer_until"].as_str().unwrap();
-    assert!(
-        defer_until.contains("2099-12-31"),
-        "defer_until should contain the specified date"
+    // Contract: a bare --until date means 09:00 LOCAL on that calendar
+    // date; the stored RFC3339 is UTC, whose day shifts on hosts east of
+    // UTC. Compare in local time.
+    let parsed = chrono::DateTime::parse_from_rfc3339(defer_until).expect("defer_until is RFC3339");
+    let local = parsed.with_timezone(&chrono::Local);
+    assert_eq!(
+        local.format("%Y-%m-%d").to_string(),
+        "2099-12-31",
+        "defer_until should represent the specified local date"
     );
     info!("defer_until_specific_date: assertions passed");
 }
