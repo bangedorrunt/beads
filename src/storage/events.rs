@@ -370,9 +370,8 @@ pub fn get_events(conn: &Connection, issue_id: &str, limit: usize) -> Result<Vec
     )?;
 
     let mut result: Vec<Event> = events.iter().map(event_from_row).collect::<Result<_>>()?;
-    // fsqlite may not honour ORDER BY DESC or LIMIT in all query plans. Fetch
-    // the full issue event stream, then enforce both in Rust so LIMIT cannot
-    // discard the wrong rows before sorting.
+    // Enforce ORDER BY DESC + LIMIT in Rust rather than trusting every query
+    // plan: LIMIT cannot discard the wrong rows before sorting.
     result.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
     if limit > 0 && result.len() > limit {
         result.truncate(limit);
@@ -463,9 +462,8 @@ pub fn get_all_events(conn: &Connection, limit: usize) -> Result<Vec<Event>> {
     )?;
 
     let mut result: Vec<Event> = rows.iter().map(event_from_row).collect::<Result<_>>()?;
-    // fsqlite may not honour ORDER BY DESC or LIMIT in all query plans. Fetch
-    // the full audit stream, then enforce both in Rust so LIMIT cannot discard
-    // the wrong rows before sorting.
+    // Enforce ORDER BY DESC + LIMIT in Rust rather than trusting every query
+    // plan: LIMIT cannot discard the wrong rows before sorting.
     result.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
     if limit > 0 && result.len() > limit {
         result.truncate(limit);

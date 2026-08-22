@@ -900,7 +900,7 @@ fn merge_conflict_resolution_label(strategy: ConflictResolution) -> &'static str
 /// recovery uses: backup the DB family, open a fresh connection, import
 /// JSONL, checkpoint, VACUUM/REINDEX. The in-place
 /// `reset_data_tables`+`import_from_jsonl` code path inside
-/// `execute_import` is fragile on fsqlite — it trips stale-pager/MVCC
+/// `execute_import` path is fragile — it trips stale-pager/MVCC
 /// bugs that leave "never used" pages and partial-index mismatches that
 /// VACUUM can't always reclaim. Using `recover_database_from_jsonl`
 /// sidesteps all of that, and `execute_import` then sees
@@ -3234,7 +3234,7 @@ fn execute_import(
     // (either the DB file did not exist or a recoverable anomaly triggered
     // `rebuild_database_from_jsonl`), the DB is already a clean import of the
     // JSONL. Re-running `--rebuild`/`--force` here would redo the import and
-    // trigger fsqlite's stale-pager OpenRead bug ("could not open storage
+    // trigger the engine's stale-pager OpenRead bug ("could not open storage
     // cursor on root page N") because `reset_data_tables` + bulk INSERT within
     // the fresh connection exercises exactly the code path that just ran.
     // Prefix is a default for newly generated IDs, not a project-wide import
@@ -3452,7 +3452,7 @@ fn execute_import(
     });
 
     // Force/rebuild imports replace the database through the verified
-    // backup-and-restore recovery path. This avoids fsqlite's in-place
+    // backup-and-restore recovery path. This avoids in-place
     // DROP/CREATE pager hazards and, critically, guarantees that any late
     // validation or storage failure restores the complete previous DB family.
     let import_used_backup_rebuild = args.force || args.rebuild;
@@ -3596,7 +3596,7 @@ fn execute_import(
         && !skip_heavy_import_maintenance
     {
         // Drain the WAL before VACUUM/REINDEX so the snapshot they operate
-        // on matches what's actually on disk. Without this, fsqlite's
+        // on matches what's actually on disk. Without this, the
         // post-import MVCC state lags behind and VACUUM fails silently with
         // "database is busy (snapshot conflict on pages)", leaving the
         // free-space / partial-index corruption that triggered issue #248
@@ -3614,7 +3614,7 @@ fn execute_import(
         if let Err(e) = storage.execute_raw("REINDEX") {
             warn!(error = %e, "REINDEX after JSONL import failed (non-fatal); partial-index entries may be inconsistent");
         }
-        // Final compaction via `VACUUM INTO` + atomic rename. fsqlite's
+        // Final compaction via `VACUUM INTO` + atomic rename. The
         // in-place VACUUM does not truncate the trailing pages that its
         // REINDEX leaves orphaned, so upstream sqlite3's `PRAGMA
         // integrity_check` reports `Page N: never used` on the rebuilt

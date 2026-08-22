@@ -200,16 +200,7 @@ pub fn execute(
 *.db
 *.db-journal
 *.db-shm
-# -wal plus fsqlite 0.2+'s -wal-cert / -wal-cert-head durability sidecars
 *.db-wal*
-# fsqlite multi-process namespace sidecars (-fsqlite-ns-gate / -fsqlite-ns-use),
-# including the `.<db>.schema-migration-<run>.vacuum-*` copies left by
-# `br doctor migrate-schema` (#427)
-*-fsqlite-ns-gate
-*-fsqlite-ns-use
-*.vacuum-wal-cert*
-# fsqlite 0.3.6+ engine-upgrade bookkeeping written beside the database
-*.fsqlite-migration-state
 
 # Lock files
 .write.lock
@@ -661,7 +652,7 @@ mod tests {
         assert!(content.contains("*.db-journal"));
         assert!(
             content.lines().any(|line| line.trim() == "*.db-wal*"),
-            "init must ignore classic WAL files and fsqlite WAL certificate sidecars: {content}"
+            "init must ignore classic WAL files and WAL sidecars: {content}"
         );
         assert!(content.contains("*.db-shm"));
         assert!(

@@ -143,7 +143,7 @@ fn test_markdown_import_agent_context_json() {
 ### Type
 epic
 ### Agent Context
-{"skills": ["porting-to-rust"], "constraints": ["no rusqlite; fsqlite only"]}
+{"skills": ["porting-to-rust"], "constraints": ["no async runtime; sync I/O only"]}
 
 ## Without Context
 ### Type
@@ -180,7 +180,7 @@ task
         "agent_context content not preserved: {agent_context}"
     );
     assert!(
-        agent_context.contains("no rusqlite; fsqlite only"),
+        agent_context.contains("no async runtime; sync I/O only"),
         "agent_context content not preserved: {agent_context}"
     );
 

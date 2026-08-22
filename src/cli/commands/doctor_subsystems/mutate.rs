@@ -177,7 +177,7 @@ pub enum Op {
     Rename { to: PathBuf },
     /// Set the mode of `path`.
     Chmod { mode: u32 },
-    /// Execute `sql` against the project's `fsqlite` DB inside a
+    /// Execute `sql` against the project's SQLite DB inside a
     /// `BEGIN IMMEDIATE` transaction. Before the SQL fires, every row
     /// of every table named in `affected_tables` is snapshotted as
     /// JSON under `<run-dir>/backups/db/`; on any error the
@@ -212,7 +212,7 @@ pub enum Op {
 /// Lightweight stand-in for a SQL bind value. WP4 wires this through
 /// the chokepoint by converting to [`crate::storage::SqliteValue`]
 /// at the SQL boundary; callers can therefore stay independent of the
-/// fsqlite type stack.
+/// engine type stack.
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum DbArg {
@@ -229,7 +229,7 @@ pub enum DbArg {
 }
 
 impl DbArg {
-    /// Convert into the `fsqlite` type system. Used at the chokepoint's
+    /// Convert into the storage layer's value type. Used at the chokepoint's
     /// SQL boundary; not exposed publicly because it leaks the
     /// underlying engine type.
     fn to_sqlite_value(&self) -> crate::storage::SqliteValue {
@@ -1158,7 +1158,7 @@ fn sqlite_value_to_json(val: &crate::storage::SqliteValue) -> serde_json::Value 
 /// Drive an [`Op::DbMigrate`] end-to-end. Order of operations:
 ///
 /// 1. Snapshot the DB file verbatim to `backups/db/beads.db.pre-migrate`
-///    BEFORE opening any connection (fsqlite can dirty header counters
+///    BEFORE opening any connection (opening a connection can dirty header counters
 ///    even on read-only PRAGMAs).
 /// 2. Verify `PRAGMA user_version == from` and refuse with an internal
 ///    error otherwise.
@@ -1185,7 +1185,7 @@ fn run_db_migrate(
     }
 
     // (1) Snapshot the DB file *before* we open any connection. Opening
-    //     a fsqlite connection can dirty header counters even on a
+    //     a connection can dirty header counters even on a
     //     read-only PRAGMA query; snapshotting first keeps the
     //     pre-migrate file byte-identical to the on-disk state callers
     //     observed before invoking the chokepoint.
@@ -1371,7 +1371,7 @@ fn execute_atomic(
 ///
 /// Some `repair_*` paths (notably `VACUUM`, `REINDEX`, and the blocked-
 /// cache rebuild through `reset_blocked_cache_table`) call into
-/// fsqlite/config helpers that perform their own in-place file or DB
+/// storage/config helpers that perform their own in-place file or DB
 /// mutations and cannot be reformulated as a planned [`Op`] without a
 /// larger refactor. Until that lands, this helper gives those callers
 /// the same observability + recoverability the chokepoint provides:
@@ -2019,7 +2019,7 @@ mod tests {
 
         // Behavioral check: the rolled-back transaction left the table
         // exactly one row (the seed). We do not compare DB file bytes
-        // because fsqlite touches header counters even on a rolled-back
+        // because an engine can touch header counters even on a rolled-back
         // transaction; the row-level invariant is what matters.
         let conn = Connection::open(db.to_string_lossy().into_owned()).unwrap();
         let rows = conn.query("SELECT COUNT(*) FROM sample_widgets").unwrap();

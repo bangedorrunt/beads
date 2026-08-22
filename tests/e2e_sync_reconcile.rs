@@ -464,13 +464,11 @@ fn dry_run_mutates_no_files_and_is_deterministic() {
         before_hashes, after_hashes,
         "dry-run must not change any .beads file contents (incl. -wal/-shm)"
     );
-    // Stat comparison: the fsqlite namespace-admission sidecars
-    // (`*-fsqlite-ns-use` / `*-fsqlite-ns-gate`) get their mtime refreshed by
+    // Stat comparison: transient engine sidecars get their mtime refreshed by
     // the engine on EVERY database open, read-only included. Their contents
     // are covered by the hash assertion above; exempt only their stats.
     let strip_ns_sidecars = |m: &BTreeMap<String, (u128, u64)>| -> BTreeMap<String, (u128, u64)> {
         m.iter()
-            .filter(|(k, _)| !k.contains("-fsqlite-ns-"))
             .map(|(k, v)| (k.clone(), *v))
             .collect()
     };
@@ -984,7 +982,7 @@ fn malformed_jsonl_conflict_markers_and_duplicates_reject_cleanly() {
     );
 
     // The issue data never changed across any of the failures. Workspace
-    // bookkeeping (last-touched, lock files, fsqlite namespace sidecars) is
+    // bookkeeping (last-touched, lock files, engine sidecars) is
     // touched by every storage open and is not issue data.
     write_jsonl_lines(&ws, &good_lines);
     let after = hash_files_under(&beads_dir(&ws));
@@ -996,7 +994,6 @@ fn malformed_jsonl_conflict_markers_and_duplicates_reject_cleanly() {
             !k.ends_with("issues.jsonl")
                 && !k.ends_with("last-touched")
                 && Path::new(k.as_str()).extension() != Some(std::ffi::OsStr::new("lock"))
-                && !k.contains("-fsqlite-ns-")
         })
         .collect();
     assert!(
@@ -1122,8 +1119,7 @@ fn apply_touches_only_the_db_family() {
                 || name.starts_with("beads.db-")
                 || name.ends_with("-wal")
                 || name.ends_with("-shm")
-                || name.ends_with("-fsqlite-ns-use")
-                || name.ends_with("-fsqlite-ns-gate");
+                ;
             let bookkeeping = name == ".write.lock" || name == "last-touched";
             let harness_log = p.starts_with("logs/");
             !(db_family || bookkeeping || harness_log)

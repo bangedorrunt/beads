@@ -1,0 +1,18 @@
+[
+  {
+    "pane_id": "w8G:p1",
+    "name": "flywheel-beads-coder",
+    "profile": "coder",
+    "harness": "opencode",
+    "mail_identity": "YellowMarsh",
+    "skills_injected": false
+  },
+  {
+    "pane_id": "w8G:p2",
+    "name": "flywheel-beads-coder2",
+    "profile": "coder",
+    "harness": "opencode",
+    "mail_identity": "BlackCompass",
+    "skills_injected": false
+  }
+]

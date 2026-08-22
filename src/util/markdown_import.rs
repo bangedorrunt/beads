@@ -894,7 +894,7 @@ Explicit description content
     fn test_agent_context_section_parsing() {
         let content = r"## Epic With Context
 ### Agent Context
-Use the porting-to-rust skill. Constraints: no rusqlite; fsqlite only.
+Use the porting-to-rust skill. Constraints: no async runtime; sync I/O only.
 ### Type
 epic
 ";
@@ -902,7 +902,7 @@ epic
         assert_eq!(issues.len(), 1);
         assert_eq!(
             issues[0].agent_context.as_deref(),
-            Some("Use the porting-to-rust skill. Constraints: no rusqlite; fsqlite only.")
+            Some("Use the porting-to-rust skill. Constraints: no async runtime; sync I/O only.")
         );
     }
 

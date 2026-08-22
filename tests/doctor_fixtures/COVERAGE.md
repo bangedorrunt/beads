@@ -43,7 +43,6 @@ invocation (env override or flag) to pin the finding/check contract;
 | fm-observability-rust-log-noisy-breaks-json | rust_log_noisy_breaks_json | assert: the fixture's assert.sh runs doctor under a deliberately noisy RUST_LOG; the harness itself pins RUST_LOG=error, so the finding cannot fire under the plain run |
 | fm-permissions-beads-dir-readonly | permissions_beads_dir_readonly | detect |
 | fm-permissions-config-yaml-mode-leaks-secrets | config_yaml_secret_mode | detect |
-| fm-permissions-db-sidecar-mode-too-open | — | exception: the detector fires deterministically on a planted 0664 `-fsqlite-ns-gate`, but no fixture can pin the post-repair / post-undo stages: every `br doctor` run opens the database, and the pre-open self-heal (GH #403, `heal_namespace_sidecar_modes`) restores owner-only mode inside that same run, so the chmod fixer has nothing left to do by the repair stage. Covered by unit tests instead — `cli::commands::doctor::tests::test_db_sidecar_mode_check_flags_and_repairs_over_permissive_sidecar` and `storage::sqlite::tests::over_permissive_namespace_sidecar_mode_is_healed_before_open` |
 | fm-permissions-doctor-runs-not-creatable | doctor_runs_not_creatable | detect |
 | fm-permissions-gitignore-not-writable-blocks-repair | root_gitignore_not_writable | detect |
 | fm-permissions-jsonl-world-writable | jsonl_world_writable | detect |

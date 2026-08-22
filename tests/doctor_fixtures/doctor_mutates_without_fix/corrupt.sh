@@ -22,7 +22,7 @@ if [ ! -f .beads/beads.db-wal ]; then
     echo "fixture corrupt.sh: expected a WAL sidecar to exercise the SHM creation regression" >&2
     exit 1
 fi
-# Which sidecars survive a clean exit is an fsqlite implementation detail, not
+# Which sidecars survive a clean exit is an engine implementation detail, not
 # something this fixture may assert: 0.1.18 retains `-shm` where earlier
 # versions dropped it. Establish the WAL-without-SHM starting state instead, so
 # the fixture means the same thing on every engine version. This runs before

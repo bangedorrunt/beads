@@ -66,7 +66,7 @@ impl From<&Issue> for UpdatedIssueOutput {
 /// `get_issue(id)` read after the write transaction commits.  Doing so has
 /// surfaced as an "unrelated bead's fields leak into the diff" bug in the
 /// wild (see issue #256): a rare, yet-to-be-fully-root-caused read-path
-/// inconsistency (e.g. fsqlite prepared-statement / pager cache edge case,
+/// inconsistency (e.g. a stale prepared-statement / pager cache edge case,
 /// or a concurrent external writer touching the JSONL between the two
 /// reads) can cause the post-update `get_issue` to return data that belongs
 /// to a different row while the on-disk write is still correct.

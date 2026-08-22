@@ -77,23 +77,19 @@ fn default_filter(verbosity: u8, quiet: bool) -> String {
         return "error".to_string();
     }
 
-    // fsqlite's internal submodules (btree cells, VDBE steps, cx checkpoints,
-    // pager I/O) fire at `debug` for every row and page touched — enabling
-    // them unfiltered drowns out beads's own logs by many orders of
-    // magnitude on bulk imports. Keep fsqlite at `error` for default debug
-    // builds; `-v` raises it to `warn`, and `-vv`/higher opt into more detail.
+    // The bundled SQLite engine is C and does not emit tracing events, so
+    // filters only need to shape beads's own logs.
     match verbosity {
         0 => {
             if cfg!(debug_assertions) {
-                "beads=debug,fsqlite=error".to_string()
+                "beads=debug".to_string()
             } else {
                 "error".to_string()
             }
         }
-        1 => "beads=debug,fsqlite=warn".to_string(),
-        2 => "beads=debug,fsqlite=info,fsqlite_btree=warn,fsqlite_vdbe=warn,fsqlite_pager=warn"
-            .to_string(),
-        _ => "beads=trace,fsqlite=debug,fsqlite_btree=info,fsqlite_vdbe=info".to_string(),
+        1 => "beads=debug".to_string(),
+        2 => "beads=info".to_string(),
+        _ => "beads=trace".to_string(),
     }
 }
 
@@ -124,16 +120,10 @@ mod tests {
 
     #[test]
     fn default_filter_varies_with_verbosity() {
-        assert_eq!(default_filter(1, false), "beads=debug,fsqlite=warn");
-        assert_eq!(default_filter(0, false), "beads=debug,fsqlite=error");
-        assert_eq!(
-            default_filter(2, false),
-            "beads=debug,fsqlite=info,fsqlite_btree=warn,fsqlite_vdbe=warn,fsqlite_pager=warn"
-        );
-        assert_eq!(
-            default_filter(3, false),
-            "beads=trace,fsqlite=debug,fsqlite_btree=info,fsqlite_vdbe=info"
-        );
+        assert_eq!(default_filter(1, false), "beads=debug");
+        assert_eq!(default_filter(0, false), "beads=debug");
+        assert_eq!(default_filter(2, false), "beads=info");
+        assert_eq!(default_filter(3, false), "beads=trace");
     }
 
     #[test]

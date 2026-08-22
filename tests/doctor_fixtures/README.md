@@ -29,8 +29,8 @@ Each fixture directory contains:
 
 `br doctor undo latest` only restores files the **chokepoint** (`mutate()`)
 touched. Some current `--repair` paths predate WP3/WP4 chokepoint migration
-(notably the JSONL→DB rebuild path) and route writes directly through `fsqlite`
-or `std::fs`. For those fixtures, `undo latest` will report `restored: 0`
+(notably the JSONL→DB rebuild path) and route writes directly through the
+storage engine or `std::fs`. For those fixtures, `undo latest` will report `restored: 0`
 without failing — that is *not* a fixture failure, it is documented chokepoint
 coverage. The `gitignore_leaking_beads` fixture *does* round-trip fully and
 serves as the chokepoint regression test.

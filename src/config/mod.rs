@@ -1295,7 +1295,7 @@ fn should_attempt_jsonl_recovery(open_err: &BeadsError, db_path: &Path, jsonl_pa
         open_err,
         // A member of the database family is a directory where the engine
         // expects a regular file (e.g. a `-journal` directory left by a
-        // hostile or interrupted tool). fsqlite reports this as a plain I/O
+        // hostile or interrupted tool). The engine reports this as a plain I/O
         // error rather than a corruption variant, but it is exactly the
         // structural damage a JSONL rebuild repairs: recovery backs the whole
         // family up and recreates it.
@@ -2247,10 +2247,8 @@ fn rebuild_database_family(
 
     // Drain the WAL to the main DB file so the follow-up maintenance (VACUUM,
     // REINDEX, VACUUM INTO) operates against what is actually on disk.
-    // Without this, fsqlite's post-import MVCC state can lag behind and
-    // maintenance silently fails with "database is busy (snapshot conflict
-    // on pages: page N > snapshot db_size M)", leaving the corruption it
-    // was supposed to clean up in place.
+    // Without this, maintenance can run against stale on-disk state and
+    // leave the corruption it was supposed to clean up in place.
     if let Err(e) = storage.checkpoint_full() {
         tracing::warn!(
             error = %e,
@@ -2259,10 +2257,10 @@ fn rebuild_database_family(
         );
     }
 
-    // Post-rebuild VACUUM to eliminate freeblock accounting anomalies that
-    // frankensqlite's B-tree layer may leave behind during bulk import.
-    // Without this, C sqlite3's `PRAGMA integrity_check` can report
-    // "free space corruption" even though the data is intact (issue #237).
+    // Post-rebuild VACUUM to eliminate freeblock accounting anomalies
+    // bulk import may leave behind. Without this, sqlite3's
+    // `PRAGMA integrity_check` can report "free space corruption"
+    // even though the data is intact (issue #237).
     if let Err(e) = storage.execute_raw("VACUUM") {
         tracing::warn!(
             error = %e,
@@ -2272,7 +2270,7 @@ fn rebuild_database_family(
     }
 
     // Post-rebuild REINDEX to fix partial-index row mismatches that
-    // frankensqlite's B-tree layer can introduce during bulk insert.
+    // bulk insert can introduce.
     // VACUUM rewrites pages but does not rebuild index entries; without
     // REINDEX, `PRAGMA integrity_check` reports "row N missing from index"
     // for partial indexes like idx_issues_list_active_order (issue #246).
@@ -2285,14 +2283,13 @@ fn rebuild_database_family(
     }
 
     // Compact the rebuilt DB via `VACUUM INTO` and atomic rename. This is
-    // the only reliable way to make upstream sqlite3's
-    // `PRAGMA integrity_check` report `ok` on a file produced by fsqlite's
-    // bulk-insert + REINDEX path (issue #248). In-place VACUUM alone —
-    // even called twice after a fresh checkpoint — does not truncate the
-    // trailing pages that fsqlite's REINDEX leaves orphaned: those pages
-    // exist in the file but are neither on the freelist nor referenced
-    // from any B-tree root. `VACUUM INTO` sidesteps fsqlite's in-place
-    // truncation bug because it writes a brand-new compacted file from
+    // the reliable way to make sqlite3's
+    // `PRAGMA integrity_check` report `ok` after the
+    // bulk-insert + REINDEX rebuild path (issue #248). In-place VACUUM alone —
+    // even called twice after a fresh checkpoint — can leave trailing pages
+    // orphaned: they exist in the file but are neither on the freelist nor
+    // referenced from any B-tree root. `VACUUM INTO` sidesteps in-place
+    // truncation quirks because it writes a brand-new compacted file from
     // the reachable page set — page count matches exactly what sqlite3's
     // own `VACUUM INTO` produces. The subsequent atomic rename is
     // crash-safe on POSIX (within a filesystem) and keeps the database
@@ -2570,30 +2567,12 @@ fn actual_child_counters(storage: &SqliteStorage) -> Result<HashMap<String, u32>
 }
 
 /// Engine-managed sidecar files that live alongside a database file.
-///
-/// `-fsqlite-ns-gate` / `-fsqlite-ns-use` are fsqlite's multi-process
-/// namespace admission files; they are created for *any* database path the
-/// engine opens, including the `VACUUM INTO` temp target.
-/// Sidecars fsqlite maintains for multi-process namespace admission.
-///
-/// Single source of truth — `doctor`'s database-family walk reads the same
-/// constant so the two cannot drift apart.
-pub(crate) const FSQLITE_NAMESPACE_SIDECAR_SUFFIXES: &[&str] =
-    &["-fsqlite-ns-gate", "-fsqlite-ns-use"];
-
-/// The parallel-WAL durability-certificate sidecars fsqlite 0.2+ maintains
-/// next to the classic `-wal` file.
-pub(crate) const FSQLITE_WAL_CERT_SIDECAR_SUFFIXES: &[&str] = &["-wal-cert", "-wal-cert-head"];
-
 /// The classic SQLite sidecars.
 pub(crate) const CLASSIC_SIDECAR_SUFFIXES: &[&str] = &["-wal", "-shm", "-journal"];
 
-/// Every engine-managed sidecar suffix, classic and fsqlite-specific.
-pub(crate) fn db_sidecar_suffixes() -> impl Iterator<Item = &'static &'static str> {
-    CLASSIC_SIDECAR_SUFFIXES
-        .iter()
-        .chain(FSQLITE_NAMESPACE_SIDECAR_SUFFIXES.iter())
-        .chain(FSQLITE_WAL_CERT_SIDECAR_SUFFIXES.iter())
+/// Every engine-managed sidecar suffix.
+pub(crate) fn db_sidecar_suffixes() -> impl Iterator<Item = &'static str> {
+    CLASSIC_SIDECAR_SUFFIXES.iter().copied()
 }
 
 /// Best-effort removal of every engine sidecar belonging to `db_path`.
@@ -2688,8 +2667,7 @@ fn compact_database_via_vacuum_into_in_place_with_reopener(
 ) -> Result<SqliteStorage> {
     // Drain any WAL frames the prior VACUUM/REINDEX (run by the caller)
     // left behind, so `VACUUM INTO` sees the fully-committed on-disk
-    // state instead of having to reach into a WAL that fsqlite's own
-    // `VACUUM INTO` may or may not consult. Keeping this inside the
+    // state instead of reaching into a WAL. Keeping this inside the
     // helper means every caller gets the same guarantee regardless of
     // whether they remembered to checkpoint themselves.
     if let Err(err) = storage.checkpoint_full() {
@@ -3343,10 +3321,9 @@ impl OpenStorageResult {
         let (preserved_tombstones, preserved_dirty_issues) =
             preserved_unflushed_state(&self.storage, &source);
 
-        // Close the old connection before rebuilding at the same path.
-        // fsqlite tracks pages by file path, so keeping the old connection
-        // open while creating a new database at the same path causes
-        // BusySnapshot conflicts.
+        // Close the old connection before rebuilding at the same path:
+        // keeping it open while creating a new database at the same path
+        // causes lock conflicts.
         self.storage = SqliteStorage::open_memory()?;
 
         let (storage, _, backup_set) =
@@ -8519,72 +8496,6 @@ routing:
 
         assert_eq!(issue.title, "Recovered from JSONL only");
         assert!(db_path.is_file(), "database should be rebuilt from JSONL");
-    }
-
-    #[test]
-    fn missing_db_recovery_quarantines_orphaned_fsqlite_sidecars() {
-        let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        write_single_issue_jsonl(&jsonl_path, "bd-sidecars", "Recovered after sidecars");
-
-        let orphan_sidecars: &[(&str, &[u8])] = &[
-            ("-wal-cert", b"orphan-wal-cert"),
-            ("-wal-cert-head", b"orphan-wal-cert-head"),
-            ("-fsqlite-ns-gate", b"orphan-ns-gate"),
-            ("-fsqlite-ns-use", b"orphan-ns-use"),
-        ];
-        for (suffix, sentinel) in orphan_sidecars {
-            let path = PathBuf::from(format!("{}{suffix}", db_path.display()));
-            fs::write(path, sentinel).expect("write orphaned engine sidecar");
-        }
-
-        let storage_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
-        let issue = storage_ctx
-            .storage
-            .get_issue("bd-sidecars")
-            .expect("query issue")
-            .expect("issue should exist after rebuild");
-        assert_eq!(issue.title, "Recovered after sidecars");
-        drop(storage_ctx);
-
-        let recovery_dir = beads_dir.join(RECOVERY_DIR_NAME);
-        for (suffix, sentinel) in orphan_sidecars {
-            let original_name = format!("beads.db{suffix}");
-            let backups: Vec<_> = fs::read_dir(&recovery_dir)
-                .expect("list recovery dir")
-                .filter_map(std::result::Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| {
-                            name.starts_with(&format!("{original_name}."))
-                                && Path::new(name)
-                                    .extension()
-                                    .is_some_and(|ext| ext.eq_ignore_ascii_case("bak"))
-                        })
-                })
-                .collect();
-            assert_eq!(backups.len(), 1, "{original_name} backup count");
-            assert_eq!(
-                fs::read(&backups[0]).expect("read quarantined sidecar"),
-                *sentinel,
-                "{original_name} bytes must be preserved"
-            );
-
-            let live_path = beads_dir.join(&original_name);
-            if live_path.exists() {
-                assert_ne!(
-                    fs::read(&live_path).expect("read replacement sidecar"),
-                    *sentinel,
-                    "the orphaned {original_name} must not remain live"
-                );
-            }
-        }
     }
 
     #[test]

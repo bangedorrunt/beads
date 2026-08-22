@@ -967,7 +967,7 @@ fn e2e_doctor_detects_and_quarantines_anomalous_wal_sidecar() {
             let beads_dir = workspace.root.join(".beads");
             let wal_path = beads_dir.join("beads.db-wal");
             fs::write(&wal_path, b"synthetic orphan wal").expect("seed anomalous wal");
-            // Which sidecars survive a clean exit is an fsqlite implementation
+            // Which sidecars survive a clean exit is an engine implementation
             // detail, not a property this fixture may assert: 0.1.18 retains
             // `-shm` where earlier versions dropped it. Establish the intended
             // state instead of asserting the engine happened to leave it —

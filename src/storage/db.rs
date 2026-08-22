@@ -11,7 +11,7 @@
 //!
 //! * WAL mode and `PRAGMA user_version` stamping are native SQLite features,
 //!   driven by `storage::schema` exactly as before.
-//! * The deleted fsqlite `BusyRecovery` caller-side retry window is replaced
+//! * The deleted engine-specific caller-side retry window is replaced
 //!   by a real SQLite busy handler ([`DEFAULT_BUSY_TIMEOUT`]); an explicit
 //!   `PRAGMA busy_timeout=N` issued by callers overrides it.
 //! * There is no async runtime: the thread-local driver bridge that used to

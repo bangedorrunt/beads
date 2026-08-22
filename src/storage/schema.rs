@@ -242,8 +242,8 @@ pub const SCHEMA_SQL: &str = r"
         -- COLUMN on existing DBs. This keeps `EXPECTED_ISSUE_COLUMN_ORDER`
         -- consistent for both freshly-created and migrated databases.
         -- Column names are deliberately not repeated in these comments:
-        -- fsqlite 0.3+ stores the CREATE TABLE text faithfully (comments
-        -- included), and schema audits count declaration tokens. See #289.
+        -- engines store the CREATE TABLE text verbatim (comments included),
+        -- and schema audits count declaration tokens. See #289.
         source_repo_path TEXT,
         -- agent_context (schema v11, #297) carries canonical-JSON governing
         -- instructions inherited by descendants on br update --status
@@ -679,15 +679,15 @@ fn split_sql_statements(sql: &str) -> Vec<&str> {
 
 /// Execute multiple SQL statements separated by semicolons.
 ///
-/// fsqlite does not support `execute_batch`, so we split the SQL script
-/// into individual statements (respecting string literals and comments)
+/// Split the SQL script into individual statements (respecting string
+/// literals and comments) so each statement is applied and verified
 /// and execute each one individually.
 pub(crate) fn execute_batch(conn: &Connection, sql: &str) -> Result<()> {
     for stmt in split_sql_statements(sql) {
         let res = conn.execute(stmt);
         if let Err(e) = res {
-            // fsqlite's in-memory schema cache may not update after
-            // ALTER TABLE RENAME during table rebuilds, causing CREATE INDEX
+            // Schema images may not update after ALTER TABLE RENAME during
+            // table rebuilds, causing CREATE INDEX
             // to fail with "no such column".  These indexes will be retried
             // on the next open, so we can safely skip them here.
             // Strip SQL line-comments to get at the real statement.
@@ -751,8 +751,8 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
     } else {
         // Existing database: run migrations for schema upgrades.
         // If the issues table was rebuilt from scratch, skip migration checks
-        // that reference newly-added columns because fsqlite's in-memory schema
-        // cache may not have been updated yet.
+        // that reference newly-added columns: the rebuilt table already has
+        // the current shape.
         run_migrations(conn, issues_rebuilt).map_err(|e| {
             eprintln!("run_migrations failed: {:?}", e);
             e
@@ -985,7 +985,7 @@ pub fn run_migrations_atomic(conn: &Connection, from: u32, target_version: u32) 
     // connection (closing the TOCTOU window between the chokepoint's read and
     // this call), run the general engine, stamp, and post-verify. No outer
     // transaction: `run_migrations` opens BEGIN IMMEDIATE / COMMIT around the
-    // step bundles that need atomicity and fsqlite rejects nested BEGINs; the
+    // step bundles that need atomicity and SQLite rejects nested BEGINs; the
     // caller's pre-migrate snapshot is the full-rollback safety net.
     let row = conn.query_row("PRAGMA user_version")?;
     let current = row
@@ -1258,7 +1258,7 @@ fn core_runtime_tables_exist(conn: &Connection) -> bool {
 
 /// Expected column order for the issues table (id + ISSUE_COLUMNS names).
 /// Used to detect when ALTER TABLE has appended columns in the wrong position,
-/// which causes fsqlite to fail with "no such column" errors on older databases.
+/// which causes "no such column" errors on databases created by older br versions.
 const EXPECTED_ISSUE_COLUMN_ORDER: &[&str] = &[
     "id",
     "content_hash",
@@ -1305,9 +1305,9 @@ const EXPECTED_ISSUE_COLUMN_ORDER: &[&str] = &[
 /// table doesn't exist.
 fn issues_column_order_matches(conn: &Connection) -> bool {
     // Use PRAGMA table_info to detect both existence and column order in a
-    // single query.  Avoid querying sqlite_master separately because
-    // fsqlite's in-memory sqlite_master can return inconsistent results
-    // when queried multiple times within the same connection session.
+    // single query.  Avoid querying sqlite_master separately because it can
+    // return inconsistent results when queried multiple times within the same
+    // connection session.
     let Ok(rows) = conn.query("PRAGMA table_info(issues)") else {
         return false;
     };
@@ -1392,8 +1392,8 @@ fn finish_foreign_key_suppressed_result<T>(
 /// Rebuild the issues table so columns match the canonical SCHEMA_SQL order.
 ///
 /// This fixes databases where ALTER TABLE ADD COLUMN appended columns in a
-/// different position than the CREATE TABLE definition, causing fsqlite's
-/// column-name resolver to fail with "no such column" errors.
+/// different position than the CREATE TABLE definition, which produces
+/// "no such column" errors on older files.
 ///
 /// Uses the standard SQLite migration pattern:
 ///   1. Create new table with correct schema
@@ -1513,7 +1513,7 @@ fn rebuild_issues_table_inner(conn: &Connection, existing_columns: &[String]) ->
     conn.execute(&copy_out_sql)?;
 
     // Drop the original table, then CREATE it fresh (not via RENAME) so
-    // that fsqlite's in-memory schema cache registers all columns.
+    // every engine sees the complete column set immediately.
     conn.execute("DROP TABLE issues")?;
 
     let create_canonical = format!("CREATE TABLE issues ({})", create_cols.join(", "));
@@ -1591,8 +1591,8 @@ fn backfill_storage_null_in_default_columns(conn: &Connection) {
 
 fn kv_table_uses_primary_key(conn: &Connection, table: &str) -> bool {
     // Use PRAGMA table_info instead of sqlite_master to detect whether
-    // the `key` column is declared as PRIMARY KEY.  fsqlite's in-memory
-    // sqlite_master can return inconsistent results across queries.
+    // the `key` column is declared as PRIMARY KEY; repeated sqlite_master
+    // reads can be inconsistent across queries.
     let sql = format!("PRAGMA table_info('{table}')");
     let Ok(rows) = conn.query(&sql) else {
         return false;
@@ -1609,7 +1609,7 @@ fn kv_table_uses_primary_key(conn: &Connection, table: &str) -> bool {
 
 fn kv_table_needs_canonical_rebuild(conn: &Connection, table: &str, expected_index: &str) -> bool {
     // Use PRAGMA table_info for the existence check instead of sqlite_master,
-    // which can return inconsistent results in fsqlite.
+    // which can return inconsistent results mid-migration.
     let table_has_rows = conn
         .query(&format!("PRAGMA table_info('{table}')"))
         .is_ok_and(|rows| !rows.is_empty());
@@ -1676,12 +1676,12 @@ fn run_pre_schema_migrations(conn: &Connection) -> Result<bool> {
     }
 
     // Rebuild the issues table if columns are out of order or missing.
-    // This fixes fsqlite "no such column" errors on databases created with
+    // This fixes "no such column" errors on databases created with
     // older br versions where ALTER TABLE ADD COLUMN appended columns in
     // a different position than the canonical CREATE TABLE definition.
     // issues_column_order_matches handles both existence and column order
     // checks via PRAGMA table_info, avoiding redundant sqlite_master queries
-    // which can return inconsistent results in fsqlite.
+    // whose results can be inconsistent mid-rebuild.
     let issues_rebuilt = if issues_column_order_matches(conn) {
         false
     } else {
@@ -1690,8 +1690,8 @@ fn run_pre_schema_migrations(conn: &Connection) -> Result<bool> {
     };
 
     // After a full rebuild the issues table already has the canonical schema,
-    // so skip ensure_columns (which uses ALTER TABLE ADD COLUMN and may leave
-    // fsqlite's in-memory schema cache stale).
+    // so skip ensure_columns entirely (the rebuild already produced the
+    // current shape).
     if !issues_rebuilt {
         ensure_columns(conn, "issues", ISSUE_COLUMNS)?;
     }
@@ -1858,8 +1858,8 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
 
     // Skip v3/v4 migration when the issues table was just rebuilt from scratch
     // (it already has canonical NOT NULL constraints and the correct index).
-    // Querying columns via UPDATE/CREATE INDEX here would fail because
-    // fsqlite's in-memory schema cache may not have refreshed after the rebuild.
+    // Querying columns via UPDATE/CREATE INDEX here would fail if a stale
+    // schema image survived the rebuild.
     if !issues_rebuilt {
         if user_version < 3
             && table_exists(conn, "issues")
@@ -2010,8 +2010,8 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
     // Idempotent: skipped when the column already exists. The ADD COLUMN
     // appends at the end, matching SCHEMA_SQL and EXPECTED_ISSUE_COLUMN_ORDER.
     // If the pre-schema path rebuilt `issues`, skip this check: the rebuilt
-    // table already has the current shape, and fsqlite's in-memory schema cache
-    // may not be refreshed enough for a second column probe.
+    // table already has the current shape, making a second column probe
+    // redundant.
     if !issues_rebuilt
         && user_version < 10
         && table_exists(conn, "issues")
@@ -4016,14 +4016,14 @@ mod tests {
         conn.execute("INSERT INTO issues (id, title) VALUES ('test-1', 'Test Issue')")
             .expect("Should allow open issue without closed_at");
 
-        // Try to insert closed issue without closed_at — CHECK constraint
-        // should reject it. fsqlite does not yet enforce CHECK constraints,
-        // so we accept either outcome.
+        // A CHECK constraint should reject an insert of a closed issue
+        // without closed_at; accept either outcome for older files where the
+        // constraint is absent.
         let result = conn.execute(
             "INSERT INTO issues (id, title, status) VALUES ('test-2', 'Closed', 'closed')",
         );
         if result.is_ok() {
-            // fsqlite: CHECK not enforced — clean up the row so later assertions
+            // CHECK not enforced — clean up the row so later assertions
             // are not affected by the extra row.
             let _ = conn.execute("DELETE FROM issues WHERE id = 'test-2'");
         }
@@ -4461,8 +4461,8 @@ mod tests {
         apply_schema(&conn).unwrap();
 
         // key column should no longer be PRIMARY KEY in rebuilt tables.
-        // Use PRAGMA table_info (not the table-valued function form) since
-        // fsqlite does not support pragma_table_info as a table-valued function.
+        // Use PRAGMA table_info (not the newer table-valued function form)
+        // for broad engine compatibility.
         let config_key_pk = conn
             .query("PRAGMA table_info('config')")
             .unwrap()
@@ -4560,8 +4560,8 @@ mod tests {
             .filter_map(|row| row.get(3).and_then(|v| v.as_text()).map(String::from))
             .collect();
 
-        // fsqlite's query planner may not use composite indexes (it may
-        // fall back to SCAN), so accept either index usage or SCAN.
+        // Query plans may legitimately use the composite index or fall
+        // back to SCAN; accept either.
         let uses_index = details
             .iter()
             .any(|detail| detail.contains("idx_issues_list_active_order"));

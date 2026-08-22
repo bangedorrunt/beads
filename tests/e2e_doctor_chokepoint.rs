@@ -885,7 +885,7 @@ fn chokepoint_db_exec_round_trip() {
     let actions_path = run_dir.join("actions.jsonl");
 
     // Forward path: rebuild the cache via DELETE + INSERT inside the
-    // chokepoint. We do TWO DbExec ops because fsqlite's executor only
+    // chokepoint. We do TWO DbExec ops because a single op would only
     // accepts one statement per call.
     mutate_cache_rebuild(&ctx, &db_path);
 

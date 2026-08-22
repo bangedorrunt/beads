@@ -332,7 +332,7 @@ fn extract_issues_array(stdout: &str) -> Vec<serde_json::Value> {
 
 /// Assert that `br doctor` reports the workspace as healthy.
 ///
-/// If the initial check fails with only recoverable fsqlite-layer issues
+/// If the initial check fails with only recoverable storage-layer issues
 /// (WAL-without-SHM, minor page accounting gaps after concurrent load), this
 /// runs `doctor --repair` which checkpoints the WAL and reconciles page
 /// accounting. `doctor --repair` exits non-zero only when post-repair

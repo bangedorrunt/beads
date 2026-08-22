@@ -597,7 +597,7 @@ fn normalize_id_string(s: &str) -> String {
 
 /// insta-safe JSON snapshot wrapper.
 ///
-/// fsqlite-ext-json 0.3.6+ turns on serde_json's `arbitrary_precision`
+/// serde_json's `arbitrary_precision` feature unification note:
 /// feature for the whole build (Cargo feature unification). Under that
 /// feature `serde_json::Number` serializes through *foreign* serializers —
 /// like insta's Content model — as a private newtype struct, leaking

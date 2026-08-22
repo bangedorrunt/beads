@@ -16,12 +16,8 @@
 //! |---------|---------|
 //! | `.beads/*.db` | `SQLite` database files |
 //! | `.beads/*.db-wal` | `SQLite` WAL files |
-//! | `.beads/*.db-wal-cert` | fsqlite parallel-WAL durability certificates |
-//! | `.beads/*.db-wal-cert-head` | fsqlite checkpoint hand-off head |
 //! | `.beads/*.db-shm` | `SQLite` shared memory files |
 //! | `.beads/*.db-journal` | `SQLite` rollback journals |
-//! | `.beads/*.db-fsqlite-ns-gate` | fsqlite multi-process namespace gate |
-//! | `.beads/*.db-fsqlite-ns-use` | fsqlite multi-process namespace use-count |
 //! | `.beads/*.jsonl` | `JSONL` export files |
 //! | `.beads/*.jsonl.tmp` | Temp files for atomic writes |
 //! | `.beads/*.jsonl.<pid>.tmp` | PID-scoped temp files for atomic writes |
@@ -85,16 +81,12 @@ fn external_path_descriptor(path: &Path) -> String {
 ///
 /// This list is exhaustive - any file not matching these patterns is rejected.
 pub const ALLOWED_EXTENSIONS: &[&str] = &[
-    "db",                 // SQLite database
-    "db-wal",             // SQLite WAL
-    "db-wal-cert",        // fsqlite 0.2+ parallel-WAL durability certificates
-    "db-wal-cert-head",   // fsqlite 0.2+ checkpoint hand-off head
-    "db-shm",             // SQLite shared memory
-    "db-journal",         // SQLite rollback journal
-    "db-fsqlite-ns-gate", // fsqlite multi-process namespace gate
-    "db-fsqlite-ns-use",  // fsqlite multi-process namespace use-count
-    "jsonl",              // JSONL export
-    "jsonl.tmp",          // Atomic write temp files (plus pid-scoped .jsonl.<pid>.tmp)
+    "db",         // SQLite database
+    "db-wal",     // SQLite WAL
+    "db-shm",     // SQLite shared memory
+    "db-journal", // SQLite rollback journal
+    "jsonl",      // JSONL export
+    "jsonl.tmp",  // Atomic write temp files (plus pid-scoped .jsonl.<pid>.tmp)
 ];
 
 /// Files explicitly allowed by exact name within `.beads/`.

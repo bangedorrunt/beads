@@ -625,8 +625,8 @@ mod tests {
         let jsonl_path = beads_dir.join("issues.jsonl");
 
         // Scope the initial storage so the connection is closed before
-        // recovery opens a new one at the same path.  fsqlite tracks pages
-        // by file path, so an older connection causes BusySnapshot.
+        // recovery opens a new one at the same path; a stale connection on a
+        // replaced file causes lock conflicts.
         {
             let mut storage = SqliteStorage::open(&db_path).expect("storage");
             let issue = Issue {

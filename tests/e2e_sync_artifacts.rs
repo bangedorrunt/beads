@@ -1042,8 +1042,6 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
         "beads.db-wal-cert-head",
         "beads.db-shm",
         "beads.db-journal",
-        "beads.db-fsqlite-ns-gate",
-        "beads.db-fsqlite-ns-use",
     ] {
         let path = beads_dir.join(sidecar);
         if path.exists() {

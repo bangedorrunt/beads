@@ -115,10 +115,10 @@ fn main() {
 
     // Phase 1.5: Acquire exclusive write lock before any DB-family open that
     // may apply schema, recover, quarantine sidecars, write metadata, or read
-    // from fsqlite while another process is in a write transaction.
+    // while another process is in a write transaction.
     //
-    // Issue #243: frankensqlite deadlocks when multiple processes attempt
-    // concurrent writes to the same database file. Serialize all mutating
+    // Issue #243: concurrent writes to the same database file from multiple
+    // processes must be serialized. Serialize all mutating
     // operations through a blocking flock on `.beads/.write.lock`. Normal
     // storage open is not guaranteed read-only in recovery/schema paths, so
     // DB-family commands hold authority even when they first try the
@@ -1342,9 +1342,9 @@ const fn needs_write_lock(cmd: &Commands) -> bool {
         // flags, export hashes, and metadata (jsonl_content_hash,
         // last_export_time, needs_flush). Without the `.write.lock`, a
         // concurrent `br sync --flush-only` racing with another process's
-        // auto-flush (or a second `--flush-only`) can trip fsqlite's
-        // concurrent-write deadlock that this lock was specifically added
-        // to prevent (issue #243). `--status` only renders status after open,
+        // auto-flush (or a second `--flush-only`) can corrupt shared state;
+        // this lock was specifically added to prevent that (issue #243).
+        // `--status` only renders status after open,
         // but opening storage can still apply schema/runtime defaults or
         // recover the DB family, so it must also serialize before open.
         // `br sync --witness` hashes JSONL and returns before opening SQLite, so
@@ -3054,11 +3054,11 @@ mod tests {
         // Regression: `br sync --flush-only` calls `finalize_export` inside a
         // `with_write_transaction` (clears dirty flags, updates
         // jsonl_content_hash + last_export_time + needs_flush metadata, writes
-        // export hashes). That makes it a write-side operation as far as
-        // fsqlite is concerned. Previously the `needs_write_lock` match arm
-        // excluded `--flush-only`, leaving two concurrent `br sync
-        // --flush-only` invocations — or one racing a mutating command's
-        // auto-flush — to hit the fsqlite concurrent-write deadlock that the
+        // export hashes). That makes it a write-side operation. Previously the
+        // `needs_write_lock` match arm excluded `--flush-only`, leaving two
+        // concurrent `br sync --flush-only` invocations — or one racing a
+        // mutating command's auto-flush — to hit the concurrent-write deadlock
+        // that the
         // `.write.lock` was specifically introduced (issue #243) to prevent.
         //
         // `br sync --status` is read-only after storage is open, but the open

@@ -850,10 +850,6 @@ pub(crate) const CHECK_NAME_TO_FINDING_ID: &[(&str, &str)] = &[
         "permissions.root_gitignore",
         "fm-permissions-gitignore-not-writable-blocks-repair",
     ),
-    (
-        "permissions.db_sidecars",
-        "fm-permissions-db-sidecar-mode-too-open",
-    ),
     ("jsonl.duplicate_ids", "fm-state_files-jsonl-duplicate-ids"),
     ("comments.orphans", "fm-caches_indexes-comments-orphans"),
     ("labels.orphans", "fm-caches_indexes-labels-orphans"),
@@ -1747,8 +1743,7 @@ fn write_probe_after_repair(
 
         // Read it back inside the same transaction to verify the read path
         // agrees with what we just wrote. CTE-wrap per #254 so the probe
-        // itself does not hit fsqlite's prepared-statement fast-path cache
-        // and report false-healthy against a stale plan.
+        // cannot hit a cached plan and report false-healthy.
         let rows = conn.query_with_params(
             "WITH target(id_value) AS (SELECT ?) \
              SELECT i.id FROM issues AS i, target AS t \
@@ -4240,55 +4235,13 @@ fn db_file_has_sqlite_header(db_path: &Path) -> bool {
     file.read_exact(&mut header).is_ok() && &header == b"SQLite format 3\0"
 }
 
-/// Sidecars fsqlite maintains for its multi-process namespace admission
-/// (`-fsqlite-ns-gate`, `-fsqlite-ns-use`). They belong to the database file
-/// family and must be carried through backup/quarantine alongside the
-/// classic `-wal`/`-shm`/`-journal` trio.
-///
-/// The suffix list is owned by `config` so this walk and the compaction
-/// cleanup cannot drift apart.
-fn fsqlite_namespace_sidecar_paths(db_path: &Path) -> Vec<PathBuf> {
-    crate::config::FSQLITE_NAMESPACE_SIDECAR_SUFFIXES
-        .iter()
-        .map(|suffix| {
-            let mut sidecar = db_path.as_os_str().to_os_string();
-            sidecar.push(suffix);
-            PathBuf::from(sidecar)
-        })
-        .collect()
-}
-
-/// The parallel-WAL durability-certificate sidecars (`-wal-cert`,
-/// `-wal-cert-head`) fsqlite 0.2+ retains next to the classic `-wal` file.
-fn fsqlite_wal_cert_sidecar_paths(db_path: &Path) -> Vec<PathBuf> {
-    crate::config::FSQLITE_WAL_CERT_SIDECAR_SUFFIXES
-        .iter()
-        .map(|suffix| {
-            let mut sidecar = db_path.as_os_str().to_os_string();
-            sidecar.push(suffix);
-            PathBuf::from(sidecar)
-        })
-        .collect()
-}
-
 fn existing_sqlite_family_paths_for_legacy_op(db_path: &Path) -> Vec<PathBuf> {
     let mut paths = vec![db_path.to_path_buf()];
-    // fsqlite 0.3.6+ engine-upgrade bookkeeping lives beside the DB and
-    // belongs to the same mutation-audit family.
-    let migration_state = {
-        let mut sidecar = db_path.as_os_str().to_os_string();
-        sidecar.push(".fsqlite-migration-state");
-        PathBuf::from(sidecar)
-    };
     let sidecars = [
         sqlite_wal_sidecar_path(db_path),
         sqlite_shm_sidecar_path(db_path),
         sqlite_journal_sidecar_path(db_path),
-        migration_state,
-    ]
-    .into_iter()
-    .chain(fsqlite_namespace_sidecar_paths(db_path))
-    .chain(fsqlite_wal_cert_sidecar_paths(db_path));
+    ];
     for sidecar in sidecars {
         if fs::symlink_metadata(&sidecar)
             .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
@@ -4598,8 +4551,7 @@ fn fix_db_bloat_via_vacuum_if_warned_under_write_authority(
 /// In-place `VACUUM` only ever succeeded on such a file when some earlier
 /// command had already committed a write, because a commit makes the engine
 /// publish the *file-length-derived* page count into the header, absorbing any
-/// trailing bytes as database pages (see
-/// `docs/fsqlite_trailing_pages_report.md`). Depending on that is not a
+/// trailing bytes as database pages. Depending on that is not a
 /// behavior worth preserving: it means the repair only worked after the
 /// database had already been silently corrupted.
 ///
@@ -5717,12 +5669,9 @@ struct InnerGitignoreExpectation {
 
 /// The database-artifact family plus the original transient-state rules.
 ///
-/// GitHub #427: fsqlite 0.3 grew `-wal-cert`/`-wal-cert-head` durability
-/// certificates, `-fsqlite-ns-gate`/`-fsqlite-ns-use` namespace sidecars,
-/// and `br doctor migrate-schema` leaves `.<db>.schema-migration-<run>.
-/// vacuum-*` copies. Older repositories whose `.beads/.gitignore` predates
-/// these artifacts would show them as untracked changes; doctor now
-/// actively reconciles coverage instead of only writing rules at init.
+/// Older repositories whose `.beads/.gitignore` predates the WAL-family
+/// artifacts would show them as untracked changes; doctor actively
+/// reconciles coverage instead of only writing rules at init.
 const INNER_GITIGNORE_EXPECTATIONS: &[InnerGitignoreExpectation] = &[
     InnerGitignoreExpectation {
         append_pattern: "*.db",
@@ -5738,39 +5687,7 @@ const INNER_GITIGNORE_EXPECTATIONS: &[InnerGitignoreExpectation] = &[
     },
     InnerGitignoreExpectation {
         append_pattern: "*.db-wal*",
-        probes: &[
-            "beads.db-wal",
-            "beads.db-wal-cert",
-            "beads.db-wal-cert-head",
-        ],
-    },
-    InnerGitignoreExpectation {
-        append_pattern: "*-fsqlite-ns-gate",
-        probes: &[
-            "beads.db-fsqlite-ns-gate",
-            ".beads.db.schema-migration-20260101T000000.000000Z-0-0.vacuum-fsqlite-ns-gate",
-        ],
-    },
-    InnerGitignoreExpectation {
-        append_pattern: "*-fsqlite-ns-use",
-        probes: &[
-            "beads.db-fsqlite-ns-use",
-            ".beads.db.schema-migration-20260101T000000.000000Z-0-0.vacuum-fsqlite-ns-use",
-        ],
-    },
-    InnerGitignoreExpectation {
-        append_pattern: "*.vacuum-wal-cert*",
-        probes: &[
-            ".beads.db.schema-migration-20260101T000000.000000Z-0-0.vacuum-wal-cert",
-            ".beads.db.schema-migration-20260101T000000.000000Z-0-0.vacuum-wal-cert-head",
-        ],
-    },
-    // fsqlite 0.3.6+ records engine-upgrade bookkeeping beside the DB in
-    // `<db>.fsqlite-migration-state`; without a rule it shows up as an
-    // untracked file in every pre-0.3.6 repository.
-    InnerGitignoreExpectation {
-        append_pattern: "*.fsqlite-migration-state",
-        probes: &["beads.db.fsqlite-migration-state"],
+        probes: &["beads.db-wal"],
     },
     InnerGitignoreExpectation {
         append_pattern: ".write.lock",
@@ -6197,177 +6114,6 @@ fn fix_config_yaml_secret_mode_if_warned(
     }
 }
 
-/// Detector for `fm-permissions-db-sidecar-mode-too-open` (GitHub #403).
-///
-/// fsqlite refuses to open a namespace sidecar (`-fsqlite-ns-gate` /
-/// `-fsqlite-ns-use`) carrying any bit in `0o077`, and the refusal reaches the
-/// operator as a bare `Database error: unable to open database file: '<sidecar>'`
-/// — which reads as database corruption. The storage layer now repairs an
-/// owned sidecar on open, so this check is the visible half: it names the file
-/// and the mode whenever the workspace still holds one that is group- or
-/// other-accessible (a sidecar owned by another user is the case the storage
-/// layer cannot fix by itself).
-///
-/// On non-Unix targets the mode check is a no-op (always Ok).
-fn check_db_sidecar_modes(db_path: &Path, checks: &mut Vec<CheckResult>) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mut offenders = Vec::new();
-        for sidecar in fsqlite_namespace_sidecar_paths(db_path) {
-            let Ok(meta) = fs::symlink_metadata(&sidecar) else {
-                continue;
-            };
-            if !meta.is_file() || meta.file_type().is_symlink() {
-                continue;
-            }
-            let mode = meta.permissions().mode() & 0o7777;
-            if mode & 0o077 != 0 {
-                offenders.push((sidecar, mode));
-            }
-        }
-
-        if offenders.is_empty() {
-            push_check(
-                checks,
-                "permissions.db_sidecars",
-                CheckStatus::Ok,
-                None,
-                None,
-            );
-            return;
-        }
-
-        let summary = offenders
-            .iter()
-            .map(|(path, mode)| format!("{} (mode {mode:04o})", path.display()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let remediation = offenders
-            .iter()
-            .map(|(path, _)| format!("chmod 0600 {}", path.display()))
-            .collect::<Vec<_>>()
-            .join("; ");
-        push_check(
-            checks,
-            "permissions.db_sidecars",
-            CheckStatus::Warn,
-            Some(format!(
-                "fsqlite namespace sidecar(s) are group/other accessible and block every \
-                 database open until the mode is owner-only (0600): {summary}"
-            )),
-            Some(serde_json::json!({
-                "sidecars": offenders
-                    .iter()
-                    .map(|(path, mode)| serde_json::json!({
-                        "path": path.display().to_string(),
-                        "mode_octal": format!("{mode:04o}"),
-                    }))
-                    .collect::<Vec<_>>(),
-                "required_mode_octal": "0600",
-                "remediation": remediation,
-            })),
-        );
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = db_path;
-        push_check(
-            checks,
-            "permissions.db_sidecars",
-            CheckStatus::Ok,
-            None,
-            None,
-        );
-    }
-}
-
-/// Fixer for `fm-permissions-db-sidecar-mode-too-open` (GitHub #403).
-///
-/// Strips the group/other bits (`0o077` mask) from every flagged fsqlite
-/// namespace sidecar through [`chokepoint::mutate(Op::Chmod)`], so the change
-/// is backed up, audited in `actions.jsonl`, and reversible via `doctor undo`.
-/// Owner bits are preserved (`0o700` is an accepted mode); only the bits that
-/// make the engine refuse the open are removed. A sidecar this process does
-/// not own fails the chmod and stays flagged, which is the correct outcome —
-/// its owner has to act.
-///
-/// Unix-only; the detector always reports Ok elsewhere so the fixer is
-/// unreachable there.
-fn fix_db_sidecar_modes_if_warned(
-    db_path: &Path,
-    report: &DoctorReport,
-    ctx: &OutputContext,
-    session: Option<&mut DoctorRepairSession>,
-) -> bool {
-    let has_warning = report
-        .checks
-        .iter()
-        .any(|c| c.name == "permissions.db_sidecars" && c.status == CheckStatus::Warn);
-    if !has_warning {
-        return false;
-    }
-    let Some(session) = session else {
-        if !ctx.is_json() {
-            ctx.warning(
-                "Skipping database sidecar chmod: no doctor repair session (run-dir creation failed)",
-            );
-        }
-        return false;
-    };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mut repaired_any = false;
-        for sidecar in fsqlite_namespace_sidecar_paths(db_path) {
-            let Ok(meta) = fs::symlink_metadata(&sidecar) else {
-                continue;
-            };
-            if meta.file_type().is_symlink() || !meta.is_file() {
-                continue;
-            }
-            let current = meta.permissions().mode();
-            // Already owner-only (group/other bits all clear) — TOCTOU defense
-            // (the storage layer may have self-healed it between detection and
-            // repair).
-            if current.trailing_zeros() >= 6 {
-                continue;
-            }
-            let new_mode = current & !0o077;
-            session.set_fixer("doctor.db_sidecar_mode_chmod");
-            match chokepoint::mutate(&session.ctx, &sidecar, Op::Chmod { mode: new_mode }) {
-                Ok(result) if result.ok => {
-                    repaired_any = true;
-                    if !ctx.is_json() {
-                        ctx.info(&format!(
-                            "Restored owner-only mode on {} ({:o}→{:o})",
-                            sidecar.display(),
-                            current & 0o777,
-                            new_mode & 0o777
-                        ));
-                    }
-                }
-                Ok(_) => {}
-                Err(err) => {
-                    if !ctx.is_json() {
-                        ctx.warning(&format!(
-                            "Failed to chmod database sidecar {}: {err}",
-                            sidecar.display()
-                        ));
-                    }
-                }
-            }
-        }
-        repaired_any
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (db_path, session);
-        false
-    }
-}
 
 /// Pass-5 cycle 10: detector for
 /// `fm-observability-doctor-runs-dir-grows-unbounded`.
@@ -7968,7 +7714,7 @@ fn check_sqlite_cli_integrity(db_path: &Path, checks: &mut Vec<CheckResult>) {
                 || message.contains("failed to run sqlite3") =>
         {
             // An absent sqlite3 CLI is a benign host state, not a workspace
-            // defect: the built-in fsqlite integrity check above still ran.
+            // defect: the built-in integrity_check above still ran.
             // Warn here would pin `doctor.ok = false` (`!has_non_ok`, #292)
             // on every machine without sqlite3 in PATH — the same
             // benign-state-reported-as-warn class as #432.
@@ -11924,10 +11670,6 @@ fn collect_doctor_report_with_mode_and_db_override(
     // Pass-5 cycle 32: writability of the repo-root `.gitignore` —
     // surfaces a real blocker to the existing gitignore_repair fixer.
     check_root_gitignore_writable(repo_root, &mut checks);
-    // GitHub #403: an fsqlite namespace sidecar with group/other bits blocks
-    // every database open while doctor otherwise reports "healthy". This is a
-    // pure stat of the database family, so it runs in `--no-db` mode too.
-    check_db_sidecar_modes(&paths.db_path, &mut checks);
     // Pass-5 cycle 11: world-readable config.yaml containing secrets.
     check_config_yaml_secret_mode(beads_dir, &mut checks);
     // Pass-5 cycle 12: multiple `br` binaries on $PATH (env-based,
@@ -13113,22 +12855,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             false
         };
     let _ = config_yaml_secret_mode_repaired;
-
-    // GitHub #403: restore owner-only mode on fsqlite namespace sidecars that
-    // would otherwise wedge every database open, via Op::Chmod.
-    let db_sidecar_mode_repaired = if args.repair
-        && fixer_filter.allows("fm-permissions-db-sidecar-mode-too-open")
-    {
-        let repaired =
-            fix_db_sidecar_modes_if_warned(&paths.db_path, &initial.report, ctx, session.as_mut());
-        if repaired {
-            initial = collect_doctor_report_for_cli(&beads_dir, &paths, cli)?;
-        }
-        repaired
-    } else {
-        false
-    };
-    let _ = db_sidecar_mode_repaired;
 
     // Pass-5 cycle 27: append missing canonical patterns to .beads/.gitignore
     // via Op::AppendFile.
@@ -16868,7 +16594,7 @@ mod tests {
 
     #[test]
     fn test_fix_null_defaults_backfills_via_chokepoint() {
-        // The canonical events.actor is `TEXT NOT NULL DEFAULT ''`, and fsqlite
+        // The canonical events.actor is `TEXT NOT NULL DEFAULT ''`, and SQLite
         // enforces NOT NULL at INSERT — so to reproduce the detector's intended
         // target (rows predating a NOT NULL DEFAULT addition during schema
         // migration, where the storage retained pre-existing NULLs in older
@@ -17535,17 +17261,13 @@ mod tests {
 
     #[test]
     fn test_check_inner_gitignore_operator_megamix_equivalents_are_ok() {
-        // GitHub #427: operator-authored equivalents (broad `*.db?*`,
-        // `*.lock`, `*-fsqlite-ns-*` generics) must satisfy coverage via
-        // probes without textual equality with the canonical patterns.
+        // Operator-authored equivalents (broad `*.db?*`, `*.lock`) must
+        // satisfy coverage via probes without textual equality with the
+        // canonical patterns.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        fs::write(
-            beads_dir.join(".gitignore"),
-            b"*.db\n*.db?*\n*-fsqlite-ns-gate\n*-fsqlite-ns-use\n*.lock\n*.tmp\n",
-        )
-        .unwrap();
+        fs::write(beads_dir.join(".gitignore"), b"*.db\n*.db?*\n*.lock\n*.tmp\n").unwrap();
 
         let mut checks = Vec::new();
         check_inner_gitignore_present(&beads_dir, &mut checks);
@@ -17555,8 +17277,8 @@ mod tests {
 
     #[test]
     fn test_check_inner_gitignore_flags_missing_db_artifact_family() {
-        // A pre-fsqlite-0.3 ignore file (bare `*.db` only) must warn and
-        // name the sidecar/vacuum patterns it is missing.
+        // An ignore file missing the WAL-family patterns must warn and
+        // name the patterns it is missing.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -17578,12 +17300,7 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default();
-        for expected in [
-            "*.db-wal*",
-            "*-fsqlite-ns-gate",
-            "*-fsqlite-ns-use",
-            "*.vacuum-wal-cert*",
-        ] {
+        for expected in ["*.db-wal*"] {
             assert!(
                 missing.iter().any(|p| p == expected),
                 "expected {expected} in missing patterns, got {missing:?}"
@@ -17607,16 +17324,8 @@ mod tests {
     fn test_gitignore_glob_matches_semantics() {
         // `*` spans any run including empty; `?` is exactly one char.
         assert!(gitignore_glob_matches("*.db?*", "beads.db-wal"));
-        assert!(gitignore_glob_matches(
-            "*.db?*",
-            ".beads.db.schema-migration-20260101T000000.000000Z-0-0.vacuum-fsqlite-ns-gate"
-        ));
         assert!(!gitignore_glob_matches("*.db?*", "beads.db"));
         assert!(gitignore_glob_matches("*.db", "beads.db"));
-        assert!(gitignore_glob_matches(
-            "*-fsqlite-ns-gate",
-            "beads.db-fsqlite-ns-gate"
-        ));
         assert!(!gitignore_glob_matches("*.tmp", "probe.tmpx"));
         assert!(gitignore_glob_matches("probe.?mp", "probe.tmp"));
         assert!(!gitignore_glob_matches("probe.?mp", "probe.mp"));
@@ -18585,75 +18294,6 @@ mod tests {
             let after_meta = fs::symlink_metadata(beads_dir.join(".gitignore")).unwrap();
             assert!(after_meta.file_type().is_symlink());
         }
-    }
-
-    /// GitHub #403: a group/other-accessible fsqlite namespace sidecar wedges
-    /// every database open while doctor reported the workspace healthy and
-    /// said nothing at all. The check must name the file and its mode, and
-    /// `--repair` must restore owner-only permissions through the chokepoint.
-    #[cfg(unix)]
-    #[test]
-    fn test_db_sidecar_mode_check_flags_and_repairs_over_permissive_sidecar() {
-        use std::os::unix::fs::PermissionsExt;
-        let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let db_path = beads_dir.join("beads.db");
-        fs::write(&db_path, b"SQLite format 3\0").unwrap();
-        let gate = beads_dir.join("beads.db-fsqlite-ns-gate");
-        let use_file = beads_dir.join("beads.db-fsqlite-ns-use");
-        fs::write(&gate, b"FSQLNS01").unwrap();
-        fs::write(&use_file, b"FSQLNS01").unwrap();
-        fs::set_permissions(&gate, fs::Permissions::from_mode(0o664)).unwrap();
-        fs::set_permissions(&use_file, fs::Permissions::from_mode(0o600)).unwrap();
-
-        let mut report = DoctorReport {
-            ok: false,
-            workspace_health: Some("degraded".to_string()),
-            reliability_audit: None,
-            checks: Vec::new(),
-        };
-        check_db_sidecar_modes(&db_path, &mut report.checks);
-        let check = find_check(&report.checks, "permissions.db_sidecars").expect("check present");
-        assert_eq!(check.status, CheckStatus::Warn);
-        let message = check.message.clone().unwrap_or_default();
-        assert!(
-            message.contains("beads.db-fsqlite-ns-gate") && message.contains("0664"),
-            "message must name the sidecar and its mode: {message}"
-        );
-        assert!(
-            !message.contains("beads.db-fsqlite-ns-use"),
-            "the owner-only sidecar must not be flagged: {message}"
-        );
-
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
-            .expect("session must build");
-        let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
-        assert!(fix_db_sidecar_modes_if_warned(
-            &db_path,
-            &report,
-            &ctx,
-            Some(&mut session),
-        ));
-        let repaired = fs::metadata(&gate).unwrap().permissions().mode() & 0o777;
-        assert_eq!(repaired & 0o077, 0, "group/other bits must be cleared");
-        assert_eq!(repaired, 0o600, "owner bits preserved, group/other removed");
-
-        // Re-detect is clean, and a second repair is a no-op.
-        let mut after = Vec::new();
-        check_db_sidecar_modes(&db_path, &mut after);
-        assert_eq!(
-            find_check(&after, "permissions.db_sidecars")
-                .expect("check present")
-                .status,
-            CheckStatus::Ok
-        );
-        assert!(!fix_db_sidecar_modes_if_warned(
-            &db_path,
-            &report,
-            &ctx,
-            Some(&mut session),
-        ));
     }
 
     #[cfg(unix)]
@@ -22294,9 +21934,8 @@ mod tests {
     /// actually exists on disk.
     ///
     /// Derived from a directory listing rather than a hardcoded list: which
-    /// sidecars the storage engine leaves behind is an fsqlite implementation
-    /// detail (0.1.18 added `-fsqlite-ns-gate` / `-fsqlite-ns-use` and now
-    /// also retains `-shm`). The contract these tests assert is "the legacy
+    /// sidecars the storage engine leaves behind is an engine
+    /// implementation detail. The contract these tests assert is "the legacy
     /// audit covers the whole existing family", which must not have to be
     /// restated every time the engine adds a sidecar.
     fn on_disk_db_family_names(beads_dir: &Path, db_file_name: &str) -> BTreeSet<String> {
@@ -22321,19 +21960,14 @@ mod tests {
         let wal_path = sqlite_wal_sidecar_path(&db_path);
         let shm_path = sqlite_shm_sidecar_path(&db_path);
         let journal_path = sqlite_journal_sidecar_path(&db_path);
-        let wal_cert_paths = fsqlite_wal_cert_sidecar_paths(&db_path);
-        let wal_cert_path = wal_cert_paths[0].clone();
-        let wal_cert_head_path = wal_cert_paths[1].clone();
 
         fs::write(&db_path, b"db").unwrap();
         fs::write(&wal_path, b"wal").unwrap();
         fs::write(&journal_path, b"journal").unwrap();
-        fs::write(&wal_cert_path, b"wal-cert").unwrap();
+        fs::write(&shm_path, b"shm").unwrap();
 
         let paths = existing_sqlite_family_paths_for_legacy_op(&db_path);
-        assert_eq!(paths, vec![db_path, wal_path, journal_path, wal_cert_path]);
-        assert!(!paths.contains(&shm_path));
-        assert!(!paths.contains(&wal_cert_head_path));
+        assert_eq!(paths, vec![db_path, wal_path, journal_path, shm_path]);
     }
 
     #[test]
@@ -23853,7 +23487,7 @@ mod tests {
 
     #[test]
     fn rust_log_volume_classifies_composite_all_quiet_as_quiet() {
-        let v = rust_log_volume(Some("error,fsqlite=warn,beads=off"));
+        let v = rust_log_volume(Some("error,beads=off"));
         assert_eq!(v, RustLogVolume::Quiet);
     }
 

@@ -129,7 +129,7 @@ fn assert_fresh_lookup_round_trip(workspace: &BrWorkspace, alt_db: &Path, i: usi
     assert_eq!(
         issue_prefix.as_deref(),
         Some("raw"),
-        "raw fsqlite config lookup should keep returning the configured prefix after rebuild on loop {i}"
+        "raw keyed config lookup should keep returning the configured prefix after rebuild on loop {i}"
     );
 
     let needs_flush_raw = keyed_text_value(
@@ -148,7 +148,7 @@ fn assert_fresh_lookup_round_trip(workspace: &BrWorkspace, alt_db: &Path, i: usi
     assert_eq!(
         keyed,
         vec![fresh_id.clone()],
-        "raw fsqlite keyed query_with_params diverged from full scan for {fresh_id} on loop {i}; scanned_tail={:?}",
+        "raw keyed query_with_params diverged from full scan for {fresh_id} on loop {i}; scanned_tail={:?}",
         &scanned[scanned.len().saturating_sub(10)..]
     );
 
@@ -156,7 +156,7 @@ fn assert_fresh_lookup_round_trip(workspace: &BrWorkspace, alt_db: &Path, i: usi
     assert_eq!(
         keyed_row.as_deref(),
         Some(fresh_id.as_str()),
-        "raw fsqlite query_row_with_params diverged for {fresh_id} on loop {i}; keyed={keyed:?}"
+        "raw query_row_with_params diverged for {fresh_id} on loop {i}; keyed={keyed:?}"
     );
 
     let storage = SqliteStorage::open(alt_db).expect("open storage against rebuilt alt db");
@@ -181,10 +181,10 @@ fn assert_fresh_lookup_round_trip(workspace: &BrWorkspace, alt_db: &Path, i: usi
 }
 
 #[test]
-fn e2e_raw_fsqlite_keyed_lookup_matches_full_scan_after_alt_rebuild() {
+fn e2e_raw_keyed_lookup_matches_full_scan_after_alt_rebuild() {
     const LOOP_COUNT: usize = 20;
 
-    let _log = common::test_log("e2e_raw_fsqlite_keyed_lookup_matches_full_scan_after_alt_rebuild");
+    let _log = common::test_log("e2e_raw_keyed_lookup_matches_full_scan_after_alt_rebuild");
     let workspace = BrWorkspace::new();
 
     let init = run_br(

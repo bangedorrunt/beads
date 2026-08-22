@@ -1129,11 +1129,11 @@ fn append_label_or_membership_exists(
         params.push(SqliteValue::from(label.as_str()));
     }
 }
-// `fsqlite` starts returning false PRIMARY KEY conflicts when we rewrite
-// existing `export_hashes` rows with a single multi-values INSERT. Batch the
-// DELETE side for efficiency, but re-insert one row at a time for correctness.
+// Multi-row INSERT rewrites of `export_hashes` can trip false PRIMARY KEY
+// conflicts. Batch the DELETE side for efficiency, but re-insert one row at
+// a time for correctness.
 const EXPORT_HASH_CHUNK_SIZE: usize = 32;
-// `fsqlite` can surface the same false primary-key conflict when an existing
+// The same false primary-key conflict can surface when an existing
 // blocked-cache population is rewritten via a large multi-values INSERT. Keep
 // the delete batched/full-table, but re-insert rows individually.
 const BLOCKED_CACHE_DELETE_CHUNK_SIZE: usize = 400;
@@ -2105,7 +2105,7 @@ impl SqliteStorage {
     }
 
     /// Run a recovery transaction with FK enforcement suppressed only for the
-    /// duration required by fsqlite's cache-rebuild workaround (#215).
+    /// duration required by the cache-rebuild workaround (#215).
     ///
     /// The caller remains responsible for an explicit in-transaction
     /// `foreign_key_check` before commit. FK enforcement is restored and
@@ -2197,8 +2197,8 @@ impl SqliteStorage {
         plan: &BlockedCacheRefreshPlan,
     ) -> Result<()> {
         // Disable FK enforcement before the transaction.  PRAGMA foreign_keys
-        // can only be changed outside an active transaction.  fsqlite can
-        // surface false FK violations on blocked_issues_cache inserts (#215).
+        // can only be changed outside an active transaction; false FK
+        // violations on blocked_issues_cache inserts are suppressed (#215).
         self.conn.execute("PRAGMA foreign_keys = OFF")?;
         let result = self.with_connection_write_transaction(|conn| {
             let refreshed = Self::apply_blocked_cache_refresh_plan(conn, plan)?;
@@ -2257,8 +2257,8 @@ impl SqliteStorage {
         }
 
         // Disable FK enforcement before the transaction.  PRAGMA foreign_keys
-        // can only be changed outside an active transaction.  fsqlite can
-        // surface false FK violations on blocked_issues_cache inserts (#215).
+        // can only be changed outside an active transaction; false FK
+        // violations on blocked_issues_cache inserts are suppressed (#215).
         self.conn.execute("PRAGMA foreign_keys = OFF")?;
         let result = self.with_connection_write_transaction(|conn| {
             if !Self::metadata_equals(conn, BLOCKED_CACHE_STATE_KEY, BLOCKED_CACHE_STATE_STALE)? {
@@ -2288,11 +2288,6 @@ impl SqliteStorage {
     ///
     /// Returns an error if the connection cannot be established or schema application fails.
     pub fn open_with_timeout(path: &Path, lock_timeout_ms: Option<u64>) -> Result<Self> {
-        // GitHub #403: a group/other-readable namespace sidecar makes the open
-        // below fail with a bare "unable to open database file" naming the
-        // sidecar. Repair the mode (or explain it) before the engine gets a
-        // chance to mis-attribute the failure to the database.
-        heal_namespace_sidecar_modes(path)?;
         let conn = Connection::open(path.to_string_lossy().into_owned())?;
 
         // Set busy_timeout. Default is 0 (#243) — frankensqlite's busy
@@ -2346,9 +2341,6 @@ impl SqliteStorage {
             return Ok(None);
         }
 
-        // GitHub #403: read-only commands take this path, and they wedge on an
-        // over-permissive namespace sidecar exactly like writers do.
-        heal_namespace_sidecar_modes(path)?;
         let conn = open_with_flags(
             path.to_string_lossy().as_ref(),
             OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -2388,7 +2380,6 @@ impl SqliteStorage {
             return Ok(None);
         }
 
-        heal_namespace_sidecar_modes(path)?;
         let conn = open_with_flags(
             path.to_string_lossy().as_ref(),
             OpenFlags::SQLITE_OPEN_READ_WRITE,
@@ -2484,9 +2475,9 @@ impl SqliteStorage {
 
     /// Drop and recreate all data tables, preserving `config` and `metadata`.
     ///
-    /// Used before force imports to avoid fsqlite btree cursor bugs on DELETE
-    /// operations in large tables. By starting with empty tables, the import
-    /// only performs INSERTs.
+    /// Used before force imports so DELETE-heavy rewrites of large tables are
+    /// avoided entirely: by starting with empty tables, the import only
+    /// performs INSERTs.
     ///
     /// # Errors
     ///
@@ -3043,7 +3034,7 @@ impl SqliteStorage {
         let mut count = 0;
 
         for chunk in unique_exports.chunks(EXPORT_HASH_CHUNK_SIZE) {
-            // Delete existing entries row-by-row to avoid fsqlite IN-clause bugs
+            // Delete existing entries row-by-row rather than one IN-list DELETE.
             for (id, _) in chunk {
                 self.conn.execute_with_params(
                     "DELETE FROM export_hashes WHERE issue_id = ?",
@@ -3051,8 +3042,8 @@ impl SqliteStorage {
                 )?;
             }
 
-            // `fsqlite` can report a false primary-key conflict when many
-            // existing rows are reinserted via one VALUES list, so keep each
+            // A false primary-key conflict can surface when many existing rows are
+            // reinserted via one VALUES list, so keep each
             // insert isolated after the chunk delete.
             for (issue_id, content_hash) in chunk {
                 self.conn.execute_with_params(
@@ -3267,7 +3258,7 @@ impl SqliteStorage {
 
         let mut total_deleted = 0;
         for chunk in issue_ids.chunks(EXPORT_HASH_CHUNK_SIZE) {
-            // Delete existing entries row-by-row to avoid fsqlite IN-clause bugs
+            // Delete existing entries row-by-row rather than one IN-list DELETE.
             let mut chunk_deleted = 0;
             for id in chunk {
                 let deleted = self.conn.execute_with_params(
@@ -5967,8 +5958,8 @@ impl SqliteStorage {
 
         // Disable FK enforcement before the transaction begins.  PRAGMA
         // foreign_keys can only be changed outside an active transaction.
-        // fsqlite can surface false FK violations when its page buffer pool
-        // is exhausted, even though the referenced issue_id was just
+        // False FK violations can surface even when the referenced
+        // issue_id was just
         // written/verified in the same transaction (#215).  All FK
         // invariants (dependencies -> issues, events -> issues,
         // dirty_issues -> issues, etc.) are enforced by application logic
@@ -6041,9 +6032,8 @@ impl SqliteStorage {
 
                 for chunk in dirty_vec.chunks(DIRTY_ISSUE_CHUNK_SIZE) {
                     // Explicit DELETE + INSERT instead of INSERT OR REPLACE because
-                    // fsqlite does not reliably support UNIQUE constraint upserts.
                     for insert_chunk in chunk.chunks(450) {
-                        // Delete existing entries row-by-row to avoid fsqlite IN-clause bugs
+                        // Delete existing entries row-by-row rather than one IN-list DELETE.
                         for id in insert_chunk {
                             storage.conn.execute_with_params(
                                 "DELETE FROM dirty_issues WHERE issue_id = ?",
@@ -6125,8 +6115,8 @@ impl SqliteStorage {
         let capacity_policy = self.workflow_capacity_policy.clone();
 
         self.mutate("create_issue", actor, |conn, ctx| {
-            // Explicit duplicate check since fsqlite does not enforce
-            // UNIQUE constraints on non-rowid columns.
+            // Explicit duplicate check for UNIQUE constraints on
+            // non-rowid columns.
             match conn.query_row_with_params(
                 "SELECT 1 FROM issues WHERE id = ? LIMIT 1",
                 &[SqliteValue::from(issue.id.as_str())],
@@ -7027,7 +7017,7 @@ impl SqliteStorage {
             );
         }
         if let Some(ref val) = updates.external_ref {
-            // Explicit uniqueness check for fsqlite
+            // Explicit uniqueness check before the write
             if let Some(ext_ref) = val {
                 let existing_ext = conn.query_with_params(
                     "SELECT id FROM issues WHERE external_ref = ? AND id != ? LIMIT 1",
@@ -8371,9 +8361,9 @@ impl SqliteStorage {
 
         let labels_and = filters.labels.as_deref().unwrap_or(&[]);
         let labels_or = filters.labels_or.as_deref().unwrap_or(&[]);
-        // fsqlite 0.3.6 regression: `SELECT COUNT(*) ... WHERE id IN
-        // (SELECT ... GROUP BY ... HAVING ...)` evaluates to NULL (minimal
-        // repro in the frankensqlite escalation, beads-ro3m), which
+        // `SELECT COUNT(*) ... WHERE id IN
+        // (SELECT ... GROUP BY ... HAVING ...)` shape is fragile across engines
+        // (see beads-ro3m), so it is avoided here; previously it
         // `unwrap_or(0)` below would silently report as zero. The bare
         // membership subquery is unaffected, so multi-label AND counting
         // routes through the two-step candidate-ids path instead of the
@@ -9386,8 +9376,8 @@ impl SqliteStorage {
         }
         // The status list is inlined as SQL string literals rather than bound
         // `?` params. Status values are internal, validated, lowercased policy
-        // names (never raw user input reaching SQL), and the embedded fsqlite
-        // planner mishandles a bound `IN (?)` predicate when it sits alongside a
+        // names (never raw user input reaching SQL); a bound `IN (?)` predicate
+        // sitting alongside a
         // correlated/grouped `id IN (SELECT ... HAVING ...)` label subquery —
         // the same engine class of limitation documented on
         // `ReadyFilters::parent_member_ids` (#307/#308). Inlining keeps the
@@ -10108,7 +10098,6 @@ impl SqliteStorage {
         let mut count = 0;
         for (parent_id, last_child) in max_children {
             // Explicit DELETE + INSERT instead of INSERT OR REPLACE because
-            // fsqlite does not reliably support UNIQUE constraint upserts.
             conn.execute_with_params(
                 "DELETE FROM child_counters WHERE parent_id = ?",
                 &[SqliteValue::from(parent_id.as_str())],
@@ -10356,7 +10345,7 @@ impl SqliteStorage {
         // The table and index are guaranteed to exist (created at schema apply
         // time via SCHEMA_SQL).  Per-entry DELETE+INSERT in
         // insert_blocked_cache_entries handles any phantom B-tree entries that
-        // fsqlite may retain after bulk DELETE (#215).
+        // bulk DELETE may leave behind (#215).
         if table_exists(conn, "blocked_issues_cache") {
             conn.execute("DELETE FROM blocked_issues_cache")?;
         } else {
@@ -10460,12 +10449,10 @@ impl SqliteStorage {
         entries: &[(String, String)],
     ) -> Result<usize> {
         // Callers are responsible for disabling FK enforcement before calling
-        // this function.  fsqlite can surface false FK violations when its page
-        // buffer pool is exhausted (#215).
+        // this function; false FK violations under pressure are suppressed (#215).
         let mut count = 0;
         for (issue_id, blockers_json) in entries {
             // Explicit DELETE + INSERT instead of INSERT OR REPLACE because
-            // fsqlite does not reliably support UNIQUE constraint upserts.
             conn.execute_with_params(
                 "DELETE FROM blocked_issues_cache WHERE issue_id = ?",
                 &[SqliteValue::from(issue_id.as_str())],
@@ -11447,7 +11434,7 @@ impl SqliteStorage {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn get_epic_counts(&self) -> Result<std::collections::HashMap<String, (usize, usize)>> {
         // Fetch raw rows and aggregate in Rust to avoid SUM(CASE WHEN ... THEN 1 ELSE 0 END)
-        // which crashes fsqlite (it doesn't support non-column arguments in aggregate functions).
+        // which some engines reject (non-column arguments in aggregate functions).
         let rows = self.conn.query(
             "SELECT
                 d.depends_on_id AS epic_id,
@@ -13562,9 +13549,9 @@ impl SqliteStorage {
         };
 
         if i64::from(child_number) > current_max {
-            // DELETE + INSERT to simulate UPSERT (fsqlite limitation).
+            // DELETE + INSERT to simulate UPSERT.
             // FK enforcement is disabled by the caller's transaction wrapper
-            // to avoid false FK violations from fsqlite (#215).
+            // to avoid false FK violations (#215).
             conn.execute_with_params(
                 "DELETE FROM child_counters WHERE parent_id = ?",
                 &[SqliteValue::from(parent_id)],
@@ -13845,8 +13832,8 @@ impl SqliteStorage {
     ) -> Result<(HashMap<String, usize>, HashMap<String, usize>)> {
         // Stay below SQLite's common 999-variable ceiling while keeping the
         // default scheduler candidate window to one evidence-loading round trip.
-        // Avoid CTE VALUES materialization, which is the primary root-page
-        // collision trigger for fsqlite's MemDatabase.
+        // Avoid CTE VALUES materialization, which is a primary root-page
+        // collision trigger in in-memory databases.
         const SQLITE_VAR_LIMIT: usize = 900;
 
         if issue_ids.is_empty() {
@@ -14365,7 +14352,7 @@ impl SqliteStorage {
     fn clear_dirty_issue_ids_in_tx(&self, issue_ids: &[String]) -> Result<usize> {
         let mut total_deleted = 0;
         for chunk in issue_ids.chunks(SQLITE_VAR_LIMIT) {
-            // Delete existing entries row-by-row to avoid fsqlite IN-clause bugs
+            // Delete existing entries row-by-row rather than one IN-list DELETE.
             let mut chunk_deleted = 0;
             for id in chunk {
                 let deleted = self.conn.execute_with_params(
@@ -15637,81 +15624,6 @@ fn remove_temp_db_files(path: &Path) {
     }
 }
 
-/// Repair over-permissive modes on the fsqlite namespace sidecars that live
-/// beside `db_path`, before anything tries to open the database (GitHub #403).
-///
-/// fsqlite refuses to open `<db>-fsqlite-ns-gate` / `-fsqlite-ns-use` when the
-/// file carries any bit in `0o077`, and the refusal surfaces as a bare
-/// `Database error: unable to open database file: '<sidecar>'`, which reads as
-/// database corruption and wedges every `br` command — reads included — until
-/// a human notices the mode. The sidecars are regenerable engine state, not
-/// user data, so when this process can chmod them we strip the group/other
-/// bits and continue. When we cannot, we return an error that names the file,
-/// the observed mode, and the required mode instead of letting the engine
-/// report an unattributable `DATABASE_ERROR`.
-///
-/// A `chmod` succeeds only for the file's owner (or root), so attempting it is
-/// itself the ownership test — no uid probing is needed in a crate that
-/// forbids `unsafe`.
-///
-/// # Errors
-///
-/// Returns an error when a sidecar is over-permissive and this process cannot
-/// restore owner-only permissions.
-fn heal_namespace_sidecar_modes(db_path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        for suffix in crate::config::FSQLITE_NAMESPACE_SIDECAR_SUFFIXES {
-            let mut sidecar = db_path.as_os_str().to_os_string();
-            sidecar.push(suffix);
-            let sidecar = PathBuf::from(sidecar);
-
-            let Ok(metadata) = std::fs::symlink_metadata(&sidecar) else {
-                continue;
-            };
-            // A symlinked sidecar is out of scope: following it would chmod a
-            // file outside the database family.
-            if !metadata.is_file() || metadata.file_type().is_symlink() {
-                continue;
-            }
-            let mode = metadata.permissions().mode();
-            if mode.trailing_zeros() >= 6 {
-                continue;
-            }
-
-            let repaired = mode & !0o077;
-            if let Err(err) =
-                std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(repaired))
-            {
-                return Err(BeadsError::Io(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    format!(
-                        "fsqlite namespace sidecar {} has mode {:04o}; fsqlite requires \
-                         owner-only permissions (0600) and this process could not repair it \
-                         ({err}). The database itself is fine — run `chmod 0600 {}` (or have \
-                         its owner do so) and retry.",
-                        sidecar.display(),
-                        mode & 0o7777,
-                        sidecar.display()
-                    ),
-                )));
-            }
-            tracing::debug!(
-                sidecar = %sidecar.display(),
-                observed_mode = format!("{:04o}", mode & 0o7777),
-                repaired_mode = format!("{:04o}", repaired & 0o7777),
-                "repaired over-permissive fsqlite namespace sidecar mode",
-            );
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = db_path;
-    }
-    Ok(())
-}
 
 fn database_header_user_version(path: &Path) -> Option<u32> {
     if path == Path::new(":memory:") || !path.is_file() {
@@ -16315,7 +16227,7 @@ fn query_external_project_capabilities(
         }
     }
 
-    // Explicitly close the connection to avoid fsqlite drop_close warnings.
+    // Explicitly close the connection instead of relying on Drop.
     let _ = conn.close();
     Ok(satisfied)
 }
@@ -17478,8 +17390,8 @@ impl SqliteStorage {
             return Ok(());
         }
 
-        // Keep label inserts single-row: fsqlite can mis-handle multi-values
-        // inserts with repeated issue_id bindings on this primary key.
+        // Keep label inserts single-row: multi-values inserts with repeated
+        // issue_id bindings are fragile on this primary key.
         for label in unique_labels {
             self.conn.execute_with_params(
                 "INSERT OR IGNORE INTO labels (issue_id, label) VALUES (?, ?)",
@@ -18742,7 +18654,7 @@ impl Drop for SqliteStorage {
         {
             tracing::debug!(error = %e, "WAL checkpoint on drop failed (non-fatal)");
         }
-        // Explicitly close the connection to avoid fsqlite drop_close warnings.
+        // Explicitly close the connection instead of relying on Drop.
         let _ = self.conn.close_in_place();
         // Ephemeral temp databases (open_memory) are unlinked here, after the
         // connection is closed, so the file and its WAL/SHM/journal sidecars are
@@ -19252,68 +19164,6 @@ mod tests {
             assert_eq!(issue.status, Status::InProgress);
             assert!(issue.acceptance_criteria.is_none());
             assert!(storage.get_comments(id).unwrap().is_empty());
-        }
-    }
-
-    /// GitHub #403: fsqlite refuses to open a namespace sidecar
-    /// (`-fsqlite-ns-gate` / `-fsqlite-ns-use`) that carries any bit in
-    /// `0o077`, and the refusal surfaced as a bare "unable to open database
-    /// file" naming the sidecar — wedging every command until a human noticed
-    /// the mode. The open path now repairs the mode first, because the
-    /// sidecars are regenerable engine state rather than user data.
-    #[cfg(unix)]
-    #[test]
-    fn over_permissive_namespace_sidecar_mode_is_healed_before_open() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("beads.db");
-        {
-            let mut storage = SqliteStorage::open(&db_path).unwrap();
-            let issue = make_issue(
-                "bd-ns",
-                "sidecar mode",
-                Status::Open,
-                2,
-                None,
-                Utc::now(),
-                None,
-            );
-            storage.create_issue(&issue, "tester").unwrap();
-        }
-
-        let mut loosened = Vec::new();
-        for suffix in crate::config::FSQLITE_NAMESPACE_SIDECAR_SUFFIXES {
-            let mut sidecar = db_path.as_os_str().to_os_string();
-            sidecar.push(suffix);
-            let sidecar = PathBuf::from(sidecar);
-            if sidecar.is_file() {
-                fs::set_permissions(&sidecar, fs::Permissions::from_mode(0o664)).unwrap();
-                loosened.push(sidecar);
-            }
-        }
-        assert!(
-            !loosened.is_empty(),
-            "expected fsqlite namespace sidecars beside {}",
-            db_path.display()
-        );
-
-        // Pre-fix this open failed with a bare `DATABASE_ERROR` naming the
-        // sidecar; the database itself was never damaged.
-        let storage = SqliteStorage::open(&db_path)
-            .expect("open must repair the sidecar mode instead of failing");
-        assert!(storage.get_issue("bd-ns").unwrap().is_some());
-        drop(storage);
-
-        for sidecar in loosened {
-            let mode = fs::metadata(&sidecar).unwrap().permissions().mode();
-            assert_eq!(
-                mode & 0o077,
-                0,
-                "sidecar {} still group/other accessible (mode {:04o})",
-                sidecar.display(),
-                mode & 0o7777
-            );
         }
     }
 
@@ -22257,7 +22107,7 @@ mod tests {
     #[test]
     fn test_event_insert_for_missing_issue_succeeds_with_fk_disabled() {
         // FK enforcement is disabled during mutate transactions to work
-        // around fsqlite's false FK violations (#215).  Events for
+        // around suppressed false FK violations (#215).  Events for
         // non-existent issue_ids are tolerated rather than rejected.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let issue = make_issue(
@@ -28273,7 +28123,7 @@ mod tests {
             "reopen should restore the current schema version"
         );
 
-        // Use PRAGMA index_list instead of sqlite_master (more reliable in fsqlite)
+        // Use PRAGMA index_list instead of sqlite_master (more reliable across engines)
         let index_rows = reopened.conn.query("PRAGMA index_list('issues')").unwrap();
         let index_names: HashSet<String> = index_rows
             .iter()
@@ -28403,7 +28253,7 @@ mod tests {
         );
 
         // Use PRAGMA table_info to verify the repair (sqlite_master can
-        // return inconsistent results in fsqlite).
+        // return inconsistent results mid-rebuild).
         // Check that the `key` column no longer has pk flag set.
         let config_has_pk = reopened
             .conn
@@ -31858,7 +31708,7 @@ mod tests {
 
     #[test]
     fn test_reset_data_tables_preserves_config() {
-        // Use a real file to avoid fsqlite in-memory BUSY contention under parallel tests.
+        // Use a real file to avoid in-memory BUSY contention under parallel tests.
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
@@ -32157,13 +32007,9 @@ mod tests {
     /// spurious busy failures the previous design avoided.
     ///
     /// We assert the gate (`mutation_count > 0`) rather than the
-    /// post-Drop WAL file size because the actual on-disk effect of
-    /// `PRAGMA wal_checkpoint(TRUNCATE)` is fsqlite's responsibility
-    /// — its checkpoint executor decides whether the file is
-    /// truncated to zero or retained as a zero-frame header — and
-    /// keeping that detail out of beads's regression suite
-    /// avoids a false alarm whenever fsqlite revises its WAL
-    /// teardown.
+    /// post-Drop WAL file size because the engine's checkpoint executor
+    /// decides the exact on-disk effect; keeping that detail out of
+    /// beads's regression suite avoids false alarms.
     #[test]
     fn test_drop_checkpoint_gate_tracks_mutation_count() {
         let temp = TempDir::new().unwrap();
@@ -32200,7 +32046,7 @@ mod tests {
         // Re-opening must succeed and see the row, proving the
         // committed data survived the Drop teardown intact (whether
         // it lives in the main DB file post-checkpoint or in a
-        // replayed WAL is fsqlite's call).
+        // replayed WAL is the engine's call).
         let storage = SqliteStorage::open(&db_path).unwrap();
         assert_eq!(
             storage.mutation_count, 0,
@@ -32881,7 +32727,7 @@ mod tests {
             "shared transaction should report the authority mismatch: {shared_error}"
         );
 
-        // Since fsqlite 0.1.18 the engine itself fails closed (CannotOpen)
+        // The engine fails closed (CannotOpen)
         // on a connection whose underlying file was replaced, so post-scenario
         // forensics must reopen the displaced inode fresh instead of reading
         // through the stale connection.
@@ -33026,7 +32872,7 @@ mod tests {
             error.contains("reconcile committed state before retrying"),
             "{error}"
         );
-        // fsqlite 0.1.18 fails closed on the displaced-inode connection, so
+        // The displaced-inode connection fails closed, so
         // verify the committed mutation with a fresh open of the database
         // path: the commit lives in the WAL, which stays beside the original
         // path and replays over the hook's byte-identical copy.

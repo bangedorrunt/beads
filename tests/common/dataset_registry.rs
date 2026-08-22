@@ -606,8 +606,6 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
             || name.ends_with("-wal-cert-head")
             || name.ends_with("-shm")
             || name.ends_with("-journal")
-            || name.ends_with("-fsqlite-ns-gate")
-            || name.ends_with("-fsqlite-ns-use")
         {
             continue;
         }
