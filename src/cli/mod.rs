@@ -985,13 +985,6 @@ EXAMPLES:
     #[command(name = "vcs-status")]
     VcsStatus(VcsStatusArgs),
 
-    /// Start an MCP (Model Context Protocol) server on stdio
-    ///
-    /// Exposes the issue tracker to AI agents via the standard MCP protocol.
-    /// This is an alternative to shelling out to the br CLI.
-    #[cfg(feature = "mcp")]
-    Serve(crate::mcp::ServeArgs),
-
     /// Upgrade br to the latest version
     #[cfg(feature = "self_update")]
     Upgrade(UpgradeArgs),

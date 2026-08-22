@@ -76,9 +76,8 @@ fsqlite-observability = "0.3.6"
 
 # Current-thread runtime that drives fsqlite 0.3's async (!Send) futures to
 # completion behind the synchronous `franken_sync::Connection` bridge.
-# Pinned =0.4.8 to match both the fsqlite family's requirement
-# (>=0.4.3,<0.5) and fastmcp-rust 0.6.0's exact =0.4.8 pin, so `--features
-# mcp` builds carry a single asupersync version (beads_rust-fiop).
+# Pinned =0.4.8 to match the fsqlite family's requirement (>=0.4.3,<0.5).
+# This dependency is deleted along with the bridge in ADR-0002 W2.
 # default-features = false mirrors fsqlite's own spec.
 asupersync = { version = "=0.4.8", default-features = false }
 
@@ -129,9 +128,6 @@ unicode-width = "0.2.2"
 # Versioning
 semver = "1.0.28"
 
-# MCP server (optional; gated behind the `mcp` feature)
-fastmcp-rust = { version = "0.6.0", optional = true }
-
 # Self-update (optional; gated behind the `self_update` feature)
 self_update = { version = "1.0.0-rc.4", features = ["reqwest", "rustls", "github", "progress-bar", "archive-tar", "compression-tar-gz"], default-features = false, optional = true }
 self-replace = { version = "1.5.0", optional = true }
@@ -155,10 +151,6 @@ mimalloc = "0.1.52"
 vergen-gix = { version = "10.0", features = ["build", "cargo", "rustc"] }
 
 [dev-dependencies]
-# Re-enables `Cx::for_testing()` / `Cx::for_request()` for this crate's own
-# test builds; asupersync 0.4.8 gates those constructors behind
-# `test-internals` so production consumers cannot mint ambient authority.
-asupersync = { version = "=0.4.8", default-features = false, features = ["test-internals"] }
 assert_cmd = "2.2.2"
 flate2 = "1.1"
 predicates = "3.1.4"
@@ -193,7 +185,6 @@ opt-level = 1
 
 [features]
 default = ["self_update"]
-mcp = ["dep:fastmcp-rust"]
 self_update = [
     "dep:self_update",
     "dep:self-replace",
@@ -206,15 +197,14 @@ self_update = [
 
 # NOTE: no `[patch.crates-io]` here.
 #
-# All dependencies — fsqlite 0.3.6, its fsqlite-* transitive crates, and
-# fastmcp-rust 0.6.0 — are published on crates.io, so this crate
-# resolves everything from the registry out of the box.  That makes
+# All dependencies — fsqlite 0.3.6 and its fsqlite-* transitive crates —
+# are published on crates.io, so this crate resolves everything from the
+# registry out of the box.  That makes
 # `cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked`
-# work without requiring sibling `frankensqlite` or `fastmcp_rust`
-# checkouts (issue #250 bug 1).
+# work without requiring sibling `frankensqlite` checkouts (issue #250 bug 1).
 #
 # Local co-development: contributors who want to hack on frankensqlite
-# or fastmcp_rust alongside beads_rust can add a workspace-level
+# alongside beads_rust can add a workspace-level
 # `.cargo/config.toml` with their own `[patch.crates-io]` table.  See
 # `scripts/dev-local-frankensqlite.toml` for a ready-to-copy template.
 

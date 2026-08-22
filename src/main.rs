@@ -70,17 +70,6 @@ fn main() {
     let needs_preopened_storage_context = should_auto_import_now || should_auto_flush_now;
     let mut should_preopen_storage =
         should_preopen_storage(storage_enabled, needs_preopened_storage_context);
-    // `br serve` runs a long-lived MCP server that opens storage and performs
-    // import/flush around each request itself. A preopened storage context
-    // would own the database-family authority for the server's whole
-    // lifetime, deadlocking the server's own same-process per-request
-    // acquisitions and starving other workspace writers, so serve never
-    // preopens (its pending-merge startup gate below still runs).
-    #[cfg(feature = "mcp")]
-    if matches!(cli.command, Commands::Serve(_)) {
-        should_auto_import_now = false;
-        should_preopen_storage = false;
-    }
     let command_needs_write_lock = needs_write_lock(&cli.command);
     let no_db_jsonl_write = ctx.no_db() && no_db_jsonl_write_intent(&cli.command);
 
@@ -350,25 +339,6 @@ fn main() {
     {
         overrides.mark_database_family_lock_held(beads_dir, write_lock);
     }
-
-    // `br serve` only acquires startup authority for the pending-merge
-    // mutation gate above. The server outlives startup, its bootstrap and
-    // MCP mutation handlers take the same `.write.lock` flock through fresh
-    // descriptors (a same-process conflict, not reentrant), and holding the
-    // authority for the server's lifetime would also starve every other
-    // workspace writer. The gate verdict is final here, so release both the
-    // guard and the marked `Arc` clone before dispatch.
-    #[cfg(feature = "mcp")]
-    let write_lock = if matches!(cli.command, Commands::Serve(_)) {
-        overrides.clear_database_family_lock_marker();
-        ctx.overrides.clear_database_family_lock_marker();
-        // Shadowing alone would keep the old binding — and its flock — alive
-        // until `main` returns; move it out and release it now.
-        drop(write_lock);
-        None
-    } else {
-        write_lock
-    };
 
     // Phase 2: Open Storage (One-time)
     let mut storage_result = if should_preopen_storage {
@@ -732,9 +702,6 @@ fn main() {
         Commands::Schema(args) => commands::schema::execute(&args, &overrides, &output_ctx),
         Commands::Where => commands::r#where::execute(&overrides, &output_ctx),
         Commands::Version(args) => commands::version::execute(&args, &output_ctx),
-
-        #[cfg(feature = "mcp")]
-        Commands::Serve(args) => beads_rust::mcp::run_serve(&args, &overrides),
 
         #[cfg(feature = "self_update")]
         Commands::Upgrade(args) => commands::upgrade::execute(&args, &output_ctx),
@@ -1203,8 +1170,6 @@ const fn command_must_refuse_during_pending_merge(cmd: &Commands) -> bool {
                 | beads_rust::cli::AuditCommands::Label(_)
         ),
         Commands::Agents(args) => !args.dry_run && (args.add || args.remove || args.update),
-        #[cfg(feature = "mcp")]
-        Commands::Serve(_) => true,
         _ => false,
     }
 }
@@ -1483,9 +1448,6 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::Config { .. }
         | Commands::History(_)
         | Commands::Agents(_) => false,
-
-        #[cfg(feature = "mcp")]
-        Commands::Serve(_) => false,
 
         #[cfg(feature = "self_update")]
         Commands::Upgrade(_) => false,

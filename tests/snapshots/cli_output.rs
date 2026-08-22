@@ -2,26 +2,10 @@ use super::common::cli::{BrWorkspace, run_br};
 use super::{create_issue, init_workspace, normalize_output};
 use insta::assert_snapshot;
 
-/// `br --help` lists `serve` only when the optional `mcp` feature is compiled
-/// in, so the top-level command list is feature-set dependent. CI runs
-/// `cargo test --all-features` (`.github/workflows/ci.yml`) while the default
-/// developer build leaves `mcp` off, so freezing a single golden for both makes
-/// whichever build was not captured fail. Snapshot each feature set under its
-/// own name, mirroring how `self_update` is handled below.
-#[cfg(all(feature = "self_update", feature = "mcp"))]
-#[test]
-fn snapshot_help_output() {
-    let workspace = BrWorkspace::new();
-    let output = run_br(&workspace, ["--help"], "help");
-    assert!(output.status.success(), "help failed: {}", output.stderr);
-    assert!(
-        output.stdout.contains("serve"),
-        "help should list the serve subcommand with the mcp feature"
-    );
-    assert_snapshot!("help_output", normalize_output(&output.stdout));
-}
-
-#[cfg(all(feature = "self_update", not(feature = "mcp")))]
+/// `br --help` no longer lists a `serve` subcommand: the optional `mcp`
+/// feature was deleted (ADR-0002 W1), so a single golden covers every build,
+/// mirroring how `self_update` gating is handled below.
+#[cfg(feature = "self_update")]
 #[test]
 fn snapshot_help_output_no_mcp() {
     let workspace = BrWorkspace::new();
@@ -29,7 +13,7 @@ fn snapshot_help_output_no_mcp() {
     assert!(output.status.success(), "help failed: {}", output.stderr);
     assert!(
         !output.stdout.contains("serve"),
-        "help should not list the serve subcommand without the mcp feature"
+        "help should not list the removed serve subcommand"
     );
     assert_snapshot!("help_output_no_mcp", normalize_output(&output.stdout));
 }

@@ -48,9 +48,6 @@ pub mod util;
 pub mod validation;
 pub mod write_combining;
 
-#[cfg(feature = "mcp")]
-pub mod mcp;
-
 pub use error::{BeadsError, ErrorCode, Result, StructuredError};
 
 /// Run the CLI application.
