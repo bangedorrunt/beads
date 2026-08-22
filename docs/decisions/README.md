@@ -23,3 +23,5 @@ An ADR is an executable spec for coding agents. A human accepts the decision; an
 | ID | Title | Status |
 | :--- | :--- | :--- |
 | [0001](0001-make-beads-the-fail-closed-work-ledger.md) | Make beads the fail-closed work-ledger for flywheel × toron | **Accepted** |
+| [0002](0002-replace-fsqlite-asupersync-with-rusqlite-and-strip-platform-surface.md) | Replace fsqlite/asupersync with rusqlite and strip platform surface | **Accepted** |
+
