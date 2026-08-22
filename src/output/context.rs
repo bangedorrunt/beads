@@ -331,6 +331,63 @@ fn write_toon_issue_counts_object_to_writer<W: Write>(
     push_toon_string_value(&mut line, &issue.id);
     write_toon_newline_and_line(writer, &line)?;
 
+    // Schema v18 typed fields sit right after `id` in serde order.
+    if let Some(verify) = issue.verify.as_ref() {
+        let mut l = String::new();
+        l.push_str("    verify: ");
+        push_toon_string_value(&mut l, verify);
+        write_toon_newline_and_line(writer, &l)?;
+    }
+    if !issue.principles.is_empty() {
+        let json = serde_json::to_string(&issue.principles).unwrap_or_default();
+        let mut l = String::new();
+        l.push_str("    principles: ");
+        push_toon_string_value(&mut l, &json);
+        write_toon_newline_and_line(writer, &l)?;
+    }
+    if let Some(wave) = issue.wave {
+        let mut l = String::new();
+        l.push_str("    wave: ");
+        l.push_str(&wave.to_string());
+        write_toon_newline_and_line(writer, &l)?;
+    }
+    if let Some(pin) = issue.pin.as_ref() {
+        let mut l = String::new();
+        l.push_str("    pin: ");
+        push_toon_string_value(&mut l, pin);
+        write_toon_newline_and_line(writer, &l)?;
+    }
+    if let Some(sha) = issue.commit_sha.as_ref() {
+        let mut l = String::new();
+        l.push_str("    commit_sha: ");
+        push_toon_string_value(&mut l, sha);
+        write_toon_newline_and_line(writer, &l)?;
+    }
+    if let Some(verdict) = issue.close_verdict.as_ref() {
+        let mut l = String::new();
+        l.push_str("    close_verdict: ");
+        push_toon_string_value(&mut l, verdict);
+        write_toon_newline_and_line(writer, &l)?;
+    }
+    {
+        let mut l = String::new();
+        l.push_str("    ac_shape: ");
+        l.push_str(match issue.ac_shape {
+            crate::model::AcShape::Checkable => "checkable",
+            crate::model::AcShape::Judgment => "judgment",
+        });
+        write_toon_newline_and_line(writer, &l)?;
+    }
+    {
+        let mut l = String::new();
+        l.push_str("    blast: ");
+        l.push_str(match issue.blast {
+            crate::model::Blast::Normal => "normal",
+            crate::model::Blast::High => "high",
+        });
+        write_toon_newline_and_line(writer, &l)?;
+    }
+
     write_toon_issue_text_fields(writer, &mut line, issue)?;
     write_toon_issue_workflow_fields(writer, &mut line, issue)?;
     write_toon_issue_time_fields(writer, &mut line, issue)?;
@@ -449,8 +506,19 @@ fn issue_counts_toon_fields(row: &IssueWithCounts) -> Option<Vec<&'static str>> 
         return None;
     }
 
-    let mut fields = Vec::with_capacity(32);
+    let mut fields = Vec::with_capacity(40);
     fields.push("id");
+    // Schema v18 typed work-ledger fields (serde skips them when unset).
+    push_optional_toon_field(&mut fields, issue.verify.as_ref(), "verify");
+    if !issue.principles.is_empty() {
+        fields.push("principles");
+    }
+    push_optional_toon_field(&mut fields, issue.wave.as_ref(), "wave");
+    push_optional_toon_field(&mut fields, issue.pin.as_ref(), "pin");
+    push_optional_toon_field(&mut fields, issue.commit_sha.as_ref(), "commit_sha");
+    push_optional_toon_field(&mut fields, issue.close_verdict.as_ref(), "close_verdict");
+    fields.push("ac_shape");
+    fields.push("blast");
     fields.push("title");
     push_optional_toon_field(&mut fields, issue.description.as_ref(), "description");
     push_optional_toon_field(&mut fields, issue.design.as_ref(), "design");
@@ -546,6 +614,28 @@ fn push_toon_issue_counts_field(out: &mut String, row: &IssueWithCounts, field: 
     let issue = &row.issue;
     match field {
         "id" => push_toon_string_value(out, &issue.id),
+        "verify" => push_toon_string_value(out, issue.verify.as_deref().unwrap_or("")),
+        "principles" => {
+            let json = serde_json::to_string(&issue.principles).unwrap_or_default();
+            push_toon_string_value(out, &json);
+        }
+        "wave" => match issue.wave {
+            Some(wave) => out.push_str(&wave.to_string()),
+            None => out.push_str(""),
+        },
+        "pin" => push_toon_string_value(out, issue.pin.as_deref().unwrap_or("")),
+        "commit_sha" => push_toon_string_value(out, issue.commit_sha.as_deref().unwrap_or("")),
+        "close_verdict" => {
+            push_toon_string_value(out, issue.close_verdict.as_deref().unwrap_or(""));
+        }
+        "ac_shape" => out.push_str(match issue.ac_shape {
+            crate::model::AcShape::Checkable => "checkable",
+            crate::model::AcShape::Judgment => "judgment",
+        }),
+        "blast" => out.push_str(match issue.blast {
+            crate::model::Blast::Normal => "normal",
+            crate::model::Blast::High => "high",
+        }),
         "title" => push_toon_string_value(out, &issue.title),
         "description" => push_toon_string_value(out, issue.description.as_deref().unwrap_or("")),
         "design" => push_toon_string_value(out, issue.design.as_deref().unwrap_or("")),
@@ -1869,7 +1959,7 @@ mod tests {
         assert!(
             String::from_utf8(streamed)
                 .expect("TOON output should be utf8")
-            .starts_with("[2]{id,title,description,design,acceptance_criteria,notes,status,priority,issue_type,created_at,created_by,updated_at,source_repo,compaction_level,dependency_count,dependent_count}:")
+            .starts_with("[2]{id,ac_shape,blast,title,description,design,acceptance_criteria,notes,status,priority,issue_type,created_at,created_by,updated_at,source_repo,compaction_level,dependency_count,dependent_count}:")
         );
     }
 
