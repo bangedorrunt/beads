@@ -1,7 +1,7 @@
 //! Context extension trait for adding context to errors.
 //!
 //! Provides a convenient way to add context information to `Result` types,
-//! similar to anyhow's `Context` trait but for `BeadsError`.
+//! in the style of the well-known `Context` traits, but for `BeadsError`.
 
 use super::BeadsError;
 
