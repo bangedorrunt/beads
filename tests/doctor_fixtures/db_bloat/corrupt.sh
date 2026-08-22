@@ -29,13 +29,24 @@ head -c 1200000 /dev/zero | tr '\0' 'x' > "$payload_file"
 "$tool_bin" sync --import-only --rebuild >/dev/null 2>&1
 "$tool_bin" sync --flush-only >/dev/null 2>&1
 
-sqlite3 .beads/beads.db 'PRAGMA wal_checkpoint(TRUNCATE); PRAGMA integrity_check;' \
-  | grep -Fxq ok
+# Uses python3 because the sqlite3 CLI isn't guaranteed in the harness env.
+python3 <<'PY' | grep -Fxq ok
+import sqlite3
+conn = sqlite3.connect(".beads/beads.db")
+conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+print(conn.execute("PRAGMA integrity_check").fetchone()[0])
+conn.close()
+PY
 
 # Add 18 MiB of trailing zero pages. SQLite still reports integrity_check=ok,
 # and VACUUM compacts the database back to its logical page set.
 dd if=/dev/zero bs=1048576 count=18 status=none >> .beads/beads.db
-sqlite3 .beads/beads.db 'PRAGMA integrity_check;' | grep -Fxq ok
+python3 <<'PY' | grep -Fxq ok
+import sqlite3
+conn = sqlite3.connect(".beads/beads.db")
+print(conn.execute("PRAGMA integrity_check").fetchone()[0])
+conn.close()
+PY
 
 wc -c < .beads/beads.db > .fixture_db_bloat_pre_bytes
 wc -c < .beads/issues.jsonl > .fixture_jsonl_bytes

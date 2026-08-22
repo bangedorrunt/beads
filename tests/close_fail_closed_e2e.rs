@@ -18,11 +18,18 @@ fn setup_workspace_with_issue() -> (BrWorkspace, String) {
 
     let create = run_br(
         &workspace,
-        ["create", "Fail-closed close contract", "-p", "2", "-t", "task"],
+        [
+            "create",
+            "Fail-closed close contract",
+            "-p",
+            "2",
+            "-t",
+            "task",
+        ],
         "create_issue",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
-    let stdout = String::from_utf8_lossy(&create.stdout).to_string();
+    let stdout = create.stdout.clone();
     let id = extract_id(&stdout);
 
     (workspace, id)
@@ -58,7 +65,11 @@ fn record_unit_test_pass(workspace: &BrWorkspace, id: &str) {
         ],
         "gate_report_pass",
     );
-    assert!(report.status.success(), "gate report failed: {}", report.stderr);
+    assert!(
+        report.status.success(),
+        "gate report failed: {}",
+        report.stderr
+    );
 }
 
 /// §8.4: `close_without_pass_gate_is_nonzero` — no PASS row, no close.
@@ -78,8 +89,7 @@ fn close_without_pass_gate_is_nonzero() {
         closed.stdout
     );
     assert!(
-        closed.stdout.contains("fail-closed")
-            || closed.stdout.contains("no legal PASS gate row"),
+        closed.stdout.contains("fail-closed") || closed.stdout.contains("no legal PASS gate row"),
         "error should name the fail-closed gate: {}",
         closed.stdout
     );
@@ -127,7 +137,11 @@ fn close_with_legal_gate_and_sha_sets_close_verdict() {
         ["close", &id, "--commit-sha", "9ef55ebf", "--json"],
         "close_legal",
     );
-    assert!(closed.status.success(), "legal close failed: {}", closed.stderr);
+    assert!(
+        closed.status.success(),
+        "legal close failed: {}",
+        closed.stderr
+    );
 
     let show = run_br(&workspace, ["show", &id, "--json"], "show_closed");
     let payload = extract_json_payload(&show.stdout);
@@ -198,8 +212,7 @@ fn init_writes_require_legal_close_policy() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let policy_path = workspace.root.join(".beads").join("policy.yaml");
-    let policy =
-        std::fs::read_to_string(&policy_path).expect("br init writes .beads/policy.yaml");
+    let policy = std::fs::read_to_string(&policy_path).expect("br init writes .beads/policy.yaml");
     assert!(
         policy.contains("require_legal_close: true"),
         "default policy must enable require_legal_close: {policy}"

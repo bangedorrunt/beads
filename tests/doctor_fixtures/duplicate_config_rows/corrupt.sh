@@ -17,10 +17,15 @@ cd "$target_dir"
 "$tool_bin" sync --flush-only >/dev/null 2>&1 || true
 
 # Plant duplicate config rows under a synthetic key.
-printf '%s\n' \
-  "INSERT INTO config(key, value) VALUES('fixture.dup_test', 'first');" \
-  "INSERT INTO config(key, value) VALUES('fixture.dup_test', 'second');" \
-  | sqlite3 .beads/beads.db
+# Uses python3 because the sqlite3 CLI isn't guaranteed in the harness env.
+python3 <<'PY'
+import sqlite3
+conn = sqlite3.connect(".beads/beads.db")
+conn.execute("INSERT INTO config(key, value) VALUES('fixture.dup_test', 'first')")
+conn.execute("INSERT INTO config(key, value) VALUES('fixture.dup_test', 'second')")
+conn.commit()
+conn.close()
+PY
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

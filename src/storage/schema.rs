@@ -7,7 +7,7 @@ use crate::error::{BeadsError, Result};
 use crate::model::{IssueType, Priority, Status};
 use crate::util::content_hash_from_parts;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 17;
+pub const CURRENT_SCHEMA_VERSION: i32 = 18;
 const ISSUES_CLOSED_AT_CHECK: &str = "CHECK ((status = 'closed' AND closed_at IS NOT NULL) OR (status = 'tombstone') OR (status NOT IN ('closed', 'tombstone') AND closed_at IS NULL))";
 const GATE_RESULT_HISTORY_MIGRATION_SQL: &str = r"
     CREATE TABLE IF NOT EXISTS gate_result_history (
@@ -252,6 +252,17 @@ pub const SCHEMA_SQL: &str = r"
         -- column itself stays a TEXT bag. NULL means no inherited context;
         -- emission for descendants silently skips ancestors with NULL.
         agent_context TEXT,
+        -- Schema v18 (ADR-0001 §5.2): typed work-ledger fields. Same
+        -- append-at-end convention; every column nullable or defaulted so
+        -- schema-17 rows stay valid.
+        verify TEXT,
+        principles TEXT,
+        wave INTEGER,
+        pin TEXT,
+        commit_sha TEXT,
+        close_verdict TEXT,
+        ac_shape TEXT NOT NULL DEFAULT 'checkable',
+        blast TEXT NOT NULL DEFAULT 'normal',
         CHECK (
             (status = 'closed' AND closed_at IS NOT NULL) OR
             (status = 'tombstone') OR
@@ -1313,6 +1324,16 @@ const EXPECTED_ISSUE_COLUMN_ORDER: &[&str] = &[
     "is_template",
     "source_repo_path",
     "agent_context",
+    // Schema v18 (ADR-0001 §5.2): typed work-ledger columns, appended at
+    // the end to match ALTER TABLE ADD COLUMN positions on migrated DBs.
+    "verify",
+    "principles",
+    "wave",
+    "pin",
+    "commit_sha",
+    "close_verdict",
+    "ac_shape",
+    "blast",
 ];
 
 /// Check whether the issues table has columns in the expected order.
@@ -2152,6 +2173,65 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
             "Migrating database to schema version 17 (capacity occupancy - GitHub #384 phase 5)"
         );
         apply_capacity_occupancy_migration_in_transaction(conn)?;
+    }
+
+    // v18 (ADR-0001 §5.2, beads_rust-schema-v18-uyb3): typed work-ledger
+    // columns on `issues`. Purely additive — every column is nullable or
+    // defaulted, so schema-17 rows remain valid.
+    //
+    // #428 integrity gate: the version stamp is applied INSIDE the same
+    // transaction as the DDL, and `PRAGMA integrity_check` runs before
+    // COMMIT. Any disagreement rolls the stamp AND the DDL back and fails
+    // the migration, so a malformed database can never end up stamped 18.
+    // (`PRAGMA user_version` is journaled like any other header write, so
+    // ROLLBACK reverts it.)
+    if user_version < 18 && table_exists(conn, "issues") {
+        tracing::info!("Migrating database to schema version 18 (typed work-ledger columns)");
+        conn.execute("BEGIN IMMEDIATE")?;
+        let outcome = (|| -> Result<()> {
+            // Column-aware: fixtures and rebuilt tables may already carry the
+            // v18 shape (apply_schema stamps the current DDL); only add what
+            // is actually missing.
+            let existing: std::collections::HashSet<String> = conn
+                .query("SELECT name FROM pragma_table_info('issues')")?
+                .iter()
+                .filter_map(|row| row.get(0).and_then(SqliteValue::as_text))
+                .map(String::from)
+                .collect();
+            for (name, decl) in [
+                ("verify", "verify TEXT"),
+                ("principles", "principles TEXT"),
+                ("wave", "wave INTEGER"),
+                ("pin", "pin TEXT"),
+                ("commit_sha", "commit_sha TEXT"),
+                ("close_verdict", "close_verdict TEXT"),
+                ("ac_shape", "ac_shape TEXT NOT NULL DEFAULT 'checkable'"),
+                ("blast", "blast TEXT NOT NULL DEFAULT 'normal'"),
+            ] {
+                if !existing.contains(name) {
+                    conn.execute(&format!("ALTER TABLE issues ADD COLUMN {decl}"))?;
+                }
+            }
+            conn.execute("PRAGMA user_version = 18")?;
+
+            let row = conn.query_row("PRAGMA integrity_check")?;
+            let verdict = row.get(0).and_then(SqliteValue::as_text).unwrap_or("");
+            if !verdict.eq_ignore_ascii_case("ok") {
+                conn.execute("ROLLBACK")?;
+                return Err(crate::error::BeadsError::Config(format!(
+                    "schema-18 migration aborted: PRAGMA integrity_check reported \
+                     '{verdict}' after staging the typed work-ledger columns; \
+                     user_version was NOT stamped (#428 anti-pattern guard)"
+                )));
+            }
+            Ok(())
+        })();
+        match outcome {
+            Ok(()) => {
+                conn.execute("COMMIT")?;
+            }
+            Err(err) => return Err(err),
+        }
     }
 
     // Migration: Add missing indexes for bd parity
@@ -4707,5 +4787,88 @@ mod tests {
         let stmts = split_sql_statements("SELECT 42");
         assert_eq!(stmts.len(), 1);
         assert_eq!(stmts[0], "SELECT 42");
+    }
+}
+
+#[cfg(test)]
+mod schema18_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Build a real database stamped at v17 (pre-v18 shape), then corrupt a
+    /// secondary-index page so `PRAGMA integrity_check` reports malformed
+    /// AFTER the migration's DDL and stamp would have run (#428 anti-pattern
+    /// guard).
+    #[allow(clippy::too_many_lines)] // fixture setup reads linearly
+    fn v17_db_with_corrupt_index() -> (TempDir, Connection) {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let temp = TempDir::new().expect("tempdir");
+        let db_path = temp.path().join("beads.db");
+        let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open");
+        apply_schema(&conn).expect("apply current schema");
+
+        conn.execute("PRAGMA user_version = 17").expect("stamp 17");
+        conn.execute("DROP INDEX IF EXISTS idx_issues_content_hash")
+            .expect("drop target index");
+        conn.execute("CREATE INDEX idx_issues_content_hash ON issues(content_hash)")
+            .expect("recreate plain index");
+
+        let row = conn
+            .query_row(
+                "SELECT rootpage, (SELECT page_size FROM pragma_page_size) \
+                 FROM sqlite_master WHERE type = 'index' \
+                 AND name = 'idx_issues_content_hash'",
+            )
+            .expect("resolve rootpage");
+        let rootpage = row.get(0).and_then(SqliteValue::as_integer).unwrap();
+        let page_size = row.get(1).and_then(SqliteValue::as_integer).unwrap();
+        conn.close().expect("close before corruption");
+
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&db_path)
+            .expect("open db file");
+        f.seek(SeekFrom::Start(
+            u64::try_from((rootpage - 1) * page_size).expect("offset"),
+        ))
+        .expect("seek to index root page");
+        f.write_all(&[0xffu8; 200]).expect("corrupt index page");
+
+        let reopened = Connection::open(db_path.to_string_lossy().into_owned()).expect("reopen");
+        (temp, reopened)
+    }
+
+    #[test]
+    fn migrate_18_fails_if_integrity_check_fails() {
+        let (_temp, conn) = v17_db_with_corrupt_index();
+
+        let integrity = conn
+            .query_row("PRAGMA integrity_check")
+            .expect("integrity_check executes");
+        let pre = integrity
+            .get(0)
+            .and_then(SqliteValue::as_text)
+            .unwrap_or("");
+        assert!(
+            !pre.eq_ignore_ascii_case("ok"),
+            "fixture must start corrupted; got {pre:?}"
+        );
+
+        // The gated migration must fail closed instead of leaving a v18
+        // stamp over a malformed database (#428 anti-pattern).
+        let result = run_migrations(&conn, false);
+        assert!(result.is_err(), "migration must fail on integrity failure");
+
+        let version = conn.query_row("PRAGMA user_version").expect("read version");
+        let stamped = version
+            .get(0)
+            .and_then(SqliteValue::as_integer)
+            .unwrap_or_default();
+        assert_ne!(
+            stamped,
+            i64::from(CURRENT_SCHEMA_VERSION),
+            "user_version must not be stamped when integrity_check disagrees"
+        );
     }
 }

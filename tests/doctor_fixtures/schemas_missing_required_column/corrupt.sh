@@ -25,12 +25,17 @@ cd "$target_dir"
 
 # Drop indexes that reference the column first (SQLite's ALTER TABLE DROP
 # COLUMN refuses to drop columns referenced by indexes). Then drop the
-# column. Test harness only.
-printf '%s\n' \
-  "DROP INDEX IF EXISTS idx_comments_issue_id;" \
-  "DROP INDEX IF EXISTS idx_comments_created_at;" \
-  "ALTER TABLE comments DROP COLUMN text;" \
-  | sqlite3 .beads/beads.db
+# column. Test harness only. Uses python3 because the sqlite3 CLI isn't
+# guaranteed in the harness env.
+python3 <<'PY'
+import sqlite3
+conn = sqlite3.connect(".beads/beads.db")
+conn.execute("DROP INDEX IF EXISTS idx_comments_issue_id")
+conn.execute("DROP INDEX IF EXISTS idx_comments_created_at")
+conn.execute("ALTER TABLE comments DROP COLUMN text")
+conn.commit()
+conn.close()
+PY
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

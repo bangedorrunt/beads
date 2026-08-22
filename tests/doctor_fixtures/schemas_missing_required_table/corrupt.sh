@@ -21,8 +21,15 @@ cd "$target_dir"
 "$tool_bin" sync --flush-only >/dev/null 2>&1 || true
 
 # Drop a required table that the doctor's check_schema_tables list watches.
-# Test harness DROPs; the fixer never DROPs.
-printf '%s\n' "DROP TABLE IF EXISTS export_hashes;" | sqlite3 .beads/beads.db
+# Test harness DROPs; the fixer never DROPs. Uses python3 because the sqlite3
+# CLI isn't guaranteed in the harness env.
+python3 <<'PY'
+import sqlite3
+conn = sqlite3.connect(".beads/beads.db")
+conn.execute("DROP TABLE IF EXISTS export_hashes")
+conn.commit()
+conn.close()
+PY
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

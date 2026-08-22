@@ -900,6 +900,14 @@ mod tests {
     fn make_issue(id: &str, title: &str) -> Issue {
         let now = Utc::now();
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: id.to_string(),
             title: title.to_string(),
             description: None,

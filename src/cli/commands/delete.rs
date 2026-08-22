@@ -1204,6 +1204,14 @@ mod tests {
 
     fn create_test_issue(id: &str, title: &str) -> Issue {
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: id.to_string(),
             title: title.to_string(),
             status: Status::Open,

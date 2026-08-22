@@ -1578,7 +1578,8 @@ impl ReadyIssueProjection {
                          due_at, defer_until, external_ref, source_system, source_repo,
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
-                         sender, ephemeral, pinned, is_template, source_repo_path, agent_context"
+                         sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast"
             }
             Self::Command => {
                 r"SELECT id, title, description, acceptance_criteria, notes, status, priority,
@@ -1610,7 +1611,8 @@ impl SearchIssueProjection {
                          due_at, defer_until, external_ref, source_system, source_repo,
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
-                         sender, ephemeral, pinned, is_template, source_repo_path, agent_context
+                         sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast
                   FROM issues
                   WHERE 1=1"
             }
@@ -1642,6 +1644,8 @@ impl BlockedIssueProjection {
                      i.deleted_at, i.deleted_by, i.delete_reason, i.original_type, i.compaction_level,
                      i.compacted_at, i.compacted_at_commit, i.original_size, i.sender, i.ephemeral,
                      i.pinned, i.is_template, i.source_repo_path, i.agent_context,
+                     i.verify, i.principles, i.wave, i.pin, i.commit_sha,
+                     i.close_verdict, i.ac_shape, i.blast,
                      bc.blocked_by"
             }
             Self::Command => {
@@ -6197,8 +6201,10 @@ impl SqliteStorage {
                     closed_by_session, due_at, defer_until, external_ref, source_system,
                     source_repo, source_repo_path, deleted_at, deleted_by, delete_reason, original_type,
                     compaction_level, compacted_at, compacted_at_commit, original_size,
-                    sender, ephemeral, pinned, is_template, agent_context
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    sender, ephemeral, pinned, is_template, agent_context,
+                    verify, principles, wave, pin, commit_sha, close_verdict,
+                    ac_shape, blast
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 &[
                     SqliteValue::from(issue.id.as_str()),
                     SqliteValue::from(content_hash.as_str()),
@@ -6238,6 +6244,23 @@ impl SqliteStorage {
                     SqliteValue::from(i64::from(i32::from(issue.pinned))),
                     SqliteValue::from(i64::from(i32::from(issue.is_template))),
                     issue.agent_context.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
+                    // Schema v18 (ADR-0001 §5.2): typed work-ledger fields.
+                    issue.verify.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
+                    SqliteValue::from(
+                        serde_json::to_string(&issue.principles).unwrap_or_default(),
+                    ),
+                    issue.wave.map_or(SqliteValue::Null, |v| SqliteValue::from(i64::from(v))),
+                    issue.pin.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
+                    issue.commit_sha.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
+                    issue.close_verdict.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
+                    SqliteValue::from(match issue.ac_shape {
+                        crate::model::AcShape::Checkable => "checkable",
+                        crate::model::AcShape::Judgment => "judgment",
+                    }),
+                    SqliteValue::from(match issue.blast {
+                        crate::model::Blast::Normal => "normal",
+                        crate::model::Blast::High => "high",
+                    }),
                 ],
             )?;
 
@@ -7481,7 +7504,8 @@ impl SqliteStorage {
                    due_at, defer_until, external_ref, source_system, source_repo,
                    deleted_at, deleted_by, delete_reason, original_type,
                    compaction_level, compacted_at, compacted_at_commit, original_size,
-                   sender, ephemeral, pinned, is_template, source_repo_path, agent_context
+                   sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
+                   verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast
             FROM issues
             WHERE id = ?
         ";
@@ -7521,7 +7545,8 @@ impl SqliteStorage {
                          due_at, defer_until, external_ref, source_system, source_repo,
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
-                         sender, ephemeral, pinned, is_template, source_repo_path, agent_context
+                         sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast
                   FROM issues WHERE id IN ({})",
                 placeholders.join(",")
             );
@@ -7846,7 +7871,8 @@ impl SqliteStorage {
                          due_at, defer_until, external_ref, source_system, source_repo,
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
-                         sender, ephemeral, pinned, is_template, source_repo_path, agent_context
+                         sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast
                   FROM issues
                   WHERE {status_filter}
                     AND (is_template = 0 OR is_template IS NULL)
@@ -14101,7 +14127,9 @@ impl SqliteStorage {
                            due_at, defer_until, external_ref, source_system, source_repo,
                            deleted_at, deleted_by, delete_reason, original_type, compaction_level,
                            compacted_at, compacted_at_commit, original_size, sender, ephemeral,
-                           pinned, is_template, source_repo_path, agent_context
+                           pinned, is_template, source_repo_path, agent_context,
+                           verify, principles, wave, pin, commit_sha,
+                           close_verdict, ac_shape, blast
                     FROM issues
                     WHERE (ephemeral = 0 OR ephemeral IS NULL)
                       AND id NOT LIKE '%-wisp-%'
@@ -15037,6 +15065,20 @@ impl SqliteStorage {
             // accessor still finds the right column.
             source_repo_path: get_non_empty_str(36),
             agent_context: get_non_empty_str(37),
+            // Schema v18 (ADR-0001 §5.2): positions 38-45 in the Full
+            // SELECT. principles is a JSON document column; ac_shape/blast
+            // are TEXT enums with defaults for pre-v18 rows.
+            verify: get_non_empty_str(38),
+            principles: parse_principles_json(get_str(39)),
+            wave: row
+                .get(40)
+                .and_then(SqliteValue::as_integer)
+                .and_then(|v| u32::try_from(v).ok()),
+            pin: get_non_empty_str(41),
+            commit_sha: get_non_empty_str(42),
+            close_verdict: get_non_empty_str(43),
+            ac_shape: parse_ac_shape(row.get(44).and_then(SqliteValue::as_text)),
+            blast: parse_blast(row.get(45).and_then(SqliteValue::as_text)),
             labels: vec![],
             dependencies: vec![],
             comments: vec![],
@@ -15094,6 +15136,14 @@ impl SqliteStorage {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -15159,6 +15209,14 @@ impl SqliteStorage {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -15224,6 +15282,14 @@ impl SqliteStorage {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -15283,6 +15349,14 @@ impl SqliteStorage {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -15348,6 +15422,14 @@ impl SqliteStorage {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -15407,6 +15489,14 @@ impl SqliteStorage {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -15988,6 +16078,31 @@ fn ready_hybrid_high_bucket_priorities(priorities: Option<&[Priority]>) -> Vec<P
                 .collect()
         },
     )
+}
+
+/// Parse the v18 principles JSON column (empty/NULL => empty list).
+#[allow(clippy::needless_pass_by_value)] // adapter boundary takes owned string
+fn parse_principles_json(raw: String) -> Vec<crate::model::PrincipleCitation> {
+    if raw.trim().is_empty() {
+        return Vec::new();
+    }
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+/// Parse the v18 ac_shape TEXT enum (NULL/pre-v18 => checkable).
+fn parse_ac_shape(raw: Option<&str>) -> crate::model::AcShape {
+    match raw {
+        Some("judgment") => crate::model::AcShape::Judgment,
+        _ => crate::model::AcShape::Checkable,
+    }
+}
+
+/// Parse the v18 blast TEXT enum (NULL/pre-v18 => normal).
+fn parse_blast(raw: Option<&str>) -> crate::model::Blast {
+    match raw {
+        Some("high") => crate::model::Blast::High,
+        _ => crate::model::Blast::Normal,
+    }
 }
 
 fn parse_status(s: Option<&str>) -> Status {
@@ -17024,7 +17139,9 @@ impl SqliteStorage {
                      due_at, defer_until, external_ref, source_system, source_repo,
                      deleted_at, deleted_by, delete_reason, original_type, compaction_level,
                      compacted_at, compacted_at_commit, original_size, sender, ephemeral,
-                     pinned, is_template, source_repo_path, agent_context
+                     pinned, is_template, source_repo_path, agent_context,
+                     verify, principles, wave, pin, commit_sha,
+                     close_verdict, ac_shape, blast
                FROM issues WHERE external_ref = ?",
             &[SqliteValue::from(external_ref)],
         ) {
@@ -17047,7 +17164,9 @@ impl SqliteStorage {
                      due_at, defer_until, external_ref, source_system, source_repo,
                      deleted_at, deleted_by, delete_reason, original_type, compaction_level,
                      compacted_at, compacted_at_commit, original_size, sender, ephemeral,
-                     pinned, is_template, source_repo_path, agent_context
+                     pinned, is_template, source_repo_path, agent_contex,t
+                     verify, principles, wave, pin, commit_sha,
+                     close_verdict, ac_shape, blast
                FROM issues WHERE content_hash = ?",
             &[SqliteValue::from(content_hash)],
         ) {
@@ -17069,6 +17188,7 @@ impl SqliteStorage {
         ))
     }
 
+    #[allow(clippy::too_many_lines)] // one binding per v18 field, kept explicit
     fn import_issue_field_values(
         issue: &Issue,
         timestamps: &ImportIssueTimestampStrings,
@@ -17149,6 +17269,35 @@ impl SqliteStorage {
                 .agent_context
                 .as_deref()
                 .map_or(SqliteValue::Null, SqliteValue::from),
+            // Schema v18 (ADR-0001 §5.2): typed work-ledger fields.
+            issue
+                .verify
+                .as_deref()
+                .map_or(SqliteValue::Null, SqliteValue::from),
+            SqliteValue::from(serde_json::to_string(&issue.principles).unwrap_or_default()),
+            issue
+                .wave
+                .map_or(SqliteValue::Null, |v| SqliteValue::from(i64::from(v))),
+            issue
+                .pin
+                .as_deref()
+                .map_or(SqliteValue::Null, SqliteValue::from),
+            issue
+                .commit_sha
+                .as_deref()
+                .map_or(SqliteValue::Null, SqliteValue::from),
+            issue
+                .close_verdict
+                .as_deref()
+                .map_or(SqliteValue::Null, SqliteValue::from),
+            SqliteValue::from(match issue.ac_shape {
+                crate::model::AcShape::Checkable => "checkable",
+                crate::model::AcShape::Judgment => "judgment",
+            }),
+            SqliteValue::from(match issue.blast {
+                crate::model::Blast::Normal => "normal",
+                crate::model::Blast::High => "high",
+            }),
         ]
     }
 
@@ -17158,12 +17307,17 @@ impl SqliteStorage {
     pub(crate) fn import_issue_raw_row_for_witness(issue: &Issue) -> Result<Vec<SqliteValue>> {
         let timestamps = ImportIssueTimestampStrings::from_issue(issue);
         let mut fields = Self::import_issue_field_values(issue, &timestamps);
-        if fields.len() != 37 {
+        if fields.len() != 45 {
             return Err(BeadsError::Config(format!(
-                "Import issue raw witness expected 37 fields, found {}",
+                "Import issue raw witness expected 45 fields, found {}",
                 fields.len()
             )));
         }
+        // Reorder into physical SELECT * order: import SQL keeps
+        // source_repo_path beside source_repo, while the migrated schema
+        // appends [source_repo_path, agent_context, <v18 columns>] at the
+        // end of the table.
+        let v18_tail: Vec<_> = fields.drain(37..).collect();
         // Import SQL places source_repo_path beside source_repo for parameter
         // readability, while migrated physical schemas append it immediately
         // before agent_context. Reorder into SELECT * / schema-catalog order.
@@ -17171,14 +17325,15 @@ impl SqliteStorage {
         let agent_context = fields.pop().ok_or_else(|| {
             BeadsError::Config("Import issue raw witness lost the agent_context field".to_string())
         })?;
-        let mut row = Vec::with_capacity(38);
+        let mut row = Vec::with_capacity(46);
         row.push(SqliteValue::from(issue.id.as_str()));
         row.extend(fields);
         row.push(source_repo_path);
         row.push(agent_context);
-        if row.len() != 38 {
+        row.extend(v18_tail);
+        if row.len() != 46 {
             return Err(BeadsError::Config(format!(
-                "Import issue raw witness expected 38 columns, found {}",
+                "Import issue raw witness expected 46 columns, found {}",
                 row.len()
             )));
         }
@@ -17202,9 +17357,13 @@ impl SqliteStorage {
                 due_at, defer_until, external_ref, source_system, source_repo, source_repo_path,
                 deleted_at, deleted_by, delete_reason, original_type, compaction_level,
                 compacted_at, compacted_at_commit, original_size, sender, ephemeral,
-                pinned, is_template, agent_context
+                pinned, is_template, agent_context,
+                verify, principles, wave, pin, commit_sha, close_verdict,
+                ac_shape, blast
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?
             )",
             &insert_params,
         )?;
@@ -17229,7 +17388,9 @@ impl SqliteStorage {
                 external_ref = ?, source_system = ?, source_repo = ?, source_repo_path = ?,
                 deleted_at = ?, deleted_by = ?, delete_reason = ?, original_type = ?, compaction_level = ?,
                 compacted_at = ?, compacted_at_commit = ?, original_size = ?, sender = ?,
-                ephemeral = ?, pinned = ?, is_template = ?, agent_context = ?
+                ephemeral = ?, pinned = ?, is_template = ?, agent_context = ?,
+                verify = ?, principles = ?, wave = ?, pin = ?,
+                commit_sha = ?, close_verdict = ?, ac_shape = ?, blast = ?
               WHERE id = ?",
             &params,
         )?;
@@ -18744,6 +18905,14 @@ mod tests {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -21877,6 +22046,14 @@ mod tests {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -25174,6 +25351,14 @@ mod tests {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -25255,6 +25440,14 @@ mod tests {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -25330,6 +25523,14 @@ mod tests {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -25462,6 +25663,14 @@ mod tests {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -26075,6 +26284,14 @@ mod tests {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,

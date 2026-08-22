@@ -23,17 +23,32 @@ for pattern in ".write.lock" "*.tmp"; do
   fi
 done
 
-sqlite3 .beads/beads.db \
-  "UPDATE metadata SET value='2026-05-01T00:00:00Z' WHERE key='last_export_time';"
+# Uses python3 because the sqlite3 CLI isn't guaranteed in the harness env.
+python3 <<'PY'
+import sqlite3
+conn = sqlite3.connect(".beads/beads.db")
+conn.execute(
+    "UPDATE metadata SET value='2026-05-01T00:00:00Z' WHERE key='last_export_time'"
+)
+conn.commit()
+conn.close()
+PY
 
 if [ -e .beads/beads.base.jsonl ]; then
   echo "corrupt.sh: fresh workspace unexpectedly has .beads/beads.base.jsonl" >&2
   exit 1
 fi
 
-sqlite3 .beads/beads.db \
-  "SELECT value FROM metadata WHERE key='last_export_time' ORDER BY rowid DESC LIMIT 1;" \
-  > .fixture_last_export_time
+python3 <<'PY' > .fixture_last_export_time
+import sqlite3
+conn = sqlite3.connect(".beads/beads.db")
+row = conn.execute(
+    "SELECT value FROM metadata WHERE key='last_export_time' "
+    "ORDER BY rowid DESC LIMIT 1"
+).fetchone()
+print(row[0] if row else "")
+conn.close()
+PY
 
 if [ "$(cat .fixture_last_export_time)" != "2026-05-01T00:00:00Z" ]; then
   echo "corrupt.sh: failed to plant metadata.last_export_time" >&2

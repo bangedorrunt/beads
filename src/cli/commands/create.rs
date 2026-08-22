@@ -513,6 +513,16 @@ pub fn create_issue_impl(
 
         // 4. Construct Issue
         let mut issue = Issue {
+            // Schema v18 (beads_rust-schema-v18-uyb3): defaults; typed fields are
+            // set explicitly by later waves' surfaces.
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: id.clone(),
             title: title.clone(),
             description: description.clone(),
@@ -1031,6 +1041,16 @@ fn execute_import(
             };
 
             let mut issue = Issue {
+                // Schema v18 (beads_rust-schema-v18-uyb3): defaults; typed fields are
+                // set explicitly by later waves' surfaces.
+                verify: None,
+                principles: Vec::new(),
+                wave: None,
+                pin: None,
+                commit_sha: None,
+                close_verdict: None,
+                ac_shape: crate::model::AcShape::Checkable,
+                blast: crate::model::Blast::Normal,
                 id: id.clone(),
                 title: title.clone(),
                 description: description.clone(),

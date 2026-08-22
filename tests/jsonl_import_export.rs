@@ -633,3 +633,84 @@ fn import_rejects_invalid_id_format() {
         "Expected validation error, got: {err}"
     );
 }
+
+// governed-by: ADR-0001
+// Wave-5 L1 (beads_rust-schema-v18-uyb3): schema-17 JSONL lines carry none of
+// the typed work-ledger fields; import must fill serde defaults and persist
+// them through the v18 columns.
+#[test]
+fn schema18_import_of_schema17_jsonl_fills_defaults() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("issues.jsonl");
+
+    // Raw schema-17 line: no verify/principles/wave/pin/commit_sha/
+    // close_verdict/ac_shape/blast keys at all.
+    let legacy_line = r#"{"id":"bd-schema17","title":"legacy row","status":"open","priority":2,"issue_type":"task","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","created_by":"ubuntu"}"#;
+    fs::write(&path, format!("{legacy_line}\n")).unwrap();
+
+    let mut storage = SqliteStorage::open_memory().unwrap();
+    let import =
+        import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("bd-")).unwrap();
+    assert_eq!(import.imported_count, 1);
+
+    let issue = storage
+        .get_issue("bd-schema17")
+        .unwrap()
+        .expect("legacy row imported");
+
+    // Serde defaults filled for every absent v18 field.
+    assert!(issue.verify.is_none(), "verify defaults to None");
+    assert!(
+        issue.principles.is_empty(),
+        "principles default to an empty citation list"
+    );
+    assert!(issue.wave.is_none(), "wave defaults to None");
+    assert!(issue.pin.is_none(), "pin defaults to None");
+    assert!(issue.commit_sha.is_none(), "commit_sha defaults to None");
+    assert!(
+        issue.close_verdict.is_none(),
+        "close_verdict defaults to None"
+    );
+    assert_eq!(
+        issue.ac_shape,
+        beads::model::AcShape::Checkable,
+        "ac_shape defaults to checkable"
+    );
+    assert_eq!(
+        issue.blast,
+        beads::model::Blast::Normal,
+        "blast defaults to normal"
+    );
+
+    // Round-trip: enriched fields survive export + re-import.
+    let mut updated = issue.clone();
+    updated.verify = Some("cargo test --offline schema18".to_string());
+    updated.principles = vec![beads::model::PrincipleCitation {
+        name: "prove-it-works".to_string(),
+        decision: "stamp only after integrity_check passes".to_string(),
+    }];
+    updated.wave = Some(5);
+    updated.commit_sha = Some("8615bac8".to_string());
+    storage.upsert_issue_for_import(&updated).unwrap();
+
+    let out_path = temp.path().join("out.jsonl");
+    export_to_jsonl(&storage, &out_path, &ExportConfig::default()).unwrap();
+
+    let mut fresh = SqliteStorage::open_memory().unwrap();
+    let re =
+        import_from_jsonl(&mut fresh, &out_path, &ImportConfig::default(), Some("bd-")).unwrap();
+    assert_eq!(re.imported_count, 1);
+    let round_tripped = fresh.get_issue("bd-schema17").unwrap().unwrap();
+    assert_eq!(
+        round_tripped.verify.as_deref(),
+        Some("cargo test --offline schema18")
+    );
+    assert_eq!(round_tripped.principles.len(), 1);
+    assert_eq!(round_tripped.principles[0].name, "prove-it-works");
+    assert_eq!(
+        round_tripped.principles[0].decision,
+        "stamp only after integrity_check passes"
+    );
+    assert_eq!(round_tripped.wave, Some(5));
+    assert_eq!(round_tripped.commit_sha.as_deref(), Some("8615bac8"));
+}

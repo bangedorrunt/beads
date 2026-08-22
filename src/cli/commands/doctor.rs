@@ -13663,6 +13663,14 @@ mod tests {
 
     fn sample_issue(id: &str, title: &str) -> Issue {
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: id.to_string(),
             content_hash: None,
             title: title.to_string(),
@@ -21518,6 +21526,14 @@ mod tests {
         {
             let mut storage = SqliteStorage::open(&db_path).unwrap();
             let issue = Issue {
+                verify: None,
+                principles: Vec::new(),
+                wave: None,
+                pin: None,
+                commit_sha: None,
+                close_verdict: None,
+                ac_shape: crate::model::AcShape::Checkable,
+                blast: crate::model::Blast::Normal,
                 id: "bd-keep".to_string(),
                 content_hash: None,
                 title: "Keep me".to_string(),
@@ -21834,6 +21850,14 @@ mod tests {
         let jsonl_path = beads_dir.join("issues.jsonl");
 
         let issue = Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: "proj-abc123".to_string(),
             content_hash: None,
             title: "Imported".to_string(),

@@ -246,6 +246,14 @@ mod tests {
 
     fn make_issue(id: &str, updated_at: DateTime<Utc>) -> Issue {
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: id.to_string(),
             title: format!("Issue {id}"),
             description: None,

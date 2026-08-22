@@ -17,8 +17,17 @@ issue_id="$("$tool_bin" create --title "dirty flag divergence seed" --type task 
 "$tool_bin" sync --flush-only --json >/dev/null
 cp .beads/issues.jsonl .beads/beads.base.jsonl
 
-sqlite3 .beads/beads.db \
-  "INSERT OR REPLACE INTO dirty_issues(issue_id, marked_at) VALUES('$issue_id', '2026-01-01T00:00:00Z')"
+# Uses python3 because the sqlite3 CLI isn't guaranteed in the harness env.
+python3 - "$issue_id" <<'PY'
+import sqlite3, sys
+conn = sqlite3.connect(".beads/beads.db")
+conn.execute(
+    "INSERT OR REPLACE INTO dirty_issues(issue_id, marked_at) VALUES(?, ?)",
+    (sys.argv[1], "2026-01-01T00:00:00Z"),
+)
+conn.commit()
+conn.close()
+PY
 
 sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_sha256
 printf '%s\n' "BR_DOCTOR_FIXTURE_REPAIR_ARGS=--only fm-state_files-dirty-flag-divergence" > .fixture_env

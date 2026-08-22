@@ -13,6 +13,14 @@ fn base_time() -> chrono::DateTime<Utc> {
 pub fn issue(title: &str) -> Issue {
     let base = base_time();
     Issue {
+        verify: None,
+        principles: Vec::new(),
+        wave: None,
+        pin: None,
+        commit_sha: None,
+        close_verdict: None,
+        ac_shape: beads::model::AcShape::Checkable,
+        blast: beads::model::Blast::Normal,
         id: format!("test-{}", hash_title(title)),
         title: title.to_string(),
         description: None,

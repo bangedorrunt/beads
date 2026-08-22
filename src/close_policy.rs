@@ -871,9 +871,7 @@ fn legal_close_gate_names(input: &crate::verify::LegalCloseInput<'_>) -> Vec<&'s
 /// schema-v18 columns (beads_rust-schema-v18-uyb3) — until then every bead
 /// defaults to Normal blast, checkable AC, empty VERIFY (the non-runnable
 /// band), which is the conservative reading of the table.
-pub fn legal_close_input_for_issue_pub(
-    priority: i32,
-) -> crate::verify::LegalCloseInput<'static> {
+pub fn legal_close_input_for_issue_pub(priority: i32) -> crate::verify::LegalCloseInput<'static> {
     legal_close_input_for_issue(priority)
 }
 

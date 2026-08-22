@@ -36,12 +36,20 @@ c_id=$(echo "$ids" | sed -n 3p)
 "$tool_bin" sync --flush-only >/dev/null 2>&1 || true
 
 # Corrupt: flip marker to 'stale', wipe live rows, plant a ghost row referencing
-# non-existent issues. Use stdin to keep dcg happy (raw SQL via heredoc).
-printf '%s\n' \
-  "UPDATE metadata SET value='stale' WHERE key='blocked_cache_state';" \
-  "DELETE FROM blocked_issues_cache;" \
-  "INSERT INTO blocked_issues_cache(issue_id, blocked_by, blocked_at) VALUES ('br-9999', '[\"br-9998\"]', '2020-01-01T00:00:00Z');" \
-  | sqlite3 .beads/beads.db
+# non-existent issues. Uses python3 because the sqlite3 CLI isn't guaranteed
+# in the harness env.
+python3 <<'PY'
+import sqlite3
+conn = sqlite3.connect(".beads/beads.db")
+conn.execute("UPDATE metadata SET value='stale' WHERE key='blocked_cache_state'")
+conn.execute("DELETE FROM blocked_issues_cache")
+conn.execute(
+    "INSERT INTO blocked_issues_cache(issue_id, blocked_by, blocked_at) "
+    "VALUES ('br-9999', '[\"br-9998\"]', '2020-01-01T00:00:00Z')"
+)
+conn.commit()
+conn.close()
+PY
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

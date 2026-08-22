@@ -491,6 +491,14 @@ mod tests {
 
     fn make_issue(issue_type: IssueType, description: Option<&str>) -> Issue {
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: "bd-123".to_string(),
             content_hash: None,
             title: "Sample".to_string(),

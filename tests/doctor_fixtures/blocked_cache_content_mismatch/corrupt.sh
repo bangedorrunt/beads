@@ -33,10 +33,18 @@ b_id=$(echo "$ids" | sed -n 2p)
 
 # Wipe live rows; plant a single ghost row. Marker is left at 'current' so
 # only the projection-health probe flags it.
-printf '%s\n' \
-  "DELETE FROM blocked_issues_cache;" \
-  "INSERT INTO blocked_issues_cache(issue_id, blocked_by, blocked_at) VALUES ('br-9999', '[\"br-9998\"]', '2020-01-01T00:00:00Z');" \
-  | sqlite3 .beads/beads.db
+# Uses python3 because the sqlite3 CLI isn't guaranteed in the harness env.
+python3 <<'PY'
+import sqlite3
+conn = sqlite3.connect(".beads/beads.db")
+conn.execute("DELETE FROM blocked_issues_cache")
+conn.execute(
+    "INSERT INTO blocked_issues_cache(issue_id, blocked_by, blocked_at) "
+    "VALUES ('br-9999', '[\"br-9998\"]', '2020-01-01T00:00:00Z')"
+)
+conn.commit()
+conn.close()
+PY
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

@@ -133,6 +133,14 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
     }
 
     let mut issue = Issue {
+        verify: None,
+        principles: Vec::new(),
+        wave: None,
+        pin: None,
+        commit_sha: None,
+        close_verdict: None,
+        ac_shape: crate::model::AcShape::Checkable,
+        blast: crate::model::Blast::Normal,
         id,
         title,
         description: args.description,

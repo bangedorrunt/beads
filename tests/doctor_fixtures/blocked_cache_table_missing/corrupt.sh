@@ -29,11 +29,16 @@ b_id=$(echo "$ids" | sed -n 2p)
 "$tool_bin" sync --flush-only >/dev/null 2>&1 || true
 
 # Drop the cache table and its index. Test harness DROPs; the fixer never
-# DROPs anything.
-printf '%s\n' \
-  "DROP INDEX IF EXISTS idx_blocked_cache_blocked_at;" \
-  "DROP TABLE IF EXISTS blocked_issues_cache;" \
-  | sqlite3 .beads/beads.db
+# DROPs anything. Uses python3 because the sqlite3 CLI isn't guaranteed in
+# the harness env.
+python3 <<'PY'
+import sqlite3
+conn = sqlite3.connect(".beads/beads.db")
+conn.execute("DROP INDEX IF EXISTS idx_blocked_cache_blocked_at")
+conn.execute("DROP TABLE IF EXISTS blocked_issues_cache")
+conn.commit()
+conn.close()
+PY
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

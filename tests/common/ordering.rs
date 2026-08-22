@@ -118,6 +118,14 @@ mod tests {
     fn make_issue(id: &str, priority: Priority, age_offset_secs: i64) -> Issue {
         let base = Utc.timestamp_opt(1_735_689_600, 0).unwrap();
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: beads::model::AcShape::Checkable,
+            blast: beads::model::Blast::Normal,
             id: id.to_string(),
             title: format!("Test {id}"),
             status: Status::Open,

@@ -427,6 +427,14 @@ mod tests {
 
     fn make_test_issue() -> Issue {
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: "bd-test".to_string(),
             content_hash: None,
             title: "Test title".to_string(),

@@ -227,8 +227,7 @@ fn evaluate_close_policy(
             .filter(|result| result.passed)
             .find_map(|result| {
                 let kind = crate::verify::VerdictKind::from_gate_name(&result.gate)?;
-                crate::verify::legal_close(kind, &input)
-                    .then(|| kind.gate_name().to_string())
+                crate::verify::legal_close(kind, &input).then(|| kind.gate_name().to_string())
             });
         violations.extend(close_policy::evaluate_require_legal_close(
             issue_id,

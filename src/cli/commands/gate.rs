@@ -484,6 +484,14 @@ mod tests {
     fn make_issue(id: &str, status: Status) -> Issue {
         let now = chrono::Utc::now();
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: id.to_string(),
             title: format!("issue {id}"),
             status,
@@ -626,6 +634,9 @@ mod tests {
         gates.insert(
             "in_review -> closed".to_string(),
             GateRule {
+                // Legal-close lane (ys8b) added this flag; the legacy
+                // fixture exercises the non-legal path.
+                require_legal_close: false,
                 require_all: vec![
                     GateSpec::Named("ci_green".to_string()),
                     GateSpec::MinReviewers(1),

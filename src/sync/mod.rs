@@ -4747,6 +4747,15 @@ fn parse_strict_additive_issue(trimmed: &str, line_num: usize) -> Result<Issue> 
         "source_repo",
         "source_repo_path",
         "agent_context",
+        // Schema v18 (ADR-0001 §5.2): typed work-ledger fields.
+        "verify",
+        "principles",
+        "wave",
+        "pin",
+        "commit_sha",
+        "close_verdict",
+        "ac_shape",
+        "blast",
         "deleted_at",
         "deleted_by",
         "delete_reason",
@@ -5146,7 +5155,8 @@ fn additive_raw_rows(storage: &SqliteStorage, sql: &str) -> Result<Vec<Vec<Strin
 }
 
 fn additive_raw_issue_rows(storage: &SqliteStorage) -> Result<Vec<Vec<String>>> {
-    additive_raw_rows(storage, "SELECT * FROM issues ORDER BY id")
+    let rows = additive_raw_rows(storage, "SELECT * FROM issues ORDER BY id")?;
+    Ok(rows)
 }
 
 fn additive_raw_issue_row_map(storage: &SqliteStorage) -> Result<BTreeMap<String, Vec<String>>> {
@@ -14567,6 +14577,14 @@ mod tests {
 
     fn make_test_issue(id: &str, title: &str) -> Issue {
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: id.to_string(),
             content_hash: None,
             title: title.to_string(),
@@ -15136,6 +15154,14 @@ mod tests {
     fn make_issue_at(id: &str, title: &str, updated_at: chrono::DateTime<Utc>) -> Issue {
         let created_at = updated_at - chrono::Duration::seconds(60);
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: id.to_string(),
             content_hash: None,
             title: title.to_string(),
@@ -15304,6 +15330,10 @@ mod tests {
         let events_before = storage.get_all_events(0).unwrap();
 
         let plan = plan_additive_reconcile(&storage, &jsonl_path, &config).unwrap();
+        eprintln!(
+            "DEBUG receipt: {}",
+            serde_json::to_string(&plan.receipt()).unwrap_or_default()
+        );
         assert_eq!(plan.receipt().status, AdditiveReconcileStatus::Ready);
         assert_eq!(plan.receipt().content_hash_repairs_planned, 2);
         assert_eq!(
@@ -16030,6 +16060,10 @@ mod tests {
         let dirty_before = storage.get_dirty_issue_metadata().unwrap();
         let plan = plan_additive_reconcile(&storage, &jsonl_path, &config).unwrap();
 
+        eprintln!(
+            "DEBUG receipt: {}",
+            serde_json::to_string(&plan.receipt()).unwrap_or_default()
+        );
         assert_eq!(plan.receipt().status, AdditiveReconcileStatus::Ready);
         assert_eq!(plan.receipt().created, 1);
         assert_eq!(plan.receipt().updated, 0);
@@ -21081,6 +21115,14 @@ mod tests {
     ) -> Issue {
         let created_at = updated_at - chrono::Duration::seconds(60);
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
             id: id.to_string(),
             content_hash: hash.map(str::to_string),
             title: title.to_string(),

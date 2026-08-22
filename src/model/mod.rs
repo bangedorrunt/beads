@@ -1,3 +1,4 @@
+// governed-by: ADR-0001
 //! Core data types for `beads`.
 //!
 //! This module defines the fundamental types used throughout the application:
@@ -455,12 +456,81 @@ impl JsonSchema for EventType {
     }
 }
 
+/// ADR-0001 §5.2: one cited engineering principle paired with the concrete
+/// decision it changed on this bead. A name without a decision is a skip.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrincipleCitation {
+    /// Canonical principle name (e.g. "fix-root-causes").
+    pub name: String,
+    /// The decision this principle changed, on this bead.
+    pub decision: String,
+}
+
+/// ADR-0001 §5.2: blast-radius band. `high` forces the P0/P1 priority band
+/// at lint time (lint/flags bead consumes this).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Blast {
+    /// Ordinary bead; default.
+    #[default]
+    Normal,
+    /// Touches fail-closed invariants or shared storage semantics.
+    High,
+}
+
+/// ADR-0001 §5.2: acceptance-criteria shape. Mirrors
+/// `crate::verify::AcShape` (single canonical home pending oc2's re-export);
+/// duplicated here as an owned model type so schema-18 has a stable storage
+/// representation independent of the classifier module.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AcShape {
+    /// AC names a runnable command/test.
+    #[default]
+    Checkable,
+    /// AC is a judgment call ("review", "design") with no command to run.
+    Judgment,
+}
+
 /// The primary issue entity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct Issue {
     /// Unique ID (e.g., "bd-abc123").
     pub id: String,
 
+    /// ADR-0001 §5.2: the VERIFY command that proves this bead done. Typed
+    /// column (schema 18), not description markdown for the loop to re-parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify: Option<String>,
+
+    /// ADR-0001 §5.2: engineering principles cited at close, each pairing a
+    /// canonical principle name with the decision it changed on this bead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub principles: Vec<PrincipleCitation>,
+
+    /// ADR-0001 §5.2: wave this bead belongs to (dependency-wave ordering).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wave: Option<u32>,
+
+    /// ADR-0001 §5.2: swarm pin (adjective+noun) that owns/owned this bead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<String>,
+
+    /// ADR-0001 §5.2: commit SHA carrying the durable work signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
+
+    /// ADR-0001 §5.3: verdict kind recorded at close (command/unit/live).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_verdict: Option<String>,
+
+    /// ADR-0001 §5.2: acceptance-criteria shape (defaults to checkable).
+    #[serde(default)]
+    pub ac_shape: AcShape,
+
+    /// ADR-0001 §5.2: blast-radius band (defaults to normal).
+    #[serde(default)]
+    pub blast: Blast,
     /// Content hash for deduplication and sync.
     #[serde(skip)]
     pub content_hash: Option<String>,
@@ -630,6 +700,14 @@ pub struct Issue {
 impl Default for Issue {
     fn default() -> Self {
         Self {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: AcShape::Checkable,
+            blast: Blast::Normal,
             id: String::new(),
             content_hash: None,
             title: String::new(),
@@ -999,6 +1077,14 @@ mod tests {
     #[test]
     fn test_issue_serialization() {
         let issue = Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: AcShape::Checkable,
+            blast: Blast::Normal,
             id: "bd-123".to_string(),
             content_hash: Some("abc".to_string()),
             title: "Test Issue".to_string(),
@@ -1468,6 +1554,14 @@ mod tests {
 
     fn create_test_issue() -> Issue {
         Issue {
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            close_verdict: None,
+            ac_shape: AcShape::Checkable,
+            blast: Blast::Normal,
             id: "bd-test".to_string(),
             content_hash: None,
             title: "Test Title".to_string(),
