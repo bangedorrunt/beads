@@ -824,10 +824,11 @@ fn connection_user_version(conn: &Connection) -> Result<u32> {
 /// Source schema versions accepted by the reviewed, receipt-bound
 /// `br doctor migrate-schema` lifecycle. Every released schema since v13 must
 /// stay upgradeable here: 13/14 (pre-gate-history releases), 15 (the #388
-/// gate-history schema shipped in the v0.2.19-era line) and 16 (the #384
-/// capacity-exemptions schema created by the released v0.2.19 binary). See
-/// GitHub #398.
-pub const REVIEWED_MIGRATION_SOURCE_VERSIONS: [u32; 4] = [13, 14, 15, 16];
+/// gate-history schema shipped in the v0.2.19-era line), 16 (the #384
+/// capacity-exemptions schema created by the released v0.2.19 binary) and 17
+/// (the W4-era release every fleet tracker sits at). See GitHub #398 and
+/// beads_rust-migrate-17-18-7jduh.
+pub const REVIEWED_MIGRATION_SOURCE_VERSIONS: [u32; 5] = [13, 14, 15, 16, 17];
 
 fn current_schema_version_u32() -> Result<u32> {
     u32::try_from(CURRENT_SCHEMA_VERSION).map_err(|_| {
@@ -851,9 +852,14 @@ fn validate_reviewed_schema_migration(
         )));
     }
     if !REVIEWED_MIGRATION_SOURCE_VERSIONS.contains(&from) {
+        let supported = REVIEWED_MIGRATION_SOURCE_VERSIONS
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(BeadsError::internal(format!(
             "schema migrate refused — reviewed migrations are supported only from source \
-             schemas 13, 14, 15, and 16 to {supported_target} (got {from}->{target_version})"
+             schemas {supported} to {supported_target} (got {from}->{target_version})"
         )));
     }
     if marked_at.is_empty() {
@@ -871,6 +877,42 @@ fn validate_reviewed_schema_migration(
     Ok(())
 }
 
+/// Apply the typed work-ledger columns (ADR-0001 §5.2) inside the caller's
+/// transaction.
+///
+/// Column-aware: fixtures and rebuilt tables may already carry the v18 shape
+/// (apply_schema stamps the current DDL); only what is actually missing is
+/// added via additive `ALTER TABLE ... ADD COLUMN`. Never starts, commits, or
+/// rolls back a transaction and never stamps `user_version` — callers own the
+/// transaction and the #428 integrity gate ordering.
+///
+/// # Errors
+///
+/// Returns an error when any `ALTER TABLE` statement fails.
+fn add_missing_typed_work_ledger_columns(conn: &Connection) -> Result<()> {
+    let existing: std::collections::HashSet<String> = conn
+        .query("SELECT name FROM pragma_table_info('issues')")?
+        .iter()
+        .filter_map(|row| row.get(0).and_then(SqliteValue::as_text))
+        .map(String::from)
+        .collect();
+    for (name, decl) in [
+        ("verify", "verify TEXT"),
+        ("principles", "principles TEXT"),
+        ("wave", "wave INTEGER"),
+        ("pin", "pin TEXT"),
+        ("commit_sha", "commit_sha TEXT"),
+        ("close_verdict", "close_verdict TEXT"),
+        ("ac_shape", "ac_shape TEXT NOT NULL DEFAULT 'checkable'"),
+        ("blast", "blast TEXT NOT NULL DEFAULT 'normal'"),
+    ] {
+        if !existing.contains(name) {
+            conn.execute(&format!("ALTER TABLE issues ADD COLUMN {decl}"))?;
+        }
+    }
+    Ok(())
+}
+
 /// Apply the reviewed migration steps inside the caller's transaction.
 ///
 /// This function never starts, commits, or rolls back a transaction. The caller
@@ -878,7 +920,7 @@ fn validate_reviewed_schema_migration(
 /// `BEGIN IMMEDIATE` transaction before calling it. All validation occurs
 /// before the first migration write.
 ///
-/// Sources in [`REVIEWED_MIGRATION_SOURCE_VERSIONS`] (13, 14, 15, 16) are
+/// Sources in [`REVIEWED_MIGRATION_SOURCE_VERSIONS`] (13, 14, 15, 16, 17) are
 /// accepted, each running exactly the version-gated step chain up to
 /// `CURRENT_SCHEMA_VERSION` (#398). `marked_at` is written verbatim to every
 /// `dirty_issues` row rewritten by the v13 content-hash step, making the
@@ -922,10 +964,30 @@ pub fn run_reviewed_schema_migration_steps_in_transaction(
         apply_capacity_exemptions_migration_in_transaction(conn)?;
     }
 
-    tracing::info!(
-        "Migrating database to schema version 17 (capacity occupancy - GitHub #384 phase 5)"
-    );
-    apply_capacity_occupancy_migration_in_transaction(conn)?;
+    if from < 17 {
+        tracing::info!(
+            "Migrating database to schema version 17 (capacity occupancy - GitHub #384 phase 5)"
+        );
+        apply_capacity_occupancy_migration_in_transaction(conn)?;
+    }
+
+    // v18 (ADR-0001 §5.2, beads_rust-schema-v18-uyb3): typed work-ledger
+    // columns on `issues`. Purely additive and column-aware, so it applies to
+    // every reviewed source (13–17) and leaves already-shaped tables
+    // untouched.
+    add_missing_typed_work_ledger_columns(conn)?;
+
+    // #428 integrity gate: the version stamp lands only when integrity_check
+    // agrees. On failure the error propagates and the caller's transaction
+    // rolls back both the DDL and any stamp (#428 anti-pattern guard).
+    let row = conn.query_row("PRAGMA integrity_check")?;
+    let verdict = row.get(0).and_then(SqliteValue::as_text).unwrap_or("");
+    if !verdict.eq_ignore_ascii_case("ok") {
+        return Err(BeadsError::Config(format!(
+            "schema migrate aborted: PRAGMA integrity_check reported '{verdict}' after staging \
+             the typed work-ledger columns; user_version was NOT stamped (#428 anti-pattern guard)"
+        )));
+    }
 
     conn.execute(&format!("PRAGMA user_version = {target_version}"))
         .map_err(BeadsError::Database)?;
@@ -2189,29 +2251,7 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         tracing::info!("Migrating database to schema version 18 (typed work-ledger columns)");
         conn.execute("BEGIN IMMEDIATE")?;
         let outcome = (|| -> Result<()> {
-            // Column-aware: fixtures and rebuilt tables may already carry the
-            // v18 shape (apply_schema stamps the current DDL); only add what
-            // is actually missing.
-            let existing: std::collections::HashSet<String> = conn
-                .query("SELECT name FROM pragma_table_info('issues')")?
-                .iter()
-                .filter_map(|row| row.get(0).and_then(SqliteValue::as_text))
-                .map(String::from)
-                .collect();
-            for (name, decl) in [
-                ("verify", "verify TEXT"),
-                ("principles", "principles TEXT"),
-                ("wave", "wave INTEGER"),
-                ("pin", "pin TEXT"),
-                ("commit_sha", "commit_sha TEXT"),
-                ("close_verdict", "close_verdict TEXT"),
-                ("ac_shape", "ac_shape TEXT NOT NULL DEFAULT 'checkable'"),
-                ("blast", "blast TEXT NOT NULL DEFAULT 'normal'"),
-            ] {
-                if !existing.contains(name) {
-                    conn.execute(&format!("ALTER TABLE issues ADD COLUMN {decl}"))?;
-                }
-            }
+            add_missing_typed_work_ledger_columns(conn)?;
             conn.execute("PRAGMA user_version = 18")?;
 
             let row = conn.query_row("PRAGMA integrity_check")?;
@@ -4869,6 +4909,116 @@ mod schema18_tests {
             stamped,
             i64::from(CURRENT_SCHEMA_VERSION),
             "user_version must not be stamped when integrity_check disagrees"
+        );
+    }
+
+    /// The reviewed migration must accept source schema 17 (the W4-era
+    /// release every fleet tracker sits at) and land the typed work-ledger
+    /// columns with uyb3 defaults (beads_rust-migrate-17-18-7jduh).
+    #[test]
+    fn test_reviewed_migrate_17_to_18_adds_typed_work_ledger_columns() {
+        const TYPED_WORK_LEDGER_COLUMNS: [&str; 8] = [
+            "verify",
+            "principles",
+            "wave",
+            "pin",
+            "commit_sha",
+            "close_verdict",
+            "ac_shape",
+            "blast",
+        ];
+
+        let temp = TempDir::new().expect("tempdir");
+        let db_path = temp.path().join("reviewed-v17.db");
+        let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
+        apply_schema(&conn).expect("apply current schema");
+
+        // Seed one row, then strip the v18 shape to build a genuine
+        // schema-17 database: none of the typed work-ledger columns exist.
+        conn.execute(
+            "INSERT INTO issues (id, content_hash, title, status, priority, issue_type, created_at, updated_at) \
+             VALUES ('bd-reviewed-v17', 'hash-v17', 'W4-era row', 'open', 2, 'task', \
+                     '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')",
+        )
+        .expect("seed issue");
+        for name in TYPED_WORK_LEDGER_COLUMNS {
+            conn.execute(&format!("ALTER TABLE issues DROP COLUMN {name}"))
+                .expect("drop v18 column");
+        }
+        conn.execute("PRAGMA user_version = 17")
+            .expect("stamp reviewed source");
+
+        let columns_before: std::collections::HashSet<String> = conn
+            .query("SELECT name FROM pragma_table_info('issues')")
+            .expect("read columns before")
+            .iter()
+            .filter_map(|row| row.get(0).and_then(SqliteValue::as_text))
+            .map(String::from)
+            .collect();
+        for name in TYPED_WORK_LEDGER_COLUMNS {
+            assert!(
+                !columns_before.contains(name),
+                "fixture must start at the v17 shape: {name} already present"
+            );
+        }
+
+        conn.execute("BEGIN IMMEDIATE")
+            .expect("caller owns migration transaction");
+        let effects = run_reviewed_schema_migration_steps_in_transaction(
+            &conn,
+            17,
+            current_schema_version_u32().expect("current version"),
+            "unused-v17-timestamp",
+        )
+        .expect("reviewed 17->18 steps");
+        conn.execute("COMMIT")
+            .expect("caller commits migration transaction");
+
+        assert_eq!(
+            effects,
+            ReviewedSchemaMigrationEffects {
+                from_version: 17,
+                to_version: current_schema_version_u32().expect("current version"),
+                content_hash_rows_rebuilt: 0,
+                gate_result_history_created: false,
+            }
+        );
+
+        let columns_after: std::collections::HashSet<String> = conn
+            .query("SELECT name FROM pragma_table_info('issues')")
+            .expect("read columns after")
+            .iter()
+            .filter_map(|row| row.get(0).and_then(SqliteValue::as_text))
+            .map(String::from)
+            .collect();
+        for name in TYPED_WORK_LEDGER_COLUMNS {
+            assert!(
+                columns_after.contains(name),
+                "reviewed 17->18 must add typed work-ledger column {name}"
+            );
+        }
+
+        // Existing rows stay valid under the uyb3 defaults.
+        let ac_shape = conn
+            .query_row("SELECT ac_shape FROM issues WHERE id = 'bd-reviewed-v17'")
+            .expect("read ac_shape");
+        assert_eq!(
+            ac_shape.get(0).and_then(SqliteValue::as_text),
+            Some("checkable"),
+            "ac_shape defaults to checkable"
+        );
+        let blast = conn
+            .query_row("SELECT blast FROM issues WHERE id = 'bd-reviewed-v17'")
+            .expect("read blast");
+        assert_eq!(
+            blast.get(0).and_then(SqliteValue::as_text),
+            Some("normal"),
+            "blast defaults to normal"
+        );
+
+        assert_eq!(
+            connection_user_version(&conn).expect("read migrated version"),
+            current_schema_version_u32().expect("current version")
         );
     }
 }

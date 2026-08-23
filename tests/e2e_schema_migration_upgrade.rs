@@ -35,6 +35,11 @@ fn fixture_dir() -> PathBuf {
         .join("schema_migration")
 }
 
+/// Migration target asserted by this suite: `CURRENT_SCHEMA_VERSION` (18, the
+/// ADR-0001 typed work-ledger schema). Kept as a named constant so a future
+/// bump is a one-line change plus fixture refresh.
+const TARGET_SCHEMA_VERSION: u64 = 18;
+
 fn install_fixture_workspace(workspace: &BrWorkspace, db_gz: &str, issues: &str, config: &str) {
     let beads_dir = workspace.root.join(".beads");
     fs::create_dir_all(&beads_dir).expect("create .beads");
@@ -133,13 +138,16 @@ fn upgrade_fixture_end_to_end(
         "{label}: plan not eligible"
     );
     assert_eq!(plan_json["from_version"].as_u64(), Some(expected_from));
-    assert_eq!(plan_json["to_version"].as_u64(), Some(17));
+    assert_eq!(
+        plan_json["to_version"].as_u64(),
+        Some(TARGET_SCHEMA_VERSION)
+    );
     let plan_token = plan_json["plan_token"]
         .as_str()
         .expect("plan token")
         .to_string();
 
-    // 3. Apply migrates atomically to schema 17.
+    // 3. Apply migrates atomically to the current schema.
     let apply = run_br(
         &workspace,
         [
@@ -165,7 +173,7 @@ fn upgrade_fixture_end_to_end(
     let run_id = applied_json["run_id"].as_str().expect("run id").to_string();
     assert_eq!(
         header_user_version(&db_path),
-        17,
+        TARGET_SCHEMA_VERSION as u32,
         "{label}: post-apply schema"
     );
     for table in [
@@ -264,7 +272,7 @@ fn upgrade_fixture_end_to_end(
     );
     assert_eq!(
         header_user_version(&db_path),
-        17,
+        TARGET_SCHEMA_VERSION as u32,
         "{label}: rejected stale apply must not mutate the database"
     );
 
@@ -339,7 +347,43 @@ fn upgrade_fixture_end_to_end(
         apply2.stdout,
         apply2.stderr
     );
-    assert_eq!(header_user_version(&db_path), 17);
+    assert_eq!(
+        header_user_version(&db_path),
+        TARGET_SCHEMA_VERSION as u32,
+        "{label}: re-apply after undo"
+    );
+
+    // 7. Fail-closed contract: the binary that refused writes pre-apply
+    //    accepts ordinary writes post-apply, and they land at the current
+    //    schema (beads_rust-migrate-17-18). Kept after the undo/re-apply
+    //    cycle so the undo freshness check still sees an unchanged database.
+    let create_after = run_br(
+        &workspace,
+        [
+            "create",
+            "--title",
+            "post-migration write acceptance",
+            "--type",
+            "task",
+            "--priority",
+            "3",
+            "--json",
+            "--no-auto-flush",
+            "--no-auto-import",
+        ],
+        "create_after_apply",
+    );
+    assert!(
+        create_after.status.success(),
+        "{label}: ordinary write must be accepted after apply; stdout: {} stderr: {}",
+        create_after.stdout,
+        create_after.stderr
+    );
+    assert_eq!(
+        header_user_version(&db_path),
+        TARGET_SCHEMA_VERSION as u32,
+        "{label}: post-migration write must not move the schema version"
+    );
 }
 
 /// Schema 15 (gate-history era, pre-#384) upgrades to the current schema.
@@ -367,6 +411,23 @@ fn e2e_migrate_schema_upgrades_real_schema16_database() {
         "schema16_issues.jsonl",
         "schema16_config.yaml",
         16,
+        3,
+    );
+}
+
+/// Schema 17 (the W4-era release, main@612a403: capacity occupancy without
+/// the typed work-ledger columns) upgrades to the current schema. This is the
+/// source version every fleet tracker actually sits at
+/// (beads_rust-migrate-17-18-7jduh).
+#[test]
+fn e2e_migrate_schema_upgrades_real_schema17_database() {
+    let _log = common::test_log("e2e_migrate_schema_upgrades_real_schema17_database");
+    upgrade_fixture_end_to_end(
+        "schema17",
+        "schema17_w4_era.db.gz",
+        "schema17_issues.jsonl",
+        "schema17_config.yaml",
+        17,
         3,
     );
 }
