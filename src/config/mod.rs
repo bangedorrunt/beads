@@ -932,6 +932,9 @@ fn open_sqlite_storage_with_recovery_strategy(
     write_authority: Option<&Arc<crate::sync::DatabaseFamilyWriteLock>>,
 ) -> Result<SqliteRecoveryOpenResult> {
     if !paths.db_path.is_file() && paths.jsonl_path.is_file() {
+        // beads_rust-avhq: a dangling sidecar from a dead lineage must not
+        // survive into the rebuilt family.
+        quarantine_orphan_sidecars_when_database_absent(&paths.db_path, beads_dir);
         return open_when_db_file_is_missing(
             beads_dir,
             paths,
@@ -943,6 +946,10 @@ fn open_sqlite_storage_with_recovery_strategy(
         );
     }
     if !paths.db_path.is_file() {
+        // beads_rust-avhq: quarantine orphaned sidecars BEFORE installing
+        // the empty replacement so the fresh database never opens beside a
+        // foreign WAL.
+        quarantine_orphan_sidecars_when_database_absent(&paths.db_path, beads_dir);
         let authority = write_authority.ok_or_else(|| BeadsError::SyncConflict {
             message: "Missing database creation has no database-family authority".to_string(),
         })?;
@@ -1055,6 +1062,7 @@ fn open_when_db_file_is_missing(
             })
         }
         JsonlRecoveryStrategy::DeferToExplicitImport => {
+            quarantine_orphan_sidecars_when_database_absent(&paths.db_path, beads_dir);
             let cleanup_set =
                 prepare_missing_database_cleanup_for_recovery(&paths.db_path, beads_dir)?;
             warn!(
@@ -2594,9 +2602,89 @@ fn actual_child_counters(storage: &SqliteStorage) -> Result<HashMap<String, u32>
 /// The classic SQLite sidecars.
 pub(crate) const CLASSIC_SIDECAR_SUFFIXES: &[&str] = &["-wal", "-shm", "-journal"];
 
-/// Every engine-managed sidecar suffix.
+/// Sidecar names produced by retired engines whose files still linger in
+/// older workspaces. The fsqlite engine is gone (bundled rusqlite since
+/// ADR-0002), but its artifacts (`<db>-wal-cert`, `<db>-wal-cert-head`,
+/// fsqlite namespace gates) remain on disk and must stay visible to the
+/// sidecar inventory so they get flagged and quarantined like any other
+/// dangling artifact (beads_rust-avhq).
+pub(crate) const LEGACY_SIDECAR_SUFFIXES: &[&str] = &[
+    "-wal-cert",
+    "-wal-cert-head",
+    "-fsqlite-ns-gate",
+    "-fsqlite-ns-use",
+];
+
+/// Every engine-managed sidecar suffix, classic and legacy.
 pub(crate) fn db_sidecar_suffixes() -> impl Iterator<Item = &'static str> {
-    CLASSIC_SIDECAR_SUFFIXES.iter().copied()
+    CLASSIC_SIDECAR_SUFFIXES
+        .iter()
+        .chain(LEGACY_SIDECAR_SUFFIXES)
+        .copied()
+}
+
+/// Quarantine every dangling sidecar (classic and legacy) when the primary
+/// database file is absent (beads_rust-avhq).
+///
+/// With the DB gone, a leftover `-wal` from a dead lineage would otherwise
+/// sit beside the freshly created replacement database and be offered to
+/// SQLite as recovery input — replaying foreign frames into an empty
+/// lineage. Legacy fsqlite artifacts are equally invisible to the classic
+/// inventory, so both classes move to the recovery dir for operator
+/// inspection. No-op while the database file exists (live families keep
+/// their sidecars) or when nothing dangles.
+pub(crate) fn quarantine_orphan_sidecars_when_database_absent(db_path: &Path, beads_dir: &Path) {
+    match fs::symlink_metadata(db_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            tracing::warn!(
+                db_path = %db_path.display(),
+                "Skipping orphan-sidecar quarantine for symlinked database path"
+            );
+            return;
+        }
+        Ok(_) => return, // live database: its sidecars are not ours to move
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            tracing::warn!(
+                db_path = %db_path.display(),
+                error = %err,
+                "Skipping orphan-sidecar quarantine because the database path could not be inspected"
+            );
+            return;
+        }
+    }
+
+    let dangling: Vec<PathBuf> = db_sidecar_suffixes()
+        .map(|suffix| PathBuf::from(format!("{}{}", db_path.to_string_lossy(), suffix)))
+        .filter(|sidecar| {
+            fs::symlink_metadata(sidecar).is_ok_and(|meta| meta.file_type().is_file())
+        })
+        .collect();
+    if dangling.is_empty() {
+        return;
+    }
+
+    match quarantine_database_artifacts(
+        db_path,
+        beads_dir,
+        dangling.iter().cloned(),
+        "orphan-sidecar",
+    ) {
+        Ok(quarantined_paths) => {
+            tracing::warn!(
+                db_path = %db_path.display(),
+                quarantined_paths = ?quarantined_paths,
+                "quarantined orphaned sidecars before creating a fresh database"
+            );
+        }
+        Err(err) => {
+            tracing::warn!(
+                db_path = %db_path.display(),
+                error = %err,
+                "failed to quarantine orphaned sidecars before fresh-database creation"
+            );
+        }
+    }
 }
 
 /// Best-effort removal of every engine sidecar belonging to `db_path`.
@@ -9687,6 +9775,113 @@ routing:
             !recovery_dir_for_db_path(&db_path, &beads_dir).exists(),
             "valid-sized wal should not create a recovery quarantine"
         );
+    }
+
+    #[test]
+    fn quarantine_orphan_sidecars_when_db_absent_moves_classic_and_legacy_sidecars() {
+        // beads_rust-avhq: with the DB file gone, ANY dangling sidecar —
+        // classic or legacy fsqlite-era — must be quarantined before a
+        // fresh database is created, so SQLite never replays a foreign WAL
+        // against a new lineage.
+        let temp = TempDir::new().expect("tempdir");
+        let beads_dir = temp.path().join(".beads");
+        let db_path = beads_dir.join("beads.db");
+        fs::create_dir_all(&beads_dir).expect("create beads dir");
+
+        let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
+        let wal_cert_path = PathBuf::from(format!("{}-wal-cert", db_path.to_string_lossy()));
+        let ns_gate_path = PathBuf::from(format!("{}-fsqlite-ns-gate", db_path.to_string_lossy()));
+        fs::write(&wal_path, [0xAB_u8; 128]).expect("write orphan wal");
+        fs::write(&wal_cert_path, b"fsqlite wal certificate").expect("write legacy cert");
+        fs::write(&ns_gate_path, b"fsqlite namespace gate").expect("write legacy ns");
+
+        quarantine_orphan_sidecars_when_database_absent(&db_path, &beads_dir);
+
+        for sidecar in [&wal_path, &wal_cert_path, &ns_gate_path] {
+            assert!(
+                !sidecar.exists(),
+                "{} must be quarantined when the database file is absent",
+                sidecar.display()
+            );
+        }
+        let recovery_dir = recovery_dir_for_db_path(&db_path, &beads_dir);
+        let quarantined: Vec<String> = fs::read_dir(&recovery_dir)
+            .expect("list recovery dir")
+            .filter_map(std::result::Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+        assert!(
+            quarantined
+                .iter()
+                .any(|name| name.contains("beads.db-wal.") && name.contains("orphan-sidecar")),
+            "orphan wal must be in recovery: {quarantined:?}"
+        );
+        assert!(
+            quarantined.iter().any(|name| name.contains("-wal-cert.")),
+            "legacy -wal-cert must be in recovery: {quarantined:?}"
+        );
+        assert!(
+            quarantined
+                .iter()
+                .any(|name| name.contains("-fsqlite-ns-gate.")),
+            "legacy -fsqlite-ns-gate must be in recovery: {quarantined:?}"
+        );
+    }
+
+    #[test]
+    fn quarantine_orphan_sidecars_noops_when_database_present() {
+        let temp = TempDir::new().expect("tempdir");
+        let beads_dir = temp.path().join(".beads");
+        let db_path = beads_dir.join("beads.db");
+        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::write(&db_path, b"live db").expect("write db");
+
+        let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
+        let wal_cert_path = PathBuf::from(format!("{}-wal-cert", db_path.to_string_lossy()));
+        fs::write(&wal_path, [0u8; 64]).expect("write wal");
+        fs::write(&wal_cert_path, b"legacy").expect("write legacy cert");
+
+        quarantine_orphan_sidecars_when_database_absent(&db_path, &beads_dir);
+
+        assert!(wal_path.is_file(), "sidecars stay put while the DB exists");
+        assert!(
+            wal_cert_path.is_file(),
+            "legacy sidecars stay put while the DB exists"
+        );
+    }
+
+    #[test]
+    fn quarantine_orphan_sidecars_noops_when_nothing_dangles() {
+        let temp = TempDir::new().expect("tempdir");
+        let beads_dir = temp.path().join(".beads");
+        let db_path = beads_dir.join("beads.db");
+        fs::create_dir_all(&beads_dir).expect("create beads dir");
+
+        quarantine_orphan_sidecars_when_database_absent(&db_path, &beads_dir);
+
+        assert!(
+            !recovery_dir_for_db_path(&db_path, &beads_dir).exists(),
+            "clean absence must not fabricate recovery artifacts"
+        );
+    }
+
+    #[test]
+    fn db_sidecar_suffixes_cover_legacy_engine_names() {
+        let suffixes: std::collections::BTreeSet<&str> = db_sidecar_suffixes().collect();
+        for legacy in [
+            "-wal-cert",
+            "-wal-cert-head",
+            "-fsqlite-ns-gate",
+            "-fsqlite-ns-use",
+        ] {
+            assert!(
+                suffixes.contains(legacy),
+                "sidecar inventory must know legacy suffix {legacy}"
+            );
+        }
+        for classic in ["-wal", "-shm", "-journal"] {
+            assert!(suffixes.contains(classic));
+        }
     }
 
     #[test]

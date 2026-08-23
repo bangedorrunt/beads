@@ -1106,17 +1106,29 @@ fn fix_fence_import_if_warned(
         Option<Vec<crate::model::PrincipleCitation>>,
     );
     let plan = (|| -> std::result::Result<Vec<FenceImportPlanEntry>, BeadsError> {
-        let storage = crate::storage::SqliteStorage::open_current_read_only(db_path)?
-            .ok_or_else(|| BeadsError::Config(format!("no readable database at {}", db_path.display())))?;
+        let storage =
+            crate::storage::SqliteStorage::open_current_read_only(db_path)?.ok_or_else(|| {
+                BeadsError::Config(format!("no readable database at {}", db_path.display()))
+            })?;
         let mut plan = Vec::new();
         for id in storage.get_fence_import_candidate_ids()? {
-            let Some(issue) = storage.get_issue(&id)? else { continue };
-            let (verify_command, citations) =
-                crate::sync::fence_import::parse_description_fences(
-                    issue.description.as_deref().unwrap_or_default(),
-                );
-            let verify_is_empty = issue.verify.as_deref().unwrap_or_default().trim().is_empty();
-            let verify_to_set = if verify_is_empty { verify_command } else { None };
+            let Some(issue) = storage.get_issue(&id)? else {
+                continue;
+            };
+            let (verify_command, citations) = crate::sync::fence_import::parse_description_fences(
+                issue.description.as_deref().unwrap_or_default(),
+            );
+            let verify_is_empty = issue
+                .verify
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .is_empty();
+            let verify_to_set = if verify_is_empty {
+                verify_command
+            } else {
+                None
+            };
             let principles_to_set = if issue.principles.is_empty() && !citations.is_empty() {
                 Some(citations)
             } else {
@@ -1156,37 +1168,17 @@ fn fix_fence_import_if_warned(
     for (id, verify_to_set, principles_to_set) in plan {
         let mut touched = false;
         if let Some(command) = verify_to_set {
-            let op = chokepoint::Op::DbExec {
-                sql: "UPDATE issues SET verify = ?1 \
-                      WHERE id = ?2 AND (verify IS NULL OR trim(verify) = '')"
-                    .to_string(),
-                args: vec![
-                    chokepoint::DbArg::Text(command),
-                    chokepoint::DbArg::Text(id.clone()),
-                ],
-                affected_tables: vec!["issues".to_string()],
-                affected_predicate: Some(format!("id = '{id}'")),
-            };
-            touched |=
-                matches!(chokepoint::mutate(&session.ctx, db_path, op), Ok(result) if result.ok);
+            touched |= stamp_fence_column_via_chokepoint(
+                session, db_path, &id, "verify", &command,
+            );
         }
         if let Some(citations) = principles_to_set {
             let Ok(json) = serde_json::to_string(&citations) else {
                 continue;
             };
-            let op = chokepoint::Op::DbExec {
-                sql: "UPDATE issues SET principles = ?1 \
-                      WHERE id = ?2 AND (principles IS NULL OR principles = '' OR principles = '[]')"
-                    .to_string(),
-                args: vec![
-                    chokepoint::DbArg::Text(json),
-                    chokepoint::DbArg::Text(id.clone()),
-                ],
-                affected_tables: vec!["issues".to_string()],
-                affected_predicate: Some(format!("id = '{id}'")),
-            };
-            touched |=
-                matches!(chokepoint::mutate(&session.ctx, db_path, op), Ok(result) if result.ok);
+            touched |= stamp_fence_column_via_chokepoint(
+                session, db_path, &id, "principles", &json,
+            );
         }
         if touched {
             stamped += 1;
@@ -1198,6 +1190,34 @@ fn fix_fence_import_if_warned(
         ));
     }
     stamped > 0
+}
+
+/// Stamp one fence-import column through the repair chokepoint: a
+/// snapshot-backed `UPDATE ... WHERE id = ? AND <column still empty>` so
+/// undo can revert and a racing writer can't be clobbered. Returns whether
+/// the write applied.
+fn stamp_fence_column_via_chokepoint(
+    session: &mut DoctorRepairSession,
+    db_path: &Path,
+    id: &str,
+    column: &str,
+    value: &str,
+) -> bool {
+    let empty_guard = match column {
+        "verify" => "(verify IS NULL OR trim(verify) = '')",
+        "principles" => "(principles IS NULL OR principles = '' OR principles = '[]')",
+        _ => return false,
+    };
+    let op = chokepoint::Op::DbExec {
+        sql: format!("UPDATE issues SET {column} = ?1 WHERE id = ?2 AND {empty_guard}"),
+        args: vec![
+            chokepoint::DbArg::Text(value.to_string()),
+            chokepoint::DbArg::Text(id.to_string()),
+        ],
+        affected_tables: vec!["issues".to_string()],
+        affected_predicate: Some(format!("id = '{id}'")),
+    };
+    matches!(chokepoint::mutate(&session.ctx, db_path, op), Ok(result) if result.ok)
 }
 
 /// PASS row. `Err` carries the doctor-facing message for unreadable or
@@ -2551,16 +2571,23 @@ fn classify_path_kind(path: &Path) -> Result<FilesystemPathKind> {
     }
 }
 
-fn database_sidecar_paths(db_path: &Path) -> [(PathBuf, &'static str); 3] {
+fn database_sidecar_paths(db_path: &Path) -> Vec<(PathBuf, &'static str)> {
     let db_string = db_path.to_string_lossy();
-    [
+    let mut paths = vec![
         (PathBuf::from(format!("{db_string}-wal")), "WAL"),
         (PathBuf::from(format!("{db_string}-shm")), "SHM"),
         (
             PathBuf::from(format!("{db_string}-journal")),
             "rollback journal",
         ),
-    ]
+    ];
+    // beads_rust-avhq: legacy engine sidecars (fsqlite era) must be as
+    // visible to inspection as the classic family — the files outlive the
+    // engine that produced them.
+    for suffix in config::LEGACY_SIDECAR_SUFFIXES {
+        paths.push((PathBuf::from(format!("{db_string}{suffix}")), "legacy"));
+    }
+    paths
 }
 
 fn inspect_database_sidecars(db_path: &Path) -> Result<SidecarInspection> {
@@ -21303,6 +21330,62 @@ mod tests {
                 message.contains("WAL sidecar exists without a matching SHM sidecar")
             }),
             "unexpected sidecar message: {:?}",
+            check.message
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_check_database_sidecars_flags_legacy_sidecars_when_db_absent() -> Result<()> {
+        // beads_rust-avhq: fsqlite-era sidecars (-wal-cert, -fsqlite-ns-*)
+        // are invisible to the classic -wal/-shm/-journal inventory. With
+        // the database file gone, the doctor must flag them and list them
+        // as quarantine candidates instead of pretending the family is clean.
+        let temp = TempDir::new()?;
+        let beads_dir = temp.path().join(".beads");
+        fs::create_dir_all(&beads_dir)?;
+        let db_path = beads_dir.join("beads.db");
+        for suffix in [
+            "-wal-cert",
+            "-wal-cert-head",
+            "-fsqlite-ns-gate",
+            "-fsqlite-ns-use",
+        ] {
+            fs::write(
+                PathBuf::from(format!("{}{suffix}", db_path.to_string_lossy())),
+                b"legacy engine artifact",
+            )?;
+        }
+
+        let mut checks = Vec::new();
+        check_database_sidecars(&db_path, &mut checks)?;
+
+        let check = find_check(&checks, "db.sidecars").expect("sidecar check");
+        assert_eq!(check.status, CheckStatus::Error, "{check:?}");
+        let detail = check.details.clone().expect("sidecar detail json");
+        let candidates = detail["quarantine_candidates"]
+            .as_array()
+            .expect("candidates");
+        for suffix in [
+            "-wal-cert",
+            "-wal-cert-head",
+            "-fsqlite-ns-gate",
+            "-fsqlite-ns-use",
+        ] {
+            let expected = format!("{}{suffix}", db_path.display());
+            assert!(
+                candidates
+                    .iter()
+                    .any(|c| c.as_str() == Some(expected.as_str())),
+                "legacy sidecar {suffix} must be a quarantine candidate, got {candidates:?}"
+            );
+        }
+        assert!(
+            check
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("Database sidecars exist")),
+            "unexpected message: {:?}",
             check.message
         );
         Ok(())

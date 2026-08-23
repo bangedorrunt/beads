@@ -25,6 +25,8 @@ events:
 jsonl:
 {
   "id": "storage-golden-1",
+  "ac_shape": "checkable",
+  "blast": "normal",
   "title": "Golden storage lifecycle updated",
   "description": "Updated description",
   "status": "closed",
