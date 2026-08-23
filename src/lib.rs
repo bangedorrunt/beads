@@ -34,6 +34,31 @@ pub mod config;
 pub mod coordination;
 pub mod error;
 pub mod format;
+// Vendored graph algorithms (ADR-0003 §3.2). Upstream wrote these for a
+// wasm crate with its own lint profile; the fork's style lints are relaxed
+// *only inside this module* so the vendored files stay close to their
+// beads_viewer originals for provenance. Correctness lints stay on.
+#[allow(
+    clippy::must_use_candidate,
+    clippy::many_single_char_names,
+    clippy::too_many_lines,
+    clippy::redundant_closure,
+    clippy::redundant_closure_for_method_calls,
+    clippy::use_self,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::manual_let_else,
+    clippy::clone_on_copy,
+    clippy::cloned_instead_of_copied,
+    clippy::semicolon_if_nothing_returned,
+    clippy::unreadable_literal,
+    clippy::items_after_statements,
+    clippy::missing_panics_doc,
+    clippy::suboptimal_flops,
+    clippy::collapsible_if,
+    clippy::new_without_default
+)]
+pub mod graph;
 pub mod health;
 pub mod inheritance;
 pub mod logging;
