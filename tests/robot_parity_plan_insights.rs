@@ -92,7 +92,12 @@ fn assert_parity(actual: &Value, golden: &Value, label: &str) {
         mismatches.is_empty(),
         "{label} diverges from the bv golden ({} diffs):\n{}",
         mismatches.len(),
-        mismatches.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
+        mismatches
+            .iter()
+            .take(20)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }
 
@@ -122,7 +127,10 @@ fn workspace_with_fixture() -> BrWorkspace {
     // interpretation, so the edges are stripped, not replayed. Persisting
     // dangling refs at all is beads_rust-svtxe.
     let mut stripped_lines: Vec<String> = Vec::new();
-    for line in FIXTURE_ISSUES.lines().filter(|line| !line.trim().is_empty()) {
+    for line in FIXTURE_ISSUES
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+    {
         let mut issue: Value = serde_json::from_str(line).expect("fixture line parses");
         issue
             .as_object_mut()

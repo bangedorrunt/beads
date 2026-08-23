@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub mod agents;
+pub mod analysis;
 pub mod audit;
 pub mod blocked;
 pub mod capabilities;
@@ -37,7 +38,6 @@ pub mod init;
 pub mod label;
 pub mod lint;
 pub mod list;
-pub mod analysis;
 pub mod orphans;
 pub mod q;
 pub mod query;

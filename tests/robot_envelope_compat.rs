@@ -25,8 +25,13 @@ const FIXTURE_ISSUES: &str = include_str!("fixtures/bv_parity/fixture_issues.jso
 const VOLATILE_FIELDS: &[&str] = &["generated_at", "data_hash", "version", "ms"];
 
 /// Every robot body must carry these envelope keys (ADR-0003 §3.1).
-const ENVELOPE_REQUIRED_KEYS: &[&str] =
-    &["generated_at", "data_hash", "analysis_config", "status", "usage_hints"];
+const ENVELOPE_REQUIRED_KEYS: &[&str] = &[
+    "generated_at",
+    "data_hash",
+    "analysis_config",
+    "status",
+    "usage_hints",
+];
 
 fn strip_volatile(value: &Value) -> Value {
     match value {
@@ -73,7 +78,11 @@ fn workspace_with_fixture() -> BrWorkspace {
     workspace
 }
 
-fn run_in(workspace: &BrWorkspace, program: &std::ffi::OsStr, args: &[&str]) -> std::process::Output {
+fn run_in(
+    workspace: &BrWorkspace,
+    program: &std::ffi::OsStr,
+    args: &[&str],
+) -> std::process::Output {
     Command::new(program)
         .current_dir(&workspace.root)
         .args(args)
@@ -102,7 +111,11 @@ fn argv0_bv_robot_flags_map_to_br_subcommands_with_identical_output() {
         String::from_utf8_lossy(&as_bv.stderr)
     );
 
-    let as_br = run_in(&workspace, env!("CARGO_BIN_EXE_br").as_ref(), &["plan", "--json"]);
+    let as_br = run_in(
+        &workspace,
+        env!("CARGO_BIN_EXE_br").as_ref(),
+        &["plan", "--json"],
+    );
     assert!(as_br.status.success(), "`br plan --json` failed");
 
     let from_bv: Value =
@@ -119,9 +132,11 @@ fn argv0_bv_robot_flags_map_to_br_subcommands_with_identical_output() {
 #[test]
 fn unknown_robot_flag_fails_closed_with_not_ported_error() {
     let workspace = BrWorkspace::new();
-    let output = run_in(&workspace, env!("CARGO_BIN_EXE_br").as_ref(), &[
-        "--robot-teleport",
-    ]);
+    let output = run_in(
+        &workspace,
+        env!("CARGO_BIN_EXE_br").as_ref(),
+        &["--robot-teleport"],
+    );
 
     assert_eq!(
         output.status.code(),
@@ -129,8 +144,9 @@ fn unknown_robot_flag_fails_closed_with_not_ported_error() {
         "unknown --robot-* flags must exit 2"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let parsed: Value = serde_json::from_str(stderr.trim())
-        .unwrap_or_else(|error| panic!("unknown robot flag must emit JSON on stderr: {error}\n{stderr}"));
+    let parsed: Value = serde_json::from_str(stderr.trim()).unwrap_or_else(|error| {
+        panic!("unknown robot flag must emit JSON on stderr: {error}\n{stderr}")
+    });
     assert_eq!(
         parsed.get("not_ported").and_then(Value::as_bool),
         Some(true),
@@ -145,11 +161,11 @@ fn unknown_robot_flag_fails_closed_with_not_ported_error() {
 #[test]
 fn capabilities_manifest_declares_bv_compat_mapping() {
     let workspace = BrWorkspace::new();
-    let output = run_in(&workspace, env!("CARGO_BIN_EXE_br").as_ref(), &[
-        "capabilities",
-        "--format",
-        "json",
-    ]);
+    let output = run_in(
+        &workspace,
+        env!("CARGO_BIN_EXE_br").as_ref(),
+        &["capabilities", "--format", "json"],
+    );
     assert!(output.status.success(), "capabilities failed");
     let manifest: Value = serde_json::from_slice(&output.stdout).expect("JSON manifest");
 
@@ -166,7 +182,12 @@ fn capabilities_manifest_declares_bv_compat_mapping() {
         .get("flag_map")
         .and_then(Value::as_object)
         .expect("bv_compat.flag_map object");
-    for robot_flag in ["--robot-triage", "--robot-next", "--robot-plan", "--robot-insights"] {
+    for robot_flag in [
+        "--robot-triage",
+        "--robot-next",
+        "--robot-plan",
+        "--robot-insights",
+    ] {
         assert!(
             mapping.contains_key(robot_flag),
             "{robot_flag} must map to a br subcommand"

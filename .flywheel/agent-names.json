@@ -1,20 +1,26 @@
 [
   {
-    "pane_id": "w8A:p1",
+    "pane_id": "w8N:p1",
     "name": "flywheel-beads-oc",
     "mail_identity": "GreenStream",
     "skills_injected": false
   },
   {
-    "pane_id": "w8A:p2",
+    "pane_id": "w8N:p2",
     "name": "flywheel-beads-oc2",
     "mail_identity": "CobaltMaple",
     "skills_injected": false
   },
   {
-    "pane_id": "w8A:p3",
+    "pane_id": "w8N:p3",
     "name": "flywheel-beads-oc3",
     "mail_identity": "LavenderSalmon",
+    "skills_injected": false
+  },
+  {
+    "pane_id": "w8N:p4",
+    "name": "flywheel-beads-oc4",
+    "mail_identity": "CalmLantern",
     "skills_injected": false
   }
 ]

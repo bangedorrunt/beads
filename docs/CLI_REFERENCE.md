@@ -2031,9 +2031,43 @@ br upgrade [OPTIONS]
 | `--check` | Check for updates without installing |
 | `--force` | Force reinstall current version |
 
+
+### triage
+
+Triage view: scored recommendations, quick wins, and project health.
+
+```bash
+br triage --robot
+```
+
+### next
+
+Next-work recommendation with scoring and fail-closed claim contract.
+
+```bash
+br next --robot
+```
+
+### plan
+
+Parallel execution tracks over the actionable set.
+
+```bash
+br plan --robot
+```
+
+### insights
+
+Graph analysis: Bottlenecks, Keystones, Influencers, Hubs, Authorities, Cores, Articulation, Slack, Velocity.
+
+```bash
+br insights --robot
+```
+
 ---
 
 ### completions
+
 
 Generate shell completions.
 

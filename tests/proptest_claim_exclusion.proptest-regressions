@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc bf1bd2e0cc23d3cd81bede03e4491fd7a0833ebf364a73ec716b9c4227f0ab4b # shrinks to suffix = "aa0a0a", title = "aa", actor = "aaa", priority = Priority(0)

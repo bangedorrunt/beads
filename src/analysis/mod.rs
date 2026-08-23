@@ -22,7 +22,9 @@ pub mod config;
 pub mod data_hash;
 pub mod engine;
 pub mod status;
+pub mod triage;
 
 pub use config::{AnalysisConfig, BetweennessMode, METRIC_DEFAULT_TIMEOUT_MS};
 pub use engine::{AnalysisEngine, AnalysisResult};
-pub use status::{MetricState, MetricStatus};
+pub use status::{MetricEntry, MetricState, MetricStatus};
+pub use triage::TriageResult;

@@ -17970,6 +17970,12 @@ impl SqliteStorage {
         issue_id: &str,
         unique_deps: &[&Dependency],
     ) -> Result<()> {
+        if std::env::var("BR_SVTXE_DEBUG").is_ok() {
+            eprintln!(
+                "[svtxe] insert_dependency_refs issue={issue_id} n={}",
+                unique_deps.len()
+            );
+        }
         if unique_deps.is_empty() {
             return Ok(());
         }
