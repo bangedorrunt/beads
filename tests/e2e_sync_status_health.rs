@@ -489,8 +489,11 @@ fn e2e_noop_anchor_rejects_external_truncation_without_mutation() {
     );
 }
 
+/// beads_rust-a6kl companion: a deleted hash on an otherwise CONSISTENT
+/// workspace is a bootstrap vacuum — the no-op flush self-certifies and
+/// restores a deterministic hash instead of refusing.
 #[test]
-fn e2e_noop_anchor_missing_cached_hash_fails_then_force_recovers() {
+fn e2e_noop_anchor_missing_cached_hash_self_certifies_when_consistent() {
     let (workspace, _issue_id) = setup_certified_anchor_workspace("missing_cached_hash");
     let beads_dir = workspace.root.join(".beads");
     let mut storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("open workspace db");
@@ -507,15 +510,85 @@ fn e2e_noop_anchor_missing_cached_hash_fails_then_force_recovers() {
         before.metadata[METADATA_JSONL_CONTENT_HASH], None,
         "test precondition requires a missing cached hash"
     );
+
+    // beads_rust-a6kl: with the hash deleted but the JSONL EXACTLY matching
+    // the database, the no-op flush SELF-CERTIFIES (bootstrap vacuum, not
+    // tampering) and restores a deterministic hash.
+    let self_certified = run_br(
+        &workspace,
+        ["sync", "--flush-only", "--json", "--no-auto-import"],
+        "missing_cached_hash_flush",
+    );
+    assert!(
+        self_certified.status.success(),
+        "consistent missing-hash no-op flush must self-certify: {} {}",
+        self_certified.stdout,
+        self_certified.stderr
+    );
+    let after_self = persistence_snapshot(&workspace);
+    let restored_hash = after_self.metadata[METADATA_JSONL_CONTENT_HASH]
+        .as_ref()
+        .expect("self-certification must store a content hash");
+    assert!(!restored_hash.is_empty(), "restored hash must be non-empty");
+    assert_eq!(
+        after_self.jsonl, before.jsonl,
+        "JSONL untouched by certification"
+    );
+}
+
+/// Fail-closed half of beads_rust-a6kl: hash deleted AND the JSONL diverged
+/// from the database still refuses and preserves state until --force.
+#[test]
+fn e2e_noop_anchor_missing_cached_hash_fails_then_force_recovers() {
+    let (workspace, _issue_id) = setup_certified_anchor_workspace("missing_cached_hash");
+    let beads_dir = workspace.root.join(".beads");
+
+    // Divergence case: hash deleted AND the JSONL diverges from the database.
+    // Fail-closed semantics are unchanged — this must refuse and preserve
+    // state until --force reconciles from the database.
+    let mut storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("open workspace db");
+    assert!(
+        storage
+            .delete_metadata(METADATA_JSONL_CONTENT_HASH)
+            .expect("delete cached JSONL hash"),
+        "baseline should contain a cached JSONL hash"
+    );
+    drop(storage);
+
+    let divergent_line = r#"{"id":"zzz-foreign1","title":"Foreign","status":"open","priority":2,"issue_type":"task","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+    let mut divergent_jsonl = std::fs::read(beads_dir.join("issues.jsonl")).expect("jsonl bytes");
+    divergent_jsonl.extend_from_slice(divergent_line.as_bytes());
+    divergent_jsonl.push(b'\n');
+    std::fs::write(beads_dir.join("issues.jsonl"), &divergent_jsonl)
+        .expect("write divergent jsonl");
+
+    let before_divergence = persistence_snapshot(&workspace);
     let failed = run_br(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
         "missing_cached_hash_flush",
     );
-    assert_noop_anchor_certification_failure(&failed, "missing cached hash");
+    // The stale-database guard fires BEFORE certification here (data-loss
+    // protection outranks hash bookkeeping); assert its contract directly.
+    assert!(
+        !failed.status.success(),
+        "missing cached hash + divergence unexpectedly succeeded\nstdout={}\nstderr={}",
+        failed.stdout,
+        failed.stderr
+    );
+    let combined = format!("{}\n{}", failed.stdout, failed.stderr);
+    for guidance in [
+        "Refusing to export stale database",
+        "Run import first, or use --force to override",
+    ] {
+        assert!(
+            combined.contains(guidance),
+            "{guidance:?} guidance expected: {combined}"
+        );
+    }
     let after_failure = persistence_snapshot(&workspace);
     assert_eq!(
-        after_failure, before,
+        after_failure, before_divergence,
         "missing-hash failure must preserve JSONL, anchor, and metadata"
     );
 
@@ -598,5 +671,69 @@ fn e2e_noop_anchor_accepts_whitespace_only_change_and_copies_exact_bytes() {
     assert_eq!(
         after.metadata, before.metadata,
         "a no-op anchor repair must not mutate sync metadata"
+    );
+}
+
+/// beads_rust-a6kl: a FRESH workspace (init, zero issues, zero syncs) has
+/// never stored a JSONL content hash, so the no-op flush's certification
+/// guard used to refuse with exit 7 ("stored JSONL content hash is
+/// missing"). Missing evidence from a never-synced workspace is a bootstrap
+/// vacuum, not tampering: when the database issue set EXACTLY matches the
+/// JSONL, the no-op flush must self-certify — storing a deterministic hash —
+/// and materialize the anchor. Fail-closed behavior for genuine divergence
+/// is unchanged.
+#[test]
+fn fresh_workspace_noop_flush_self_certifies_deterministic_hash() {
+    let workspace = BrWorkspace::new();
+    let init = run_br(&workspace, ["init"], "fresh_init");
+    assert!(init.status.success(), "init failed: {}", init.stderr);
+
+    // Deliberately NO create: the reported failure is the zero-issue case.
+    let flush = run_br(&workspace, ["sync", "--flush-only"], "fresh_flush");
+    assert!(
+        flush.status.success(),
+        "no-op flush on a fresh workspace must self-certify: {}",
+        flush.stderr
+    );
+
+    let status = run_br(&workspace, ["sync", "--status", "--json"], "fresh_status");
+    assert!(status.status.success(), "{}", status.stderr);
+    let payload: Value =
+        serde_json::from_str(&extract_json_payload(&status.stdout)).expect("status json");
+    let hash_first: String = payload["jsonl_content_hash"]
+        .as_str()
+        .filter(|h| !h.is_empty())
+        .expect("no-op flush must store a non-empty deterministic content hash")
+        .to_string();
+
+    let beads_dir = workspace.root.join(".beads");
+    assert_eq!(
+        std::fs::read(beads_dir.join("beads.base.jsonl")).expect("anchor"),
+        std::fs::read(beads_dir.join("issues.jsonl")).expect("jsonl"),
+        "anchor must be certified byte-exact after the bootstrap flush"
+    );
+
+    // Deterministic + idempotent: a second no-op flush keeps the same hash.
+    let flush_again = run_br(&workspace, ["sync", "--flush-only"], "fresh_flush_again");
+    assert!(flush_again.status.success(), "{}", flush_again.stderr);
+    let status2 = run_br(&workspace, ["sync", "--status", "--json"], "fresh_status_2");
+    let payload2: Value =
+        serde_json::from_str(&extract_json_payload(&status2.stdout)).expect("status json 2");
+    let hash_second: String = payload2["jsonl_content_hash"]
+        .as_str()
+        .expect("hash still present")
+        .to_string();
+    assert_eq!(
+        hash_first, hash_second,
+        "no-op flush hash must be deterministic"
+    );
+
+    // The workspace must read as fully healthy afterwards.
+    let doctor = run_br(&workspace, ["doctor", "--quick", "--json"], "fresh_doctor");
+    let doctor_payload: Value =
+        serde_json::from_str(&extract_json_payload(&doctor.stdout)).expect("doctor json");
+    assert_eq!(
+        doctor_payload["ok"], true,
+        "post-bootstrap workspace must certify healthy: {doctor_payload}"
     );
 }

@@ -20,8 +20,9 @@ use crate::sync::{
     AdditiveReconcileReceipt, AdditiveReconcileStatus, ConflictResolution, ExpectedJsonlSourceRef,
     ExpectedStagedExport, ExportConfig, ExportEntityType, ExportError, ExportErrorPolicy,
     ImportConfig, ImportResult, JsonlSourceSnapshot, JsonlSourceStateWitness,
-    METADATA_JSONL_CONTENT_HASH, METADATA_LAST_EXPORT_TIME, METADATA_LAST_IMPORT_TIME,
-    MergeContext, OrphanMode, ReconcileActionKind, ReconcileApplyOutcome, ReconcilePlan,
+    METADATA_JSONL_CONTENT_HASH, METADATA_JSONL_MTIME, METADATA_JSONL_SIZE,
+    METADATA_LAST_EXPORT_TIME, METADATA_LAST_IMPORT_TIME, MergeContext, OrphanMode,
+    ReconcileActionKind, ReconcileApplyOutcome, ReconcilePlan,
     ReviewedAdditiveReconcilePlanRequest, ReviewedAdditiveReconcileRequest,
     SYNC_RECONCILE_SCHEMA_VERSION, SyncMergeIntent, SyncMergeNoteWitness, SyncMergePendingPhase,
     SyncMergePendingReceipt, analyze_jsonl_snapshot,
@@ -2461,30 +2462,55 @@ fn execute_flush(
         // directly with the captured snapshot. Missing or mismatched
         // evidence fails closed; --force deliberately takes the real-export
         // path instead.
+        //
+        // beads_rust-a6kl bootstrap exception: a workspace that has NEVER
+        // been certified (no stored hash — fresh `br init`, or a tracker
+        // predating hash bookkeeping) is a vacuum, not tampering. When the
+        // database issue set EXACTLY matches the captured JSONL, the no-op
+        // flush self-certifies by storing the observed content hash —
+        // deterministic for the unchanged state, so every later no-op flush
+        // compares equal. Any id/count divergence still refuses below.
         let noop_source = source.expect("existing JSONL has an immutable snapshot");
+        let observed_content_hash = noop_source.content_sha256();
         let stored_content_hash = storage
             .get_metadata(METADATA_JSONL_CONTENT_HASH)?
-            .filter(|hash| !hash.trim().is_empty())
-            .ok_or_else(|| {
-                BeadsError::Config(
-                    "Cannot certify a no-op flush because the stored JSONL content hash is \
-                     missing. The merge anchor was not changed.\n\
-                     Inspect/reconcile with `br sync --merge`, accept the JSONL intentionally \
-                     with `br sync --import-only --force`, or replace it from the database with \
+            .filter(|hash| !hash.trim().is_empty());
+        match stored_content_hash {
+            Some(stored) if stored != observed_content_hash => {
+                return Err(BeadsError::Config(format!(
+                    "Refusing a no-op flush because the JSONL changed since its last certified \
+                     sync (stored hash {stored}, observed hash \
+                     {observed_content_hash}). The merge anchor was not changed.\n\
+                     Inspect/reconcile with `br sync --merge`, accept the JSONL intentionally with \
+                     `br sync --import-only --force`, or replace it from the database with \
                      `br sync --flush-only --force`."
-                        .to_string(),
-                )
-            })?;
-        let observed_content_hash = noop_source.content_sha256();
-        if observed_content_hash != stored_content_hash {
-            return Err(BeadsError::Config(format!(
-                "Refusing a no-op flush because the JSONL changed since its last certified \
-                 sync (stored hash {stored_content_hash}, observed hash \
-                 {observed_content_hash}). The merge anchor was not changed.\n\
-                 Inspect/reconcile with `br sync --merge`, accept the JSONL intentionally with \
-                 `br sync --import-only --force`, or replace it from the database with \
-                 `br sync --flush-only --force`."
-            )));
+                )));
+            }
+            None => {
+                let db_id_set: HashSet<String> = storage.get_all_ids()?.into_iter().collect();
+                let jsonl_id_set: HashSet<String> = jsonl_ids.iter().cloned().collect();
+                if db_issue_count != existing_count || db_id_set != jsonl_id_set {
+                    return Err(BeadsError::Config(format!(
+                        "Cannot certify a no-op flush because there is no stored JSONL content \
+                         hash and the database does not exactly match the JSONL issue set \
+                         (database: {db_issue_count} issue(s), JSONL: {existing_count}). The \
+                         merge anchor was not changed.\n\
+                         Inspect/reconcile with `br sync --merge`, accept the JSONL intentionally \
+                         with `br sync --import-only --force`, or replace it from the database \
+                         with `br sync --flush-only --force`."
+                    )));
+                }
+                storage.set_metadata(METADATA_JSONL_CONTENT_HASH, observed_content_hash)?;
+                let mtime =
+                    chrono::DateTime::<chrono::Utc>::from(noop_source.modified()).to_rfc3339();
+                storage.set_metadata(METADATA_JSONL_MTIME, &mtime)?;
+                storage.set_metadata(METADATA_JSONL_SIZE, &noop_source.size().to_string())?;
+                debug!(
+                    hash = %observed_content_hash,
+                    "No-op flush self-certified a never-synced workspace"
+                );
+            }
+            Some(_) => {}
         }
 
         // Certified: ensure the anchor holds the exact snapshot bytes (also
