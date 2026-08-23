@@ -27,6 +27,7 @@
 // Lint configuration is in Cargo.toml [lints.clippy] section
 #![allow(clippy::module_name_repetitions)]
 
+pub mod analysis;
 pub mod cache;
 pub mod cli;
 pub mod close_policy;

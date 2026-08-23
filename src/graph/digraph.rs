@@ -2,6 +2,7 @@
 // governed-by: ADR-0003
 use std::collections::HashMap;
 
+#[derive(Clone, Debug)]
 pub struct DiGraph {
     nodes: Vec<String>,
     node_index: HashMap<String, usize>,
