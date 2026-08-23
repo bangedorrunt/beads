@@ -1,3 +1,4 @@
+// governed-by: ADR-0001
 //! JSONL import/export for `beads`.
 //!
 //! This module handles:
@@ -1473,7 +1474,40 @@ enum ConditionalNamespaceChange {
         allow(dead_code)
     )]
     RenamedCreate,
+    /// The filesystem rejected `RENAME_NOREPLACE` with `EINVAL`, so the
+    /// absent destination was installed via an atomic hard-link plus a
+    /// best-effort unlink of the staged duplicate name.
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "android", target_vendor = "apple")),
+        allow(dead_code)
+    )]
+    LinkedCreate,
     Exchanged,
+    /// The filesystem rejected `RENAME_EXCHANGE` with `EINVAL`, so the prior
+    /// generation was displaced through witnessed plain renames performed
+    /// under the held JSONL family authority.
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "android", target_vendor = "apple")),
+        allow(dead_code)
+    )]
+    ExchangedViaWitnessedRenames,
+}
+
+impl ConditionalNamespaceChange {
+    const fn displaces_prior_generation(self) -> bool {
+        matches!(self, Self::Exchanged | Self::ExchangedViaWitnessedRenames)
+    }
+}
+
+// Test-only seam simulating filesystems that reject the renameat2 flag
+// extension with `EINVAL` (Linux 9p, WSL2 DrvFS); all primitive namespace
+// operations still run against the real filesystem.
+#[cfg(all(
+    test,
+    any(target_os = "linux", target_os = "android", target_vendor = "apple")
+))]
+thread_local! {
+    static SIMULATE_RENAME_FLAGS_EINVAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 struct ConditionalJsonlPublication {
@@ -1522,35 +1556,191 @@ fn perform_conditional_namespace_change(
         }
     };
 
-    renameat_with(
+    #[cfg(test)]
+    let flagged_attempt = if SIMULATE_RENAME_FLAGS_EINVAL.with(std::cell::Cell::get) {
+        // Skip the real flagged syscall entirely: a simulated EINVAL must
+        // leave the filesystem untouched so the fallback starts from the
+        // same pre-call layout a genuinely flag-hostile filesystem has.
+        Err(rustix::io::Errno::INVAL)
+    } else {
+        renameat_with(
+            staged_name.parent().as_file(),
+            staged_name.leaf(),
+            output_name.parent().as_file(),
+            output_name.leaf(),
+            flags,
+        )
+    };
+
+    #[cfg(not(test))]
+    let flagged_attempt = renameat_with(
         staged_name.parent().as_file(),
         staged_name.leaf(),
         output_name.parent().as_file(),
         output_name.leaf(),
         flags,
-    )
-    .map_err(|error| {
-        let error = std::io::Error::from(error);
-        match (expected_previous_state, error.kind()) {
-            (JsonlSourceStateWitness::Missing, std::io::ErrorKind::AlreadyExists) => {
-                BeadsError::SyncConflict {
-                    message:
-                        "JSONL appeared before the atomic no-replace publication; refusing to overwrite it"
-                            .to_string(),
-                }
-            }
-            (JsonlSourceStateWitness::Present { .. }, std::io::ErrorKind::NotFound) => {
-                BeadsError::SyncConflict {
-                    message:
-                        "JSONL disappeared before the atomic exchange publication; refusing to continue"
-                            .to_string(),
-                }
-            }
-            _ => BeadsError::Io(error),
-        }
-    })?;
+    );
 
-    Ok(change)
+    match flagged_attempt {
+        Ok(()) => Ok(change),
+        Err(rustix::io::Errno::INVAL) => {
+            // Filesystems such as Linux 9p and WSL2 DrvFS reject the entire
+            // renameat2 flag extension with EINVAL (GH #419). Degrade to
+            // witnessed primitive namespace operations under the held JSONL
+            // family authority; the caller's post-change witness battery
+            // re-verifies both resulting names before the publication is
+            // acknowledged, and any downgrade is recorded in the receipt.
+            match expected_previous_state {
+                JsonlSourceStateWitness::Missing => {
+                    emulate_no_replace_publication_with_link(staged_name, output_name)?;
+                    Ok(ConditionalNamespaceChange::LinkedCreate)
+                }
+                JsonlSourceStateWitness::Present { .. } => {
+                    emulate_exchange_publication_with_witnessed_renames(staged_name, output_name)?;
+                    Ok(ConditionalNamespaceChange::ExchangedViaWitnessedRenames)
+                }
+            }
+        }
+        Err(error) => {
+            let error = std::io::Error::from(error);
+            match (expected_previous_state, error.kind()) {
+                (JsonlSourceStateWitness::Missing, std::io::ErrorKind::AlreadyExists) => {
+                    Err(BeadsError::SyncConflict {
+                        message:
+                            "JSONL appeared before the atomic no-replace publication; refusing to overwrite it"
+                                .to_string(),
+                    })
+                }
+                (JsonlSourceStateWitness::Present { .. }, std::io::ErrorKind::NotFound) => {
+                    Err(BeadsError::SyncConflict {
+                        message:
+                            "JSONL disappeared before the atomic exchange publication; refusing to continue"
+                                .to_string(),
+                    })
+                }
+                _ => Err(BeadsError::Io(error)),
+            }
+        }
+    }
+}
+
+/// Emulates `RENAME_NOREPLACE` on filesystems without renameat2 flag support
+/// by hard-linking the staged generation onto the absent destination name and
+/// then unlinking the now-duplicate staged name.
+///
+/// The hard-link creation is itself an atomic no-replace operation, so a
+/// concurrently created destination is still refused instead of overwritten.
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+fn emulate_no_replace_publication_with_link(
+    staged_name: &PinnedJsonlName,
+    output_name: &PinnedJsonlName,
+) -> Result<()> {
+    use rustix::fs::{AtFlags, linkat};
+
+    if let Err(error) = linkat(
+        staged_name.parent().as_file(),
+        staged_name.leaf(),
+        output_name.parent().as_file(),
+        output_name.leaf(),
+        AtFlags::empty(),
+    ) {
+        let error = std::io::Error::from(error);
+        return if error.kind() == std::io::ErrorKind::AlreadyExists {
+            Err(BeadsError::SyncConflict {
+                message:
+                    "JSONL appeared before the no-replace link publication; refusing to overwrite it"
+                        .to_string(),
+            })
+        } else {
+            Err(BeadsError::Io(error))
+        };
+    }
+
+    // The published inode already lives at the destination name; a residual
+    // `.jsonl.tmp` duplicate inside the pinned parent stays within the sync
+    // path allowlist and is harmless, so unlinking is best-effort.
+    let _ = rustix::fs::unlinkat(
+        staged_name.parent().as_file(),
+        staged_name.leaf(),
+        AtFlags::empty(),
+    );
+    Ok(())
+}
+
+/// Emulates `RENAME_EXCHANGE` with witnessed plain renames: park the staged
+/// generation at a unique hold name, displace the prior generation into the
+/// staged recovery slot, then install the new generation at the destination.
+///
+/// Every step is a single-directory plain rename performed under the held
+/// JSONL family write lock; intermediate states are not atomic across a
+/// crash, but each failure path restores the pre-call layout before failing,
+/// and the caller's witness battery rejects any residual mismatch.
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+fn emulate_exchange_publication_with_witnessed_renames(
+    staged_name: &PinnedJsonlName,
+    output_name: &PinnedJsonlName,
+) -> Result<()> {
+    use rustix::fs::{RenameFlags, renameat_with};
+    use std::ffi::OsStr;
+
+    let plain_rename = |from: &PinnedJsonlName, to: &PinnedJsonlName| {
+        renameat_with(
+            from.parent().as_file(),
+            from.leaf(),
+            to.parent().as_file(),
+            to.leaf(),
+            RenameFlags::empty(),
+        )
+        .map_err(std::io::Error::from)
+    };
+
+    // Derived from the staged leaf so the hold name stays inside the pinned
+    // parent and inside the `.jsonl.tmp` allowlist; uniqueness follows from
+    // the staged temp name being unique per export attempt.
+    let staged_leaf_prefix = staged_name
+        .leaf()
+        .to_str()
+        .and_then(|leaf| leaf.strip_suffix(".tmp"))
+        .ok_or_else(|| {
+            BeadsError::Config(format!(
+                "Staged JSONL name {} does not carry the required .tmp suffix for exchange fallback",
+                staged_name.display_path().display()
+            ))
+        })?;
+    let hold_leaf = format!("{staged_leaf_prefix}.hold.jsonl.tmp");
+    let hold_name = staged_name.with_leaf(OsStr::new(&hold_leaf))?;
+
+    plain_rename(staged_name, &hold_name).map_err(BeadsError::Io)?;
+
+    if let Err(error) = plain_rename(output_name, staged_name) {
+        let _restored = plain_rename(&hold_name, staged_name);
+        return Err(displaced_exchange_rename_error(error));
+    }
+
+    if let Err(error) = plain_rename(&hold_name, output_name) {
+        // Best-effort restoration toward the pre-call layout; the caller's
+        // witness battery fail-closes on any residual mismatch anyway.
+        let _ = plain_rename(staged_name, output_name);
+        let _ = plain_rename(&hold_name, staged_name);
+        return Err(BeadsError::Io(error));
+    }
+
+    Ok(())
+}
+
+/// Maps a failed displacement rename during the exchange fallback to the same
+/// refused-publication conflict the atomic path reports.
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+fn displaced_exchange_rename_error(error: std::io::Error) -> BeadsError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        BeadsError::SyncConflict {
+            message:
+                "JSONL disappeared before the witnessed-rename exchange publication; refusing to continue"
+                    .to_string(),
+        }
+    } else {
+        BeadsError::Io(error)
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
@@ -1683,10 +1873,12 @@ where
     hook(ConditionalPublicationHookPhase::PreCommit)?;
     let namespace_change =
         perform_conditional_namespace_change(&staged_name, &output_name, expected_previous_state)?;
-    let displaced_path =
-        (namespace_change == ConditionalNamespaceChange::Exchanged).then_some(temp_path);
-    let cleanup_candidate =
-        (namespace_change == ConditionalNamespaceChange::Exchanged).then_some(temp_path);
+    let displaced_path = namespace_change
+        .displaces_prior_generation()
+        .then_some(temp_path);
+    let cleanup_candidate = namespace_change
+        .displaces_prior_generation()
+        .then_some(temp_path);
 
     hook(ConditionalPublicationHookPhase::PostRename)
         .map_err(|error| published_but_unwitnessed(output_path, displaced_path, error))?;
@@ -1715,7 +1907,7 @@ where
         };
     }
 
-    let displaced_source = if namespace_change == ConditionalNamespaceChange::Exchanged {
+    let displaced_source = if namespace_change.displaces_prior_generation() {
         let displaced_source = staged_name
             .capture()
             .map_err(|error| published_but_unwitnessed(output_path, displaced_path, error))?;
@@ -1747,7 +1939,11 @@ where
 
     let atomicity = match namespace_change {
         ConditionalNamespaceChange::RenamedCreate => ExportPublicationAtomicity::CreateNoReplace,
+        ConditionalNamespaceChange::LinkedCreate => ExportPublicationAtomicity::LinkedNoReplace,
         ConditionalNamespaceChange::Exchanged => ExportPublicationAtomicity::ExchangeAndVerify,
+        ConditionalNamespaceChange::ExchangedViaWitnessedRenames => {
+            ExportPublicationAtomicity::WitnessedRenamesExchange
+        }
     };
     let mut retained_recovery_path = None;
     let mut cleanup_durable = true;
@@ -2233,6 +2429,14 @@ pub enum ExportPublicationAtomicity {
     /// The staged and prior destination names were atomically exchanged, then
     /// both resulting identities and byte digests were verified.
     ExchangeAndVerify,
+    /// The filesystem rejected the renameat2 flag extension with `EINVAL`, so
+    /// the absent destination was installed via an atomic hard-link plus a
+    /// best-effort unlink of the staged duplicate name.
+    LinkedNoReplace,
+    /// The filesystem rejected `RENAME_EXCHANGE` with `EINVAL`, so the prior
+    /// generation was displaced through witnessed plain renames under the
+    /// held JSONL family authority; intermediate states are not atomic.
+    WitnessedRenamesExchange,
 }
 
 /// Verified durable-file publication metadata for an export.
@@ -17090,6 +17294,175 @@ mod tests {
         );
         assert_eq!(publication.source.state_witness(), staged_state);
         assert_eq!(publication.source.content_sha256(), content_sha256);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    struct ForceRenameFlagsEinvalGuard;
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    impl ForceRenameFlagsEinvalGuard {
+        fn new() -> Self {
+            SIMULATE_RENAME_FLAGS_EINVAL.with(|flag| flag.set(true));
+            Self
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    impl Drop for ForceRenameFlagsEinvalGuard {
+        fn drop(&mut self) {
+            SIMULATE_RENAME_FLAGS_EINVAL.with(|flag| flag.set(false));
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    #[test]
+    fn conditional_publication_falls_back_to_link_when_flags_are_rejected_with_einval() {
+        let _einval = ForceRenameFlagsEinvalGuard::new();
+        let temp = TempDir::new().unwrap();
+        let output_path = temp.path().join("issues.jsonl");
+        let temp_path = export_temp_path(&output_path);
+        fs::write(&temp_path, b"{\"id\":\"new\"}\n").unwrap();
+        let staged_source = capture_jsonl_source_snapshot(&temp_path).unwrap();
+        let content_sha256 = staged_source.content_sha256().to_string();
+        let authority = blocking_jsonl_family_write_lock_with_timeout(&output_path, None).unwrap();
+
+        let publication = publish_staged_jsonl_conditionally_with(
+            &temp_path,
+            TempFileGuard::new(temp_path.clone()),
+            &output_path,
+            &staged_source,
+            &JsonlSourceStateWitness::Missing,
+            &content_sha256,
+            &authority,
+            || Ok(()),
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            publication.atomicity,
+            ExportPublicationAtomicity::LinkedNoReplace,
+            "an EINVAL-flagged create must record the downgraded link-based atomicity"
+        );
+        assert_eq!(fs::read(&output_path).unwrap(), b"{\"id\":\"new\"}\n");
+        assert!(!temp_path.exists(), "staged duplicate name must be removed");
+        assert!(publication.cleanup_durable);
+        assert!(publication.retained_recovery_path.is_none());
+        assert_eq!(
+            fs::read(&output_path).unwrap(),
+            b"{\"id\":\"new\"}\n",
+            "published bytes must match the staged generation"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    #[test]
+    fn conditional_publication_falls_back_to_witnessed_renames_when_exchange_flag_is_einval() {
+        let _einval = ForceRenameFlagsEinvalGuard::new();
+        let temp = TempDir::new().unwrap();
+        let output_path = temp.path().join("issues.jsonl");
+        let temp_path = export_temp_path(&output_path);
+        fs::write(&output_path, b"{\"id\":\"old\"}\n").unwrap();
+        fs::write(&temp_path, b"{\"id\":\"new\"}\n").unwrap();
+        let expected_previous_state = capture_jsonl_source_snapshot(&output_path)
+            .unwrap()
+            .state_witness();
+        let staged_source = capture_jsonl_source_snapshot(&temp_path).unwrap();
+        let content_sha256 = staged_source.content_sha256().to_string();
+        let authority = blocking_jsonl_family_write_lock_with_timeout(&output_path, None).unwrap();
+
+        let publication = publish_staged_jsonl_conditionally_with(
+            &temp_path,
+            TempFileGuard::new_retained(temp_path.clone()),
+            &output_path,
+            &staged_source,
+            &expected_previous_state,
+            &content_sha256,
+            &authority,
+            || Ok(()),
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            publication.atomicity,
+            ExportPublicationAtomicity::WitnessedRenamesExchange,
+            "an EINVAL exchange must record the downgraded witnessed-renames atomicity"
+        );
+        assert_eq!(fs::read(&output_path).unwrap(), b"{\"id\":\"new\"}\n");
+        assert!(
+            !temp_path.exists(),
+            "a successful witnessed-rename exchange cleans up the displaced slot like the atomic path"
+        );
+        assert!(publication.retained_recovery_path.is_none());
+        assert!(publication.cleanup_durable);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    #[test]
+    fn einval_link_fallback_refuses_to_replace_an_existing_target() {
+        let _einval = ForceRenameFlagsEinvalGuard::new();
+        let temp = TempDir::new().unwrap();
+        let output_path = temp.path().join("issues.jsonl");
+        let temp_path = export_temp_path(&output_path);
+        fs::write(&output_path, b"{\"id\":\"raced\"}\n").unwrap();
+        fs::write(&temp_path, b"{\"id\":\"new\"}\n").unwrap();
+        let authority = blocking_jsonl_family_write_lock_with_timeout(&output_path, None).unwrap();
+        let output_name = authority.pinned_name_for_target(&output_path).unwrap();
+        let staged_name = authority.pinned_sibling(&temp_path).unwrap();
+
+        let result = perform_conditional_namespace_change(
+            &staged_name,
+            &output_name,
+            &JsonlSourceStateWitness::Missing,
+        );
+
+        assert!(
+            matches!(result, Err(BeadsError::SyncConflict { .. })),
+            "the no-replace guarantee survives the EINVAL fallback"
+        );
+        assert_eq!(
+            fs::read(&output_path).unwrap(),
+            b"{\"id\":\"raced\"}\n",
+            "the pre-existing target must not be overwritten"
+        );
+        assert_eq!(
+            fs::read(&temp_path).unwrap(),
+            b"{\"id\":\"new\"}\n",
+            "the staged generation must survive a refused publication"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    #[test]
+    fn einval_witnessed_rename_fallback_restores_staging_when_target_disappeared() {
+        let _einval = ForceRenameFlagsEinvalGuard::new();
+        let temp = TempDir::new().unwrap();
+        let output_path = temp.path().join("issues.jsonl");
+        let temp_path = export_temp_path(&output_path);
+        fs::write(&output_path, b"{\"id\":\"old\"}\n").unwrap();
+        fs::write(&temp_path, b"{\"id\":\"new\"}\n").unwrap();
+        let expected_previous_state = capture_jsonl_source_snapshot(&output_path)
+            .unwrap()
+            .state_witness();
+        // The prior generation disappears after its witness was captured.
+        fs::remove_file(&output_path).unwrap();
+        let authority = blocking_jsonl_family_write_lock_with_timeout(&output_path, None).unwrap();
+        let output_name = authority.pinned_name_for_target(&output_path).unwrap();
+        let staged_name = authority.pinned_sibling(&temp_path).unwrap();
+
+        let result = perform_conditional_namespace_change(
+            &staged_name,
+            &output_name,
+            &expected_previous_state,
+        );
+
+        assert!(matches!(result, Err(BeadsError::SyncConflict { .. })));
+        assert_eq!(
+            fs::read(&temp_path).unwrap(),
+            b"{\"id\":\"new\"}\n",
+            "a failed witnessed-rename fallback must restore the staged generation"
+        );
     }
 
     #[cfg(unix)]

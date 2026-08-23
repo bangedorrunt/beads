@@ -97,6 +97,19 @@ arbitrary daemonized descendants. No sync mode calls or delegates to it.
 | **Empty DB guard** | Exporting 0 issues over a JSONL with N issues | `--force` |
 | **Stale DB guard** | Exporting when DB is missing issues from JSONL | `--force` |
 
+#### Filesystems without renameat2 flags (9p, WSL2 DrvFS)
+
+Conditional JSONL publication prefers atomic `RENAME_NOREPLACE` /
+`RENAME_EXCHANGE` operations. Filesystems that reject the renameat2 flag
+extension with `EINVAL` (Linux `9p`, WSL2 `DrvFS`) no longer fail the export:
+publication degrades to witnessed primitive namespace operations under the
+still-held JSONL family write lock — hard-link + unlink for creates, plain
+renames with post-change witness verification for replacements. The downgrade
+is recorded in the export publication receipt as `LinkedNoReplace` or
+`WitnessedRenamesExchange` instead of `CreateNoReplace` /
+`ExchangeAndVerify`. Refusal semantics are unchanged: a concurrently created
+target is still never overwritten, and any witness mismatch fails closed.
+
 ### Import Guards
 
 | Guard | What it prevents | Override |
