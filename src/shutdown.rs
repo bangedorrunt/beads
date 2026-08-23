@@ -58,6 +58,52 @@ pub fn install() {
     }
     #[cfg(unix)]
     install_unix();
+    install_pipe_tolerant_panic_hook();
+}
+
+/// Classify a panic payload as "the text output path failed to print
+/// because stdout is a closed pipe" (beads_rust-3fna). Such panics are a
+/// normal close, not a crash: the requested output was delivered up to the
+/// point the reader stopped listening (`br list | head`), and standard CLI
+/// convention is to exit 0 rather than abort with a core dump.
+#[must_use]
+fn is_stdout_broken_pipe_panic(payload: &(dyn std::any::Any + Send)) -> bool {
+    let message: Option<&str> = if let Some(static_message) = payload.downcast_ref::<&'static str>()
+    {
+        Some(static_message)
+    } else {
+        payload.downcast_ref::<String>().map(String::as_str)
+    };
+    let Some(message) = message else {
+        return false;
+    };
+    message.contains("failed printing to stdout")
+        && (message.contains("Broken pipe")
+            || message.contains("broken pipe")
+            || message.contains("os error 32"))
+}
+
+/// Install a panic-hook shim that turns broken-stdout-print panics into a
+/// clean `exit(0)`.
+///
+/// The Rust runtime ignores `SIGPIPE`, so `println!` on a closed pipe
+/// returns `EPIPE`, which `println!` converts into a panic; under
+/// `panic = "abort"` that becomes SIGABRT plus a core dump even though the
+/// command is read-only and its output was already consumed by the reader
+/// (`br list | head`). Every other panic is forwarded to the previously
+/// installed hook (or default behavior) unchanged.
+pub fn install_pipe_tolerant_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |payload| {
+        if is_stdout_broken_pipe_panic(payload.payload()) {
+            // Read-only text commands: the reader hung up. Exit like a
+            // well-behaved filter instead of aborting (#434 /
+            // beads_rust-3fna). exit() skips Drop/WAL flush, but so did the
+            // abort it replaces, and these commands hold no write lock.
+            std::process::exit(0);
+        }
+        previous(payload);
+    }));
 }
 
 /// Returns `true` once any registered signal has been observed.
@@ -173,5 +219,37 @@ mod tests {
         if !is_requested() {
             assert_eq!(exit_code(), None);
         }
+    }
+}
+
+#[cfg(test)]
+mod pipe_tolerant_panic_hook_tests {
+    use super::*;
+
+    /// beads_rust-3fna: the exact println! EPIPE payload must classify as a
+    /// normal close.
+    #[test]
+    fn stdout_broken_pipe_print_panic_classifies_as_normal_close() {
+        let payload = String::from("failed printing to stdout: Broken pipe (os error 32)");
+        assert!(is_stdout_broken_pipe_panic(&payload));
+    }
+
+    #[test]
+    fn static_str_variant_classifies_as_normal_close() {
+        static PAYLOAD: &str = "failed printing to stdout: broken pipe";
+        assert!(is_stdout_broken_pipe_panic(&PAYLOAD));
+    }
+
+    #[test]
+    fn unrelated_panics_do_not_classify_as_pipe_close() {
+        assert!(!is_stdout_broken_pipe_panic(&String::from(
+            "index out of bounds"
+        )));
+        assert!(!is_stdout_broken_pipe_panic(&String::from(
+            "failed printing to stderr: Broken pipe (os error 32)"
+        )));
+        assert!(!is_stdout_broken_pipe_panic(&String::from(
+            "failed printing to stdout: No such device"
+        )));
     }
 }
