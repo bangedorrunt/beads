@@ -633,6 +633,14 @@ fn refuse_gate_fixer_rows() -> &'static [FixerRow] {
             &["db.recovery_artifacts"],
             &[],
         ),
+        (
+            "briefs.fence_import_pending",
+            "briefs",
+            true,
+            false,
+            &["briefs.fence_import"],
+            &["fm-briefs-fence-import-pending"],
+        ),
     ]
 }
 
