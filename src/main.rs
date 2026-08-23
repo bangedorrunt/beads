@@ -773,12 +773,12 @@ fn main() {
                 commands::query::execute(&command, &overrides, &output_ctx)
             }
         }
-        Commands::Plan(args) => {
-            commands::analysis::execute_plan(&args, &overrides, &output_ctx)
-        }
+        Commands::Plan(args) => commands::analysis::execute_plan(&args, &overrides, &output_ctx),
         Commands::Insights(args) => {
             commands::analysis::execute_insights(&args, &overrides, &output_ctx)
         }
+        Commands::Triage(args) => commands::triage::execute_triage(&args, &overrides, &output_ctx),
+        Commands::Next(args) => commands::triage::execute_next(&args, &overrides, &output_ctx),
         Commands::Graph(args) => {
             if let (Some(res), Some(beads_dir)) = (storage_result.as_ref(), ctx.beads_dir.as_ref())
             {
@@ -1458,8 +1458,9 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::History(_)
         | Commands::Agents(_) => false,
 
-        | Commands::Plan(_)
-        | Commands::Insights(_) => false,
+        Commands::Plan(_) | Commands::Insights(_) | Commands::Triage(_) | Commands::Next(_) => {
+            false
+        }
 
         #[cfg(feature = "self_update")]
         Commands::Upgrade(_) => false,
