@@ -5021,4 +5021,223 @@ mod schema18_tests {
             current_schema_version_u32().expect("current version")
         );
     }
+
+    /// Build a real database stamped at v16 (pre-v17 shape: the #384 phase-5
+    /// capacity-occupancy table does not exist yet), then corrupt a
+    /// secondary-index page so `PRAGMA integrity_check` reports malformed
+    /// BEFORE any migration runs (#428 defect class at source v16).
+    #[allow(clippy::too_many_lines)] // fixture setup reads linearly
+    fn v16_db_with_corrupt_index() -> (TempDir, Connection) {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let temp = TempDir::new().expect("tempdir");
+        let db_path = temp.path().join("beads.db");
+        let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open");
+        apply_schema(&conn).expect("apply current schema");
+
+        // Shape down to genuine v16: strip the v17 capacity-occupancy table.
+        conn.execute("DROP TABLE IF EXISTS capacity_occupancy")
+            .expect("drop v17 occupancy table");
+        conn.execute("PRAGMA user_version = 16").expect("stamp 16");
+        conn.execute("DROP INDEX IF EXISTS idx_issues_content_hash")
+            .expect("drop target index");
+        conn.execute("CREATE INDEX idx_issues_content_hash ON issues(content_hash)")
+            .expect("recreate plain index");
+
+        let row = conn
+            .query_row(
+                "SELECT rootpage, (SELECT page_size FROM pragma_page_size) \
+                 FROM sqlite_master WHERE type = 'index' \
+                 AND name = 'idx_issues_content_hash'",
+            )
+            .expect("resolve rootpage");
+        let rootpage = row.get(0).and_then(SqliteValue::as_integer).unwrap();
+        let page_size = row.get(1).and_then(SqliteValue::as_integer).unwrap();
+        conn.close().expect("close before corruption");
+
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&db_path)
+            .expect("open db file");
+        f.seek(SeekFrom::Start(
+            u64::try_from((rootpage - 1) * page_size).expect("offset"),
+        ))
+        .expect("seek to index root page");
+        f.write_all(&[0xffu8; 200]).expect("corrupt index page");
+
+        let reopened = Connection::open(db_path.to_string_lossy().into_owned()).expect("reopen");
+        (temp, reopened)
+    }
+
+    /// The #428 anti-pattern guard must also hold when the corrupted source is
+    /// v16 walking the capacity-occupancy step: fail closed, never stamp a
+    /// malformed database.
+    #[test]
+    fn migrate_from_16_fails_if_integrity_check_fails() {
+        let (_temp, conn) = v16_db_with_corrupt_index();
+
+        let integrity = conn
+            .query_row("PRAGMA integrity_check")
+            .expect("integrity_check executes");
+        let pre = integrity
+            .get(0)
+            .and_then(SqliteValue::as_text)
+            .unwrap_or("");
+        assert!(
+            !pre.eq_ignore_ascii_case("ok"),
+            "fixture must start corrupted; got {pre:?}"
+        );
+
+        let result = run_migrations(&conn, false);
+        assert!(result.is_err(), "migration must fail on integrity failure");
+
+        let version = conn.query_row("PRAGMA user_version").expect("read version");
+        let stamped = version
+            .get(0)
+            .and_then(SqliteValue::as_integer)
+            .unwrap_or_default();
+        assert_ne!(
+            stamped,
+            i64::from(CURRENT_SCHEMA_VERSION),
+            "user_version must not be stamped when integrity_check disagrees"
+        );
+    }
+
+    /// The reviewed migration must accept source schema 16 (the released
+    /// v0.2.19-binary shape) and land BOTH the v17 capacity-occupancy step and
+    /// the typed work-ledger columns with uyb3 defaults
+    /// (beads_rust-ajui, GH #428 sibling of migrate-17-18).
+    #[test]
+    fn test_reviewed_migrate_16_to_18_adds_capacity_occupancy_and_typed_work_ledger_columns() {
+        const TYPED_WORK_LEDGER_COLUMNS: [&str; 8] = [
+            "verify",
+            "principles",
+            "wave",
+            "pin",
+            "commit_sha",
+            "close_verdict",
+            "ac_shape",
+            "blast",
+        ];
+
+        let temp = TempDir::new().expect("tempdir");
+        let db_path = temp.path().join("reviewed-v16.db");
+        let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
+        apply_schema(&conn).expect("apply current schema");
+
+        // Seed one row, then strip the v17/v18 shapes to build a genuine
+        // schema-16 database: no capacity-occupancy table, none of the typed
+        // work-ledger columns.
+        conn.execute(
+            "INSERT INTO issues (id, content_hash, title, status, priority, issue_type, created_at, updated_at) \
+             VALUES ('bd-reviewed-v16', 'hash-v16', 'v0.2.19-era row', 'open', 2, 'task', \
+                     '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')",
+        )
+        .expect("seed issue");
+        conn.execute("DROP TABLE IF EXISTS capacity_occupancy")
+            .expect("drop v17 occupancy table");
+        for name in TYPED_WORK_LEDGER_COLUMNS {
+            conn.execute(&format!("ALTER TABLE issues DROP COLUMN {name}"))
+                .expect("drop v18 column");
+        }
+        conn.execute("PRAGMA user_version = 16")
+            .expect("stamp reviewed source");
+
+        let columns_before: std::collections::HashSet<String> = conn
+            .query("SELECT name FROM pragma_table_info('issues')")
+            .expect("read columns before")
+            .iter()
+            .filter_map(|row| row.get(0).and_then(SqliteValue::as_text))
+            .map(String::from)
+            .collect();
+        for name in TYPED_WORK_LEDGER_COLUMNS {
+            assert!(
+                !columns_before.contains(name),
+                "fixture must start at the v16 shape: {name} already present"
+            );
+        }
+        assert!(
+            !table_exists(&conn, "capacity_occupancy"),
+            "fixture must start at the v16 shape: capacity_occupancy already present"
+        );
+
+        conn.execute("BEGIN IMMEDIATE")
+            .expect("caller owns migration transaction");
+        let effects = run_reviewed_schema_migration_steps_in_transaction(
+            &conn,
+            16,
+            current_schema_version_u32().expect("current version"),
+            "unused-v16-timestamp",
+        )
+        .expect("reviewed 16->18 steps");
+        conn.execute("COMMIT")
+            .expect("caller commits migration transaction");
+
+        assert_eq!(
+            effects,
+            ReviewedSchemaMigrationEffects {
+                from_version: 16,
+                to_version: current_schema_version_u32().expect("current version"),
+                content_hash_rows_rebuilt: 0,
+                gate_result_history_created: false,
+            }
+        );
+
+        assert!(
+            table_exists(&conn, "capacity_occupancy"),
+            "reviewed 16->18 must add the v17 capacity-occupancy table"
+        );
+
+        let columns_after: std::collections::HashSet<String> = conn
+            .query("SELECT name FROM pragma_table_info('issues')")
+            .expect("read columns after")
+            .iter()
+            .filter_map(|row| row.get(0).and_then(SqliteValue::as_text))
+            .map(String::from)
+            .collect();
+        for name in TYPED_WORK_LEDGER_COLUMNS {
+            assert!(
+                columns_after.contains(name),
+                "reviewed 16->18 must add typed work-ledger column {name}"
+            );
+        }
+
+        // Existing rows stay valid under the uyb3 defaults.
+        let ac_shape = conn
+            .query_row("SELECT ac_shape FROM issues WHERE id = 'bd-reviewed-v16'")
+            .expect("read ac_shape");
+        assert_eq!(
+            ac_shape.get(0).and_then(SqliteValue::as_text),
+            Some("checkable"),
+            "ac_shape defaults to checkable"
+        );
+        let blast = conn
+            .query_row("SELECT blast FROM issues WHERE id = 'bd-reviewed-v16'")
+            .expect("read blast");
+        assert_eq!(
+            blast.get(0).and_then(SqliteValue::as_text),
+            Some("normal"),
+            "blast defaults to normal"
+        );
+
+        assert_eq!(
+            connection_user_version(&conn).expect("read migrated version"),
+            current_schema_version_u32().expect("current version")
+        );
+
+        // The migrated database must come out integrity-clean (#428): the
+        // success report and integrity_check may never disagree again.
+        let integrity = conn
+            .query_row("PRAGMA integrity_check")
+            .expect("post-migration integrity_check executes");
+        let verdict = integrity
+            .get(0)
+            .and_then(SqliteValue::as_text)
+            .unwrap_or("");
+        assert_eq!(
+            verdict.to_ascii_lowercase(),
+            "ok",
+            "successful migration must leave an integrity-clean database (#428)"
+        );
+    }
 }
