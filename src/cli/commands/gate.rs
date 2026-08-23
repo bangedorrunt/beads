@@ -5,8 +5,10 @@
 //! the project configures `workflow.gates`, the computed required-gate status
 //! for each guarded transition out of the issue's current status.
 //!
-//! Gate results are auxiliary, project-local metadata (like `close_metadata`):
-//! they are not synced through JSONL. Enforcement at the close/transition
+//! Gate results are ledger state (ADR-0001 §5.4): the append-only history
+//! exports to the `.beads/gates.jsonl` sidecar alongside issues.jsonl
+//! (`br sync --flush-only` writes both; `--import-only` loads both), so a
+//! clone can prove a close. Enforcement at the close/transition
 //! chokepoint lives in `close_policy::evaluate_gates`, hooked from
 //! `commands::update` and `commands::close`.
 

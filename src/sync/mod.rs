@@ -11417,6 +11417,128 @@ fn write_jsonl_lines_atomically(
     Ok(hex_encode(&hasher.finalize()))
 }
 
+/// Summary of a `.beads/gates.jsonl` flush (ADR-0001 §5.4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GateSidecarExport {
+    /// Number of verdict rows written.
+    pub exported_count: usize,
+    /// Hex SHA-256 of the exact published bytes.
+    pub content_hash: String,
+}
+
+/// Flush every recorded gate verdict to the `.beads/gates.jsonl` sidecar,
+/// atomically. One [`crate::close_policy::GateResultRecord`] per line; row
+/// order is deterministic (`recorded_at|issue_id|gate|provider`) so identical
+/// history yields byte-identical files across machines. The full history
+/// exports — FAIL and superseded rows included — because the ledger's proof
+/// value includes why transitions were refused.
+///
+/// # Errors
+///
+/// Returns an error if reading the verdicts or publishing the file fails.
+pub fn export_gates_to_jsonl(
+    storage: &SqliteStorage,
+    path: &Path,
+    config: &ExportConfig,
+) -> Result<GateSidecarExport> {
+    let records = storage.get_all_gate_result_records()?;
+    let mut lines = BTreeMap::new();
+    for record in &records {
+        let key = format!(
+            "{}|{}|{}|{}",
+            record.recorded_at, record.issue_id, record.gate, record.provider
+        );
+        let line = serde_json::to_string(record)
+            .map_err(|err| BeadsError::Config(format!("gate row {key}: {err}")))?;
+        lines.insert(key, line);
+    }
+
+    // Same temp+rename publication as the issues export, minus the
+    // issue-shaped per-line integrity probe (gate rows are their own schema).
+    let mut temp_output = prepare_jsonl_temp_output(path, config)?;
+    let mut hasher = Sha256::new();
+    for line in lines.values() {
+        writeln!(temp_output.writer, "{line}")?;
+        hasher.update(line.as_bytes());
+        hasher.update(b"\n");
+    }
+    let JsonlTempOutput {
+        temp_path,
+        temp_guard,
+        writer,
+    } = temp_output;
+    sync_jsonl_writer(writer)?;
+    rename_jsonl_temp_output(&temp_path, temp_guard, path, config)?;
+
+    Ok(GateSidecarExport {
+        exported_count: lines.len(),
+        content_hash: hex_encode(&hasher.finalize()),
+    })
+}
+
+/// Summary of a `.beads/gates.jsonl` load (ADR-0001 §5.4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GateSidecarImport {
+    /// Verdict rows present in the file.
+    pub total: usize,
+    /// Rows newly appended to history.
+    pub inserted: usize,
+    /// Rows skipped as already present (idempotent replay).
+    pub skipped: usize,
+}
+
+/// Load gate verdict rows from a gates.jsonl sidecar into history. Idempotent
+/// by full-tuple match; rows referencing unknown issues are refused rather
+/// than dropped, because a PASS row without its issue means the issues export
+/// and the sidecar disagree.
+///
+/// # Errors
+///
+/// Returns an error on malformed JSONL, or when a row references an unknown
+/// issue, or on any database write failure.
+/// ADR-0001 §5.4 ledger fingerprint for robot output: SHA-256 over the
+/// exact `issues.jsonl` bytes and the exact `gates.jsonl` sidecar bytes,
+/// length-framed so the pair is unambiguous, truncated to 16 hex chars to
+/// match bv's `data_hash` convention. `None` when the issues export is
+/// absent; a missing sidecar hashes as an empty frame (legal for older
+/// workspaces).
+#[must_use]
+pub fn compute_ledger_data_hash(issues_path: &Path, gates_path: &Path) -> Option<String> {
+    let issues = fs::read(issues_path).ok()?;
+    let gates = fs::read(gates_path).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(u64::to_le_bytes(issues.len() as u64));
+    hasher.update(&issues);
+    hasher.update(u64::to_le_bytes(gates.len() as u64));
+    hasher.update(&gates);
+    let digest = hex_encode(&hasher.finalize());
+    Some(digest[..16].to_string())
+}
+
+pub fn import_gates_from_jsonl(
+    storage: &mut SqliteStorage,
+    path: &Path,
+    _config: &ImportConfig,
+) -> Result<GateSidecarImport> {
+    let raw = fs::read_to_string(path).map_err(BeadsError::from)?;
+    let mut summary = GateSidecarImport {
+        total: 0,
+        inserted: 0,
+        skipped: 0,
+    };
+    for line in raw.lines().filter(|line| !line.trim().is_empty()) {
+        let record: crate::close_policy::GateResultRecord = serde_json::from_str(line)
+            .map_err(|err| BeadsError::Config(format!("gates.jsonl parse: {err}")))?;
+        summary.total += 1;
+        if storage.insert_gate_result_record(&record)? {
+            summary.inserted += 1;
+        } else {
+            summary.skipped += 1;
+        }
+    }
+    Ok(summary)
+}
+
 struct IncrementalAutoFlushChanges {
     dirty_metadata: Vec<(String, String)>,
     removed_hash_ids: Vec<String>,

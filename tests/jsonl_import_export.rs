@@ -3,8 +3,8 @@ mod common;
 use beads::model::{Comment, DependencyType, Issue, Priority, Status};
 use beads::storage::SqliteStorage;
 use beads::sync::{
-    ExportConfig, ImportConfig, export_to_jsonl, finalize_export, import_from_jsonl,
-    read_issues_from_jsonl,
+    ExportConfig, ImportConfig, export_gates_to_jsonl, export_to_jsonl, finalize_export,
+    import_from_jsonl, import_gates_from_jsonl, read_issues_from_jsonl,
 };
 use chrono::{Duration, TimeZone, Utc};
 use common::fixtures;
@@ -713,4 +713,112 @@ fn schema18_import_of_schema17_jsonl_fills_defaults() {
     );
     assert_eq!(round_tripped.wave, Some(5));
     assert_eq!(round_tripped.commit_sha.as_deref(), Some("8615bac8"));
+}
+
+/// ADR-0001 §5.4 (beads_rust-gates-jsonl-ea54): gate verdicts are ledger rows
+/// that survive a git clone. Flush writes the `.beads/gates.jsonl` sidecar;
+/// import-only reloads it; the roundtrip proves a fresh database can still
+/// authorize the closes those rows licensed.
+// governed-by: ADR-0001
+#[test]
+fn gates_jsonl_roundtrip_flush_import() {
+    let temp = TempDir::new().unwrap();
+    let db_path = temp.path().join("beads.db");
+    let issues_path = temp.path().join("issues.jsonl");
+    let gates_path = temp.path().join("gates.jsonl");
+
+    {
+        let mut storage = SqliteStorage::open(&db_path).unwrap();
+        storage
+            .create_issue(&issue_with_id("test-g1", "Gated work"), "tester")
+            .unwrap();
+        storage
+            .record_scoped_gate_result(
+                "test-g1",
+                "open",
+                0,
+                "closed",
+                "unit-test-verified",
+                "verifier",
+                true,
+                Some("cargo test => green"),
+                "tester",
+            )
+            .unwrap();
+
+        // FLUSH: one call exports both files; the sidecar lands next to the
+        // issues export with the derived name.
+        export_to_jsonl(&storage, &issues_path, &ExportConfig::default()).unwrap();
+        export_gates_to_jsonl(&storage, &gates_path, &ExportConfig::default()).unwrap();
+    }
+
+    let sidecar = fs::read_to_string(&gates_path).unwrap();
+    assert!(
+        sidecar.contains("\"issue_id\":\"test-g1\"")
+            || sidecar.contains("\"issue_id\": \"test-g1\""),
+        "sidecar must carry the verdict row: {sidecar}"
+    );
+    assert_eq!(sidecar.lines().count(), 1, "one row per line");
+
+    // WIPE: simulate a fresh clone — no database, only the JSONL pair.
+    fs::remove_file(&db_path).unwrap();
+
+    let mut fresh = SqliteStorage::open(&db_path).unwrap();
+    import_from_jsonl(
+        &mut fresh,
+        &issues_path,
+        &ImportConfig::default(),
+        Some("test-"),
+    )
+    .unwrap();
+    import_gates_from_jsonl(&mut fresh, &gates_path, &ImportConfig::default()).unwrap();
+
+    let rows = fresh
+        .get_scoped_gate_results("test-g1", "open", "closed")
+        .unwrap();
+    assert_eq!(rows.len(), 1, "PASS row must be queryable after reimport");
+    assert!(rows[0].passed);
+    assert_eq!(rows[0].gate, "unit-test-verified");
+    assert_eq!(rows[0].provider, "verifier");
+}
+
+/// ADR-0001 §5.4: `data_hash` covers BOTH exported files and is
+/// deterministic for identical content; touching either file changes it.
+#[test]
+fn ledger_data_hash_covers_issues_and_gates_sidecar() {
+    use beads::sync::compute_ledger_data_hash;
+
+    let temp = TempDir::new().unwrap();
+    let issues_path = temp.path().join("issues.jsonl");
+    let gates_path = temp.path().join("gates.jsonl");
+
+    assert!(
+        compute_ledger_data_hash(&issues_path, &gates_path).is_none(),
+        "no fingerprint when the issues export is missing"
+    );
+
+    fs::write(&issues_path, "{\"id\":\"test-h1\"}\n").unwrap();
+
+    fs::write(&gates_path, "").unwrap(); // absent sidecar == empty frame
+    let baseline = compute_ledger_data_hash(&issues_path, &gates_path).unwrap();
+
+    // Same content, different path: identical hash.
+    let twin_issues = temp.path().join("twin.jsonl");
+    fs::write(&twin_issues, "{\"id\":\"test-h1\"}\n").unwrap();
+    assert_eq!(
+        compute_ledger_data_hash(&issues_path, &gates_path),
+        compute_ledger_data_hash(&twin_issues, &gates_path)
+    );
+
+    // A verdict-row change flips the combined hash.
+    fs::write(&gates_path, "{\"issue_id\":\"test-g1\",\"passed\":true}\n").unwrap();
+    let after_gate = compute_ledger_data_hash(&issues_path, &gates_path).unwrap();
+    assert_ne!(baseline, after_gate);
+
+    // So does an issue-row change.
+    fs::write(&issues_path, "{\"id\":\"test-h2\"}\n").unwrap();
+    assert_ne!(
+        after_gate,
+        compute_ledger_data_hash(&issues_path, &gates_path).unwrap()
+    );
 }

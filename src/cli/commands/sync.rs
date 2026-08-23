@@ -383,6 +383,12 @@ pub struct SyncStatus {
     /// recover with `br sync --reconcile` (lossless) or
     /// `--import-only --rebuild` (JSONL-authoritative).
     pub coverage_drift: bool,
+    /// ADR-0001 §5.4: fingerprint over BOTH exported files (issues.jsonl +
+    /// gates.jsonl sidecar), truncated to bv's 16-hex convention. Agents use
+    /// it to detect stale robot output across a clone. Absent when the
+    /// issues export does not exist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_hash: Option<String>,
     /// Stable VCS-observation slot for the canonical JSONL export.
     ///
     /// Sync deliberately never probes Git. The object therefore reports
@@ -1861,6 +1867,31 @@ fn status_coverage(
 }
 
 /// Execute the --status subcommand.
+/// ADR-0001 §5.4: load `.beads/gates.jsonl` when present. Missing sidecar is
+/// legal (older workspaces, zero gate history). Parse or write failures are
+/// logged and swallowed here rather than failing the surrounding sync: the
+/// issues import must not be rolled back because a sidecar row went stale,
+/// and `br doctor`'s orphan-verdict check surfaces unprovable closes.
+fn load_gates_sidecar_if_present(storage: &mut crate::storage::SqliteStorage, beads_dir: &Path) {
+    let gates_path = beads_dir.join("gates.jsonl");
+    if !gates_path.exists() {
+        return;
+    }
+    match crate::sync::import_gates_from_jsonl(storage, &gates_path, &ImportConfig::default()) {
+        Ok(gates_import) => info!(
+            total = gates_import.total,
+            inserted = gates_import.inserted,
+            skipped = gates_import.skipped,
+            "Gate verdict sidecar imported"
+        ),
+        Err(error) => warn!(
+            path = %gates_path.display(),
+            %error,
+            "Gate verdict sidecar could not be loaded; closes backed by its PASS rows will be flagged by `br doctor`"
+        ),
+    }
+}
+
 fn execute_status(
     storage: &crate::storage::SqliteStorage,
     path_policy: &SyncPathPolicy,
@@ -1901,6 +1932,12 @@ fn execute_status(
 
     let (coverage, coverage_drift) = status_coverage(storage, jsonl_path, jsonl_exists);
 
+    let data_hash = if jsonl_exists {
+        crate::sync::compute_ledger_data_hash(jsonl_path, &jsonl_path.with_file_name("gates.jsonl"))
+    } else {
+        None
+    };
+
     let status = SyncStatus {
         dirty_count,
         last_export_time,
@@ -1913,6 +1950,7 @@ fn execute_status(
         reliability_audit,
         coverage,
         coverage_drift,
+        data_hash,
         git_export: GitExportStatus::not_probed(),
     };
     debug!(
@@ -2469,6 +2507,26 @@ fn execute_flush(
             refresh_base_snapshot_from_flushed_jsonl_snapshot(noop_source, &path_policy.beads_dir)?;
         }
 
+        // ADR-0001 §5.4: even with zero dirty issues the gates sidecar must
+        // be republished — gate verdict rows are not issue-dirty state, so
+        // without this a fresh `br gate report` followed by `--flush-only`
+        // would report "nothing to do" and strand the PASS row unexported.
+        let gates_path = path_policy.beads_dir.join("gates.jsonl");
+        let gates_export = crate::sync::export_gates_to_jsonl(
+            storage,
+            &gates_path,
+            &crate::sync::ExportConfig {
+                beads_dir: Some(path_policy.beads_dir.clone()),
+                allow_external_jsonl: path_policy.allow_external_jsonl,
+                ..ExportConfig::default()
+            },
+        )?;
+        debug!(
+            gates = gates_export.exported_count,
+            path = %gates_path.display(),
+            "Exported gate verdict sidecar (clean issues flush)"
+        );
+
         if use_json {
             let result = FlushResult {
                 exported_issues: 0,
@@ -2581,6 +2639,26 @@ fn execute_flush(
         source: Box::new(source),
     })?;
     info!("Export complete, cleared dirty flags");
+
+    // ADR-0001 §5.4: the gates.jsonl sidecar rides every flush so a clone
+    // can prove a close. Published only after the issues export finalized —
+    // a sidecar newer than its issues.jsonl is harmless (import refuses rows
+    // for unknown issues), the reverse would orphan verdicts.
+    let gates_path = path_policy.beads_dir.join("gates.jsonl");
+    let gates_export = crate::sync::export_gates_to_jsonl(
+        storage,
+        &gates_path,
+        &crate::sync::ExportConfig {
+            beads_dir: Some(path_policy.beads_dir.clone()),
+            allow_external_jsonl: path_policy.allow_external_jsonl,
+            ..ExportConfig::default()
+        },
+    )?;
+    debug!(
+        gates = gates_export.exported_count,
+        path = %gates_path.display(),
+        "Exported gate verdict sidecar"
+    );
 
     // Write manifest if requested (atomic: temp + fsync + durable_rename)
     let manifest_path = if args.manifest {
@@ -3388,6 +3466,13 @@ fn execute_import(
                 );
 
                 crate::sync::verify_jsonl_source_snapshot_current(source, jsonl_authority)?;
+
+                // ADR-0001 §5.4: the issues shortcut must not strand the
+                // gates sidecar — gate verdicts are not issue-dirty state.
+                // The load is idempotent (full-tuple dedupe), so replaying it
+                // on every "already current" import is cheap and safe.
+                load_gates_sidecar_if_present(storage, beads_dir);
+
                 if use_json {
                     let result = ImportResultOutput {
                         created: 0,
@@ -3504,6 +3589,12 @@ fn execute_import(
         tombstone_skipped = import_result.tombstone_skipped,
         "Import complete"
     );
+
+    // ADR-0001 §5.4: load the gates.jsonl sidecar after the issues are in —
+    // verdict rows reference issues, and a PASS row for an unknown issue is
+    // refused rather than dropped. Missing sidecar stays legal (older
+    // workspaces, or a clone with zero gate history).
+    load_gates_sidecar_if_present(storage, beads_dir);
 
     // --rebuild: remove DB entries not present in JSONL.
     //

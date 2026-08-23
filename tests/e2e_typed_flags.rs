@@ -109,7 +109,7 @@ fn e2e_create_verify_wins_over_ac_flag_conflict_is_rejected() {
 
     let out = run_br(
         &workspace,
-        &[
+        [
             "create",
             "Conflicting bead",
             "--verify",
@@ -134,7 +134,7 @@ fn e2e_update_principle_appends_citation() {
 
     let first = run_br(
         &workspace,
-        &[
+        [
             "update",
             &id,
             "--principle",
@@ -146,7 +146,7 @@ fn e2e_update_principle_appends_citation() {
 
     let second = run_br(
         &workspace,
-        &[
+        [
             "update",
             &id,
             "--principle",
@@ -187,7 +187,7 @@ fn e2e_update_principle_rejects_malformed_citation() {
 
     let out = run_br(
         &workspace,
-        &["update", &id, "--principle", "NoSeparatorHere"],
+        ["update", &id, "--principle", "NoSeparatorHere"],
         "update_principle_bad",
     );
     assert!(
@@ -249,7 +249,7 @@ fn e2e_lint_does_not_require_acceptance_criteria_heading() {
         .filter_map(|m| m.as_str())
         .collect();
     assert!(
-        missing.iter().all(|m| !m.contains("#")),
+        missing.iter().all(|m| !m.contains('#')),
         "no markdown headings in lint output: {missing:?}"
     );
     assert!(
