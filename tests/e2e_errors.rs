@@ -751,8 +751,13 @@ fn e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl() {
 }
 
 #[test]
-fn e2e_auto_flush_failure_is_visible_in_json_mode() {
-    let _log = common::test_log("e2e_auto_flush_failure_is_visible_in_json_mode");
+fn e2e_auto_flush_failure_fails_loudly_in_json_mode() {
+    // ADR-0001 §5.8 wave 4 (GH #435): a mutating command whose auto-flush
+    // failed must NEVER exit 0 — the export ledger (export_hashes) would
+    // answer "in sync" against a JSONL it did not record. The command still
+    // prints its normal output and the AUTO_FLUSH_FAILED warning, but exits
+    // with the sync/JSONL code (6) so scripted callers see the flush debt.
+    let _log = common::test_log("e2e_auto_flush_failure_fails_loudly_in_json_mode");
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -782,9 +787,11 @@ fn e2e_auto_flush_failure_is_visible_in_json_mode() {
         [("BEADS_JSONL", bad_jsonl.as_str())],
         "update_bad_auto_flush_jsonl",
     );
-    assert!(
-        update.status.success(),
-        "mutation should still succeed while surfacing auto-flush debt: {}",
+    assert_eq!(
+        update.status.code(),
+        Some(6),
+        "failed auto-flush must exit with the sync/JSONL code, not 0: stdout={} stderr={}",
+        update.stdout,
         update.stderr
     );
 
@@ -813,6 +820,85 @@ fn e2e_auto_flush_failure_is_visible_in_json_mode() {
         update.stdout.contains(&issue_id),
         "JSON stdout should still contain command output: {}",
         update.stdout
+    );
+}
+
+#[test]
+fn e2e_concurrent_sync_lock_holder_skips_flush_without_losing_the_ledger() {
+    // The other half of the GH #435 concurrency surface (ADR-0001 §5.8
+    // wave 4): a second process holding .sync.lock makes auto-flush SKIP.
+    // Unlike a failed flush, a skip writes nothing — JSONL and the
+    // export_hashes ledger stay mutually consistent, and `needs_flush`
+    // keeps flagging the debt — so the mutation stays exit-0, with the
+    // AUTO_FLUSH_FAILED warning as the audit trail. If this ever starts
+    // losing hash bookkeeping, the fails-loudly contract above applies.
+    let _log =
+        common::test_log("e2e_concurrent_sync_lock_holder_skips_flush_without_losing_the_ledger");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success(), "init failed: {}", init.stderr);
+
+    let create = run_br(&workspace, ["create", "Lock-held flush skip"], "create");
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+    let issue_id = parse_created_id(&create.stdout);
+
+    // Concurrent holder: keep the sync lock held across the br update.
+    let lock_path = workspace.root.join(".beads").join(".sync.lock");
+    let mut holder = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .expect("open .sync.lock as the concurrent holder");
+    holder
+        .try_lock()
+        .expect("holder acquires the exclusive sync lock");
+
+    let jsonl_before = fs::read(workspace.root.join(".beads").join("issues.jsonl"))
+        .expect("read jsonl before update");
+
+    let update = run_br(
+        &workspace,
+        [
+            "--json",
+            "--no-auto-import",
+            "update",
+            &issue_id,
+            "--priority",
+            "1",
+        ],
+        "update_under_held_sync_lock",
+    );
+
+    drop(holder);
+
+    assert!(
+        update.status.success(),
+        "a lock-skipped flush is consistent (nothing written), so exit stays 0: {}",
+        update.stderr
+    );
+    let warning_payload = extract_json_payload(&update.stderr);
+    assert!(
+        warning_payload.contains("AUTO_FLUSH_FAILED"),
+        "skip must still surface the auto-flush warning: {}",
+        update.stderr
+    );
+    assert_eq!(
+        fs::read(workspace.root.join(".beads").join("issues.jsonl")).unwrap(),
+        jsonl_before,
+        "skipped flush must not touch the JSONL"
+    );
+
+    // The mutation itself committed; the DB flags the flush debt instead of
+    // silently pretending the ledger is current.
+    let show = run_br(&workspace, ["show", &issue_id, "--json"], "show");
+    assert!(
+        show.status.success() && show.stdout.contains("\"priority\":1"),
+        "mutation must have committed under the held lock: {} {}",
+        show.stdout,
+        show.stderr
     );
 }
 

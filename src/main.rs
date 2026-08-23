@@ -870,6 +870,13 @@ fn main() {
                 &paths.jsonl_path,
                 &e,
             );
+            // ADR-0001 §5.8 wave 4 (GH #435): a failed flush can leave the
+            // export ledger (export_hashes) stale against the JSONL it just
+            // failed to record. The warning alone is not enough — scripted
+            // callers must never see exit 0 with flush debt on the table,
+            // so surface the sync/JSONL error code (6) after output and
+            // teardown, matching `br sync`'s additive-reconcile debt signal.
+            beads::output::record_pending_exit_code(6);
         }
     }
 
