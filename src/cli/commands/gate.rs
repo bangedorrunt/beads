@@ -201,6 +201,17 @@ fn resolve_gate_target(
     labels: &[String],
     priority: i32,
 ) -> Result<String> {
+    // ADR-0001 §5.3 (rpay): under `require_legal_close`, the legal-close
+    // table — not a static YAML name list — decides which verdict gates are
+    // meaningful. Any kebab-case verdict-kind gate is recordable for a
+    // transition whose rule carries `require_legal_close`; `legal_close`
+    // rejects illegal kinds at close time.
+    let legal_close_transition = |to: &str| {
+        workflow
+            .gate_rule_for(from_status, to)
+            .is_some_and(|rule| rule.require_legal_close)
+            && crate::verify::VerdictKind::from_gate_name(gate).is_some()
+    };
     let gate_is_required = |to: &str| {
         workflow
             .required_gates_for(from_status, to, labels, priority)
@@ -213,7 +224,7 @@ fn resolve_gate_target(
         if requested.is_empty() {
             return Err(BeadsError::validation("to", "--to must not be empty"));
         }
-        if !gate_is_required(requested) {
+        if !gate_is_required(requested) && !legal_close_transition(requested) {
             return Err(BeadsError::validation(
                 "to",
                 format!(
@@ -231,7 +242,9 @@ fn resolve_gate_target(
         };
         let rule_from = rule_from.trim();
         let rule_to = rule_to.trim();
-        if rule_from.eq_ignore_ascii_case(from_status) && gate_is_required(rule_to) {
+        if rule_from.eq_ignore_ascii_case(from_status)
+            && (gate_is_required(rule_to) || legal_close_transition(rule_to))
+        {
             targets
                 .entry(rule_to.to_ascii_lowercase())
                 .or_insert_with(|| rule_to.to_string());

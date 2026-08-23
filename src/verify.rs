@@ -208,9 +208,13 @@ pub fn legal_close(kind: VerdictKind, bead: &LegalCloseInput<'_>) -> bool {
                 && bead.blast == Blast::Normal
                 && !runnable
         }
-        // Row 3 — P0/P1 or High blast: independent verification only.
+        // Rows 2+3 — independent verification. Legal for the non-runnable
+        // band (ADR row 2) and for the P0/P1 / High-blast band (row 3);
+        // illegal only in the cheap band, where a loop-run
+        // CommandVerified is the exclusive proof.
         VerdictKind::UnitTestVerified | VerdictKind::LiveVerified => {
-            bead.ac == AcShape::Checkable && (bead.priority <= 1 || bead.blast == Blast::High)
+            bead.ac == AcShape::Checkable
+                && !(bead.priority >= 2 && bead.blast == Blast::Normal && runnable)
         }
         // Row 4 — judgment AC: ReviewerSigned only. Recording any other kind
         // for a judgment bead is a false verdict.
@@ -382,7 +386,12 @@ mod tests {
             VerifierBlocked | VerifierFailed => false,
             CommandVerified => ac == Checkable && priority >= 2 && blast == Normal && runnable,
             WorkerReceipt => ac == Checkable && priority >= 2 && blast == Normal && !runnable,
-            UnitTestVerified | LiveVerified => ac == Checkable && (priority <= 1 || blast == High),
+            // Rows 2+3: independent verification is legal for the
+            // non-runnable band AND the P0/P1 / High band; illegal only in
+            // the cheap band (CommandVerified-exclusive).
+            UnitTestVerified | LiveVerified => {
+                ac == Checkable && !(priority >= 2 && blast == Normal && runnable)
+            }
         }
     }
 

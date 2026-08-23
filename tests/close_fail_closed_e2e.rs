@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br};
+use common::cli::{parse_created_id, run_br, BrWorkspace, extract_json_payload};
 
 fn setup_workspace_with_issue() -> (BrWorkspace, String) {
     let workspace = BrWorkspace::new();
@@ -29,22 +29,9 @@ fn setup_workspace_with_issue() -> (BrWorkspace, String) {
         "create_issue",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
-    let stdout = create.stdout.clone();
-    let id = extract_id(&stdout);
+    let id = parse_created_id(&create.stdout);
 
     (workspace, id)
-}
-
-fn extract_id(stdout: &str) -> String {
-    for line in stdout.lines() {
-        if let Some(id) = line.split_whitespace().next()
-            && id.contains('-')
-            && !id.starts_with('#')
-        {
-            return id.to_string();
-        }
-    }
-    panic!("could not parse created issue id from: {stdout}");
 }
 
 fn record_unit_test_pass(workspace: &BrWorkspace, id: &str) {
@@ -190,13 +177,14 @@ fn bypass_without_br_operator_is_rejected() {
     );
     assert!(
         !closed.status.success(),
-        "bypass without BR_OPERATOR=1 must be rejected: {}",
-        closed.stdout
+        "bypass without BR_OPERATOR=1 must be rejected: {} {}",
+        closed.stdout,
+        closed.stderr
     );
+    let combined = format!("{}{}", closed.stdout, closed.stderr);
     assert!(
-        closed.stdout.contains("BR_OPERATOR"),
-        "rejection should name BR_OPERATOR=1: {}",
-        closed.stdout
+        combined.contains("BR_OPERATOR"),
+        "rejection should name BR_OPERATOR=1: {combined}"
     );
 }
 

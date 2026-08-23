@@ -2901,6 +2901,33 @@ pub mod catalog {
         format!("seed-{seed}-{action}")
     }
 
+    /// ADR-0001 §5.3: record a legal PASS row before a fail-closed close.
+    fn gate_report_step(issue_alias: &str, action: &str, label: &str) -> WorkspaceEvolutionStep {
+        command_step(
+            vec![
+                "gate".to_string(),
+                "report".to_string(),
+                format!("{{{issue_alias}}}"),
+                "--gate".to_string(),
+                "unit-test-verified".to_string(),
+                "--provider".to_string(),
+                "verifier".to_string(),
+                "--status".to_string(),
+                "pass".to_string(),
+                "--to".to_string(),
+                "closed".to_string(),
+                "--json".to_string(),
+            ],
+            label,
+        )
+    }
+
+    fn action_hash(action: &str) -> u64 {
+        action.bytes().fold(0xcbf29ce4u64, |acc, b| {
+            (acc ^ u64::from(b)).wrapping_mul(0x100000001b3)
+        })
+    }
+
     fn command_step(args: impl IntoIterator<Item = String>, label: &str) -> WorkspaceEvolutionStep {
         WorkspaceEvolutionStep::command(WorkspaceEvolutionCommand::new(
             ScenarioCommand::new(args).with_label(label),
@@ -2962,6 +2989,10 @@ pub mod catalog {
             format!("{{{issue_alias}}}"),
             "--reason".to_string(),
             seeded_reason(seed, action),
+            // ADR-0001 §5.3: closes cite the commit carrying the bead id.
+            // The replay seeds a deterministic SHA per action.
+            "--commit-sha".to_string(),
+            format!("{:016x}", seed ^ action_hash(action)),
             "--json".to_string(),
         ];
         if no_auto_flush {
@@ -3010,6 +3041,7 @@ pub mod catalog {
                     "link_dependency",
                 ),
                 command_step(vec!["ready".to_string(), "--json".to_string()], "ready_blocked"),
+                gate_report_step("root", "close_root", "gate_before_close_root"),
                 close_step(seed, "root", "close-root", "close_root", true),
                 stale_read_step("ready", "ready_after_close"),
                 sync_flush_step("flush_after_close"),
@@ -3023,6 +3055,7 @@ pub mod catalog {
                     ],
                     "import_after_reopen",
                 ),
+                gate_report_step("root", "close_root_final", "gate_before_close_root_final"),
                 close_step(seed, "root", "final-close-root", "close_root_final", false),
                 command_step(vec!["ready".to_string(), "--json".to_string()], "ready_final"),
                 sync_flush_step("flush_final"),
@@ -3158,6 +3191,11 @@ pub mod catalog {
             ));
 
             if iteration % 3 == 1 {
+                steps.push(gate_report_step(
+                    &alias,
+                    "stress-close",
+                    &format!("gate_before_close_stress_{iteration}"),
+                ));
                 steps.push(close_step(
                     iteration_seed,
                     &alias,

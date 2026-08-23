@@ -1901,6 +1901,9 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
+        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
+        seed_opt_out_policy(&temp);
+
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
@@ -1924,6 +1927,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-blocked".to_string(), "bd-blocker".to_string()],
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx).expect("close batch");
@@ -1951,6 +1955,9 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
+        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
+        seed_opt_out_policy(&temp);
+
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
@@ -1974,6 +1981,7 @@ mod tests {
                 "bd-close-skip".to_string(),
                 "bd-close-last".to_string(),
             ],
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         let execution = execute_route(&args, &CliOverrides::default(), &ctx, &beads_dir, false)
@@ -2002,6 +2010,9 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
+        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
+        seed_opt_out_policy(&temp);
+
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
@@ -2016,6 +2027,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-parent".to_string(), "bd-parent.1".to_string()],
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2044,6 +2056,9 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
+        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
+        seed_opt_out_policy(&temp);
+
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
@@ -2058,6 +2073,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-parent".to_string()],
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, true, &CliOverrides::default(), &ctx)
@@ -2091,6 +2107,9 @@ mod tests {
         let temp = TempDir::new().expect("tempdir");
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
+
+        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
+        seed_opt_out_policy(&temp);
 
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
@@ -2151,6 +2170,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-child".to_string()],
             reason: Some("Child done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2195,6 +2215,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-closed".to_string()],
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
 
@@ -2225,6 +2246,9 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
+        // Fail-closed default is orthogonal here; opt out to isolate the partial-batch predicate.
+        seed_opt_out_policy(&temp);
+
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
@@ -2254,6 +2278,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-blocked".to_string(), "bd-free".to_string()],
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
 
@@ -2331,10 +2356,30 @@ mod tests {
         )
         .expect("write policy");
 
+        // The fail-closed close default also applies (this policy has no
+        // workflow.gates block), so record the legal PASS row first.
+        {
+            let mut storage = SqliteStorage::open(&db_path).expect("storage");
+            storage
+                .record_scoped_gate_result(
+                    "bd-policy",
+                    "open",
+                    0,
+                    "closed",
+                    "unit-test-verified",
+                    "verifier",
+                    true,
+                    None,
+                    "verifier",
+                )
+                .expect("record legal pass");
+        }
+
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-policy".to_string()],
             reason: Some("done cleanly".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx).expect("close issue");
@@ -2346,10 +2391,16 @@ mod tests {
             .expect("active policy should record metadata even when no gate fires");
         assert!(!metadata.bypassed_policy);
         assert!(metadata.bypass_reason.is_none());
-        assert!(metadata.policy_gates_fired.is_empty());
         assert!(metadata.closed_by_agent_name.is_none());
         assert!(metadata.closed_by_harness.is_none());
         assert!(metadata.closed_by_model.is_none());
+        // The fail-closed audit trail rides in the gates JSON until schema
+        // v18 promotes close_verdict to a column.
+        let fired = serde_json::to_string(&metadata.policy_gates_fired).unwrap_or_default();
+        assert!(
+            fired.contains("close_verdict=unit-test-verified") && fired.contains("commit_sha="),
+            "expected fail-closed audit entries, got: {fired}"
+        );
     }
 
     #[test]
@@ -2384,6 +2435,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-clean".to_string(), "bd-policy-fail".to_string()],
             reason: Some("done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2429,21 +2481,45 @@ mod tests {
             .expect("create no-policy issue");
         drop(storage);
 
+        // ADR-0001 §5.3: there is no "policy-invisible" close anymore — the
+        // fail-closed default is active even without a policy.yaml. A legal
+        // close (PASS row + SHA) records its metadata audit trail.
+        {
+            let mut storage = SqliteStorage::open(&db_path).expect("storage");
+            storage
+                .record_scoped_gate_result(
+                    "bd-no-policy",
+                    "open",
+                    0,
+                    "closed",
+                    "unit-test-verified",
+                    "verifier",
+                    true,
+                    None,
+                    "verifier",
+                )
+                .expect("record legal pass");
+        }
+
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-no-policy".to_string()],
             reason: Some("done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx).expect("close issue");
 
         let storage = SqliteStorage::open(&db_path).expect("reopen storage");
+        let metadata = storage
+            .get_close_metadata("bd-no-policy")
+            .expect("read close metadata")
+            .expect("a fail-closed close records its audit trail");
+        assert!(!metadata.bypassed_policy);
+        let fired = serde_json::to_string(&metadata.policy_gates_fired).unwrap_or_default();
         assert!(
-            storage
-                .get_close_metadata("bd-no-policy")
-                .expect("read close metadata")
-                .is_none(),
-            "repos without an active policy should retain the no-observable-change invariant"
+            fired.contains("close_verdict=unit-test-verified"),
+            "expected the authorizing verdict in the audit trail, got: {fired}"
         );
     }
 
@@ -2480,6 +2556,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-wf".to_string()],
             reason: Some("done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2528,7 +2605,7 @@ mod tests {
     // =========================================================================
 
     const DEFERRED_DEPENDENTS_POLICY: &str =
-        "close_policy:\n  forbid_close_with_deferred_dependents:\n    enabled: true\n";
+        "close_policy:\n  forbid_close_with_deferred_dependents:\n    enabled: true\nworkflow:\n  strict: true\n  gates:\n    \"in_review -> closed\":\n      require_all:\n        - ci_green\n";
 
     /// Build a prereq bead `bd-prereq` and a dependent bead `bd-dep` with a
     /// `blocks` edge from the prereq (so `bd-dep` depends on `bd-prereq`),
@@ -2573,6 +2650,9 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
+        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
+        seed_opt_out_policy(&temp);
+
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
         // Deferred dependent present, but NO policy.yaml => gate is off.
@@ -2582,6 +2662,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-prereq".to_string()],
             reason: Some("done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2617,6 +2698,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-prereq".to_string()],
             reason: Some("done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2671,6 +2753,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-prereq".to_string()],
             reason: Some("done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2708,6 +2791,7 @@ mod tests {
             let args = CloseArgs {
                 ids: vec!["bd-prereq".to_string()],
                 reason: Some("done".to_string()),
+                commit_sha: test_sha(),
                 ..CloseArgs::default()
             };
             execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2732,6 +2816,7 @@ mod tests {
             let args = CloseArgs {
                 ids: vec!["bd-prereq".to_string()],
                 reason: Some("done".to_string()),
+                commit_sha: test_sha(),
                 ..CloseArgs::default()
             };
             execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2757,6 +2842,29 @@ mod tests {
       require_all:
         - ci_green
 "#;
+
+    /// Opt-out policy for tests whose intent is orthogonal to the ADR-0001
+    /// fail-closed close default (batch plumbing, dependency chains, the
+    /// deferred-dependents gate): a non-empty `workflow.gates` map means
+    /// gating is explicitly configured, so the fail-closed default stands
+    /// down and `open -> closed` stays ungated.
+    const LEGACY_OPT_OUT_POLICY_YAML: &str = GATE_POLICY_YAML;
+
+    /// Seed the opt-out policy into a workspace that already ran `br init`.
+    fn seed_opt_out_policy(temp: &TempDir) {
+        std::fs::write(
+            temp.path()
+                .join(".beads")
+                .join(crate::close_policy::POLICY_FILE_NAME),
+            LEGACY_OPT_OUT_POLICY_YAML,
+        )
+        .expect("write opt-out policy");
+    }
+
+    /// Every legal close cites the commit carrying the bead id.
+    fn test_sha() -> Option<String> {
+        Some("0123456789abcdef".to_string())
+    }
 
     fn setup_gate_repo(temp: &TempDir, status: Status) -> std::path::PathBuf {
         let ctx = OutputContext::from_flags(false, false, true);
@@ -2785,6 +2893,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2831,6 +2940,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2858,6 +2968,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2872,7 +2983,10 @@ mod tests {
 
     #[test]
     fn close_unaffected_with_no_policy_file() {
-        // Backward-compat: no policy.yaml at all → close behaves as before.
+        // ADR-0001 §5.3: the fail-closed default applies even when a
+        // workspace carries NO policy.yaml (pre-init clones, older
+        // workspaces). Closing is refused until a legal PASS row exists;
+        // recording one (plus the SHA) completes the close.
         let _lock = crate::util::test_helpers::TEST_DIR_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2880,6 +2994,13 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
         let beads_dir = temp.path().join(".beads");
+        // Simulate a workspace that predates init writing policies.
+        std::fs::remove_file(beads_dir.join(close_policy::POLICY_FILE_NAME))
+            .expect("remove policy.yaml");
+        assert!(
+            !beads_dir.join(close_policy::POLICY_FILE_NAME).exists(),
+            "precondition: this test exercises the absent-policy-file path"
+        );
         let db_path = beads_dir.join("beads.db");
         {
             let mut storage = SqliteStorage::open(&db_path).expect("storage");
@@ -2898,10 +3019,36 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
+            commit_sha: test_sha(),
             ..CloseArgs::default()
         };
+        let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
+            .expect_err("no policy file still means fail-closed close");
+        assert!(
+            err.to_string().contains("fail-closed"),
+            "expected fail-closed refusal, got: {err:?}"
+        );
+
+        // Recording a legal PASS row (P2/Normal/non-runnable VERIFY band:
+        // independent verification) completes the same close.
+        {
+            let mut storage = SqliteStorage::open(&db_path).expect("storage");
+            storage
+                .record_scoped_gate_result(
+                    "bd-1",
+                    "in_review",
+                    0,
+                    "closed",
+                    "unit-test-verified",
+                    "verifier",
+                    true,
+                    None,
+                    "verifier",
+                )
+                .expect("record legal pass");
+        }
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
-            .expect("close must succeed with no policy file");
+            .expect("close succeeds once the legal PASS row exists");
         let storage = SqliteStorage::open(&db_path).expect("reopen");
         assert_eq!(
             storage.get_issue("bd-1").unwrap().unwrap().status,
