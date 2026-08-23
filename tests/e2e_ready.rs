@@ -456,7 +456,37 @@ fn ready_respects_external_dependencies() {
         label.stderr
     );
 
-    let close = run_br(&external, ["close", &provider_id], "ext_close");
+    // The external provider is closed through the fail-closed close policy
+    // now installed by `init` (default policy.yaml): record a legal PASS gate
+    // row, then close with a commit sha. The test's subject is external
+    // status resolution, so the closure mechanics are kept minimal but legal.
+    let gate = run_br(
+        &external,
+        [
+            "gate",
+            "report",
+            &provider_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "cargo-test",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "ext_gate",
+    );
+    assert!(
+        gate.status.success(),
+        "external gate report failed: {}",
+        gate.stderr
+    );
+    let close = run_br(
+        &external,
+        ["close", &provider_id, "--commit-sha", "ext1234"],
+        "ext_close",
+    );
     assert!(
         close.status.success(),
         "external close failed: {}",
@@ -1200,6 +1230,15 @@ fn ready_default_group_is_open_only_e2e() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
+    // The default policy.yaml installed by `init` is strict and excludes
+    // `rework` from its status vocabulary; this test only needs a rework
+    // STATUS to exist (unconfigured ready group must default to [open]), so
+    // grant the status + transition without configuring a ready group.
+    write_policy(
+        &workspace,
+        "workflow:\n  statuses: [open, in_progress, closed, deferred, rework]\n  transitions:\n    open: [in_progress, closed, deferred, rework]\n    rework: [open, closed]\n",
+    );
+
     let open = run_br(&workspace, ["create", "Open work", "-t", "task"], "c_open");
     let open_id = parse_created_id(&open.stdout);
     let rework = run_br(
@@ -1242,6 +1281,14 @@ fn ready_configured_group_surfaces_rework_e2e() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
+    // The default strict policy excludes `rework`; the custom policy must be
+    // installed BEFORE the status flip and carry both the rework vocabulary
+    // and the configured ready group under test.
+    write_policy(
+        &workspace,
+        "workflow:\n  statuses: [open, in_progress, closed, deferred, rework]\n  transitions:\n    open: [in_progress, closed, deferred, rework]\n    rework: [open, closed]\n  status_groups:\n    ready: [open, rework]\n",
+    );
+
     let open = run_br(&workspace, ["create", "Open work", "-t", "task"], "c_open");
     let open_id = parse_created_id(&open.stdout);
     let rework = run_br(
@@ -1256,11 +1303,6 @@ fn ready_configured_group_surfaces_rework_e2e() {
         "to_rework",
     );
     stamp_dispatchable(&workspace);
-
-    write_policy(
-        &workspace,
-        "workflow:\n  status_groups:\n    ready: [open, rework]\n",
-    );
 
     let result = run_br(&workspace, ["ready", "--json"], "ready_configured");
     assert!(result.status.success(), "ready failed: {}", result.stderr);

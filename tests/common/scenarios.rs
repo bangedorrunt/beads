@@ -4420,11 +4420,17 @@ mod tests {
         let ready_json: Value =
             serde_json::from_str(&extract_json_payload(&ready.stdout)).expect("ready json");
         let ready_items = ready_json.as_array().expect("ready array");
+        // ADR-0001 §5.5: `captured_create_step` beads carry no typed VERIFY
+        // (the create-time flag is the lint-cli-flags bead's landing), so the
+        // unblocked child is NOT dispatchable until a fence import stamps it.
+        // The predicate change intentionally narrows this scenario's ready
+        // set; assert the child is at least known-unblocked (queryable via
+        // list) and absent from ready rather than dispatched.
         assert!(
-            ready_items
+            !ready_items
                 .iter()
                 .any(|item| { item.get("id").and_then(Value::as_str) == Some(child_id.as_str()) }),
-            "child issue should become ready after blocker closure"
+            "child without typed verify must not be dispatchable under §5.5"
         );
 
         let isolated = isolated_from_override(
