@@ -1,14 +1,12 @@
 //! E2E tests for the `lint` command.
 //!
-//! The lint command validates issue templates by checking for required sections
-//! based on issue type:
-//! - Bug: "## Steps to Reproduce", "## Acceptance Criteria"
-//! - Task/Feature: "## Acceptance Criteria"
-//! - Epic: "## Success Criteria"
+//! ADR-0001 §5.2 one brief schema: lint checks the typed work-ledger fields
+//! (non-empty `verify`; P≤2 non-empty, well-formed `principles`) and no
+//! longer requires markdown template headings.
 //!
 //! Test coverage:
 //! - Clean workspace scenarios (no warnings)
-//! - Missing sections detection by issue type
+//! - Typed-field warnings (verify, principles, kebab-case names)
 //! - Filter tests (--type, --status, specific IDs)
 //! - JSON output structure verification
 //! - Error handling (before init, invalid filters)
@@ -105,13 +103,27 @@ fn e2e_lint_clean_workspace_json_empty_results() {
 #[test]
 fn e2e_lint_issue_with_all_required_sections_passes() {
     let _log = common::test_log("e2e_lint_issue_with_all_required_sections_passes");
-    // Bug with all required sections should not trigger warnings
+    // A bug with a well-formed brief (verify + principle, no headings) lints clean
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    let description =
-        "## Steps to Reproduce\n1. Do this\n2. Then that\n\n## Acceptance Criteria\n- Bug is fixed";
-    create_issue_with_description(&workspace, "Complete bug", "bug", Some(description));
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Complete bug",
+            "--type",
+            "bug",
+            "--priority",
+            "3",
+            "--verify",
+            "cargo build",
+            "--principle",
+            "prove-it-works — lint contract carried by typed fields",
+        ],
+        "create_complete_bug",
+    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let lint = run_br(&workspace, ["lint"], "lint_complete_bug");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
@@ -123,20 +135,19 @@ fn e2e_lint_issue_with_all_required_sections_passes() {
 }
 
 // =============================================================================
-// Missing Sections Tests by Issue Type
+// Typed Brief Field Tests
 // =============================================================================
 
 #[test]
-fn e2e_lint_bug_missing_steps_to_reproduce() {
-    let _log = common::test_log("e2e_lint_bug_missing_steps_to_reproduce");
-    // Bug without "Steps to Reproduce" should warn
+fn e2e_lint_missing_verify_warns() {
+    let _log = common::test_log("e2e_lint_missing_verify_warns");
+    // An issue without a VERIFY command should warn on `verify`
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    let description = "## Acceptance Criteria\n- Bug is fixed";
-    let id = create_issue_with_description(&workspace, "Incomplete bug", "bug", Some(description));
+    let id = create_issue_with_description(&workspace, "No verify", "bug", Some("Some bug"));
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_bug_missing_steps");
+    let lint = run_br(&workspace, ["lint", "--json"], "lint_bug_missing_verify");
     // In JSON mode, exit code is always 0
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
@@ -154,24 +165,27 @@ fn e2e_lint_bug_missing_steps_to_reproduce() {
 
     let missing = issue_result.unwrap()["missing"].as_array().unwrap();
     assert!(
-        missing
-            .iter()
-            .any(|m| m.as_str().unwrap().contains("Steps to Reproduce")),
-        "expected missing 'Steps to Reproduce', got: {missing:?}"
+        missing.iter().any(|m| m.as_str().unwrap() == "verify"),
+        "expected missing 'verify', got: {missing:?}"
     );
 }
 
 #[test]
-fn e2e_lint_bug_missing_acceptance_criteria() {
-    let _log = common::test_log("e2e_lint_bug_missing_acceptance_criteria");
-    // Bug without "Acceptance Criteria" should warn
+fn e2e_lint_priority_at_or_below_two_requires_principles() {
+    let _log = common::test_log("e2e_lint_priority_at_or_below_two_requires_principles");
+    // P2 issue with verify but no principles should warn on `principles`
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    let description = "## Steps to Reproduce\n1. Step one";
-    let id = create_issue_with_description(&workspace, "Bug without AC", "bug", Some(description));
+    let create = run_br(
+        &workspace,
+        ["create", "P2 no principles", "--verify", "cargo build"],
+        "create_p2_no_principles",
+    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+    let id = parse_created_id(&create.stdout);
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_bug_missing_ac");
+    let lint = run_br(&workspace, ["lint", "--json"], "lint_p2_no_principles");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);
@@ -183,17 +197,116 @@ fn e2e_lint_bug_missing_acceptance_criteria() {
 
     let missing = issue_result.unwrap()["missing"].as_array().unwrap();
     assert!(
-        missing
-            .iter()
-            .any(|m| m.as_str().unwrap().contains("Acceptance Criteria")),
-        "expected missing 'Acceptance Criteria', got: {missing:?}"
+        missing.iter().any(|m| m.as_str().unwrap() == "principles"),
+        "expected missing 'principles', got: {missing:?}"
     );
 }
 
 #[test]
-fn e2e_lint_bug_missing_all_sections() {
+fn e2e_lint_non_kebab_principle_name_warns() {
+    let _log = common::test_log("e2e_lint_non_kebab_principle_name_warns");
+    let workspace = BrWorkspace::new();
+    init_workspace(&workspace);
+
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Bad principle name",
+            "--priority",
+            "3",
+            "--verify",
+            "cargo build",
+        ],
+        "create_bad_principle",
+    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+    let id = parse_created_id(&create.stdout);
+
+    let update = run_br(
+        &workspace,
+        [
+            "update",
+            &id,
+            "--principle",
+            "Fix Root Causes — chose storage-layer fix over CLI shim",
+        ],
+        "update_bad_principle",
+    );
+    assert!(
+        !update.status.success(),
+        "non-kebab-case citation must be rejected at the CLI boundary"
+    );
+}
+
+#[test]
+fn e2e_lint_epic_without_verify_warns() {
+    let _log = common::test_log("e2e_lint_epic_without_verify_warns");
+    // One brief schema: epics lint under the same rules as every other type
+    let workspace = BrWorkspace::new();
+    init_workspace(&workspace);
+
+    let id = create_issue_with_description(
+        &workspace,
+        "Epic without verify",
+        "epic",
+        Some("Big project"),
+    );
+
+    let lint = run_br(&workspace, ["lint", "--json"], "lint_epic_missing_sc");
+    assert!(lint.status.success(), "lint failed: {}", lint.stderr);
+
+    let json_str = extract_json_payload(&lint.stdout);
+    let json: Value = serde_json::from_str(&json_str).expect("valid JSON");
+
+    let results = json["results"].as_array().unwrap();
+    let issue_result = results.iter().find(|r| r["id"] == id);
+    assert!(issue_result.is_some(), "issue {id} not in results");
+
+    let missing = issue_result.unwrap()["missing"].as_array().unwrap();
+    assert!(
+        missing.iter().any(|m| m.as_str().unwrap() == "verify"),
+        "expected missing 'verify' for epic, got: {missing:?}"
+    );
+}
+
+#[test]
+fn e2e_lint_chore_with_well_formed_brief_passes() {
+    let _log = common::test_log("e2e_lint_chore_with_well_formed_brief_passes");
+    let workspace = BrWorkspace::new();
+    init_workspace(&workspace);
+
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Simple chore",
+            "--type",
+            "chore",
+            "--priority",
+            "3",
+            "--verify",
+            "cargo build",
+            "--principle",
+            "subtract-before-you-add — no extra template machinery",
+        ],
+        "create_chore_clean",
+    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+
+    let lint = run_br(&workspace, ["lint"], "lint_chore_no_sections");
+    assert!(lint.status.success(), "lint failed: {}", lint.stderr);
+    assert!(
+        lint.stdout.contains("No template warnings found"),
+        "chore with a well-formed brief should be clean, got: {}",
+        lint.stdout
+    );
+}
+
+#[test]
+fn e2e_lint_bug_missing_all_typed_fields() {
     let _log = common::test_log("e2e_lint_bug_missing_all_sections");
-    // Bug without any required sections should have 2 warnings
+    // Bare P2 bug: both verify and principles warn
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -212,84 +325,41 @@ fn e2e_lint_bug_missing_all_sections() {
     let warnings = issue_result.unwrap()["warnings"].as_i64().unwrap();
     assert_eq!(
         warnings, 2,
-        "expected 2 warnings for bug missing all sections"
+        "expected 2 warnings for bug missing verify and principles"
     );
 }
 
 #[test]
-fn e2e_lint_task_missing_acceptance_criteria() {
+fn e2e_lint_heading_free_bug_with_brief_passes() {
     let _log = common::test_log("e2e_lint_task_missing_acceptance_criteria");
-    // Task without "Acceptance Criteria" should warn
+    // Headings are dead: a bug whose description carries no headings but
+    // whose typed fields satisfy the brief lints clean
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    let id =
-        create_issue_with_description(&workspace, "Task without AC", "task", Some("Just do it"));
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Heading-free task",
+            "--priority",
+            "3",
+            "--verify",
+            "cargo test --offline lint",
+            "--principle",
+            "prove-it-works — typed fields, not heading grep",
+        ],
+        "create_heading_free_task",
+    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_task_missing_ac");
+    let lint = run_br(&workspace, ["lint", "--json"], "lint_task_no_headings");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);
     let json: Value = serde_json::from_str(&json_str).expect("valid JSON");
 
-    let results = json["results"].as_array().unwrap();
-    let issue_result = results.iter().find(|r| r["id"] == id);
-    assert!(issue_result.is_some(), "issue {id} not in results");
-
-    let missing = issue_result.unwrap()["missing"].as_array().unwrap();
-    assert!(
-        missing
-            .iter()
-            .any(|m| m.as_str().unwrap().contains("Acceptance Criteria")),
-        "expected missing 'Acceptance Criteria', got: {missing:?}"
-    );
-}
-
-#[test]
-fn e2e_lint_epic_missing_success_criteria() {
-    let _log = common::test_log("e2e_lint_epic_missing_success_criteria");
-    // Epic without "Success Criteria" should warn
-    let workspace = BrWorkspace::new();
-    init_workspace(&workspace);
-
-    let id =
-        create_issue_with_description(&workspace, "Epic without SC", "epic", Some("Big project"));
-
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_epic_missing_sc");
-    assert!(lint.status.success(), "lint failed: {}", lint.stderr);
-
-    let json_str = extract_json_payload(&lint.stdout);
-    let json: Value = serde_json::from_str(&json_str).expect("valid JSON");
-
-    let results = json["results"].as_array().unwrap();
-    let issue_result = results.iter().find(|r| r["id"] == id);
-    assert!(issue_result.is_some(), "issue {id} not in results");
-
-    let missing = issue_result.unwrap()["missing"].as_array().unwrap();
-    assert!(
-        missing
-            .iter()
-            .any(|m| m.as_str().unwrap().contains("Success Criteria")),
-        "expected missing 'Success Criteria', got: {missing:?}"
-    );
-}
-
-#[test]
-fn e2e_lint_chore_no_required_sections() {
-    let _log = common::test_log("e2e_lint_chore_no_required_sections");
-    // Chore type has no required sections, should never warn
-    let workspace = BrWorkspace::new();
-    init_workspace(&workspace);
-
-    create_issue_with_description(&workspace, "Simple chore", "chore", Some("Just cleanup"));
-
-    let lint = run_br(&workspace, ["lint"], "lint_chore_no_sections");
-    assert!(lint.status.success(), "lint failed: {}", lint.stderr);
-    assert!(
-        lint.stdout.contains("No template warnings found"),
-        "chore should not have required sections, got: {}",
-        lint.stdout
-    );
+    assert_eq!(json["total"], 0, "heading-free brief must not warn");
 }
 
 // =============================================================================
@@ -337,9 +407,31 @@ fn e2e_lint_filter_by_status_all() {
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    // Create and close a bug without required sections
+    // Create and close a bug without required fields
     let bug_id = create_issue_with_description(&workspace, "Closed bug", "bug", Some("Closed"));
-    let close = run_br(&workspace, ["close", &bug_id], "close_bug");
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &bug_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e-lint-test",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_report_bug",
+    );
+    assert!(gate.status.success(), "gate report failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        ["close", &bug_id, "--commit-sha", "abc1234"],
+        "close_bug",
+    );
     assert!(close.status.success(), "close failed: {}", close.stderr);
     let deferred_bug =
         create_issue_with_description(&workspace, "Deferred bug", "bug", Some("Deferred"));
@@ -517,10 +609,12 @@ fn e2e_lint_json_output_structure() {
             .expect("result missing 'suggestions' array");
         assert!(
             suggestions.iter().any(|suggestion| {
-                suggestion["section"].as_str() == Some("## Steps to Reproduce")
-                    && suggestion["hint"].as_str() == Some("Describe how to reproduce the bug")
+                suggestion["section"].as_str() == Some("verify")
+                    && suggestion["hint"]
+                        .as_str()
+                        .is_some_and(|hint| hint.contains("VERIFY"))
             }),
-            "result suggestions should include section-specific hints: {suggestions:?}"
+            "result suggestions should include the verify hint: {suggestions:?}"
         );
     }
 }
@@ -566,11 +660,11 @@ fn e2e_lint_text_output_warnings() {
     );
     assert!(
         lint.stdout.contains("Missing") || lint.stdout.contains("warning"),
-        "text output should indicate missing sections"
+        "text output should indicate missing fields"
     );
     assert!(
-        lint.stdout.contains("Describe how to reproduce the bug"),
-        "text output should include section hint"
+        lint.stdout.contains("VERIFY"),
+        "text output should include the verify hint"
     );
 }
 
@@ -663,26 +757,43 @@ fn e2e_lint_unknown_type_filter_no_matches() {
 }
 
 // =============================================================================
-// Case Insensitivity Tests
+// Heading Independence Tests
 // =============================================================================
 
 #[test]
-fn e2e_lint_case_insensitive_section_matching() {
+fn e2e_lint_ignores_markdown_headings_entirely() {
     let _log = common::test_log("e2e_lint_case_insensitive_section_matching");
-    // Section headings should match case-insensitively
+    // Headings neither satisfy nor trigger warnings: only typed fields count.
+    // A P3 bug with headings but no verify still warns on verify.
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    // Use lowercase headings
-    let description = "## steps to reproduce\n1. Steps\n\n## acceptance criteria\n- Done";
-    create_issue_with_description(&workspace, "Lowercase bug", "bug", Some(description));
+    let description = "## Steps to Reproduce\n1. Steps\n\n## Acceptance Criteria\n- Done";
+    let id = create_issue_with_description(
+        &workspace,
+        "Headings but no verify",
+        "bug",
+        Some(description),
+    );
 
-    let lint = run_br(&workspace, ["lint"], "lint_case_insensitive");
+    let lint = run_br(&workspace, ["lint", "--json"], "lint_case_insensitive");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
+
+    let json_str = extract_json_payload(&lint.stdout);
+    let json: Value = serde_json::from_str(&json_str).expect("valid JSON");
+
+    let results = json["results"].as_array().unwrap();
+    let issue_result = results.iter().find(|r| r["id"] == id);
+    assert!(issue_result.is_some(), "issue {id} not in results");
+
+    let missing = issue_result.unwrap()["missing"].as_array().unwrap();
     assert!(
-        lint.stdout.contains("No template warnings found"),
-        "case-insensitive matching should work, got: {}",
-        lint.stdout
+        missing.iter().any(|m| m.as_str().unwrap() == "verify"),
+        "headings must not substitute for verify, got: {missing:?}"
+    );
+    assert!(
+        missing.iter().all(|m| !m.as_str().unwrap().contains('#')),
+        "no markdown headings in lint output: {missing:?}"
     );
 }
 

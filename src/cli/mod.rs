@@ -1128,6 +1128,43 @@ pub struct CreateArgs {
     #[arg(long = "agent-context")]
     pub agent_context: Option<String>,
 
+    // ADR-0001 §5.2 typed work-ledger fields. These write typed columns,
+    // never description markdown.
+    /// VERIFY command that proves this bead done (single line).
+    #[arg(long = "verify", value_name = "CMD", allow_hyphen_values = true)]
+    pub verify: Option<String>,
+
+    /// Cite an engineering principle: 'name — decision' (repeatable). The
+    /// name must be kebab-case; the decision is the concrete choice it
+    /// changed on this bead.
+    #[arg(
+        long = "principle",
+        value_name = "NAME — DECISION",
+        allow_hyphen_values = true
+    )]
+    pub principle: Vec<String>,
+
+    /// Wave index this bead belongs to.
+    #[arg(long = "wave", value_name = "N")]
+    pub wave: Option<u32>,
+
+    /// Swarm pin (adjective+noun) that owns this bead.
+    #[arg(long = "pin", value_name = "PIN")]
+    pub pin: Option<String>,
+
+    /// Commit SHA carrying the durable work signal for this bead.
+    #[arg(long = "commit-sha", value_name = "SHA")]
+    pub commit_sha: Option<String>,
+
+    /// Blast-radius band (default normal; high forces the P0/P1 band at close).
+    #[arg(long = "blast", value_name = "normal|high")]
+    pub blast: Option<String>,
+
+    /// Acceptance-criteria shape (default checkable when --verify is given;
+    /// judgment only without a VERIFY command).
+    #[arg(long = "ac", value_name = "checkable|judgment")]
+    pub ac: Option<String>,
+
     /// Preview without creating
     #[arg(long)]
     pub dry_run: bool,
@@ -1311,6 +1348,42 @@ pub struct UpdateArgs {
     /// in `.beads/config.yaml`.
     #[arg(long = "agent-context")]
     pub agent_context: Option<String>,
+
+    // ADR-0001 §5.2 typed work-ledger fields. These write typed columns,
+    // never description markdown. `--principle` appends citations.
+    /// Set the VERIFY command that proves this bead done (empty clears).
+    #[arg(long = "verify", value_name = "CMD", allow_hyphen_values = true)]
+    pub verify: Option<String>,
+
+    /// Append an engineering-principle citation: 'name — decision'
+    /// (repeatable). The name must be kebab-case; the decision is the
+    /// concrete choice it changed on this bead.
+    #[arg(
+        long = "principle",
+        value_name = "NAME — DECISION",
+        allow_hyphen_values = true
+    )]
+    pub principle: Vec<String>,
+
+    /// Set the wave index (empty clears).
+    #[arg(long = "wave", value_name = "N")]
+    pub wave: Option<String>,
+
+    /// Set the swarm pin (adjective+noun) that owns this bead (empty clears).
+    #[arg(long = "pin", value_name = "PIN")]
+    pub pin: Option<String>,
+
+    /// Set the commit SHA carrying the durable work signal (empty clears).
+    #[arg(long = "commit-sha", value_name = "SHA")]
+    pub commit_sha: Option<String>,
+
+    /// Set the blast-radius band (normal|high).
+    #[arg(long = "blast", value_name = "normal|high")]
+    pub blast: Option<String>,
+
+    /// Set the acceptance-criteria shape (checkable|judgment).
+    #[arg(long = "ac", value_name = "checkable|judgment")]
+    pub ac: Option<String>,
 
     /// Set `closed_by_session` when closing
     #[arg(long)]

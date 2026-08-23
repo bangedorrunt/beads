@@ -1,6 +1,8 @@
 //! Lint command implementation.
 //!
-//! Checks issues for missing recommended template sections based on issue type.
+//! ADR-0001 §5.2: one brief schema. Lint checks the typed work-ledger fields —
+//! non-empty `verify`, and non-empty well-formed `principles` for P≤2 — and
+//! no longer requires markdown template headings.
 
 use super::{
     acquire_routed_workspace_write_lock, auto_import_storage_ctx_if_stale,
@@ -61,33 +63,6 @@ impl LintSummary {
         }
     }
 }
-
-#[derive(Debug, Clone, Copy)]
-struct RequiredSection {
-    heading: &'static str,
-    hint: &'static str,
-}
-
-const BUG_SECTIONS: [RequiredSection; 2] = [
-    RequiredSection {
-        heading: "## Steps to Reproduce",
-        hint: "Describe how to reproduce the bug",
-    },
-    RequiredSection {
-        heading: "## Acceptance Criteria",
-        hint: "Define criteria to verify the fix",
-    },
-];
-
-const TASK_SECTIONS: [RequiredSection; 1] = [RequiredSection {
-    heading: "## Acceptance Criteria",
-    hint: "Define criteria to verify completion",
-}];
-
-const EPIC_SECTIONS: [RequiredSection; 1] = [RequiredSection {
-    heading: "## Success Criteria",
-    hint: "Define high-level success criteria",
-}];
 
 /// Execute the lint command.
 ///
@@ -417,27 +392,66 @@ fn lint_issues(issues: &[Issue]) -> LintSummary {
     }
 }
 
+/// Kebab-case principle name: lowercase alphanumeric segments joined by
+/// single hyphens (`^[a-z0-9]+(-[a-z0-9]+)*$`).
+fn is_kebab_case(name: &str) -> bool {
+    !name.is_empty()
+        && name.split('-').all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
 fn lint_issue(issue: &Issue) -> Option<LintResult> {
-    let required = required_sections(&issue.issue_type);
-    if required.is_empty() {
+    let mut problems: Vec<LintProblem> = Vec::new();
+
+    if issue
+        .verify
+        .as_deref()
+        .is_none_or(|verify| verify.trim().is_empty())
+    {
+        problems.push(LintProblem {
+            section: "verify".to_string(),
+            hint: "Set a VERIFY command that proves this bead done (br update --verify)"
+                .to_string(),
+        });
+    }
+
+    if issue.priority <= crate::model::Priority::MEDIUM && issue.principles.is_empty() {
+        problems.push(LintProblem {
+            section: "principles".to_string(),
+            hint: "Cite at least one engineering principle with the decision it changed (br update --principle 'name — decision')".to_string(),
+        });
+    }
+
+    for citation in &issue.principles {
+        if !is_kebab_case(&citation.name) {
+            problems.push(LintProblem {
+                section: format!("principles:{}", citation.name),
+                hint: "Principle names are kebab-case (lowercase alphanumeric, single hyphens)"
+                    .to_string(),
+            });
+        }
+        if citation.decision.trim().is_empty() {
+            problems.push(LintProblem {
+                section: format!("principles:{}", citation.name),
+                hint: "Each principle cites the concrete decision it changed; empty decisions are skipped".to_string(),
+            });
+        }
+    }
+
+    if problems.is_empty() {
         return None;
     }
 
-    let description = issue.description.as_deref().unwrap_or("");
-    let missing = missing_sections(description, required);
-    if missing.is_empty() {
-        return None;
-    }
-
-    let missing_headings = missing
+    let missing = problems.iter().map(|p| p.section.clone()).collect();
+    let suggestions = problems
         .iter()
-        .map(|section| section.heading.to_string())
-        .collect();
-    let suggestions = missing
-        .iter()
-        .map(|section| LintSuggestion {
-            section: section.heading.to_string(),
-            hint: section.hint.to_string(),
+        .map(|p| LintSuggestion {
+            section: p.section.clone(),
+            hint: p.hint.clone(),
         })
         .collect();
 
@@ -445,42 +459,16 @@ fn lint_issue(issue: &Issue) -> Option<LintResult> {
         id: issue.id.clone(),
         title: issue.title.clone(),
         issue_type: issue.issue_type.as_str().to_string(),
-        warnings: missing.len(),
-        missing: missing_headings,
+        warnings: problems.len(),
+        missing,
         suggestions,
     })
 }
 
-const fn required_sections(issue_type: &IssueType) -> &'static [RequiredSection] {
-    match issue_type {
-        IssueType::Bug => &BUG_SECTIONS,
-        IssueType::Task | IssueType::Feature => &TASK_SECTIONS,
-        IssueType::Epic => &EPIC_SECTIONS,
-        _ => &[],
-    }
-}
-
-fn missing_sections(description: &str, required: &[RequiredSection]) -> Vec<RequiredSection> {
-    let desc_lower = description.to_lowercase();
-    let mut missing = Vec::new();
-
-    for section in required {
-        let heading_text = strip_heading_prefix(section.heading);
-        let heading_lower = heading_text.to_lowercase();
-        if !desc_lower.contains(&heading_lower) {
-            missing.push(*section);
-        }
-    }
-
-    missing
-}
-
-fn strip_heading_prefix(heading: &str) -> &str {
-    let trimmed = heading.trim();
-    trimmed
-        .strip_prefix("## ")
-        .or_else(|| trimmed.strip_prefix("# "))
-        .unwrap_or(trimmed)
+#[derive(Debug, Clone)]
+struct LintProblem {
+    section: String,
+    hint: String,
 }
 
 #[cfg(test)]
@@ -544,34 +532,105 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_sections_for_bug() {
-        let issue = make_issue(IssueType::Bug, Some("Bug report"));
-        let result = lint_issue(&issue).expect("lint result");
-        assert_eq!(result.warnings, 2);
-        assert!(
-            result
-                .missing
-                .contains(&"## Steps to Reproduce".to_string())
-        );
-        assert!(
-            result
-                .missing
-                .contains(&"## Acceptance Criteria".to_string())
-        );
-        assert!(result.suggestions.iter().any(|suggestion| {
-            suggestion.section == "## Steps to Reproduce"
-                && suggestion.hint == "Describe how to reproduce the bug"
-        }));
-        assert!(result.suggestions.iter().any(|suggestion| {
-            suggestion.section == "## Acceptance Criteria"
-                && suggestion.hint == "Define criteria to verify the fix"
-        }));
+    fn lint_does_not_require_acceptance_criteria_heading() {
+        // ADR-0001 §5.2: heading sections are dead; a bug whose description
+        // carries no "## Acceptance Criteria" / "## Steps to Reproduce" text
+        // lints clean as long as the typed fields satisfy the brief schema.
+        let mut issue = make_issue(IssueType::Bug, Some("Bug report with no headings"));
+        issue.priority = crate::model::Priority::HIGH;
+        issue.verify = Some("cargo test --offline lint".to_string());
+        issue.principles = vec![crate::model::PrincipleCitation {
+            name: "prove-it-works".to_string(),
+            decision: "lint contract carried by unit tests, not heading grep".to_string(),
+        }];
+        assert!(lint_issue(&issue).is_none());
     }
 
     #[test]
-    fn test_required_sections_present_case_insensitive() {
-        let description = "## steps to reproduce\n- foo\n# acceptance criteria\n- bar";
-        let issue = make_issue(IssueType::Bug, Some(description));
+    fn lint_requires_non_empty_verify() {
+        let mut missing = make_issue(IssueType::Task, None);
+        missing.priority = crate::model::Priority::LOW;
+        let result = lint_issue(&missing).expect("lint result");
+        assert_eq!(result.warnings, 1);
+        assert!(result.missing.contains(&"verify".to_string()));
+
+        let mut blank = make_issue(IssueType::Task, None);
+        blank.priority = crate::model::Priority::LOW;
+        blank.verify = Some("   ".to_string());
+        let result = lint_issue(&blank).expect("lint result");
+        assert_eq!(result.warnings, 1);
+        assert!(result.missing.contains(&"verify".to_string()));
+    }
+
+    #[test]
+    fn lint_requires_principles_for_priority_at_or_below_two() {
+        let p2 = make_issue(IssueType::Task, None);
+        let mut p2 = p2;
+        p2.verify = Some("cargo test".to_string());
+        let result = lint_issue(&p2).expect("lint result");
+        assert_eq!(result.warnings, 1);
+        assert!(result.missing.contains(&"principles".to_string()));
+    }
+
+    #[test]
+    fn lint_skips_principles_requirement_above_priority_two() {
+        let mut p3 = make_issue(IssueType::Task, None);
+        p3.verify = Some("cargo test".to_string());
+        p3.priority = crate::model::Priority::LOW;
+        assert!(lint_issue(&p3).is_none());
+    }
+
+    #[test]
+    fn lint_flags_non_kebab_case_principle_names() {
+        let mut issue = make_issue(IssueType::Task, None);
+        issue.verify = Some("cargo test".to_string());
+        issue.principles = vec![crate::model::PrincipleCitation {
+            name: "Fix Root Causes".to_string(),
+            decision: "chose storage-layer fix over CLI shim".to_string(),
+        }];
+        let result = lint_issue(&issue).expect("lint result");
+        assert_eq!(result.warnings, 1);
+        assert!(
+            result
+                .missing
+                .iter()
+                .any(|m| m.starts_with("principles:") && m.contains("Fix Root Causes"))
+        );
+        assert!(
+            result
+                .suggestions
+                .iter()
+                .any(|s| s.hint.contains("kebab-case"))
+        );
+    }
+
+    #[test]
+    fn lint_flags_empty_principle_decisions() {
+        let mut issue = make_issue(IssueType::Task, None);
+        issue.verify = Some("cargo test".to_string());
+        issue.principles = vec![
+            crate::model::PrincipleCitation {
+                name: "fix-root-causes".to_string(),
+                decision: String::new(),
+            },
+            crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "   ".to_string(),
+            },
+        ];
+        let result = lint_issue(&issue).expect("lint result");
+        assert_eq!(result.warnings, 2);
+    }
+
+    #[test]
+    fn lint_accepts_well_formed_brief() {
+        let mut issue = make_issue(IssueType::Bug, Some("## VERIFY\ncargo test"));
+        issue.priority = crate::model::Priority::CRITICAL;
+        issue.verify = Some("timeout 900 cargo test --offline lint".to_string());
+        issue.principles = vec![crate::model::PrincipleCitation {
+            name: "subtract-before-you-add".to_string(),
+            decision: "dual lint templates die; one brief schema".to_string(),
+        }];
         assert!(lint_issue(&issue).is_none());
     }
 

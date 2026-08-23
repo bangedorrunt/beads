@@ -7163,6 +7163,61 @@ impl SqliteStorage {
             );
         }
 
+        // ADR-0001 §5.2 typed brief fields. `principles` is a JSON document
+        // column; ac_shape/blast are TEXT enums (same encoding as create).
+        if let Some(ref val) = updates.verify {
+            issue.verify.clone_from(val);
+            add_update(
+                "verify",
+                val.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
+            );
+        }
+        if !updates.principles_append.is_empty() {
+            issue
+                .principles
+                .extend(updates.principles_append.iter().cloned());
+            add_update(
+                "principles",
+                SqliteValue::from(
+                    serde_json::to_string(&issue.principles)
+                        .map_err(|e| BeadsError::Validation {
+                            field: "principles".to_string(),
+                            reason: format!("citation serialization failed: {e}"),
+                        })?
+                        .as_str(),
+                ),
+            );
+        }
+        if let Some(ref val) = updates.wave {
+            issue.wave = *val;
+            add_update(
+                "wave",
+                val.map_or(SqliteValue::Null, |w| SqliteValue::from(i64::from(w))),
+            );
+        }
+        if let Some(ref val) = updates.pin {
+            issue.pin.clone_from(val);
+            add_update(
+                "pin",
+                val.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
+            );
+        }
+        if let Some(ref val) = updates.commit_sha {
+            issue.commit_sha.clone_from(val);
+            add_update(
+                "commit_sha",
+                val.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
+            );
+        }
+        if let Some(val) = updates.blast {
+            issue.blast = val;
+            add_update("blast", SqliteValue::from(blast_as_str(val)));
+        }
+        if let Some(val) = updates.ac_shape {
+            issue.ac_shape = val;
+            add_update("ac_shape", SqliteValue::from(ac_shape_as_str(val)));
+        }
+
         if set_clauses.is_empty() {
             return Ok(());
         }
@@ -8146,7 +8201,11 @@ impl SqliteStorage {
         }
 
         let mut sql = String::from(
-            "SELECT id, title, description, status, issue_type, created_at, updated_at
+            // ADR-0001 §5.2: lint reads the typed brief fields (priority band
+            // for the principles rule, verify/principles for the schema), so
+            // this projection carries them instead of re-hydrating full rows.
+            "SELECT id, title, description, status, priority, issue_type, \
+             created_at, updated_at, verify, principles
              FROM issues WHERE 1=1",
         );
         let mut params = Vec::new();
@@ -15317,6 +15376,12 @@ impl SqliteStorage {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string)
         };
+        #[allow(clippy::cast_possible_truncation)]
+        let get_opt_i32 = |idx: usize| -> Option<i32> {
+            row.get(idx)
+                .and_then(SqliteValue::as_integer)
+                .map(|value| value as i32)
+        };
 
         Ok(Issue {
             id: get_str(0),
@@ -15327,14 +15392,14 @@ impl SqliteStorage {
             acceptance_criteria: None,
             notes: None,
             status: parse_status(row.get(3).and_then(SqliteValue::as_text)),
-            priority: Priority::default(),
-            issue_type: parse_issue_type(row.get(4).and_then(SqliteValue::as_text)),
+            priority: Priority(get_opt_i32(4).unwrap_or_else(|| Priority::default().0)),
+            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text)),
             assignee: None,
             owner: None,
             estimated_minutes: None,
-            created_at: parse_datetime_value(row.get(5))?,
+            created_at: parse_datetime_value(row.get(6))?,
             created_by: None,
-            updated_at: parse_datetime_value(row.get(6))?,
+            updated_at: parse_datetime_value(row.get(7))?,
             closed_at: None,
             close_reason: None,
             closed_by_session: None,
@@ -15349,8 +15414,8 @@ impl SqliteStorage {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
-            verify: None,
-            principles: Vec::new(),
+            verify: get_non_empty_str(8),
+            principles: parse_principles_json(get_str(9)),
             wave: None,
             pin: None,
             commit_sha: None,
@@ -15884,6 +15949,17 @@ pub struct IssueUpdate {
     /// New comment bound to this status transition. Storage validates and
     /// inserts it in the same transaction as the status change.
     pub transition_comment: Option<String>,
+    /// ADR-0001 §5.2 typed brief fields. `Some(Some(v))` sets, `Some(None)`
+    /// clears (where clearing is meaningful); `None` means "do not touch".
+    /// `principles_append` extends the existing citations instead of
+    /// replacing them (`br update --principle` is append-only).
+    pub verify: Option<Option<String>>,
+    pub principles_append: Vec<crate::model::PrincipleCitation>,
+    pub wave: Option<Option<u32>>,
+    pub pin: Option<Option<String>>,
+    pub commit_sha: Option<Option<String>>,
+    pub blast: Option<crate::model::Blast>,
+    pub ac_shape: Option<crate::model::AcShape>,
     /// Audited reason for explicitly bypassing workflow transition gates and
     /// required fields. A non-empty value skips those checks for this issue and
     /// records a `workflow_policy_bypassed` event in the same transaction.
@@ -15928,6 +16004,13 @@ impl IssueUpdate {
             && self.delete_reason.is_none()
             && self.transition_comment.is_none()
             && self.workflow_policy_bypass_reason.is_none()
+            && self.verify.is_none()
+            && self.principles_append.is_empty()
+            && self.wave.is_none()
+            && self.pin.is_none()
+            && self.commit_sha.is_none()
+            && self.blast.is_none()
+            && self.ac_shape.is_none()
             && !self.expect_unassigned
     }
 }
@@ -16094,6 +16177,22 @@ fn parse_ac_shape(raw: Option<&str>) -> crate::model::AcShape {
     match raw {
         Some("judgment") => crate::model::AcShape::Judgment,
         _ => crate::model::AcShape::Checkable,
+    }
+}
+
+/// Encode the v18 ac_shape TEXT enum (inverse of [`parse_ac_shape`]).
+fn ac_shape_as_str(value: crate::model::AcShape) -> &'static str {
+    match value {
+        crate::model::AcShape::Checkable => "checkable",
+        crate::model::AcShape::Judgment => "judgment",
+    }
+}
+
+/// Encode the v18 blast TEXT enum (inverse of [`parse_blast`]).
+fn blast_as_str(value: crate::model::Blast) -> &'static str {
+    match value {
+        crate::model::Blast::Normal => "normal",
+        crate::model::Blast::High => "high",
     }
 }
 
@@ -31311,6 +31410,9 @@ mod tests {
         );
     }
 
+    // Fixture-heavy by design: the inline schema must mirror the real v18
+    // issues table so the NULL-legacy-flags path is exercised end to end.
+    #[allow(clippy::too_many_lines)]
     #[test]
     fn test_get_ready_issues_treats_null_legacy_flags_as_false() {
         let conn = Connection::open(":memory:").unwrap();

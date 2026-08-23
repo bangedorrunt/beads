@@ -1753,14 +1753,23 @@ fn e2e_lint_clean_output_when_no_warnings() {
     let init = run_br(&workspace, ["init"], "lint_clean_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let description = "## Acceptance Criteria\n- done";
-    create_issue_with_description(
+    let create = run_br(
         &workspace,
-        "Task with criteria",
-        Some("task"),
-        Some(description),
+        [
+            "create",
+            "Task with a brief",
+            "--type",
+            "task",
+            "--priority",
+            "3",
+            "--verify",
+            "cargo build",
+            "--principle",
+            "prove-it-works — typed fields carry the lint contract",
+        ],
         "lint_clean_create",
     );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let lint = run_br(&workspace, ["lint"], "lint_clean_run");
     assert!(
@@ -1787,6 +1796,7 @@ fn e2e_lint_bug_missing_sections_json() {
     );
 
     let json = run_lint_json(&workspace, vec!["lint".to_string()], "lint_bug_json");
+    // Bare P2 bug: both verify and principles warn
     assert_eq!(json["total"].as_u64(), Some(2));
     assert_eq!(json["issues"].as_u64(), Some(1));
     let missing = json["results"][0]["missing"]
@@ -1796,8 +1806,8 @@ fn e2e_lint_bug_missing_sections_json() {
         .iter()
         .filter_map(|value| value.as_str().map(str::to_string))
         .collect();
-    assert!(missing_text.contains(&"## Steps to Reproduce".to_string()));
-    assert!(missing_text.contains(&"## Acceptance Criteria".to_string()));
+    assert!(missing_text.contains(&"verify".to_string()));
+    assert!(missing_text.contains(&"principles".to_string()));
 }
 
 #[test]
@@ -1823,8 +1833,9 @@ fn e2e_lint_multiple_issues_aggregate_warnings() {
     );
 
     let json = run_lint_json(&workspace, vec!["lint".to_string()], "lint_multi_json");
+    // Two bare P2 issues, 2 warnings each (verify + principles)
     assert_eq!(json["issues"].as_u64(), Some(2));
-    assert_eq!(json["total"].as_u64(), Some(3));
+    assert_eq!(json["total"].as_u64(), Some(4));
 }
 
 #[test]
@@ -1862,9 +1873,31 @@ fn e2e_lint_status_all_includes_closed() {
         "lint_closed_bug",
     );
 
+    let close_gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e-errors-test",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "lint_closed_gate",
+    );
+    assert!(
+        close_gate.status.success(),
+        "gate report failed: {}",
+        close_gate.stderr
+    );
     let close = run_br(
         &workspace,
-        ["close", &id, "--reason", "done"],
+        ["close", &id, "--reason", "done", "--commit-sha", "abc1234"],
         "lint_closed_close",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -1944,8 +1977,10 @@ fn e2e_lint_ids_only_lints_selected() {
 }
 
 #[test]
-fn e2e_lint_skips_types_without_required_sections() {
+fn e2e_lint_chore_lints_under_one_brief_schema() {
     let _log = common::test_log("e2e_lint_skips_types_without_required_sections");
+    // ADR-0001 §5.2: one brief schema — chores lint under the same typed
+    // rules as every other type (bare chore warns on verify + principles).
     let workspace = BrWorkspace::new();
     let init = run_br(&workspace, ["init"], "lint_skip_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
@@ -1959,8 +1994,8 @@ fn e2e_lint_skips_types_without_required_sections() {
     );
 
     let json = run_lint_json(&workspace, vec!["lint".to_string()], "lint_skip_json");
-    assert_eq!(json["issues"].as_u64(), Some(0));
-    assert_eq!(json["total"].as_u64(), Some(0));
+    assert_eq!(json["issues"].as_u64(), Some(1));
+    assert_eq!(json["total"].as_u64(), Some(2));
 }
 
 // === Structured JSON Error Output Tests ===

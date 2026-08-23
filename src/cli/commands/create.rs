@@ -456,6 +456,16 @@ pub fn create_issue_impl(
 
     let due_at = parse_optional_date(args.due.as_deref())?;
     let defer_until = parse_optional_date(args.defer.as_deref())?;
+    // ADR-0001 §5.2 typed brief fields: parse/validate BEFORE any mutation
+    // so invalid input leaves no issue row, event, dirty marker, or JSONL
+    // record behind. Reuses the update parsers so create and update accept
+    // identical forms.
+    let principles = super::update::parse_principle_args(&args.principle)?;
+    let blast = super::update::parse_blast_arg(args.blast.as_deref())?.unwrap_or_default();
+    let ac_shape = super::update::resolve_ac_shape(
+        args.verify.as_deref().is_some_and(|v| !v.trim().is_empty()),
+        super::update::parse_ac_arg(args.ac.as_deref())?,
+    )?;
     // Parse/validate the governing agent context BEFORE any mutation so
     // invalid context leaves no issue row, event, dirty marker, or JSONL
     // record behind (beads#408). Reuses the update parser so create and
@@ -513,16 +523,15 @@ pub fn create_issue_impl(
 
         // 4. Construct Issue
         let mut issue = Issue {
-            // Schema v18 (beads_rust-schema-v18-uyb3): defaults; typed fields are
-            // set explicitly by later waves' surfaces.
-            verify: None,
-            principles: Vec::new(),
-            wave: None,
-            pin: None,
-            commit_sha: None,
+            // ADR-0001 §5.2 typed brief fields, parsed and validated above.
+            verify: args.verify.clone().filter(|v| !v.trim().is_empty()),
+            principles: principles.clone(),
+            wave: args.wave,
+            pin: args.pin.clone(),
+            commit_sha: args.commit_sha.clone(),
             close_verdict: None,
-            ac_shape: crate::model::AcShape::Checkable,
-            blast: crate::model::Blast::Normal,
+            ac_shape,
+            blast,
             id: id.clone(),
             title: title.clone(),
             description: description.clone(),
@@ -1571,6 +1580,13 @@ mod tests {
             external_ref: None,
             status: None,
             ephemeral: false,
+            verify: None,
+            principle: vec![],
+            wave: None,
+            pin: None,
+            commit_sha: None,
+            blast: None,
+            ac: None,
             dry_run: false,
             silent: false,
             file: None,

@@ -1252,6 +1252,13 @@ fn build_update(args: &UpdateArgs, actor: &str, claim_exclusive: bool) -> Result
         source_repo: optional_string_field(args.source_repo.as_deref()),
         source_repo_path: optional_string_field(args.source_repo_path.as_deref()),
         agent_context: agent_context_update_from_arg(args.agent_context.as_deref())?,
+        verify: optional_string_field(args.verify.as_deref()),
+        principles_append: parse_principle_args(&args.principle)?,
+        wave: optional_u32_field(args.wave.as_deref())?,
+        pin: optional_string_field(args.pin.as_deref()),
+        commit_sha: optional_string_field(args.commit_sha.as_deref()),
+        blast: parse_blast_arg(args.blast.as_deref())?,
+        ac_shape: parse_ac_arg(args.ac.as_deref())?,
         closed_at,
         close_reason,
         closed_by_session,
@@ -1280,6 +1287,122 @@ fn optional_string_field(value: Option<&str>) -> Option<Option<String>> {
             Some(v.to_string())
         }
     })
+}
+
+/// ADR-0001 §5.2: kebab-case principle name — lowercase alphanumeric
+/// segments joined by single hyphens.
+pub(crate) fn is_kebab_case_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.split('-').all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
+/// Parse repeatable `--principle 'name — decision'` citations (em dash
+/// separator). Rejects missing separators, non-kebab-case names, and empty
+/// decisions at the CLI boundary so storage never sees a malformed citation.
+#[allow(clippy::single_match_else)]
+pub(crate) fn parse_principle_args(
+    args: &[String],
+) -> Result<Vec<crate::model::PrincipleCitation>> {
+    args.iter()
+        .map(|raw| {
+            let Some((name, decision)) = raw.split_once('—') else {
+                return Err(BeadsError::validation(
+                    "principle",
+                    format!("expected 'name — decision' (em dash separator), got: {raw:?}"),
+                ));
+            };
+            let name = name.trim();
+            let decision = decision.trim();
+            if !is_kebab_case_name(name) {
+                return Err(BeadsError::validation(
+                    "principle",
+                    format!("principle names are kebab-case, got: {name:?}"),
+                ));
+            }
+            if decision.is_empty() {
+                return Err(BeadsError::validation(
+                    "principle",
+                    "the cited decision must not be empty".to_string(),
+                ));
+            }
+            Ok(crate::model::PrincipleCitation {
+                name: name.to_string(),
+                decision: decision.to_string(),
+            })
+        })
+        .collect()
+}
+
+#[allow(clippy::option_option)]
+pub(crate) fn parse_blast_arg(value: Option<&str>) -> Result<Option<crate::model::Blast>> {
+    match value {
+        None => Ok(None),
+        Some("normal") => Ok(Some(crate::model::Blast::Normal)),
+        Some("high") => Ok(Some(crate::model::Blast::High)),
+        Some(other) => Err(BeadsError::validation(
+            "blast",
+            format!("expected normal|high, got: {other:?}"),
+        )),
+    }
+}
+
+#[allow(clippy::option_option)]
+pub(crate) fn parse_ac_arg(value: Option<&str>) -> Result<Option<crate::model::AcShape>> {
+    match value {
+        None => Ok(None),
+        Some("checkable") => Ok(Some(crate::model::AcShape::Checkable)),
+        Some("judgment") => Ok(Some(crate::model::AcShape::Judgment)),
+        Some(other) => Err(BeadsError::validation(
+            "ac",
+            format!("expected checkable|judgment, got: {other:?}"),
+        )),
+    }
+}
+
+/// `--wave` accepts a non-negative integer, or an empty string to clear.
+#[allow(clippy::option_option)]
+fn optional_u32_field(value: Option<&str>) -> Result<Option<Option<u32>>> {
+    match value {
+        None => Ok(None),
+        Some(raw) if raw.trim().is_empty() => Ok(Some(None)),
+        Some(raw) => raw
+            .trim()
+            .parse::<u32>()
+            .map(|parsed| Some(Some(parsed)))
+            .map_err(|_| {
+                BeadsError::validation(
+                    "wave",
+                    format!("expected a non-negative integer, got: {raw:?}"),
+                )
+            }),
+    }
+}
+
+/// ADR-0001 §5.2 ac_shape defaulting shared by create/update: checkable when
+/// a VERIFY command is present; judgment only without one and with an
+/// explicit `--ac judgment`. An explicit judgment alongside `--verify` is a
+/// conflict (fail closed rather than silently overriding either).
+pub(crate) fn resolve_ac_shape(
+    verify_present: bool,
+    explicit: Option<crate::model::AcShape>,
+) -> Result<crate::model::AcShape> {
+    match (verify_present, explicit) {
+        (true, Some(crate::model::AcShape::Judgment)) => Err(BeadsError::validation(
+            "ac",
+            "--ac judgment conflicts with --verify; drop the VERIFY command or use --ac checkable",
+        )),
+        // Checkable wins whenever a VERIFY command is present; otherwise an
+        // explicit --ac flag governs and the bare default is checkable.
+        (_, Some(crate::model::AcShape::Checkable) | None) => {
+            Ok(crate::model::AcShape::Checkable)
+        }
+        (false, Some(shape)) => Ok(shape),
+    }
 }
 
 /// Parse the `--agent-context` argument into an `IssueUpdate::agent_context`
