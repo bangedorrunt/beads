@@ -5,6 +5,7 @@
 mod common;
 
 use common::cli::{BrWorkspace, run_br};
+use std::process::{Command, Stdio};
 
 fn br_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_br"))
@@ -27,7 +28,6 @@ fn list_into_closed_stdout_exits_zero() {
         assert!(create.status.success(), "create failed");
     }
 
-    use std::process::{Command, Stdio};
     let mut child = Command::new(br_bin())
         .current_dir(&workspace.root)
         .arg("list")
@@ -61,7 +61,6 @@ fn list_into_head_exits_zero() {
         assert!(create.status.success(), "create failed");
     }
 
-    use std::process::{Command, Stdio};
     let pipeline = format!("{} list | head -1", br_bin().display());
     let out = Command::new("sh")
         .arg("-c")

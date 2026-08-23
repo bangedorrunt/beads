@@ -845,7 +845,7 @@ fn e2e_concurrent_sync_lock_holder_skips_flush_without_losing_the_ledger() {
 
     // Concurrent holder: keep the sync lock held across the br update.
     let lock_path = workspace.root.join(".beads").join(".sync.lock");
-    let mut holder = fs::OpenOptions::new()
+    let holder = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)

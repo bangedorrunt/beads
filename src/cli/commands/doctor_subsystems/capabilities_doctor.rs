@@ -821,6 +821,7 @@ mod tests {
                 "doctor.repair_database_sidecars",
                 "refuse_gates.schema_version_downgrade",
                 "refuse_gates.recovery_fingerprint_integrity",
+                "briefs.fence_import_pending",
             ],
             "fixer registry order is part of the stable capabilities JSON"
         );

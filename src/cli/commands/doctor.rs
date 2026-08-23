@@ -1168,17 +1168,14 @@ fn fix_fence_import_if_warned(
     for (id, verify_to_set, principles_to_set) in plan {
         let mut touched = false;
         if let Some(command) = verify_to_set {
-            touched |= stamp_fence_column_via_chokepoint(
-                session, db_path, &id, "verify", &command,
-            );
+            touched |= stamp_fence_column_via_chokepoint(session, db_path, &id, "verify", &command);
         }
         if let Some(citations) = principles_to_set {
             let Ok(json) = serde_json::to_string(&citations) else {
                 continue;
             };
-            touched |= stamp_fence_column_via_chokepoint(
-                session, db_path, &id, "principles", &json,
-            );
+            touched |=
+                stamp_fence_column_via_chokepoint(session, db_path, &id, "principles", &json);
         }
         if touched {
             stamped += 1;
@@ -1197,7 +1194,7 @@ fn fix_fence_import_if_warned(
 /// undo can revert and a racing writer can't be clobbered. Returns whether
 /// the write applied.
 fn stamp_fence_column_via_chokepoint(
-    session: &mut DoctorRepairSession,
+    session: &DoctorRepairSession,
     db_path: &Path,
     id: &str,
     column: &str,
@@ -20040,16 +20037,25 @@ mod tests {
         assert!(summary.applied());
         assert_eq!(
             summary.action_labels(),
-            vec!["db_bloat_vacuumed".to_string()]
+            vec![
+                "db_bloat_vacuumed".to_string(),
+                "fence_import_applied".to_string()
+            ]
         );
         assert_eq!(
             repair_outcome_message_from_parts(summary.messages(), None, None),
-            "Compacted database via VACUUM to reclaim freelist space (--unsafe-auto-fix opt-in)."
+            "Compacted database via VACUUM to reclaim freelist space (--unsafe-auto-fix opt-in). Stamped typed brief fields from description fences (one-shot fence import)."
         );
         let audit = summary.audit_record();
         assert_eq!(audit.phase, "doctor.early_repair");
-        assert_eq!(audit.outcome, "db_bloat_vacuumed");
-        assert_eq!(audit.applied_actions, vec!["db_bloat_vacuumed".to_string()]);
+        assert_eq!(audit.outcome, "repairs_applied");
+        assert_eq!(
+            audit.applied_actions,
+            vec![
+                "db_bloat_vacuumed".to_string(),
+                "fence_import_applied".to_string()
+            ]
+        );
     }
 
     #[test]

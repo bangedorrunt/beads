@@ -5108,6 +5108,7 @@ mod schema18_tests {
     /// the typed work-ledger columns with uyb3 defaults
     /// (beads_rust-ajui, GH #428 sibling of migrate-17-18).
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_reviewed_migrate_16_to_18_adds_capacity_occupancy_and_typed_work_ledger_columns() {
         const TYPED_WORK_LEDGER_COLUMNS: [&str; 8] = [
             "verify",
