@@ -696,3 +696,210 @@ fn ready_include_deferred_flag() {
     assert!(ids.contains(&open_no_defer.id));
     assert!(ids.contains(&open_with_defer.id));
 }
+
+// ============================================================================
+// ADR-0001 §5.5 UNIFIED READY PREDICATE (beads_rust-ready-predicate-9n4c)
+// ============================================================================
+
+use beads::model::PrincipleCitation;
+use beads::storage::IssueUpdate;
+
+fn citation(name: &str, decision: &str) -> PrincipleCitation {
+    PrincipleCitation {
+        name: name.to_string(),
+        decision: decision.to_string(),
+    }
+}
+
+/// §8.4 #9 / §5.5 condition 4: `verify` must be Some, non-empty, and a
+/// single line for an issue to be ready.
+#[test]
+fn ready_omits_missing_verify() {
+    let mut storage = test_db();
+
+    let mut missing = fixtures::IssueBuilder::new("No verify").build();
+    missing.verify = None;
+    storage.create_issue(&missing, "tester").unwrap();
+
+    let mut empty = fixtures::IssueBuilder::new("Empty verify").build();
+    empty.verify = Some("   ".to_string());
+    storage.create_issue(&empty, "tester").unwrap();
+
+    let mut multiline = fixtures::IssueBuilder::new("Multiline verify").build();
+    multiline.verify = Some("cargo test --offline ready_\ncargo clippy".to_string());
+    storage.create_issue(&multiline, "tester").unwrap();
+
+    let filters = ReadyFilters::default();
+    let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
+    assert!(
+        !ids.contains(&missing.id),
+        "missing verify must not be ready"
+    );
+    assert!(
+        !ids.contains(&empty.id),
+        "whitespace-only verify must not be ready"
+    );
+    assert!(
+        !ids.contains(&multiline.id),
+        "multi-line verify must not be ready"
+    );
+
+    let mut valid = fixtures::IssueBuilder::new("Valid verify").build();
+    valid.verify = Some("cargo test --offline ready_omits_missing_verify".to_string());
+    storage.create_issue(&valid, "tester").unwrap();
+    let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
+    assert!(ids.contains(&valid.id), "single-line verify must be ready");
+}
+
+/// §8.4 #10 / §5.5 condition 5: priority <= 2 requires >=1 principles
+/// citation, each with non-empty name and decision. P3+ stays exempt.
+#[test]
+fn ready_omits_p1_missing_principles() {
+    let mut storage = test_db();
+
+    let mut p1_no_principles = fixtures::IssueBuilder::new("P1 without principles")
+        .with_priority(Priority(1))
+        .build();
+    p1_no_principles.verify = Some("cargo test".to_string());
+    p1_no_principles.principles = vec![];
+    storage.create_issue(&p1_no_principles, "tester").unwrap();
+
+    let mut p1_empty_decision = fixtures::IssueBuilder::new("P1 citation without decision")
+        .with_priority(Priority(1))
+        .build();
+    p1_empty_decision.verify = Some("cargo test".to_string());
+    p1_empty_decision.principles = vec![citation("prove-it-works", "")];
+    storage.create_issue(&p1_empty_decision, "tester").unwrap();
+
+    let mut p1_empty_name = fixtures::IssueBuilder::new("P1 citation without name")
+        .with_priority(Priority(1))
+        .build();
+    p1_empty_name.verify = Some("cargo test".to_string());
+    p1_empty_name.principles = vec![citation("", "some decision")];
+    storage.create_issue(&p1_empty_name, "tester").unwrap();
+
+    let filters = ReadyFilters::default();
+    let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
+    assert!(
+        !ids.contains(&p1_no_principles.id),
+        "P1 with no citations must not be ready"
+    );
+    assert!(
+        !ids.contains(&p1_empty_decision.id),
+        "P1 citation with empty decision must not be ready"
+    );
+    assert!(
+        !ids.contains(&p1_empty_name.id),
+        "P1 citation with empty name must not be ready"
+    );
+
+    // Fully-cited P1 is ready; uncited P3 is also ready (exempt band).
+    let mut p1_ok = fixtures::IssueBuilder::new("P1 fully cited")
+        .with_priority(Priority(1))
+        .build();
+    p1_ok.verify = Some("cargo test".to_string());
+    p1_ok.principles = vec![citation(
+        "prove-it-works",
+        "each exclusion rule has a named test",
+    )];
+    storage.create_issue(&p1_ok, "tester").unwrap();
+
+    let mut p3_uncited = fixtures::IssueBuilder::new("P3 uncited")
+        .with_priority(Priority(3))
+        .build();
+    p3_uncited.verify = Some("cargo test".to_string());
+    storage.create_issue(&p3_uncited, "tester").unwrap();
+
+    let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
+    assert!(ids.contains(&p1_ok.id));
+    assert!(ids.contains(&p3_uncited.id), "P3 is exempt from principles");
+}
+
+/// §8.4 #11 / §5.5 condition 6: wave Some(n) is held while any other issue
+/// with wave Some(m<n) sits open/in_progress. wave None is never held.
+#[test]
+fn ready_holds_wave_2_while_wave_1_open() {
+    let mut storage = test_db();
+
+    let mut wave1 = fixtures::IssueBuilder::new("Wave 1 work").build();
+    wave1.wave = Some(1);
+    wave1.verify = Some("cargo test".to_string());
+    storage.create_issue(&wave1, "tester").unwrap();
+
+    let mut wave2 = fixtures::IssueBuilder::new("Wave 2 work").build();
+    wave2.wave = Some(2);
+    wave2.verify = Some("cargo test".to_string());
+    storage.create_issue(&wave2, "tester").unwrap();
+
+    let mut un_waved = fixtures::IssueBuilder::new("No wave").build();
+    un_waved.wave = None;
+    un_waved.verify = Some("cargo test".to_string());
+    storage.create_issue(&un_waved, "tester").unwrap();
+
+    let filters = ReadyFilters::default();
+    let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
+    assert!(
+        !ids.contains(&wave2.id),
+        "wave 2 must be held while wave 1 is open"
+    );
+    assert!(ids.contains(&wave1.id));
+    assert!(
+        ids.contains(&un_waved.id),
+        "wave None is never held by the wave gate"
+    );
+
+    // Closing the wave-1 bead releases wave 2.
+    storage
+        .update_issue(
+            &wave1.id,
+            &IssueUpdate {
+                status: Some(Status::Closed),
+                ..Default::default()
+            },
+            "tester",
+        )
+        .unwrap();
+    let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
+    assert!(ids.contains(&wave2.id), "closing wave 1 releases wave 2");
+}
+
+/// §8.4 #12 / §5.5 condition 2 (parent #432): closed blockers are ignored;
+/// a MISSING blocker (dependency pointing at an absent local id) is ignored
+/// too — only open or in_progress blockers hide an issue from ready.
+#[test]
+fn ready_ignores_closed_blocker() {
+    let mut storage = test_db();
+
+    let blocker = fixtures::IssueBuilder::new("Blocker").build();
+    storage.create_issue(&blocker, "tester").unwrap();
+    let dependent = fixtures::IssueBuilder::new("Dependent").build();
+    storage.create_issue(&dependent, "tester").unwrap();
+    storage
+        .add_dependency(&dependent.id, &blocker.id, "blocks", "tester")
+        .unwrap();
+
+    let filters = ReadyFilters::default();
+    let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
+    assert!(!ids.contains(&dependent.id), "open blocker must hold");
+
+    storage
+        .update_issue(
+            &blocker.id,
+            &IssueUpdate {
+                status: Some(Status::Closed),
+                ..Default::default()
+            },
+            "tester",
+        )
+        .unwrap();
+    let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
+    assert!(
+        ids.contains(&dependent.id),
+        "closed blocker must be ignored (#432)"
+    );
+
+    // Missing blockers (dependency edge -> nonexistent local id) are also
+    // ignored by §5.5, but the storage API refuses to create dangling edges
+    // (IssueNotFound), so that half of the rule is exercised by the SQL-level
+    // INNER JOIN in load_direct_blockers_impl rather than here.
+}

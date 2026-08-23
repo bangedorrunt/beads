@@ -1398,9 +1398,7 @@ pub(crate) fn resolve_ac_shape(
         )),
         // Checkable wins whenever a VERIFY command is present; otherwise an
         // explicit --ac flag governs and the bare default is checkable.
-        (_, Some(crate::model::AcShape::Checkable) | None) => {
-            Ok(crate::model::AcShape::Checkable)
-        }
+        (_, Some(crate::model::AcShape::Checkable) | None) => Ok(crate::model::AcShape::Checkable),
         (false, Some(shape)) => Ok(shape),
     }
 }

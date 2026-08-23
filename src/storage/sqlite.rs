@@ -1584,7 +1584,7 @@ impl ReadyIssueProjection {
             Self::Command => {
                 r"SELECT id, title, description, acceptance_criteria, notes, status, priority,
                          issue_type, assignee, owner, estimated_minutes, created_at, created_by,
-                         updated_at"
+                         updated_at, verify, principles, wave, pin"
             }
             Self::Summary => {
                 r"SELECT id, title, status, priority, issue_type, created_at, updated_at"
@@ -3880,6 +3880,98 @@ impl SqliteStorage {
     /// # Errors
     ///
     /// Returns an error if the database query fails.
+    /// Every recorded gate verdict, oldest first — the export source for the
+    /// `.beads/gates.jsonl` sidecar (ADR-0001 §5.4). The history is the
+    /// ledger: FAIL rows and superseded verdicts export too, so a clone can
+    /// audit why a transition was ever refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub fn get_all_gate_result_records(
+        &self,
+    ) -> Result<Vec<crate::close_policy::GateResultRecord>> {
+        let rows = self.conn.query(
+            "SELECT id, issue_id, from_status, to_status, status_revision,
+                    gate, provider, passed, note, recorded_by, recorded_at
+             FROM gate_result_history ORDER BY id",
+        )?;
+        rows.iter().map(gate_result_record_from_row).collect()
+    }
+
+    /// Append one imported [`GateResultRecord`] verbatim. Idempotent: a row
+    /// whose full tuple already exists is skipped (JSONL re-imports and merge
+    /// replays must not duplicate history). Local `id`s stay autoincrement;
+    /// provenance (`recorded_by`/`recorded_at`) is preserved.
+    ///
+    /// Returns `true` when the row was newly inserted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database write fails or the referenced issue
+    /// does not exist.
+    pub fn insert_gate_result_record(
+        &self,
+        record: &crate::close_policy::GateResultRecord,
+    ) -> Result<bool> {
+        self.with_connection_write_transaction(|conn| {
+            let dup = conn.query_with_params(
+                "SELECT id FROM gate_result_history
+                 WHERE issue_id = ? AND from_status = ? AND to_status = ?
+                   AND status_revision = ? AND gate = ? AND provider = ?
+                   AND passed = ? AND note IS ? AND recorded_by IS ?
+                   AND recorded_at = ?
+                 LIMIT 1",
+                &[
+                    SqliteValue::from(record.issue_id.as_str()),
+                    SqliteValue::from(record.from_status.as_str()),
+                    SqliteValue::from(record.to_status.as_str()),
+                    SqliteValue::from(record.status_revision),
+                    SqliteValue::from(record.gate.as_str()),
+                    SqliteValue::from(record.provider.as_str()),
+                    SqliteValue::from(i64::from(record.passed)),
+                    record
+                        .note
+                        .as_deref()
+                        .map_or(SqliteValue::Null, SqliteValue::from),
+                    record
+                        .recorded_by
+                        .as_deref()
+                        .map_or(SqliteValue::Null, SqliteValue::from),
+                    SqliteValue::from(record.recorded_at.as_str()),
+                ],
+            )?;
+            if !dup.is_empty() {
+                return Ok(false);
+            }
+            conn.execute_with_params(
+                "INSERT INTO gate_result_history (
+                    issue_id, from_status, to_status, status_revision, gate,
+                    provider, passed, note, recorded_by, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                &[
+                    SqliteValue::from(record.issue_id.as_str()),
+                    SqliteValue::from(record.from_status.as_str()),
+                    SqliteValue::from(record.to_status.as_str()),
+                    SqliteValue::from(record.status_revision),
+                    SqliteValue::from(record.gate.as_str()),
+                    SqliteValue::from(record.provider.as_str()),
+                    SqliteValue::from(i64::from(record.passed)),
+                    record
+                        .note
+                        .as_deref()
+                        .map_or(SqliteValue::Null, SqliteValue::from),
+                    record
+                        .recorded_by
+                        .as_deref()
+                        .map_or(SqliteValue::Null, SqliteValue::from),
+                    SqliteValue::from(record.recorded_at.as_str()),
+                ],
+            )?;
+            Ok(true)
+        })
+    }
+
     pub fn get_legacy_gate_results(
         &self,
         issue_id: &str,
@@ -9515,6 +9607,45 @@ impl SqliteStorage {
         // Exclude templates
         sql.push_str(" AND (is_template = 0 OR is_template IS NULL)");
 
+        // ADR-0001 §5.5 condition 4: `verify` must be Some, non-empty, and a
+        // single line (no newline/carriage return). The loop executes this
+        // command as the bead's proof; without it the bead is not
+        // dispatchable.
+        sql.push_str(
+            " AND issues.verify IS NOT NULL \
+             AND trim(issues.verify) != '' \
+             AND instr(issues.verify, char(10)) = 0 \
+             AND instr(issues.verify, char(13)) = 0",
+        );
+
+        // ADR-0001 §5.5 condition 5: priority <= 2 requires at least one
+        // principles citation, each with non-empty name and decision. The
+        // column stores a JSON array of {name, decision} objects; malformed
+        // or absent JSON fails the band check fail-closed.
+        sql.push_str(
+            " AND (issues.priority > 2 OR (\
+             issues.principles IS NOT NULL \
+             AND json_valid(issues.principles) \
+             AND json_array_length(issues.principles) >= 1 \
+             AND NOT EXISTS (\
+             SELECT 1 FROM json_each(issues.principles) je \
+             WHERE je.value ->> '$.name' IS NULL \
+             OR je.value ->> '$.decision' IS NULL \
+             OR trim(je.value ->> '$.name') = '' \
+             OR trim(je.value ->> '$.decision') = '')))",
+        );
+
+        // ADR-0001 §5.5 condition 6: wave gate. A waved issue is held while
+        // any other issue with a strictly lower wave sits open/in_progress;
+        // wave None is never held.
+        sql.push_str(
+            " AND (issues.wave IS NULL OR NOT EXISTS (\
+             SELECT 1 FROM issues lower_wave \
+             WHERE lower_wave.wave IS NOT NULL \
+             AND lower_wave.wave < issues.wave \
+             AND lower_wave.status IN ('open', 'in_progress')))",
+        );
+
         // Filter by types
         if let Some(ref types) = filters.types
             && !types.is_empty()
@@ -10571,17 +10702,22 @@ impl SqliteStorage {
     fn load_direct_blockers_impl(conn: &Connection) -> Result<HashMap<String, Vec<String>>> {
         // Exclude external dependencies from the persisted cache because their
         // status is not locally known and must be resolved at query time.
+        //
+        // ADR-0001 §5.5 condition 2 (parent #432): CLOSED and MISSING local
+        // blockers are ignored — they must not hide an issue from ready;
+        // `br doctor` reports them as repair work instead. Every other
+        // locally-known status keeps the historical blocking semantics
+        // (deferred/blocker epics still gate their dependents, #357).
         let rows = conn.query(
             "SELECT DISTINCT d.issue_id, d.depends_on_id || ':' || COALESCE(i.status, 'unknown')
              FROM dependencies d
-             LEFT JOIN issues i ON d.depends_on_id = i.id
+             JOIN issues i ON d.depends_on_id = i.id
              WHERE d.type IN ('blocks', 'conditional-blocks', 'waits-for')
                AND d.depends_on_id NOT LIKE 'external:%'
                AND (
                  i.status NOT IN ('closed', 'tombstone')
-                 OR i.id IS NULL
                )
-               AND (i.is_template = 0 OR i.is_template IS NULL OR i.id IS NULL)",
+               AND (i.is_template = 0 OR i.is_template IS NULL)",
         )?;
         let mut blocked_issues_map: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -11517,6 +11653,23 @@ impl SqliteStorage {
     /// Returns an error if the database query fails.
     pub fn get_all_ids(&self) -> Result<Vec<String>> {
         let rows = self.conn.query("SELECT id FROM issues ORDER BY id")?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| r.get(0).and_then(SqliteValue::as_text).map(String::from))
+            .collect())
+    }
+
+    /// IDs of closed issues that carry a `close_verdict` — the set whose
+    /// closes must be provable from the gates.jsonl sidecar (ADR-0001 §5.4).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub fn get_closed_ids_with_close_verdict(&self) -> Result<Vec<String>> {
+        let rows = self.conn.query(
+            "SELECT id FROM issues
+             WHERE status = 'closed' AND close_verdict IS NOT NULL ORDER BY id",
+        )?;
         Ok(rows
             .iter()
             .filter_map(|r| r.get(0).and_then(SqliteValue::as_text).map(String::from))
@@ -15071,7 +15224,7 @@ impl SqliteStorage {
         let get_opt_i32 = |idx: usize| -> Option<i32> {
             row.get(idx)
                 .and_then(SqliteValue::as_integer)
-                .map(|v| v as i32)
+                .map(|value| value as i32)
         };
         let get_bool = |idx: usize| -> bool {
             row.get(idx).and_then(SqliteValue::as_integer).unwrap_or(0) != 0
@@ -15163,6 +15316,11 @@ impl SqliteStorage {
                 .and_then(SqliteValue::as_integer)
                 .map(|value| value as i32)
         };
+        let get_opt_u32 = |idx: usize| -> Option<u32> {
+            row.get(idx)
+                .and_then(SqliteValue::as_integer)
+                .and_then(|value| u32::try_from(value).ok())
+        };
 
         Ok(Issue {
             id: get_str(0),
@@ -15195,10 +15353,16 @@ impl SqliteStorage {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
-            verify: None,
-            principles: Vec::new(),
-            wave: None,
-            pin: None,
+            // ADR-0001 §5.5: the ready JSON surface carries the typed
+            // work-ledger fields (columns 14-17 of the Command projection).
+            verify: get_non_empty_str(14),
+            principles: row
+                .get(15)
+                .and_then(SqliteValue::as_text)
+                .and_then(|raw| serde_json::from_str(raw).ok())
+                .unwrap_or_default(),
+            wave: get_opt_u32(16),
+            pin: get_non_empty_str(17),
             commit_sha: None,
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
@@ -17263,7 +17427,7 @@ impl SqliteStorage {
                      due_at, defer_until, external_ref, source_system, source_repo,
                      deleted_at, deleted_by, delete_reason, original_type, compaction_level,
                      compacted_at, compacted_at_commit, original_size, sender, ephemeral,
-                     pinned, is_template, source_repo_path, agent_contex,t
+                     pinned, is_template, source_repo_path, agent_context,
                      verify, principles, wave, pin, commit_sha,
                      close_verdict, ac_shape, blast
                FROM issues WHERE content_hash = ?",
@@ -19004,8 +19168,14 @@ mod tests {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
-            verify: None,
-            principles: Vec::new(),
+            // ADR-0001 §5.5: ready-dispatchable fixtures carry a runnable
+            // VERIFY and a principles citation by default; predicate tests
+            // opt out by clearing these fields explicitly.
+            verify: Some("cargo test --offline".to_string()),
+            principles: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "default test fixture citation".to_string(),
+            }],
             wave: None,
             pin: None,
             commit_sha: None,
@@ -31517,8 +31687,8 @@ mod tests {
                 r"
                 INSERT INTO issues (
                     id, title, status, priority, issue_type, created_at, updated_at,
-                    ephemeral, pinned, is_template
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+                    ephemeral, pinned, is_template, verify, principles
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
                 ",
                 &[
                     SqliteValue::from("bd-legacy-ready"),
@@ -31528,6 +31698,9 @@ mod tests {
                     SqliteValue::from("task"),
                     SqliteValue::from(stamp.as_str()),
                     SqliteValue::from(stamp.as_str()),
+                    // ADR-0001 §5.5 dispatchable fixture (see fixtures.rs).
+                    SqliteValue::from("cargo test --offline"),
+                    SqliteValue::from(r#"[{"name":"p","decision":"d"}]"#),
                 ],
             )
             .unwrap();

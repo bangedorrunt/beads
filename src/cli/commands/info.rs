@@ -991,6 +991,12 @@ mod tests {
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let blocker = crate::model::Issue {
             id: "bd-blocker".to_string(),
+            // ADR-0001 §5.5: dispatchable projection fixture.
+            verify: Some("cargo test --offline".to_string()),
+            principles: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "projection fixture citation".to_string(),
+            }],
             title: "Blocker".to_string(),
             issue_type: crate::model::IssueType::Task,
             priority: crate::model::Priority::HIGH,
@@ -998,6 +1004,12 @@ mod tests {
         };
         let target = crate::model::Issue {
             id: "bd-target".to_string(),
+            // ADR-0001 §5.5: dispatchable projection fixture.
+            verify: Some("cargo test --offline".to_string()),
+            principles: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "projection fixture citation".to_string(),
+            }],
             title: "Target".to_string(),
             issue_type: crate::model::IssueType::Task,
             priority: crate::model::Priority::LOW,
@@ -1105,6 +1117,12 @@ mod tests {
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let blocker = crate::model::Issue {
             id: "bd-real-blocker".to_string(),
+            // ADR-0001 §5.5: dispatchable projection fixture.
+            verify: Some("cargo test --offline".to_string()),
+            principles: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "projection fixture citation".to_string(),
+            }],
             title: "Real blocker".to_string(),
             issue_type: crate::model::IssueType::Task,
             priority: crate::model::Priority::HIGH,
@@ -1112,6 +1130,12 @@ mod tests {
         };
         let target = crate::model::Issue {
             id: "bd-parity-target".to_string(),
+            // ADR-0001 §5.5: dispatchable projection fixture.
+            verify: Some("cargo test --offline".to_string()),
+            principles: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "projection fixture citation".to_string(),
+            }],
             title: "Target".to_string(),
             issue_type: crate::model::IssueType::Task,
             priority: crate::model::Priority::LOW,
@@ -1185,6 +1209,12 @@ mod tests {
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let blocker = crate::model::Issue {
             id: "bd-ready-blocker".to_string(),
+            // ADR-0001 §5.5: dispatchable projection fixture.
+            verify: Some("cargo test --offline".to_string()),
+            principles: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "projection fixture citation".to_string(),
+            }],
             title: "Ready blocker".to_string(),
             issue_type: crate::model::IssueType::Task,
             priority: crate::model::Priority::HIGH,
@@ -1192,6 +1222,12 @@ mod tests {
         };
         let target = crate::model::Issue {
             id: "bd-ready-target".to_string(),
+            // ADR-0001 §5.5: dispatchable projection fixture.
+            verify: Some("cargo test --offline".to_string()),
+            principles: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "projection fixture citation".to_string(),
+            }],
             title: "Ready target".to_string(),
             issue_type: crate::model::IssueType::Task,
             priority: crate::model::Priority::LOW,

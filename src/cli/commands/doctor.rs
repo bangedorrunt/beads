@@ -1083,6 +1083,117 @@ pub fn inspect_pending_sync_merge_under_authority(
     ))
 }
 
+/// ADR-0001 §5.4 orphan-verdict check: a closed issue whose `close_verdict`
+/// is set but whose close cannot be proven from a PASS row in
+/// `.beads/gates.jsonl` is an error — the verdict is ledger state, not local
+/// database state, and must survive a git clone.
+/// Parse `.beads/gates.jsonl` into the set of issue ids holding at least one
+/// PASS row. `Err` carries the doctor-facing message for unreadable or
+/// malformed sidecars.
+fn parse_sidecar_pass_issue_ids(
+    gates_path: &Path,
+) -> std::result::Result<std::collections::HashSet<String>, String> {
+    let raw = fs::read_to_string(gates_path)
+        .map_err(|error| format!("Cannot read gates.jsonl: {error}"))?;
+    let mut ids = std::collections::HashSet::new();
+    for line in raw.lines().filter(|l| !l.trim().is_empty()) {
+        let value: serde_json::Value = serde_json::from_str(line).map_err(|error| {
+            format!("gates.jsonl is not parseable, so closed-bead verdicts are unprovable: {error}")
+        })?;
+        if value.get("passed").and_then(serde_json::Value::as_bool) == Some(true)
+            && let Some(id) = value.get("issue_id").and_then(serde_json::Value::as_str)
+        {
+            ids.insert(id.to_string());
+        }
+    }
+    Ok(ids)
+}
+
+fn check_gate_verdict_orphans(beads_dir: &Path, db_path: &Path, checks: &mut Vec<CheckResult>) {
+    let gates_path = beads_dir.join("gates.jsonl");
+    let pass_issue_ids = if gates_path.exists() {
+        match parse_sidecar_pass_issue_ids(&gates_path) {
+            Ok(ids) => ids,
+            Err(error) => {
+                push_check(
+                    checks,
+                    "gate.verdict_orphans",
+                    CheckStatus::Error,
+                    Some(error),
+                    Some(serde_json::json!({
+                        "path": gates_path.display().to_string(),
+                        "remediation": "Restore or regenerate .beads/gates.jsonl via `br sync --flush-only`."
+                    })),
+                );
+                return;
+            }
+        }
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    // Open the database read-only for the closed-with-verdict query.
+    let orphan_ids = (|| {
+        let storage =
+            crate::storage::SqliteStorage::open_current_read_only(db_path)?.ok_or_else(|| {
+                BeadsError::Config(format!(
+                    "no readable SQLite database at {}",
+                    db_path.display()
+                ))
+            })?;
+        storage.get_closed_ids_with_close_verdict()
+    })();
+    match orphan_ids {
+        Ok(ids) => {
+            let unproven: Vec<&String> = ids
+                .iter()
+                .filter(|id| !pass_issue_ids.contains(*id))
+                .collect();
+            if unproven.is_empty() {
+                push_check(
+                    checks,
+                    "gate.verdict_orphans",
+                    CheckStatus::Ok,
+                    Some(format!(
+                        "All {} closed-with-verdict issue(s) have a matching gates.jsonl PASS row",
+                        ids.len()
+                    )),
+                    None,
+                );
+            } else {
+                let listed: Vec<String> =
+                    unproven.iter().take(10).map(ToString::to_string).collect();
+                push_check(
+                    checks,
+                    "gate.verdict_orphans",
+                    CheckStatus::Error,
+                    Some(format!(
+                        "{} closed issue(s) carry close_verdict but no gates.jsonl PASS row \
+                         proves the close: {}{}",
+                        unproven.len(),
+                        listed.join(", "),
+                        if unproven.len() > 10 { ", ..." } else { "" }
+                    )),
+                    Some(serde_json::json!({
+                        "unproven_count": unproven.len(),
+                        "unproven_ids": listed,
+                        "remediation": "Re-run the VERIFY command for each bead and `br gate report` a legal PASS row, then flush. If the closes were never legitimate, reopen and re-close them legally."
+                    })),
+                );
+            }
+        }
+        Err(error) => push_check(
+            checks,
+            "gate.verdict_orphans",
+            CheckStatus::Warn,
+            Some(format!(
+                "Could not query closed-with-verdict issues (database unavailable to this check): {error}"
+            )),
+            None,
+        ),
+    }
+}
+
 fn check_pending_sync_merge(db_path: &Path, checks: &mut Vec<CheckResult>) {
     match inspect_pending_sync_merge_at_path(db_path) {
         Ok(None) => push_check(
@@ -11705,6 +11816,12 @@ fn collect_doctor_report_with_mode_and_db_override(
     // could otherwise overwrite the pending merge's expected artifact.
     check_pending_sync_merge(&paths.db_path, &mut checks);
 
+    // ADR-0001 §5.4: closed beads must prove their closes from a PASS row in
+    // gates.jsonl. DB-backed, so skipped under --no-db like its peers.
+    if !no_db {
+        check_gate_verdict_orphans(beads_dir, &paths.db_path, &mut checks);
+    }
+
     // The JSONL-side audit always runs — it is the source of truth under the
     // `--no-db` (JSONL-only) contract.
     let (jsonl_path, jsonl_count) = inspect_doctor_jsonl(beads_dir, paths, mode, &mut checks);
@@ -13663,8 +13780,12 @@ mod tests {
 
     fn sample_issue(id: &str, title: &str) -> Issue {
         Issue {
-            verify: None,
-            principles: Vec::new(),
+            // ADR-0001 §5.5: projection fixtures are dispatchable beads.
+            verify: Some("cargo test --offline".to_string()),
+            principles: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "projection fixture citation".to_string(),
+            }],
             wave: None,
             pin: None,
             commit_sha: None,
@@ -21850,8 +21971,12 @@ mod tests {
         let jsonl_path = beads_dir.join("issues.jsonl");
 
         let issue = Issue {
-            verify: None,
-            principles: Vec::new(),
+            // ADR-0001 §5.5: projection fixtures are dispatchable beads.
+            verify: Some("cargo test --offline".to_string()),
+            principles: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "projection fixture citation".to_string(),
+            }],
             wave: None,
             pin: None,
             commit_sha: None,

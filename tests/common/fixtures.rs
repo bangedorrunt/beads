@@ -10,11 +10,17 @@ fn base_time() -> chrono::DateTime<Utc> {
     Utc.timestamp_opt(1_735_689_600, 0).unwrap() // 2025-01-01 00:00:00 UTC
 }
 
+/// ADR-0001 §5.5: ready-dispatchable fixtures carry a runnable VERIFY and a
+/// principles citation by default; the §5.5 predicate tests opt out
+/// explicitly via `without_verify` / `without_principles`.
 pub fn issue(title: &str) -> Issue {
     let base = base_time();
     Issue {
-        verify: None,
-        principles: Vec::new(),
+        verify: Some("cargo test --offline".to_string()),
+        principles: vec![beads::model::PrincipleCitation {
+            name: "prove-it-works".to_string(),
+            decision: "default builder citation for dispatchable fixtures".to_string(),
+        }],
         wave: None,
         pin: None,
         commit_sha: None,

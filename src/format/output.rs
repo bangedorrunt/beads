@@ -47,8 +47,19 @@ pub struct ReadyIssue {
     pub notes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// Mail pin of the live claim holder, if any (ADR-0001 §5.5 JSON shape).
+    pub pin: Option<String>,
     pub priority: Priority,
+    /// Principles citations for the loop's legal-close check (ADR-0001 §5.5).
+    ///
+    /// Always emitted (as `[]` when empty).
+    pub principles: Vec<crate::model::PrincipleCitation>,
     pub status: Status,
+    /// The runnable VERIFY command the loop must execute (ADR-0001 §5.5).
+    pub verify: Option<String>,
+    /// Wave number; lower waves gate higher ones in the ready predicate
+    /// (ADR-0001 §5.5 condition 6). Always emitted (`null` when un-waved).
+    pub wave: Option<u32>,
     pub title: String,
     pub updated_at: DateTime<Utc>,
 }
@@ -67,8 +78,12 @@ impl From<Issue> for ReadyIssue {
             labels: issue.labels,
             notes: issue.notes,
             owner: issue.owner,
+            pin: issue.pin,
             priority: issue.priority,
+            principles: issue.principles,
             status: issue.status,
+            verify: issue.verify,
+            wave: issue.wave,
             title: issue.title,
             updated_at: issue.updated_at,
         }

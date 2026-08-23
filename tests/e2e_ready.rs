@@ -52,6 +52,50 @@ fn set_issue_jsonl_string(issue: &mut Value, field: &str, value: &str) {
     object.insert(field.to_string(), Value::String(value.to_string()));
 }
 
+/// Stamp the ADR-0001 §5.5 typed fields onto every issue in the workspace's
+/// JSONL and re-import, so fixture beads are dispatchable under the unified
+/// ready predicate (verify present + principles citation).
+fn stamp_dispatchable(workspace: &BrWorkspace) {
+    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let contents = fs::read_to_string(&jsonl_path).expect("read issues.jsonl");
+    let stamped: Vec<String> = contents
+        .lines()
+        .map(|line| {
+            let mut issue: Value = serde_json::from_str(line).expect("parse issue jsonl line");
+            let object = issue.as_object_mut().expect("issue jsonl object");
+            object.insert(
+                "verify".to_string(),
+                Value::String("cargo test --offline".to_string()),
+            );
+            object.insert(
+                "principles".to_string(),
+                serde_json::json!([
+                    {
+                        "name": "prove-it-works",
+                        "decision": "e2e fixture citation"
+                    }
+                ]),
+            );
+            // Bump updated_at so the importer treats the row as newer than
+            // the database copy ("Equal timestamps" skip guard).
+            object.insert(
+                "updated_at".to_string(),
+                Value::String(
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                ),
+            );
+            serde_json::to_string(&issue).expect("serialize issue jsonl")
+        })
+        .collect();
+    fs::write(&jsonl_path, format!("{}\n", stamped.join("\n"))).expect("write issues.jsonl");
+    let import = run_br(workspace, ["sync", "--import-only"], "stamp_import");
+    assert!(
+        import.status.success(),
+        "stamp re-import failed: {}",
+        import.stderr
+    );
+}
+
 fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
     let workspace = BrWorkspace::new();
 
@@ -156,6 +200,8 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id5);
 
+    stamp_dispatchable(&workspace);
+
     (workspace, ids)
 }
 
@@ -193,6 +239,8 @@ fn ready_cli_excludes_in_progress_issues() {
         "claim_issue",
     );
     assert!(claim.status.success(), "claim failed: {}", claim.stderr);
+
+    stamp_dispatchable(&workspace);
 
     let result = run_br(
         &workspace,
@@ -359,6 +407,9 @@ fn ready_respects_external_dependencies() {
         "dep add failed: {}",
         dep_add.stderr
     );
+    // §5.5: make the locally created bead dispatchable once its external
+    // blocker clears (verify + principles present).
+    stamp_dispatchable(&workspace);
 
     let ready_before = run_br(&workspace, ["ready", "--json"], "ready_before");
     assert!(
@@ -479,6 +530,9 @@ fn ready_imports_stale_external_jsonl_before_status_probe() {
         "dep add failed: {}",
         dep_add.stderr
     );
+    // §5.5: make the locally created bead dispatchable once its external
+    // blocker clears (verify + principles present).
+    stamp_dispatchable(&workspace);
 
     let provider = run_br(&external, ["create", "Provide auth"], "ext_create");
     assert!(
@@ -1036,7 +1090,7 @@ fn e2e_ready_with_mixed_priority_high_tier_first() {
     ] {
         let create = run_br(
             &workspace,
-            ["create", title, "-t", "task", "-p", prio, "--no-auto-flush"],
+            ["create", title, "-t", "task", "-p", prio],
             &format!("create_{title}"),
         );
         assert!(
@@ -1045,6 +1099,8 @@ fn e2e_ready_with_mixed_priority_high_tier_first() {
             create.stderr
         );
     }
+
+    stamp_dispatchable(&workspace);
 
     let out = run_br(&workspace, ["ready", "--json"], "ready");
     assert!(out.status.success(), "br ready failed: {}", out.stderr);
@@ -1104,11 +1160,13 @@ fn e2e_ready_returns_no_duplicate_ids() {
         let title = format!("issue {i}");
         let create = run_br(
             &workspace,
-            ["create", &title, "-t", "task", "-p", "2", "--no-auto-flush"],
+            ["create", &title, "-t", "task", "-p", "2"],
             &format!("c_{i}"),
         );
         assert!(create.status.success(), "create failed");
     }
+
+    stamp_dispatchable(&workspace);
 
     let out = run_br(&workspace, ["ready", "--json"], "ready");
     assert!(out.status.success(), "br ready failed");
@@ -1160,6 +1218,7 @@ fn ready_default_group_is_open_only_e2e() {
         "update to rework failed: {}",
         set.stderr
     );
+    stamp_dispatchable(&workspace);
 
     // No policy configured → default ready group is [open].
     let result = run_br(&workspace, ["ready", "--json"], "ready_default");
@@ -1196,6 +1255,7 @@ fn ready_configured_group_surfaces_rework_e2e() {
         ["update", &rework_id, "--status", "rework"],
         "to_rework",
     );
+    stamp_dispatchable(&workspace);
 
     write_policy(
         &workspace,
@@ -1322,5 +1382,91 @@ fn ready_cli_quiet_suppresses_truncation_note() {
         !result.stderr.contains("Showing 2 of"),
         "quiet ready should not emit truncation note; stderr: {}",
         result.stderr
+    );
+}
+
+// ============================================================================
+// ADR-0001 §5.5 unified ready predicate (beads_rust-ready-predicate-9n4c)
+// ============================================================================
+
+/// `br ready --json` is the loop's dispatchable set: rows carry the §5.5
+/// fields (verify, wave, pin, principles), and the predicate excludes a P1
+/// bead until its principles citation lands.
+#[test]
+fn e2e_ready_json_carries_s55_fields_and_enforces_predicate() {
+    let workspace = BrWorkspace::new();
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success(), "init failed: {}", init.stderr);
+
+    // P1 with verify but no principles: hidden by condition 5.
+    let created = run_br(
+        &workspace,
+        [
+            "create",
+            "--title",
+            "P1 uncited",
+            "--type",
+            "bug",
+            "--priority",
+            "1",
+        ],
+        "create_p1",
+    );
+    assert!(
+        created.status.success(),
+        "create failed: {}",
+        created.stderr
+    );
+    let p1_id = parse_created_id(&created.stdout);
+    assert!(!p1_id.is_empty(), "could not parse created id");
+
+    let mut p1 = issue_from_jsonl(&workspace, &p1_id);
+    set_issue_jsonl_string(&mut p1, "verify", "cargo test --offline ready_");
+    write_single_issue_jsonl(&workspace, &p1);
+    run_br(&workspace, ["sync", "--import-only"], "import_p1");
+
+    let ready = run_br(&workspace, ["ready", "--json"], "ready_p1_uncited");
+    assert!(ready.status.success(), "ready failed: {}", ready.stderr);
+    let issues: Vec<Value> =
+        serde_json::from_str(&extract_json_payload(&ready.stdout)).expect("ready JSON");
+    assert!(
+        !issue_list_contains_id(&issues, &p1_id),
+        "P1 without principles citation must not be dispatchable"
+    );
+
+    // Add the citation; the bead becomes dispatchable and the row carries
+    // the §5.5 fields.
+    let mut cited = issue_from_jsonl(&workspace, &p1_id);
+    cited["principles"] = serde_json::json!([
+        {"name": "prove-it-works", "decision": "each exclusion rule has a named test"}
+    ]);
+    cited["updated_at"] =
+        Value::String(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+    write_single_issue_jsonl(&workspace, &cited);
+    run_br(&workspace, ["sync", "--import-only"], "import_p1_cited");
+
+    let ready = run_br(&workspace, ["ready", "--json"], "ready_p1_cited");
+    assert!(ready.status.success(), "ready failed: {}", ready.stderr);
+    let issues: Vec<Value> =
+        serde_json::from_str(&extract_json_payload(&ready.stdout)).expect("ready JSON");
+    assert!(
+        issue_list_contains_id(&issues, &p1_id),
+        "fully-cited P1 must be dispatchable"
+    );
+    let row = issues
+        .iter()
+        .find(|i| i.get("id").and_then(Value::as_str) == Some(p1_id.as_str()))
+        .expect("row for cited P1");
+    assert_eq!(
+        row.get("verify").and_then(Value::as_str),
+        Some("cargo test --offline ready_"),
+        "§5.5 row must carry verify"
+    );
+    assert!(row.get("wave").is_some(), "§5.5 row must carry wave");
+    assert!(row.get("pin").is_some(), "§5.5 row must carry pin");
+    assert_eq!(
+        row["principles"][0]["name"].as_str(),
+        Some("prove-it-works"),
+        "§5.5 row must carry principles citations"
     );
 }

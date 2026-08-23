@@ -38,7 +38,7 @@ fn fixture_dir() -> PathBuf {
 /// Migration target asserted by this suite: `CURRENT_SCHEMA_VERSION` (18, the
 /// ADR-0001 typed work-ledger schema). Kept as a named constant so a future
 /// bump is a one-line change plus fixture refresh.
-const TARGET_SCHEMA_VERSION: u64 = 18;
+const TARGET_SCHEMA_VERSION: u32 = 18;
 
 fn install_fixture_workspace(workspace: &BrWorkspace, db_gz: &str, issues: &str, config: &str) {
     let beads_dir = workspace.root.join(".beads");
@@ -140,7 +140,7 @@ fn upgrade_fixture_end_to_end(
     assert_eq!(plan_json["from_version"].as_u64(), Some(expected_from));
     assert_eq!(
         plan_json["to_version"].as_u64(),
-        Some(TARGET_SCHEMA_VERSION)
+        Some(u64::from(TARGET_SCHEMA_VERSION))
     );
     let plan_token = plan_json["plan_token"]
         .as_str()
@@ -173,7 +173,7 @@ fn upgrade_fixture_end_to_end(
     let run_id = applied_json["run_id"].as_str().expect("run id").to_string();
     assert_eq!(
         header_user_version(&db_path),
-        TARGET_SCHEMA_VERSION as u32,
+        TARGET_SCHEMA_VERSION,
         "{label}: post-apply schema"
     );
     for table in [
@@ -272,7 +272,7 @@ fn upgrade_fixture_end_to_end(
     );
     assert_eq!(
         header_user_version(&db_path),
-        TARGET_SCHEMA_VERSION as u32,
+        TARGET_SCHEMA_VERSION,
         "{label}: rejected stale apply must not mutate the database"
     );
 
@@ -349,7 +349,7 @@ fn upgrade_fixture_end_to_end(
     );
     assert_eq!(
         header_user_version(&db_path),
-        TARGET_SCHEMA_VERSION as u32,
+        TARGET_SCHEMA_VERSION,
         "{label}: re-apply after undo"
     );
 
@@ -381,7 +381,7 @@ fn upgrade_fixture_end_to_end(
     );
     assert_eq!(
         header_user_version(&db_path),
-        TARGET_SCHEMA_VERSION as u32,
+        TARGET_SCHEMA_VERSION,
         "{label}: post-migration write must not move the schema version"
     );
 }
