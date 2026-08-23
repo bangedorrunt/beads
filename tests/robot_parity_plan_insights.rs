@@ -37,6 +37,65 @@ fn strip_volatile(value: &Value) -> Value {
     }
 }
 
+/// Recursively compares two normalized envelopes. Floats compare within a
+/// tight relative tolerance because ADR-0003 §3.1 makes float parity with
+/// Go best-effort ("same top pick, same ordering", not bit-equal doubles);
+/// everything else must match exactly.
+fn collect_mismatches(actual: &Value, golden: &Value, path: &str, out: &mut Vec<String>) {
+    const FLOAT_TOLERANCE: f64 = 1e-9;
+    match (actual, golden) {
+        (Value::Number(left), Value::Number(right)) => {
+            let (Some(left), Some(right)) = (left.as_f64(), right.as_f64()) else {
+                if left != right {
+                    out.push(format!("{path}: {left} != {right}"));
+                }
+                return;
+            };
+            let scale = right.abs().max(1.0);
+            if (left - right).abs() > FLOAT_TOLERANCE * scale {
+                out.push(format!("{path}: {left} !~ {right}"));
+            }
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            let keys: std::collections::BTreeSet<&String> =
+                left.keys().chain(right.keys()).collect();
+            for key in keys {
+                let joined = format!("{path}/{key}");
+                match (left.get(key), right.get(key)) {
+                    (Some(l), Some(r)) => collect_mismatches(l, r, &joined, out),
+                    (None, Some(_)) => out.push(format!("{joined}: missing in actual")),
+                    (Some(_), None) => out.push(format!("{joined}: extra in actual")),
+                    (None, None) => unreachable!(),
+                }
+            }
+        }
+        (Value::Array(left), Value::Array(right)) => {
+            if left.len() != right.len() {
+                out.push(format!("{path}: length {} != {}", left.len(), right.len()));
+            }
+            for (index, (l, r)) in left.iter().zip(right.iter()).enumerate() {
+                collect_mismatches(l, r, &format!("{path}[{index}]"), out);
+            }
+        }
+        _ => {
+            if actual != golden {
+                out.push(format!("{path}: {actual} != {golden}"));
+            }
+        }
+    }
+}
+
+fn assert_parity(actual: &Value, golden: &Value, label: &str) {
+    let mut mismatches = Vec::new();
+    collect_mismatches(actual, golden, "", &mut mismatches);
+    assert!(
+        mismatches.is_empty(),
+        "{label} diverges from the bv golden ({} diffs):\n{}",
+        mismatches.len(),
+        mismatches.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
+    );
+}
+
 fn golden_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/bv_parity")
@@ -54,27 +113,20 @@ fn workspace_with_fixture() -> BrWorkspace {
     let beads_dir = workspace.root.join(".beads");
     std::fs::create_dir_all(&beads_dir).expect("create .beads dir");
 
-    // bv reads inline `dependencies` arrays straight from the JSONL; br's
-    // importer currently refuses to rebuild a database that contains them
-    // (separate bead), so seed the workspace without them and recreate the
-    // graph through `br dep add`, then assert the same logical edges.
-    let mut edges: Vec<(String, String)> = Vec::new();
+    // bv reads inline `dependencies` straight from the JSONL and drops the
+    // fixture's dangling short-id references ("a", "b", ...) — the committed
+    // goldens therefore describe an EDGELESS graph plus deferred-blocked
+    // accounting. Replaying those edges through `br dep add` would normalize
+    // the short ids into REAL blocking edges (`fx-b`), producing a different
+    // graph than the golden describes. Parity requires reproducing bv's
+    // interpretation, so the edges are stripped, not replayed. Persisting
+    // dangling refs at all is beads_rust-svtxe.
     let mut stripped_lines: Vec<String> = Vec::new();
     for line in FIXTURE_ISSUES.lines().filter(|line| !line.trim().is_empty()) {
         let mut issue: Value = serde_json::from_str(line).expect("fixture line parses");
-        if let Some(deps) = issue
+        issue
             .as_object_mut()
-            .and_then(|map| map.remove("dependencies"))
-            .and_then(|deps| deps.as_array().cloned())
-        {
-            for dep in deps {
-                let id = issue.get("id").and_then(Value::as_str).unwrap_or_default();
-                let depends_on = dep.get("depends_on").and_then(Value::as_str);
-                if let Some(depends_on) = depends_on {
-                    edges.push((id.to_owned(), depends_on.to_owned()));
-                }
-            }
-        }
+            .and_then(|map| map.remove("dependencies"));
         stripped_lines.push(issue.to_string());
     }
     std::fs::write(beads_dir.join("issues.jsonl"), stripped_lines.join("\n"))
@@ -89,19 +141,6 @@ fn workspace_with_fixture() -> BrWorkspace {
         "fixture import failed: {}",
         String::from_utf8_lossy(&import.stderr)
     );
-    for (id, depends_on) in &edges {
-        let dep = Command::new(env!("CARGO_BIN_EXE_br"))
-            .current_dir(&workspace.root)
-            .args(["dep", "add", id, depends_on])
-            .env("NO_COLOR", "1")
-            .output()
-            .unwrap_or_else(|error| panic!("spawn br dep add {id} {depends_on}: {error}"));
-        assert!(
-            dep.status.success(),
-            "`br dep add {id} {depends_on}` failed: {}",
-            String::from_utf8_lossy(&dep.stderr)
-        );
-    }
     workspace
 }
 
@@ -146,9 +185,10 @@ fn robot_plan_matches_bv_golden_shape_and_track_composition() {
     let actual = strip_volatile(&run_robot_json(&workspace, &["plan", "--json"]));
     let golden = strip_volatile(&load_golden("robot-plan.json"));
 
-    assert_eq!(
-        actual, golden,
-        "`br plan --json` must be structurally identical to the bv golden"
+    assert_parity(
+        &actual,
+        &golden,
+        "`br plan --json` must be structurally identical to the bv golden",
     );
 
     let actual_tracks = actual
@@ -199,9 +239,10 @@ fn robot_insights_matches_bv_golden_shape_and_metric_ranking() {
     let actual = strip_volatile(&run_robot_json(&workspace, &["insights", "--json"]));
     let golden = strip_volatile(&load_golden("robot-insights.json"));
 
-    assert_eq!(
-        actual, golden,
-        "`br insights --json` must be structurally identical to the bv golden"
+    assert_parity(
+        &actual,
+        &golden,
+        "`br insights --json` must be structurally identical to the bv golden",
     );
 
     // Rank stability on the flywheel-critical maps (ADR-0003 §3.1 scores note).

@@ -773,6 +773,12 @@ fn main() {
                 commands::query::execute(&command, &overrides, &output_ctx)
             }
         }
+        Commands::Plan(args) => {
+            commands::analysis::execute_plan(&args, &overrides, &output_ctx)
+        }
+        Commands::Insights(args) => {
+            commands::analysis::execute_insights(&args, &overrides, &output_ctx)
+        }
         Commands::Graph(args) => {
             if let (Some(res), Some(beads_dir)) = (storage_result.as_ref(), ctx.beads_dir.as_ref())
             {
@@ -1452,6 +1458,9 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::History(_)
         | Commands::Agents(_) => false,
 
+        | Commands::Plan(_)
+        | Commands::Insights(_) => false,
+
         #[cfg(feature = "self_update")]
         Commands::Upgrade(_) => false,
     }
@@ -1476,6 +1485,8 @@ const fn supports_read_only_fast_open(cmd: &Commands) -> bool {
         | Commands::Lint(_)
         | Commands::Changelog(_)
         | Commands::Graph(_)
+        | Commands::Plan(_)
+        | Commands::Insights(_)
         | Commands::Orphans(beads::cli::OrphansArgs { fix: false, .. })
         | Commands::Comments(beads::cli::CommentsArgs {
             command: None | Some(beads::cli::CommentCommands::List(_)),

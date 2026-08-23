@@ -866,6 +866,15 @@ pub enum Commands {
     /// List orphan issues (referenced in commits but open)
     Orphans(OrphansArgs),
 
+    /// Parallel execution tracks over the actionable set (bv parity)
+    Plan(PlanArgs),
+
+    /// Unified triage payload for agents (bv parity, ADR-0003 §3.1)
+    Triage(TriageArgs),
+
+    /// The single top claimable pick, fail-closed (bv parity, ADR-0003 §3.2)
+    Next(NextArgs),
+
     /// Quick capture (create issue, print ID only)
     Q(QuickArgs),
 
@@ -909,6 +918,9 @@ pub enum Commands {
 
     /// Show project statistics
     Stats(StatsArgs),
+
+    /// Graph metric maps: bottlenecks, keystones, cycles, velocity (bv parity)
+    Insights(InsightsArgs),
 
     /// Alias for stats
     Status(StatsArgs),
@@ -1724,6 +1736,9 @@ pub const fn command_requests_robot_json(cmd: &Commands) -> bool {
         Commands::Defer(args) => args.robot,
         Commands::Undefer(args) => args.robot,
         Commands::Orphans(args) => args.robot,
+        Commands::Plan(args) => args.robot,
+        Commands::Insights(args) => args.robot,
+        Commands::Triage(args) | Commands::Next(args) => args.robot,
         Commands::Changelog(args) => args.robot,
         Commands::Sync(args) => args.robot,
         Commands::VcsStatus(args) => args.robot,
@@ -3527,6 +3542,46 @@ pub struct OrphansArgs {
     /// Prompt to fix orphans
     #[arg(long)]
     pub fix: bool,
+
+    /// Machine-readable output (alias for --json)
+    #[arg(long)]
+    pub robot: bool,
+}
+
+/// Arguments for the plan command (ADR-0003 §3.3).
+#[derive(Args, Debug, Clone, Default)]
+pub struct PlanArgs {
+    /// Scope the analysis to issues carrying this label
+    #[arg(long)]
+    pub label: Option<String>,
+
+    /// Machine-readable output (alias for --json)
+    #[arg(long)]
+    pub robot: bool,
+}
+
+/// Arguments for the triage command (ADR-0003 §3.1).
+#[derive(Args, Debug, Clone, Default)]
+pub struct TriageArgs {
+    /// Machine-readable output (alias for --json)
+    #[arg(long)]
+    pub robot: bool,
+}
+
+/// Arguments for the next command (ADR-0003 §3.2).
+#[derive(Args, Debug, Clone, Default)]
+pub struct NextArgs {
+    /// Machine-readable output (alias for --json)
+    #[arg(long)]
+    pub robot: bool,
+}
+
+/// Arguments for the insights command (ADR-0003 §3.5).
+#[derive(Args, Debug, Clone, Default)]
+pub struct InsightsArgs {
+    /// Scope the analysis to issues carrying this label
+    #[arg(long)]
+    pub label: Option<String>,
 
     /// Machine-readable output (alias for --json)
     #[arg(long)]
