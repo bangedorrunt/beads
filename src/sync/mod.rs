@@ -8,6 +8,7 @@
 //! - Path validation and allowlist enforcement
 
 mod db_inode_lock;
+pub mod fence_import;
 pub mod history;
 pub mod path;
 pub mod witness;

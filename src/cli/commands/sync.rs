@@ -3473,6 +3473,23 @@ fn execute_import(
                 // on every "already current" import is cheap and safe.
                 load_gates_sidecar_if_present(storage, beads_dir);
 
+                // ADR-0001 §5.2: same for the fence import — legacy fences
+                // must stamp even when issues themselves are current.
+                match crate::sync::fence_import::sync_fences_into_typed_fields(
+                    storage,
+                    "fence-import",
+                ) {
+                    Ok(outcome) if outcome.issues_updated > 0 => info!(
+                        count = outcome.issues_updated,
+                        "Fence import stamped typed brief fields"
+                    ),
+                    Ok(_) => {}
+                    Err(error) => warn!(
+                        %error,
+                        "Fence import failed; rerun `br doctor --repair` to retry"
+                    ),
+                }
+
                 if use_json {
                     let result = ImportResultOutput {
                         created: 0,
@@ -3595,6 +3612,21 @@ fn execute_import(
     // refused rather than dropped. Missing sidecar stays legal (older
     // workspaces, or a clone with zero gate history).
     load_gates_sidecar_if_present(storage, beads_dir);
+
+    // ADR-0001 §5.2: one-shot fence import — stamp empty typed brief fields
+    // from description fences so a clone materializing a legacy JSONL gets
+    // the typed shape without manual `br update` passes.
+    match crate::sync::fence_import::sync_fences_into_typed_fields(storage, "fence-import") {
+        Ok(outcome) if outcome.issues_updated > 0 => info!(
+            count = outcome.issues_updated,
+            "Fence import stamped typed brief fields"
+        ),
+        Ok(_) => {}
+        Err(error) => warn!(
+            %error,
+            "Fence import failed; rerun `br doctor --repair` to retry"
+        ),
+    }
 
     // --rebuild: remove DB entries not present in JSONL.
     //

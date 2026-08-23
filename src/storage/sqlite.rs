@@ -11651,6 +11651,28 @@ impl SqliteStorage {
     /// # Errors
     ///
     /// Returns an error if the database query fails.
+    /// IDs of issues whose description still carries a `## VERIFY` or
+    /// `## PRINCIPLES` fence while the corresponding typed fields are empty —
+    /// the work list for the §5.2 one-shot fence import.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub fn get_fence_import_candidate_ids(&self) -> Result<Vec<String>> {
+        let rows = self.conn.query(
+            "SELECT id FROM issues
+             WHERE ((verify IS NULL OR trim(verify) = '')
+                    AND description LIKE '%## VERIFY%')
+                OR ((principles IS NULL OR principles = '' OR principles = '[]')
+                    AND description LIKE '%## PRINCIPLES%')
+             ORDER BY id",
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| r.get(0).and_then(SqliteValue::as_text).map(String::from))
+            .collect())
+    }
+
     pub fn get_all_ids(&self) -> Result<Vec<String>> {
         let rows = self.conn.query("SELECT id FROM issues ORDER BY id")?;
         Ok(rows

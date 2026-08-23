@@ -1087,6 +1087,120 @@ pub fn inspect_pending_sync_merge_under_authority(
 /// is set but whose close cannot be proven from a PASS row in
 /// `.beads/gates.jsonl` is an error — the verdict is ledger state, not local
 /// database state, and must survive a git clone.
+/// ADR-0001 §5.2 (beads_rust-fence-import-ou8g): `--repair` arm of the
+/// one-shot fence import. Probes for issues whose typed brief fields are
+/// empty while their description still carries legal fences, then stamps
+/// them through the repair chokepoint (per-issue snapshot-backed DbExec, so
+/// undo can revert). Returns `true` when any issue was stamped.
+fn fix_fence_import_if_warned(
+    db_path: &Path,
+    ctx: &OutputContext,
+    session: Option<&mut DoctorRepairSession>,
+) -> bool {
+    // Plan from a read-only view first: which issues get what.
+    /// One planned fence-import write: issue id, verify command to stamp
+    /// (when its typed field is empty), and citations to write (same guard).
+    type FenceImportPlanEntry = (
+        String,
+        Option<String>,
+        Option<Vec<crate::model::PrincipleCitation>>,
+    );
+    let plan = (|| -> std::result::Result<Vec<FenceImportPlanEntry>, BeadsError> {
+        let storage = crate::storage::SqliteStorage::open_current_read_only(db_path)?
+            .ok_or_else(|| BeadsError::Config(format!("no readable database at {}", db_path.display())))?;
+        let mut plan = Vec::new();
+        for id in storage.get_fence_import_candidate_ids()? {
+            let Some(issue) = storage.get_issue(&id)? else { continue };
+            let (verify_command, citations) =
+                crate::sync::fence_import::parse_description_fences(
+                    issue.description.as_deref().unwrap_or_default(),
+                );
+            let verify_is_empty = issue.verify.as_deref().unwrap_or_default().trim().is_empty();
+            let verify_to_set = if verify_is_empty { verify_command } else { None };
+            let principles_to_set = if issue.principles.is_empty() && !citations.is_empty() {
+                Some(citations)
+            } else {
+                None
+            };
+            if verify_to_set.is_some() || principles_to_set.is_some() {
+                plan.push((id, verify_to_set, principles_to_set));
+            }
+        }
+        Ok(plan)
+    })();
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(error) => {
+            if !ctx.is_json() {
+                ctx.warning(&format!(
+                    "Skipping fence import: cannot read candidates: {error}"
+                ));
+            }
+            return false;
+        }
+    };
+    if plan.is_empty() {
+        return false;
+    }
+    let Some(session) = session else {
+        if !ctx.is_json() {
+            ctx.warning(
+                "Skipping fence import: no doctor repair session (run-dir creation failed)",
+            );
+        }
+        return false;
+    };
+
+    session.set_fixer("sync.fence_import");
+    let mut stamped = 0usize;
+    for (id, verify_to_set, principles_to_set) in plan {
+        let mut touched = false;
+        if let Some(command) = verify_to_set {
+            let op = chokepoint::Op::DbExec {
+                sql: "UPDATE issues SET verify = ?1 \
+                      WHERE id = ?2 AND (verify IS NULL OR trim(verify) = '')"
+                    .to_string(),
+                args: vec![
+                    chokepoint::DbArg::Text(command),
+                    chokepoint::DbArg::Text(id.clone()),
+                ],
+                affected_tables: vec!["issues".to_string()],
+                affected_predicate: Some(format!("id = '{id}'")),
+            };
+            touched |=
+                matches!(chokepoint::mutate(&session.ctx, db_path, op), Ok(result) if result.ok);
+        }
+        if let Some(citations) = principles_to_set {
+            let Ok(json) = serde_json::to_string(&citations) else {
+                continue;
+            };
+            let op = chokepoint::Op::DbExec {
+                sql: "UPDATE issues SET principles = ?1 \
+                      WHERE id = ?2 AND (principles IS NULL OR principles = '' OR principles = '[]')"
+                    .to_string(),
+                args: vec![
+                    chokepoint::DbArg::Text(json),
+                    chokepoint::DbArg::Text(id.clone()),
+                ],
+                affected_tables: vec!["issues".to_string()],
+                affected_predicate: Some(format!("id = '{id}'")),
+            };
+            touched |=
+                matches!(chokepoint::mutate(&session.ctx, db_path, op), Ok(result) if result.ok);
+        }
+        if touched {
+            stamped += 1;
+        }
+    }
+    if stamped > 0 && !ctx.is_json() {
+        ctx.info(&format!(
+            "Fence import stamped typed brief fields on {stamped} issue(s)"
+        ));
+    }
+    stamped > 0
+}
+
+/// PASS row. `Err` carries the doctor-facing message for unreadable or
 /// Parse `.beads/gates.jsonl` into the set of issue ids holding at least one
 /// PASS row. `Err` carries the doctor-facing message for unreadable or
 /// malformed sidecars.
@@ -2203,6 +2317,7 @@ struct EarlyRepairSummary {
     wal_checkpoint: bool,
     null_defaults: bool,
     db_bloat_vacuum: bool,
+    fence_import: bool,
 }
 
 impl EarlyRepairSummary {
@@ -2228,6 +2343,7 @@ impl EarlyRepairSummary {
             || self.wal_checkpoint
             || self.null_defaults
             || self.db_bloat_vacuum
+            || self.fence_import
     }
 
     fn action_labels(self) -> Vec<String> {
@@ -2294,6 +2410,9 @@ impl EarlyRepairSummary {
         }
         if self.db_bloat_vacuum {
             actions.push("db_bloat_vacuumed".to_string());
+        }
+        if self.fence_import {
+            actions.push("fence_import_applied".to_string());
         }
         actions
     }
@@ -2372,6 +2491,12 @@ impl EarlyRepairSummary {
         if self.db_bloat_vacuum {
             messages.push(
                 "Compacted database via VACUUM to reclaim freelist space (--unsafe-auto-fix opt-in)."
+                    .to_string(),
+            );
+        }
+        if self.fence_import {
+            messages.push(
+                "Stamped typed brief fields from description fences (one-shot fence import)."
                     .to_string(),
             );
         }
@@ -12822,6 +12947,20 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             false
         };
 
+    // ADR-0001 §5.2 (beads_rust-fence-import-ou8g): stamp empty typed brief
+    // fields from description fences. Self-probing (no report warning keys
+    // it); one-shot by construction, so it no-ops on already-clean trackers.
+    let fence_import_repaired =
+        if args.repair && fixer_filter.allows("fm-briefs-fence-import-pending") {
+            let repaired = fix_fence_import_if_warned(&paths.db_path, ctx, session.as_mut());
+            if repaired {
+                initial = collect_doctor_report_for_cli(&beads_dir, &paths, cli)?;
+            }
+            repaired
+        } else {
+            false
+        };
+
     // Pass-4 cycle 4: recompute metadata.jsonl_content_hash from the
     // authoritative JSONL on disk if the cached value has drifted.
     // JSONL is NEVER mutated; only the cache row updates.
@@ -13204,6 +13343,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         wal_checkpoint: wal_checkpoint_repaired,
         null_defaults: null_defaults_repaired,
         db_bloat_vacuum: db_bloat_vacuum_repaired,
+        fence_import: fence_import_repaired,
     };
 
     if !args.repair {
@@ -19804,6 +19944,7 @@ mod tests {
             wal_checkpoint: false,
             null_defaults: false,
             db_bloat_vacuum: false,
+            fence_import: false,
         };
 
         assert!(summary.applied());
@@ -19866,6 +20007,7 @@ mod tests {
             wal_checkpoint: false,
             null_defaults: false,
             db_bloat_vacuum: true,
+            fence_import: true,
         };
 
         assert!(summary.applied());
@@ -19907,6 +20049,7 @@ mod tests {
             wal_checkpoint: false,
             null_defaults: true,
             db_bloat_vacuum: false,
+            fence_import: false,
         };
 
         assert!(summary.applied());
@@ -19951,6 +20094,7 @@ mod tests {
             wal_checkpoint: false,
             null_defaults: false,
             db_bloat_vacuum: false,
+            fence_import: false,
         };
 
         assert!(summary.applied());
@@ -19995,6 +20139,7 @@ mod tests {
             wal_checkpoint: false,
             null_defaults: false,
             db_bloat_vacuum: false,
+            fence_import: false,
         };
 
         assert!(summary.applied());
@@ -20039,6 +20184,7 @@ mod tests {
             wal_checkpoint: false,
             null_defaults: false,
             db_bloat_vacuum: false,
+            fence_import: false,
         };
 
         assert!(summary.applied());

@@ -1,7 +1,7 @@
 mod common;
 
 use beads::model::{Comment, DependencyType, Issue, Priority, Status};
-use beads::storage::SqliteStorage;
+use beads::storage::{IssueUpdate, SqliteStorage};
 use beads::sync::{
     ExportConfig, ImportConfig, export_gates_to_jsonl, export_to_jsonl, finalize_export,
     import_from_jsonl, import_gates_from_jsonl, read_issues_from_jsonl,
@@ -821,4 +821,107 @@ fn ledger_data_hash_covers_issues_and_gates_sidecar() {
         after_gate,
         compute_ledger_data_hash(&issues_path, &gates_path).unwrap()
     );
+}
+
+/// ADR-0001 §5.2 (beads_rust-fence-import-ou8g): one-shot fence import.
+/// Legacy beads carry ## VERIFY / ## PRINCIPLES markdown fences in their
+/// description; the helper stamps the typed fields EXACTLY once — later
+/// fence edits are ignored because the field, not the prose, is the source
+/// of truth. The description itself is never modified.
+#[test]
+fn fence_import_copies_verify_once_then_ignores_later_fence_edits() {
+    use beads::sync::fence_import::sync_fences_into_typed_fields;
+
+    let mut storage = SqliteStorage::open_memory().unwrap();
+    let now = Utc::now();
+    let mut legacy = fixtures::issue("Legacy fenced bead");
+    legacy.id = "test-f1".to_string();
+    legacy.created_at = now;
+    legacy.updated_at = now;
+    legacy.verify = None;
+    legacy.principles = Vec::new();
+    legacy.description = Some(
+        "Work items.\n\n## VERIFY\n```\ntimeout 600 cargo test --offline fence_import\n```\n\n\
+         ## PRINCIPLES\nprove-it-works — proof survives git clone\n\
+         not-a-principle no dash here\n"
+            .to_string(),
+    );
+    legacy.acceptance_criteria = None;
+    legacy.design = None;
+    legacy.notes = None;
+    storage.create_issue(&legacy, "tester").unwrap();
+
+    // First import: fence contents land in the typed fields.
+    let outcome = sync_fences_into_typed_fields(&mut storage, "fence-import").unwrap();
+    assert_eq!(outcome.issues_updated, 1, "the legacy bead gets stamped");
+
+    let stamped = storage.get_issue("test-f1").unwrap().unwrap();
+    assert_eq!(
+        stamped.verify.as_deref(),
+        Some("timeout 600 cargo test --offline fence_import"),
+        "VERIFY fence command copied into the typed field"
+    );
+    assert_eq!(
+        stamped.principles.len(),
+        1,
+        "only 'name — decision' lines cite"
+    );
+    assert_eq!(stamped.principles[0].name, "prove-it-works");
+    assert_eq!(stamped.principles[0].decision, "proof survives git clone");
+    let description_after_first = stamped.description.clone().unwrap();
+    assert!(
+        description_after_first.contains("## VERIFY"),
+        "import is lossless: description untouched"
+    );
+
+    // Later fence edit: fields are already set, so the edit is IGNORED.
+    let mut edited = stamped.clone();
+    edited.description = Some(
+        "Work items.\n\n## VERIFY\n```\ncargo test --offline something_else_entirely\n```\n\n\
+         ## PRINCIPLES\nchase-shiny — later fence edits must not win\n"
+            .to_string(),
+    );
+    let updates = IssueUpdate {
+        description: Some(Some(edited.description.unwrap())),
+        ..IssueUpdate::default()
+    };
+    storage.update_issue("test-f1", &updates, "tester").unwrap();
+
+    let outcome2 = sync_fences_into_typed_fields(&mut storage, "fence-import").unwrap();
+    assert_eq!(
+        outcome2.issues_updated, 0,
+        "one-shot: nothing left to stamp"
+    );
+
+    let final_issue = storage.get_issue("test-f1").unwrap().unwrap();
+    assert_eq!(
+        final_issue.verify.as_deref(),
+        Some("timeout 600 cargo test --offline fence_import"),
+        "later fence edits are ignored once the field is set"
+    );
+    assert_eq!(final_issue.principles.len(), 1);
+    assert_eq!(final_issue.principles[0].name, "prove-it-works");
+}
+
+/// §5.2: an issue whose typed fields are ALREADY set is skipped even though
+/// its description still carries fences (the pre-stamped shape).
+#[test]
+fn fence_import_skips_beads_with_typed_fields_already_set() {
+    use beads::sync::fence_import::sync_fences_into_typed_fields;
+
+    let mut storage = SqliteStorage::open_memory().unwrap();
+    let now = Utc::now();
+    let mut modern = fixtures::issue("Modern bead");
+    modern.id = "test-f2".to_string();
+    modern.created_at = now;
+    modern.updated_at = now;
+    modern.verify = Some("br doctor --check".to_string());
+    modern.principles = Vec::new();
+    modern.description = Some("## VERIFY\ncargo build\n".to_string());
+    storage.create_issue(&modern, "tester").unwrap();
+
+    let outcome = sync_fences_into_typed_fields(&mut storage, "fence-import").unwrap();
+    assert_eq!(outcome.issues_updated, 0);
+    let issue = storage.get_issue("test-f2").unwrap().unwrap();
+    assert_eq!(issue.verify.as_deref(), Some("br doctor --check"));
 }
