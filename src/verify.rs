@@ -379,7 +379,7 @@ mod tests {
         runnable: bool,
     ) -> bool {
         use AcShape::{Checkable, Judgment};
-        use Blast::{High, Normal};
+        use Blast::Normal;
         use VerdictKind::*;
         match kind {
             ReviewerSigned => ac == Judgment,

@@ -829,6 +829,7 @@ pub const ADR0019_VERDICT_GATE_NAMES: [&str; 5] = [
 
 /// Detect the illegal `require_all`-of-the-five-verdict-names configuration
 /// (ADR-0001 §5.3). Returns the offending transition keys.
+#[must_use]
 pub fn detect_illegal_require_all(workflow: &Workflow) -> Vec<String> {
     let mut offenders = Vec::new();
     for (key, rule) in &workflow.gates {
@@ -871,6 +872,7 @@ fn legal_close_gate_names(input: &crate::verify::LegalCloseInput<'_>) -> Vec<&'s
 /// schema-v18 columns (beads_rust-schema-v18-uyb3) — until then every bead
 /// defaults to Normal blast, checkable AC, empty VERIFY (the non-runnable
 /// band), which is the conservative reading of the table.
+#[must_use]
 pub fn legal_close_input_for_issue_pub(priority: i32) -> crate::verify::LegalCloseInput<'static> {
     legal_close_input_for_issue(priority)
 }
@@ -889,6 +891,7 @@ fn legal_close_input_for_issue(priority: i32) -> crate::verify::LegalCloseInput<
 /// recorded PASS row's gate kind satisfies `crate::verify::legal_close` for
 /// this bead; a FAIL row for any verdict gate poisons the transition even
 /// when another kind passes ("never a FAIL row").
+#[must_use]
 pub fn evaluate_require_legal_close(
     issue_id: &str,
     from: &str,
@@ -2810,6 +2813,49 @@ fn parse_unchecked_box(line: &str) -> Option<String> {
 /// # Errors
 ///
 /// Returns an error if the file exists but cannot be read or parsed.
+/// True when a project never configured workflow gating: `workflow.strict`
+/// unset AND no gates. ADR-0001 §5.3 — such a project runs the fail-closed
+/// default on BOTH the record side and the close side.
+#[must_use]
+pub fn workflow_gating_unconfigured(workflow: &Workflow) -> bool {
+    !workflow.strict && workflow.gates.is_empty()
+}
+
+/// The parsed [`DEFAULT_FAIL_CLOSED_POLICY_YAML`] workflow, computed once.
+fn default_fail_closed_workflow() -> &'static Workflow {
+    static DEFAULT: std::sync::OnceLock<Workflow> = std::sync::OnceLock::new();
+    DEFAULT.get_or_init(|| {
+        serde_yml::from_str::<PolicyDocument>(DEFAULT_FAIL_CLOSED_POLICY_YAML)
+            .expect("builtin DEFAULT_FAIL_CLOSED_POLICY_YAML must parse")
+            .workflow
+    })
+}
+
+/// The ONE §5.3 workflow-defaulting ladder, shared by the gate-record path
+/// (`br gate report`) and the close chokepoint (beads_rust-gate-report-
+/// default-uro91): when `.beads/policy.yaml` is absent, or it never
+/// configured workflow gating ([`workflow_gating_unconfigured`]), the
+/// fail-closed default is the effective workflow — so a verdict row can
+/// always be recorded for exactly the transitions close demands.
+///
+/// Callers that need non-workflow sections (`allow_bypass`, `close_policy`)
+/// keep loading [`load_for_beads_dir`]; only the gating ladder is shared.
+///
+/// # Errors
+///
+/// Returns an error if the file exists but cannot be read or parsed.
+pub fn resolve_effective_workflow(beads_dir: &Path) -> Result<Workflow> {
+    let path = beads_dir.join(POLICY_FILE_NAME);
+    if !path.exists() {
+        return Ok(default_fail_closed_workflow().clone());
+    }
+    let document = load_for_beads_dir(beads_dir)?;
+    if workflow_gating_unconfigured(&document.workflow) {
+        return Ok(default_fail_closed_workflow().clone());
+    }
+    Ok(document.workflow)
+}
+
 pub fn load_for_beads_dir(beads_dir: &Path) -> Result<PolicyDocument> {
     let path = beads_dir.join(POLICY_FILE_NAME);
     if !path.exists() {

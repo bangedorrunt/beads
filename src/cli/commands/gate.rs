@@ -127,12 +127,12 @@ fn execute_report(
             .ok_or_else(|| BeadsError::IssueNotFound {
                 id: issue_id.clone(),
             })?;
-    let policy = close_policy::load_for_beads_dir(beads_dir)?;
+    let policy = close_policy::resolve_effective_workflow(beads_dir)?;
     let labels = storage_ctx.storage.get_labels(&issue_id)?;
     let from_status = issue.status.as_str();
     let status_revision = storage_ctx.storage.status_revision(&issue_id)?;
     let to_status = resolve_gate_target(
-        &policy.workflow,
+        &policy,
         from_status,
         args.to.as_deref(),
         gate,
@@ -286,14 +286,16 @@ fn execute_list(
     let legacy_results = storage_ctx.storage.get_legacy_gate_results(&issue_id)?;
 
     // Compute required-gate status for each guarded transition out of the
-    // current status, using the project's workflow.gates config. Absent
-    // config / status leaves this empty (backward compatible).
-    let policy = close_policy::load_for_beads_dir(beads_dir)?;
+    // current status, using the effective §5.3 workflow (the fail-closed
+    // default applies when policy.yaml is absent or unconfigured — same
+    // resolution as the record path and close). Absent status leaves this
+    // empty.
+    let workflow = close_policy::resolve_effective_workflow(beads_dir)?;
     let labels = storage_ctx.storage.get_labels(&issue_id)?;
     let priority = issue.as_ref().map_or(0, |i| i.priority.0);
     let mut results_by_target = BTreeMap::new();
     if let Some(from) = current_status.as_deref() {
-        for key in policy.workflow.gates.keys() {
+        for key in workflow.gates.keys() {
             let Some((rule_from, rule_to)) = key.split_once("->") else {
                 continue;
             };
@@ -308,7 +310,7 @@ fn execute_list(
         }
     }
     let gated_transitions = compute_gated_transitions(
-        &policy.workflow,
+        &workflow,
         &issue_id,
         current_status.as_deref(),
         &labels,

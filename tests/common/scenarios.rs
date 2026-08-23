@@ -2902,7 +2902,10 @@ pub mod catalog {
     }
 
     /// ADR-0001 §5.3: record a legal PASS row before a fail-closed close.
-    fn gate_report_step(issue_alias: &str, action: &str, label: &str) -> WorkspaceEvolutionStep {
+    // `action` is reserved by callers ("close_root", "stress-close", ...) to
+    // distinguish steps; the step builder has nowhere to carry it yet, so it
+    // stays unused until the harness grows an action slot.
+    fn gate_report_step(issue_alias: &str, _action: &str, label: &str) -> WorkspaceEvolutionStep {
         command_step(
             vec![
                 "gate".to_string(),
@@ -2923,8 +2926,8 @@ pub mod catalog {
     }
 
     fn action_hash(action: &str) -> u64 {
-        action.bytes().fold(0xcbf29ce4u64, |acc, b| {
-            (acc ^ u64::from(b)).wrapping_mul(0x100000001b3)
+        action.bytes().fold(0xcbf2_9ce4_u64, |acc, b| {
+            (acc ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
         })
     }
 

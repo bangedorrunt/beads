@@ -127,21 +127,33 @@ fn resolve_attribution_for_close(
     )
 }
 
+/// The policy-side inputs to [`evaluate_close_policy`]: the loaded close
+/// policy, the effective §5.3 workflow, and whether the fail-closed default
+/// applies. Grouped so the evaluator stays under the argument-count lint.
+struct CloseGateInputs<'a> {
+    policy: &'a ClosePolicy,
+    workflow: &'a crate::close_policy::Workflow,
+    fail_closed_default: bool,
+}
+
 /// Run every enabled gate against `issue` and produce the (possibly empty)
 /// violation list. This includes the close-policy gates (issue #274) *and* the
 /// workflow gate engine (issue #312, layer 2): closing an issue is a transition
 /// into the `closed` state, so any `workflow.gates` rule guarding
 /// `"<current> -> closed"` is enforced here too.
 fn evaluate_close_policy(
-    policy: &ClosePolicy,
-    workflow: &crate::close_policy::Workflow,
+    inputs: &CloseGateInputs<'_>,
     storage: &SqliteStorage,
     issue_id: &str,
     issue: &Issue,
     args: &CloseArgs,
     close_actor: &str,
-    fail_closed_default: bool,
 ) -> Result<EvaluatedGates> {
+    let CloseGateInputs {
+        policy,
+        workflow,
+        fail_closed_default,
+    } = *inputs;
     // Look up the in_progress actor only when the gate is enabled — this
     // saves a query per close for repos that don't enable that specific
     // gate.
@@ -845,10 +857,11 @@ fn execute_route(
     let policy_doc = close_policy::load_for_beads_dir(beads_dir)?;
     // ADR-0001 §5.3: the fail-closed close default applies when the project
     // has no `.beads/policy.yaml`, or when it never configured workflow
-    // gating (strict unset / no gates). Interim reading until the policy
-    // schema distinguishes "strict explicitly false" (uyb3).
+    // gating — the SAME ladder `resolve_effective_workflow` serves to the
+    // gate-record path (beads_rust-gate-report-default-uro91), so record and
+    // close can never disagree about the default again.
     let fail_closed_default = !beads_dir.join(close_policy::POLICY_FILE_NAME).exists()
-        || (!policy_doc.workflow.strict && policy_doc.workflow.gates.is_empty());
+        || close_policy::workflow_gating_unconfigured(&policy_doc.workflow);
     // Active when close-policy gates are enabled (issue #274) OR the workflow
     // gate engine is configured (issue #312, layer 2), OR the fail-closed
     // close default applies. The latter must also trigger per-issue gate
@@ -881,8 +894,7 @@ fn execute_route(
             .commit_sha
             .as_deref()
             .map(str::trim)
-            .filter(|sha| !sha.is_empty())
-            .is_none()
+            .is_none_or(str::is_empty)
     {
         return Err(BeadsError::validation(
             "commit-sha",
@@ -1062,14 +1074,16 @@ fn execute_route(
             }
 
             let evaluated_gates = evaluate_close_policy(
-                &policy_doc.close_policy,
-                &policy_doc.workflow,
+                &CloseGateInputs {
+                    policy: &policy_doc.close_policy,
+                    workflow: &policy_doc.workflow,
+                    fail_closed_default,
+                },
                 &storage_ctx.storage,
                 id,
                 issue,
                 args,
                 &actor,
-                fail_closed_default,
             )?;
             if !evaluated_gates.violations.is_empty() && !args.bypass_policy {
                 let summary = summarize_violations(&evaluated_gates.violations);
@@ -1927,7 +1941,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-blocked".to_string(), "bd-blocker".to_string()],
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx).expect("close batch");
@@ -1981,7 +1995,7 @@ mod tests {
                 "bd-close-skip".to_string(),
                 "bd-close-last".to_string(),
             ],
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         let execution = execute_route(&args, &CliOverrides::default(), &ctx, &beads_dir, false)
@@ -2027,7 +2041,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-parent".to_string(), "bd-parent.1".to_string()],
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2073,7 +2087,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-parent".to_string()],
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, true, &CliOverrides::default(), &ctx)
@@ -2170,7 +2184,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-child".to_string()],
             reason: Some("Child done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2215,7 +2229,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-closed".to_string()],
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
 
@@ -2278,7 +2292,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-blocked".to_string(), "bd-free".to_string()],
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
 
@@ -2359,7 +2373,7 @@ mod tests {
         // The fail-closed close default also applies (this policy has no
         // workflow.gates block), so record the legal PASS row first.
         {
-            let mut storage = SqliteStorage::open(&db_path).expect("storage");
+            let storage = SqliteStorage::open(&db_path).expect("storage");
             storage
                 .record_scoped_gate_result(
                     "bd-policy",
@@ -2379,7 +2393,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-policy".to_string()],
             reason: Some("done cleanly".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx).expect("close issue");
@@ -2435,7 +2449,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-clean".to_string(), "bd-policy-fail".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2485,7 +2499,7 @@ mod tests {
         // fail-closed default is active even without a policy.yaml. A legal
         // close (PASS row + SHA) records its metadata audit trail.
         {
-            let mut storage = SqliteStorage::open(&db_path).expect("storage");
+            let storage = SqliteStorage::open(&db_path).expect("storage");
             storage
                 .record_scoped_gate_result(
                     "bd-no-policy",
@@ -2505,7 +2519,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-no-policy".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx).expect("close issue");
@@ -2556,7 +2570,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-wf".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2604,8 +2618,7 @@ mod tests {
     // forbid_close_with_deferred_dependents gate (beads#303)
     // =========================================================================
 
-    const DEFERRED_DEPENDENTS_POLICY: &str =
-        "close_policy:\n  forbid_close_with_deferred_dependents:\n    enabled: true\nworkflow:\n  strict: true\n  gates:\n    \"in_review -> closed\":\n      require_all:\n        - ci_green\n";
+    const DEFERRED_DEPENDENTS_POLICY: &str = "close_policy:\n  forbid_close_with_deferred_dependents:\n    enabled: true\nworkflow:\n  strict: true\n  gates:\n    \"in_review -> closed\":\n      require_all:\n        - ci_green\n";
 
     /// Build a prereq bead `bd-prereq` and a dependent bead `bd-dep` with a
     /// `blocks` edge from the prereq (so `bd-dep` depends on `bd-prereq`),
@@ -2662,7 +2675,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-prereq".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2698,7 +2711,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-prereq".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2753,7 +2766,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-prereq".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2791,7 +2804,7 @@ mod tests {
             let args = CloseArgs {
                 ids: vec!["bd-prereq".to_string()],
                 reason: Some("done".to_string()),
-                commit_sha: test_sha(),
+                commit_sha: Some(test_sha()),
                 ..CloseArgs::default()
             };
             execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2816,7 +2829,7 @@ mod tests {
             let args = CloseArgs {
                 ids: vec!["bd-prereq".to_string()],
                 reason: Some("done".to_string()),
-                commit_sha: test_sha(),
+                commit_sha: Some(test_sha()),
                 ..CloseArgs::default()
             };
             execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2862,8 +2875,8 @@ mod tests {
     }
 
     /// Every legal close cites the commit carrying the bead id.
-    fn test_sha() -> Option<String> {
-        Some("0123456789abcdef".to_string())
+    fn test_sha() -> String {
+        "0123456789abcdef".to_string()
     }
 
     fn setup_gate_repo(temp: &TempDir, status: Status) -> std::path::PathBuf {
@@ -2893,7 +2906,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2940,7 +2953,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2968,7 +2981,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3019,7 +3032,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: test_sha(),
+            commit_sha: Some(test_sha()),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3032,7 +3045,7 @@ mod tests {
         // Recording a legal PASS row (P2/Normal/non-runnable VERIFY band:
         // independent verification) completes the same close.
         {
-            let mut storage = SqliteStorage::open(&db_path).expect("storage");
+            let storage = SqliteStorage::open(&db_path).expect("storage");
             storage
                 .record_scoped_gate_result(
                     "bd-1",

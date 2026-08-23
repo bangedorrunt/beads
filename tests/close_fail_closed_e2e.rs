@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::cli::{parse_created_id, run_br, BrWorkspace, extract_json_payload};
+use common::cli::{BrWorkspace, extract_json_payload, parse_created_id, run_br};
 
 fn setup_workspace_with_issue() -> (BrWorkspace, String) {
     let workspace = BrWorkspace::new();
@@ -185,6 +185,135 @@ fn bypass_without_br_operator_is_rejected() {
     assert!(
         combined.contains("BR_OPERATOR"),
         "rejection should name BR_OPERATOR=1: {combined}"
+    );
+}
+
+/// ADR-0001 §5.3 defaulting contract (beads_rust-gate-report-default-uro91):
+/// when policy.yaml is ABSENT or `workflow.strict` is unset with no gates,
+/// BOTH the gate-record path and the fail-closed close path must resolve the
+/// same ADR default (`require_legal_close: true`). Before uro91 the record
+/// side inverted this: `br gate report` refused verdict rows while `br close`
+/// demanded them — the catch-22 that forced CalmLantern's operator bypass.
+fn setup_workspace_without_policy() -> (BrWorkspace, String) {
+    let workspace = BrWorkspace::new();
+    std::fs::create_dir_all(workspace.root.join(".beads")).expect("beads dir");
+    // Deliberately NO `br init`: `.beads/policy.yaml` stays absent.
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Absent-policy gate-report default",
+            "-p",
+            "2",
+            "-t",
+            "task",
+        ],
+        "create_issue",
+    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+    let id = parse_created_id(&create.stdout);
+    (workspace, id)
+}
+
+fn record_and_close_legally(workspace: &BrWorkspace, id: &str, label_suffix: &str) {
+    let report = run_br(
+        workspace,
+        [
+            "gate",
+            "report",
+            id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "verifier",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        Box::leak(format!("gate_report_pass_{label_suffix}").into_boxed_str()),
+    );
+    assert!(
+        report.status.success(),
+        "gate report must accept the ADR default when policy is absent/unstrict: {} {}",
+        report.stdout,
+        report.stderr
+    );
+
+    let closed = run_br(
+        workspace,
+        ["close", id, "--commit-sha", "deadbee", "--json"],
+        Box::leak(format!("close_legal_{label_suffix}").into_boxed_str()),
+    );
+    assert!(
+        closed.status.success(),
+        "close must accept the recorded PASS row WITHOUT bypass: {} {}",
+        closed.stdout,
+        closed.stderr
+    );
+}
+
+/// uro91: absent policy.yaml — gate report records the verdict row and close
+/// accepts it legally, no bypass.
+#[test]
+fn gate_report_default_records_row_when_policy_absent() {
+    let _log = common::test_log("gate_report_default_records_row_when_policy_absent");
+    let (workspace, id) = setup_workspace_without_policy();
+    record_and_close_legally(&workspace, &id, "absent");
+
+    let show = run_br(&workspace, ["show", &id, "--json"], "show_closed");
+    assert!(show.status.success(), "{}", show.stderr);
+    let payload = extract_json_payload(&show.stdout);
+    let issues: serde_json::Value = serde_json::from_str(&payload).expect("valid json");
+    assert_eq!(issues[0]["status"], "closed", "{issues}");
+}
+
+/// uro91: policy.yaml present but `workflow.strict` unset with no gates —
+/// same fail-closed default applies on BOTH sides.
+#[test]
+fn gate_report_default_records_row_when_strict_unset() {
+    let _log = common::test_log("gate_report_default_records_row_when_strict_unset");
+    let (workspace, id) = setup_workspace_with_issue();
+    std::fs::write(
+        workspace.root.join(".beads").join("policy.yaml"),
+        "workflow:\n  statuses: [open, closed]\n  transitions:\n    open: [closed]\n",
+    )
+    .expect("write strict-unset policy");
+    record_and_close_legally(&workspace, &id, "strict_unset");
+}
+
+/// uro91: an installed explicit policy wins — the ADR default must NOT leak
+/// into a project that configured its own (here: gate-less) workflow.
+#[test]
+fn gate_report_default_explicit_file_still_governs() {
+    let _log = common::test_log("gate_report_default_explicit_file_still_governs");
+    let (workspace, id) = setup_workspace_with_issue();
+    std::fs::write(
+        workspace.root.join(".beads").join("policy.yaml"),
+        "workflow:\n  strict: true\n  statuses: [open, closed]\n  transitions:\n    open: [closed]\n",
+    )
+    .expect("write explicit policy");
+
+    let report = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "verifier",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_report_explicit_refusal",
+    );
+    assert!(
+        !report.status.success(),
+        "explicit file without legal-close gating must still refuse: {report:?}"
     );
 }
 
