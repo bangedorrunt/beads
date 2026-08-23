@@ -407,6 +407,10 @@ self_update = ["dep:self_update"]   # Self-update from GitHub releases (rustls T
 - **`unsafe_code = "forbid"`** — Zero unsafe code via crate-level lint
 - **`clippy::pedantic` + `clippy::nursery`** — Maximum lint strictness enabled
 
+## VERIFY Fence Honesty (legal-close interaction)
+
+A VERIFY fence that is a single loop-runnable command (`cargo test ...`, `timeout ...`) legally closes ONLY via `command-verified` (row 1). If you actually verified via unit tests, the fence must state the composed commands you really ran — the ledger checks the fence shape, and a bare runnable line makes `unit-test-verified` an illegal close. (Lesson: bd-2mdo, 2026-08-23 — first fence was refused by ledger check until it matched reality.)
+
 ---
 
 ## Sync Safety Maintenance
