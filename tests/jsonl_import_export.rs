@@ -925,3 +925,113 @@ fn fence_import_skips_beads_with_typed_fields_already_set() {
     let issue = storage.get_issue("test-f2").unwrap().unwrap();
     assert_eq!(issue.verify.as_deref(), Some("br doctor --check"));
 }
+
+/// beads_rust-svtxe: the importer must not count inline dependencies it
+/// later silently deletes. Resolvable and `external:*` targets persist;
+/// a target that exists neither in the database nor in the JSONL is a
+/// hard, precise error — never a silent drop followed by an opaque
+/// post-recovery row-count mismatch.
+#[test]
+fn import_persists_inline_dependencies_and_rejects_unresolvable_targets() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("issues.jsonl");
+    let mk = |id: &str, deps: &[(&str, &str)]| {
+        let mut issue = issue_with_id(id, id);
+        issue.created_at = Utc::now() - Duration::hours(1);
+        issue.updated_at = issue.created_at;
+        issue.dependencies = deps
+            .iter()
+            .map(|(target, dep_type)| beads::model::Dependency {
+                issue_id: id.to_string(),
+                depends_on_id: (*target).to_string(),
+                dep_type: dep_type
+                    .parse()
+                    .unwrap_or_else(|_| DependencyType::Custom((*dep_type).to_string())),
+                created_at: issue.created_at,
+                created_by: Some("tester".to_string()),
+                metadata: None,
+                thread_id: None,
+            })
+            .collect();
+        serde_json::to_string(&issue).unwrap()
+    };
+
+    // Happy path: resolvable in-file target + external:* cross-tracker
+    // targets all persist; counted == persisted.
+    let lines = [
+        mk(
+            "test-a",
+            &[("test-b", "blocks"), ("external:ext-7", "blocks")],
+        ),
+        mk("test-b", &[("external:other-tracker-7", "related")]),
+    ];
+    fs::write(&path, format!("{}\n{}\n", lines[0], lines[1])).unwrap();
+
+    let mut storage = SqliteStorage::open_memory().unwrap();
+    let import =
+        import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-")).unwrap();
+
+    assert_eq!(import.imported_count, 2);
+    assert_eq!(
+        import.dependencies_imported, 3,
+        "all three inline deps must be counted AND persisted"
+    );
+
+    let deps_a = storage.get_dependencies("test-a").unwrap();
+    assert!(
+        deps_a.contains(&"test-b".to_string()),
+        "resolvable dep persisted"
+    );
+    assert!(
+        deps_a.contains(&"external:ext-7".to_string()),
+        "external dep persisted"
+    );
+    let deps_b = storage.get_dependencies("test-b").unwrap();
+    assert_eq!(deps_b, vec!["external:other-tracker-7".to_string()]);
+}
+
+/// beads_rust-svtxe: a dangling non-external dependency target fails the
+/// import up front with a diagnostic naming the target, instead of the
+/// old silent-drop-then-fail-closed "row count mismatch".
+#[test]
+fn import_rejects_inline_dependency_with_unknown_target_up_front() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("issues.jsonl");
+    let mk = |id: &str, deps: &[(&str, &str)]| {
+        let mut issue = issue_with_id(id, id);
+        issue.created_at = Utc::now() - Duration::hours(1);
+        issue.updated_at = issue.created_at;
+        issue.dependencies = deps
+            .iter()
+            .map(|(target, dep_type)| beads::model::Dependency {
+                issue_id: id.to_string(),
+                depends_on_id: (*target).to_string(),
+                dep_type: dep_type
+                    .parse()
+                    .unwrap_or_else(|_| DependencyType::Custom((*dep_type).to_string())),
+                created_at: issue.created_at,
+                created_by: Some("tester".to_string()),
+                metadata: None,
+                thread_id: None,
+            })
+            .collect();
+        serde_json::to_string(&issue).unwrap()
+    };
+
+    let line_a = mk("test-a", &[("ghost", "blocks")]);
+    fs::write(&path, format!("{line_a}\n")).unwrap();
+
+    let mut storage = SqliteStorage::open_memory().unwrap();
+    let err = import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-"))
+        .expect_err("dangling dep target must fail the import");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("ghost"),
+        "error must name the unresolvable target: {msg}"
+    );
+    assert!(
+        msg.contains("test-a"),
+        "error must name the referencing issue: {msg}"
+    );
+}

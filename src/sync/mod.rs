@@ -12443,6 +12443,10 @@ struct ImportValidationPlan {
     record_count: usize,
     prefix_mismatches: Vec<PrefixRenameSeed>,
     occupied_ids: HashSet<String>,
+    /// Every issue id present in the JSONL, before any prefix/collision
+    /// renames. Used to decide whether an inline dependency target
+    /// resolves inside this file (beads_rust-svtxe).
+    imported_ids: HashSet<String>,
 }
 
 struct ImportMetadataMaps {
@@ -12525,6 +12529,7 @@ fn collect_import_validation_plan(
                 line_num
             )));
         }
+        plan.imported_ids.insert(issue.id.clone());
 
         if prefix_mismatch {
             plan.prefix_mismatches.push(PrefixRenameSeed {
@@ -12817,6 +12822,7 @@ fn stream_import_actions_in_tx(
     prefix_renames: &HashMap<String, String>,
     collision_renames: &HashMap<String, String>,
     metadata: &ImportMetadataMaps,
+    resolvable_dep_targets: &HashSet<String>,
     base_result: &ImportResult,
     progress: &indicatif::ProgressBar,
 ) -> Result<ImportResult> {
@@ -12829,7 +12835,7 @@ fn stream_import_actions_in_tx(
     progress.set_position(0);
     storage.clear_all_export_hashes_in_tx()?;
 
-    for_each_jsonl_import_issue(source, |_line_num, mut issue| {
+    for_each_jsonl_import_issue(source, |line_num, mut issue| {
         apply_prefix_renames(&mut issue, prefix_renames);
 
         if issue.ephemeral {
@@ -12859,6 +12865,24 @@ fn stream_import_actions_in_tx(
         };
 
         apply_collision_renames(&mut issue, collision_renames);
+
+        // beads_rust-svtxe: refuse inline deps that cannot resolve instead
+        // of persisting them and silently deleting them in post-import
+        // orphan cleanup (which made the counted-vs-persisted postcondition
+        // fail with an opaque row-count mismatch).
+        for dep in &issue.dependencies {
+            if dep.depends_on_id.starts_with("external:")
+                || resolvable_dep_targets.contains(&dep.depends_on_id)
+            {
+                continue;
+            }
+            return Err(BeadsError::Config(format!(
+                "Dependency target '{}' of issue '{}' at line {} does not exist in the database or JSONL; \
+                 use 'external:{}' for cross-tracker references",
+                dep.depends_on_id, issue.id, line_num, dep.depends_on_id
+            )));
+        }
+
         process_import_action(storage, &action, &issue, &mut tx_result)?;
 
         if let Some((export_id, export_hash)) = export_hash_entry_for_import_action(
@@ -13004,6 +13028,27 @@ pub(crate) fn import_from_jsonl_snapshot(
     let observed_jsonl = observed_jsonl_snapshot_witness(source);
 
     // Phase 2: Execute Actions
+
+    // Effective issue ids after prefix + collision renames: a dependency
+    // target is valid iff it is `external:*`, already exists in the
+    // database, or resolves to one of these ids. Validating here (instead
+    // of letting post-import orphan cleanup silently delete such rows)
+    // keeps the counted-vs-persisted contract honest and turns a confusing
+    // post-recovery count mismatch into a precise diagnostic
+    // (beads_rust-svtxe).
+    let resolvable_dep_targets: HashSet<String> = metadata
+        .meta_by_id
+        .keys()
+        .cloned()
+        .chain(validation_plan.imported_ids.iter().map(|id| {
+            prefix_renames
+                .get(id)
+                .and_then(|renamed| collision_renames.get(renamed))
+                .or_else(|| collision_renames.get(id))
+                .cloned()
+                .unwrap_or_else(|| id.clone())
+        }))
+        .collect();
     //
     // Disable FK constraints during bulk import so that issues can reference
     // other issues (in dependencies/comments) that haven't been inserted yet.
@@ -13029,6 +13074,7 @@ pub(crate) fn import_from_jsonl_snapshot(
             &prefix_renames,
             &collision_renames,
             &metadata,
+            &resolvable_dep_targets,
             &result,
             &progress,
         )?;
