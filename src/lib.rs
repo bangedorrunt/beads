@@ -69,6 +69,7 @@ pub mod policy;
 pub mod shutdown;
 pub mod storage;
 pub mod sync;
+pub mod tui;
 pub mod util;
 pub mod validation;
 pub mod verify;

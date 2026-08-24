@@ -29,6 +29,17 @@ fn main() {
     // completion subprocess (above) would also be safe.
     beads::shutdown::install();
 
+    // Bare `br` in a TTY opens the TUI (ADR-0003 §3.3 bare-br entry). Any
+    // argument at all — including global flags — falls through to clap, and
+    // non-TTY stdout keeps the classic help text.
+    if std::env::args().count() == 1 && io::stdout().is_terminal() {
+        if let Err(error) = beads::tui::run() {
+            eprintln!("br: tui failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let cli = Cli::parse();
     let json_error_mode = should_render_errors_as_json(&cli);
     let color_error_mode = should_color_human_errors_for_cli(&cli);
