@@ -44,6 +44,57 @@ const BASE_WEIGHTS: &[(&str, f64)] = &[
     ("risk", 0.10),
 ];
 
+/// Maximum absolute float deviation tolerated between the Go-generated
+/// golden and br's Rust output. ADR-0003 §3.1: "structure parity is
+/// mandatory; float parity with Go is best-effort" — the vendored crate's
+/// iterative solvers (PageRank) drift from Go at ~1e-6, and the golden's
+/// wall-clock instant can differ from BR_ANALYSIS_NOW by up to one bv run.
+const FLOAT_TOLERANCE: f64 = 1e-4;
+
+/// Structural diff that fails on shape/text/order differences and on floats
+/// deviating more than FLOAT_TOLERANCE (ADR §3.1 semantics).
+fn assert_structurally_equal(actual: &Value, golden: &Value, path: &str) {
+    match (actual, golden) {
+        (Value::Object(a), Value::Object(g)) => {
+            let missing: Vec<&String> = g.keys().filter(|k| !a.contains_key(*k)).collect();
+            assert!(
+                missing.is_empty(),
+                "{path}: golden fields missing from actual: {missing:?}"
+            );
+            let extra: Vec<&String> = a.keys().filter(|k| !g.contains_key(*k)).collect();
+            assert!(
+                extra.is_empty(),
+                "{path}: actual carries fields the golden lacks: {extra:?}"
+            );
+            for key in g.keys() {
+                assert_structurally_equal(&a[key], &g[key], &format!("{path}.{key}"));
+            }
+        }
+        (Value::Array(a), Value::Array(g)) => {
+            assert!(
+                a.len() == g.len(),
+                "{path}: length mismatch (actual {} vs golden {})",
+                a.len(),
+                g.len()
+            );
+            for (index, (av, gv)) in a.iter().zip(g.iter()).enumerate() {
+                assert_structurally_equal(av, gv, &format!("{path}[{index}]"));
+            }
+        }
+        (Value::Number(a), Value::Number(g)) => {
+            let (Some(av), Some(gv)) = (a.as_f64(), g.as_f64()) else {
+                panic!("{path}: non-f64 numbers {a} vs {g}");
+            };
+            let scale = av.abs().max(gv.abs()).max(1.0);
+            assert!(
+                (av - gv).abs() <= FLOAT_TOLERANCE * scale,
+                "{path}: float drift {av} vs {gv} exceeds tolerance"
+            );
+        }
+        _ => assert_eq!(actual, golden, "{path}: structural mismatch"),
+    }
+}
+
 fn strip_volatile(value: &Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(
@@ -72,36 +123,10 @@ fn workspace_with_fixture() -> BrWorkspace {
     let beads_dir = workspace.root.join(".beads");
     std::fs::create_dir_all(&beads_dir).expect("create .beads dir");
 
-    // Strip inline dependencies (br's importer refuses them; see the
-    // plan/insights parity test for the rationale) and replay via `br dep add`.
-    // Note the fixture's edges use short ids (`a`, `b`, `f`, ...) that resolve
-    // to no fixture issue; they are replayed verbatim because the goldens were
-    // generated with those same dangling edges (bv drops them for quick_ref
-    // accounting but consults them in the next-pick walk — an observed bv
-    // quirk the parity contract pins deliberately).
-    let mut edges: Vec<(String, String)> = Vec::new();
-    let mut stripped_lines: Vec<String> = Vec::new();
-    for line in FIXTURE_ISSUES
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-    {
-        let mut issue: Value = serde_json::from_str(line).expect("fixture line parses");
-        if let Some(deps) = issue
-            .as_object_mut()
-            .and_then(|map| map.remove("dependencies"))
-            .and_then(|deps| deps.as_array().cloned())
-        {
-            for dep in deps {
-                let id = issue.get("id").and_then(Value::as_str).unwrap_or_default();
-                let depends_on = dep.get("depends_on_id").and_then(Value::as_str);
-                if let Some(depends_on) = depends_on {
-                    edges.push((id.to_owned(), depends_on.to_owned()));
-                }
-            }
-        }
-        stripped_lines.push(issue.to_string());
-    }
-    std::fs::write(beads_dir.join("issues.jsonl"), stripped_lines.join("\n"))
+    // The fixture ships inline dependencies exactly as bv reads them; br's
+    // JSONL rebuild path imports them verbatim (including the fx-h/fx-i
+    // cycle, which `br dep add` would refuse but storage accepts on import).
+    std::fs::write(beads_dir.join("issues.jsonl"), FIXTURE_ISSUES)
         .expect("write fixture issues.jsonl");
     let import = Command::new(env!("CARGO_BIN_EXE_br"))
         .current_dir(&workspace.root)
@@ -113,19 +138,6 @@ fn workspace_with_fixture() -> BrWorkspace {
         "fixture import failed: {}",
         String::from_utf8_lossy(&import.stderr)
     );
-    for (id, depends_on) in &edges {
-        let dep = Command::new(env!("CARGO_BIN_EXE_br"))
-            .current_dir(&workspace.root)
-            .args(["dep", "add", id, depends_on])
-            .env("NO_COLOR", "1")
-            .output()
-            .unwrap_or_else(|error| panic!("spawn br dep add {id} {depends_on}: {error}"));
-        assert!(
-            dep.status.success(),
-            "`br dep add {id} {depends_on}` failed: {}",
-            String::from_utf8_lossy(&dep.stderr)
-        );
-    }
     workspace
 }
 
@@ -153,10 +165,7 @@ fn robot_triage_matches_bv_golden_shape() {
     let actual = strip_volatile(&run_robot_json(&workspace, &["triage", "--json"]));
     let golden = strip_volatile(&load_golden("robot-triage.json"));
 
-    assert_eq!(
-        actual, golden,
-        "`br triage --json` must be structurally identical to the bv golden"
-    );
+    assert_structurally_equal(&actual, &golden, "triage");
 }
 
 #[test]
@@ -212,7 +221,21 @@ fn robot_triage_quick_ref_shape_and_issue_165_semantics() {
         .get("top_picks")
         .and_then(Value::as_array)
         .expect("quick_ref.top_picks array");
-    assert_eq!(top_picks.len(), 3, "top_picks carries exactly 3 entries");
+    assert!(
+        top_picks.len() <= 3,
+        "top_picks cap at 3 entries, got {}",
+        top_picks.len()
+    );
+    let golden_triage = load_golden("robot-triage.json");
+    let golden_picks = golden_triage
+        .pointer("/triage/quick_ref/top_picks")
+        .and_then(Value::as_array)
+        .expect("golden top_picks array");
+    assert_eq!(
+        top_picks.len(),
+        golden_picks.len(),
+        "claimable pick count must match the bv golden (cap 3, fewer when the claimable set is small)"
+    );
     for pick in top_picks {
         for field in ["id", "title", "score", "reasons", "unblocks"] {
             assert!(
@@ -252,8 +275,12 @@ fn robot_triage_recommendations_ranked_score_desc_then_id_asc() {
             .expect("recommendation id")
             .to_owned();
         if let Some((previous_score, previous_id)) = previous {
+            // Exact equality is the point here (bv's tie-break contract):
+            // equal floats MUST fall through to the id comparison.
+            #[allow(clippy::float_cmp)]
+            let tied = score == previous_score;
             assert!(
-                score < previous_score || (score == previous_score && id > previous_id),
+                score < previous_score || (tied && id > previous_id),
                 "ordering must be score desc, tie-break id asc: ({previous_score}, {previous_id}) then ({score}, {id})"
             );
         }
@@ -290,11 +317,7 @@ fn robot_next_matches_bv_golden_claim_contract() {
     let actual = run_robot_json(&workspace, &["next", "--json"]);
     let golden = strip_volatile(&load_golden("robot-next.json"));
 
-    assert_eq!(
-        strip_volatile(&actual),
-        golden,
-        "`br next --json` must be structurally identical to the bv golden"
-    );
+    assert_structurally_equal(&strip_volatile(&actual), &golden, "next");
 
     // The flywheel-consumed fail-closed claim surface (ADR-0003 §3.1).
     let id = actual
@@ -321,26 +344,30 @@ fn robot_next_matches_bv_golden_claim_contract() {
 fn robot_next_fails_closed_when_top_pick_unclaimable() {
     let workspace = workspace_with_fixture();
 
-    // Claim the current golden pick so the walk must skip it.
-    let golden_pick = {
-        let golden = load_golden("robot-next.json");
-        golden
-            .get("id")
-            .and_then(Value::as_str)
-            .expect("golden next.id")
-            .to_owned()
-    };
-    let claim = Command::new(env!("CARGO_BIN_EXE_br"))
-        .current_dir(&workspace.root)
-        .args(["update", &golden_pick, "--status", "in_progress"])
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("spawn br update");
-    assert!(
-        claim.status.success(),
-        "claiming the top pick failed: {}",
-        String::from_utf8_lossy(&claim.stderr)
-    );
+    // Claim EVERY golden pick so no claim-safe candidate remains and the
+    // walk must degrade (claiming just the first would hand us the second).
+    let golden = load_golden("robot-triage.json");
+    let pick_ids: Vec<String> = golden
+        .pointer("/triage/quick_ref/top_picks")
+        .and_then(Value::as_array)
+        .expect("golden top_picks")
+        .iter()
+        .filter_map(|pick| pick.get("id").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    for id in &pick_ids {
+        let claim = Command::new(env!("CARGO_BIN_EXE_br"))
+            .current_dir(&workspace.root)
+            .args(["update", id, "--status", "in_progress"])
+            .env("NO_COLOR", "1")
+            .output()
+            .expect("spawn br update");
+        assert!(
+            claim.status.success(),
+            "claiming {id} failed: {}",
+            String::from_utf8_lossy(&claim.stderr)
+        );
+    }
 
     let output = Command::new(env!("CARGO_BIN_EXE_br"))
         .current_dir(&workspace.root)

@@ -14,10 +14,11 @@
 //!   `"approximate"` even though Brandes runs exact here;
 //! * `Critical` reports `skipped` although critical-path heights feed
 //!   time-to-impact scoring;
-//! * the triage claimability gate ignores dangling dependency ids while
-//!   robot-next's diagnostic walk treats them as `"<id> (missing)"` open
-//!   blockers — the two bv surfaces genuinely disagree and both sides are
-//!   reproduced.
+//! * the triage-side claimability gate consults only blockers that resolve to
+//!   known issues, while robot-next's diagnostic walk also reports dangling
+//!   dependency ids as `"<id> (missing)"` open blockers — both behaviors come
+//!   from the Go source and stay reproducible for any workspace that does
+//!   carry dangling edges.
 //!
 //! Clock: every time-derived signal takes an explicit `now`; the CLI sources
 //! it from `BR_ANALYSIS_NOW` when set so parity tests never rot.
@@ -270,8 +271,14 @@ pub struct TriageResult {
 // Scoring primitives (priority.go / risk.go ports)
 // ---------------------------------------------------------------------------
 
+/// Fractional days between two instants (Go uses full float64 precision;
+/// chrono's num_hours() would truncate and skew staleness by up to an hour).
+fn fractional_days(from: DateTime<Utc>, to: DateTime<Utc>) -> f64 {
+    (to - from).num_milliseconds() as f64 / 86_400_000.0
+}
+
 fn compute_staleness(updated_at: DateTime<Utc>, now: DateTime<Utc>) -> f64 {
-    ((now - updated_at).num_hours() as f64 / 24.0 / 30.0).clamp(0.0, 1.0)
+    (fractional_days(updated_at, now) / 30.0).clamp(0.0, 1.0)
 }
 
 fn compute_priority_boost(priority: i64) -> f64 {
@@ -293,6 +300,7 @@ fn compute_time_to_impact(
     estimated_minutes: Option<i32>,
     median_minutes: i32,
 ) -> (f64, String) {
+    const MAX_MINUTES: f64 = 480.0;
     let mut effective_minutes = median_minutes;
     let mut estimate_source = "median";
     if let Some(minutes) = estimated_minutes.filter(|m| *m > 0) {
@@ -301,8 +309,10 @@ fn compute_time_to_impact(
     }
 
     let depth_norm = (critical_depth / MAX_CRITICAL_PATH_DEPTH).min(1.0);
-    const MAX_MINUTES: f64 = 480.0;
     let time_factor = (1.0 - f64::from(effective_minutes) / MAX_MINUTES).clamp(0.0, 1.0);
+    // Deliberately NOT mul_add: Go evaluates these as separate ops on the
+    // golden-generating host, and fusing would perturb parity floats.
+    #[allow(clippy::suboptimal_flops)]
     let score = depth_norm * 0.7 + time_factor * 0.3;
 
     let explanation = if critical_depth >= 3.0 {
@@ -341,7 +351,9 @@ fn compute_urgency(issue: &Issue, now: DateTime<Utc>) -> (f64, Option<String>) {
     }
 
     let created_at = issue.created_at;
-    let days_since_created = (now - created_at).num_hours() as f64 / 24.0;
+    let days_since_created = fractional_days(created_at, now);
+    // Go evaluates the decay as separate ops; fusing would perturb parity.
+    #[allow(clippy::suboptimal_flops)]
     if days_since_created > 0.0 {
         score += 0.5 * (1.0 - (-days_since_created / URGENCY_DECAY_DAYS).exp());
         if days_since_created >= 14.0 {
@@ -366,6 +378,7 @@ fn compute_urgency(issue: &Issue, now: DateTime<Utc>) -> (f64, Option<String>) {
 /// a claimability blocker ("open blockers including parents"), unlike the
 /// analysis engine's schedule-edge set. No current golden distinguishes the
 /// two; this follows the Go source we ported.
+#[must_use]
 pub fn is_triage_blocking(dep_type: &DependencyType) -> bool {
     matches!(
         dep_type,
@@ -382,19 +395,20 @@ fn is_closed_like(issue: &Issue) -> bool {
 
 fn compute_activity_churn(issue: &Issue, now: DateTime<Utc>) -> f64 {
     let created_at = issue.created_at;
-    let age_days = ((now - created_at).num_hours() as f64 / 24.0).max(1.0);
+    let age_days = fractional_days(created_at, now).max(1.0);
 
     let comment_churn = issue.comments.len() as f64 / age_days;
 
     let mut update_recency = 0.0;
     {
         let updated_at = issue.updated_at;
-        let update_span = (updated_at - created_at).num_hours() as f64 / 24.0;
+        let update_span = fractional_days(created_at, updated_at);
         if update_span > 0.0 && age_days > 1.0 {
             update_recency = update_span / age_days;
         }
     }
 
+    #[allow(clippy::suboptimal_flops)]
     (comment_churn * 0.6 + update_recency * 0.4).min(1.0)
 }
 
@@ -409,12 +423,12 @@ fn compute_cross_repo_risk(issue: &Issue, by_id: &HashMap<&str, &Issue>) -> f64 
             continue;
         }
         total_blocking_deps += 1;
-        if let Some(dep_issue) = by_id.get(dep.depends_on_id.as_str()) {
-            if let Some(repo) = dep_issue.source_repo.as_deref().filter(|r| !r.is_empty()) {
-                if repo != this_repo {
-                    cross_repo_count += 1;
-                }
-            }
+        if by_id
+            .get(dep.depends_on_id.as_str())
+            .and_then(|dep_issue| dep_issue.source_repo.as_deref())
+            .is_some_and(|repo| !repo.is_empty() && repo != this_repo)
+        {
+            cross_repo_count += 1;
         }
     }
     if total_blocking_deps == 0 {
@@ -424,16 +438,16 @@ fn compute_cross_repo_risk(issue: &Issue, by_id: &HashMap<&str, &Issue>) -> f64 
 }
 
 fn compute_status_risk(issue: &Issue, now: DateTime<Utc>) -> f64 {
-    let days_since_update = (now - issue.updated_at).num_hours() as f64 / 24.0;
+    let days_since_update = fractional_days(issue.updated_at, now);
     match issue.status {
-        Status::Closed | Status::Tombstone => 0.0,
         Status::Blocked if days_since_update > 7.0 => 0.9,
         Status::Blocked => 0.7,
         Status::InProgress if days_since_update > 14.0 => 0.8,
         Status::InProgress if days_since_update > 7.0 => 0.4,
-        Status::InProgress => 0.1,
-        Status::Open if (now - issue.created_at).num_hours() as f64 / 24.0 > 30.0 => 0.3,
-        Status::Open => 0.1,
+        Status::Open if fractional_days(issue.created_at, now) > 30.0 => 0.3,
+        // Go gives every remaining open/in-progress bead the same base risk;
+        // closed-like and custom statuses fall through with zero.
+        Status::InProgress | Status::Open => 0.1,
         _ => 0.0,
     }
 }
@@ -449,9 +463,7 @@ fn compute_risk_signals(
         if !is_triage_blocking(&dep.dep_type) {
             continue;
         }
-        degrees.push(f64::from(
-            blocker_counts.get(&dep.depends_on_id).copied().unwrap_or(0) as u32,
-        ));
+        degrees.push(blocker_counts.get(&dep.depends_on_id).copied().unwrap_or(0) as f64);
     }
     let fan_variance = if degrees.len() < 2 {
         0.0
@@ -470,6 +482,7 @@ fn compute_risk_signals(
     let cross_repo_risk = compute_cross_repo_risk(issue, by_id);
     let status_risk = compute_status_risk(issue, now);
 
+    #[allow(clippy::suboptimal_flops)]
     let composite =
         (fan_variance * 0.30 + activity_churn * 0.30 + cross_repo_risk * 0.20 + status_risk * 0.20)
             .min(1.0);
@@ -669,8 +682,8 @@ fn median_estimated_minutes(issues: &[Issue]) -> i32 {
     }
     estimates.sort_unstable();
     let mid = estimates.len() / 2;
-    if estimates.len() % 2 == 0 {
-        (estimates[mid - 1] + estimates[mid]) / 2
+    if estimates.len().is_multiple_of(2) {
+        i32::midpoint(estimates[mid - 1], estimates[mid])
     } else {
         estimates[mid]
     }
@@ -696,10 +709,10 @@ fn compute_impact_scores(
         let bw_norm = normalize(betweenness.get(&issue.id).copied().unwrap_or(0.0), max_bw);
         let blocker_norm = normalize(
             graph.blocker_counts.get(&issue.id).copied().unwrap_or(0) as f64,
-            f64::from(max_blockers as u32),
+            max_blockers as f64,
         );
         let staleness_norm = compute_staleness(issue.updated_at, now);
-        let priority_norm = compute_priority_boost(issue.priority.0 as i64);
+        let priority_norm = compute_priority_boost(i64::from(issue.priority.0));
 
         let depth = critical_path.get(&issue.id).copied().unwrap_or(0.0);
         let (tti_norm, tti_explanation) =
@@ -744,7 +757,7 @@ fn compute_impact_scores(
         scores.push(ImpactScore {
             id: issue.id.clone(),
             title: issue.title.clone(),
-            priority: issue.priority.0 as i64,
+            priority: i64::from(issue.priority.0),
             score,
             breakdown,
         });
@@ -779,14 +792,17 @@ fn compute_triage_scores(
         let issue = graph.by_id.get(base.id.as_str()).copied();
         let not_in_progress = !issue.is_some_and(|issue| issue.status == Status::InProgress);
         let depth = graph.blocker_depth(&base.id);
-        let quick_win_boost = if not_in_progress && depth >= 0 && depth <= QUICK_WIN_MAX_DEPTH {
-            let depth_factor =
-                1.0 - depth as f64 / f64::from(i32::try_from(QUICK_WIN_MAX_DEPTH + 1).unwrap_or(3));
-            (depth_factor * base.score * QUICK_WIN_WEIGHT).min(QUICK_WIN_WEIGHT)
+        let quick_win_boost = if not_in_progress && (0..=QUICK_WIN_MAX_DEPTH).contains(&depth) {
+            let divisor = f64::from(i32::try_from(QUICK_WIN_MAX_DEPTH).unwrap_or(2) + 1);
+            #[allow(clippy::suboptimal_flops)]
+            let boost = ((1.0 - depth as f64 / divisor) * base.score * QUICK_WIN_WEIGHT)
+                .min(QUICK_WIN_WEIGHT);
+            boost
         } else {
             0.0
         };
 
+        #[allow(clippy::suboptimal_flops)]
         let triage_score = base.score * BASE_SCORE_WEIGHT + unblock_boost + quick_win_boost;
         rows.push(TriageScoreRow {
             id: base.id.clone(),
@@ -832,8 +848,10 @@ fn generate_reasons(
 
     let unblocks_ids = graph.unblocks_of(&row.id).to_vec();
     let blocked_by_ids = graph.open_blockers_of(&row.id).to_vec();
+    // int() truncation is bv's own behavior for the "N days" strings.
+    #[allow(clippy::cast_possible_truncation)]
     let days_since_update = issue
-        .map(|issue| ((now - issue.updated_at).num_hours() as f64 / 24.0) as i64)
+        .map(|issue| fractional_days(issue.updated_at, now) as i64)
         .unwrap_or(0);
     let claimed_by = issue
         .and_then(|issue| issue.assignee.as_deref())
@@ -848,7 +866,6 @@ fn generate_reasons(
     let has_recorded_nonempty_status = status_text.as_deref().is_some_and(|s| !s.is_empty());
 
     let mut reasons: Vec<String> = Vec::new();
-    let mut primary = String::new();
     let mut action_hint = "Start work on this issue".to_string();
     if is_future_deferred {
         action_hint = format!(
@@ -868,13 +885,11 @@ fn generate_reasons(
 
     // 1. Unblock cascade.
     if unblocks_ids.len() >= 3 {
-        let reason = format!(
+        reasons.push(format!(
             "🎯 Completing this unblocks {} downstream issues ({})",
             unblocks_ids.len(),
             format_unblock_list(&unblocks_ids)
-        );
-        primary = reason.clone();
-        reasons.push(reason);
+        ));
     } else if !unblocks_ids.is_empty() {
         reasons.push(format!(
             "🔓 Unblocks {} item(s): {}",
@@ -885,14 +900,10 @@ fn generate_reasons(
 
     // 3. Graph metrics (betweenness first, then pagerank).
     if row.breakdown.betweenness_norm > 0.5 {
-        let reason = format!(
+        reasons.push(format!(
             "🔀 Critical path bottleneck (betweenness: {:.0}%)",
             row.breakdown.betweenness_norm * 100.0
-        );
-        if primary.is_empty() {
-            primary = reason.clone();
-        }
-        reasons.push(reason);
+        ));
     }
     if row.breakdown.pagerank_norm > 0.3 {
         reasons.push(format!(
@@ -919,9 +930,6 @@ fn generate_reasons(
     // 5. Quick-win identification.
     if is_quick_win {
         reasons.push("⚡ Low effort, high impact - good starting point".to_string());
-        if primary.is_empty() && !unblocks_ids.is_empty() {
-            primary = "⚡ Low effort, high impact - good starting point".to_string();
-        }
         let is_critical_stale = is_in_progress && days_since_update > 14;
         if !is_in_progress && !is_critical_stale && !is_future_deferred {
             action_hint = "Quick win - start here for fast progress".to_string();
@@ -986,15 +994,14 @@ fn generate_reasons(
     if issue.is_some_and(|issue| issue.priority.0 <= 1) {
         reasons.push(format!(
             "🚨 High priority (P{}) - prioritize this work",
-            issue.map_or(4, |issue| issue.priority.0) as i64
+            i64::from(issue.map_or(4, |issue| issue.priority.0))
         ));
     }
 
-    if primary.is_empty() {
-        primary = reasons.first().cloned().unwrap_or_else(|| {
-            reasons.push("Good candidate for work".to_string());
-            "Good candidate for work".to_string()
-        });
+    // bv also returns a `primary` reason we do not serialize; its one
+    // observable side effect is this default line when nothing matched.
+    if reasons.is_empty() {
+        reasons.push("Good candidate for work".to_string());
     }
 
     TriageReasons {
@@ -1035,7 +1042,10 @@ fn compute_counts(issues: &[Issue], graph: &TriageGraph<'_>) -> HealthCounts {
             .or_insert(0) += 1;
         if is_closed_like(issue) {
             counts.closed += 1;
-        } else if graph.open_blockers_of(&issue.id).is_empty() {
+        } else if issue.status == Status::Open && graph.open_blockers_of(&issue.id).is_empty() {
+            // bv treats only status-open, unblocked issues as actionable;
+            // in_progress/blocked-status rows count as dependency_blocked
+            // even with no blocking edges.
             counts.not_closed += 1;
             counts.actionable += 1;
         } else {
@@ -1090,7 +1100,7 @@ fn compute_velocity(issues: &[Issue], now: DateTime<Utc>) -> Velocity {
         *week_buckets
             .entry(monday_of_iso_week(closed_at))
             .or_insert(0) += 1;
-        total_close_hours += (closed_at - issue.created_at).num_hours() as f64;
+        total_close_hours += (closed_at - issue.created_at).num_milliseconds() as f64 / 3_600_000.0;
         close_samples += 1;
     }
 
@@ -1140,13 +1150,13 @@ fn triage_analysis_config() -> AnalysisConfig {
     }
 }
 
-fn skipped_quiet() -> Option<MetricEntry> {
-    Some(MetricEntry {
+fn skipped_quiet() -> MetricEntry {
+    MetricEntry {
         state: MetricState::Skipped,
         reason: None,
         sample: None,
         ms: None,
-    })
+    }
 }
 
 /// Emission status mirrors bv's triage shape exactly (see module docs for
@@ -1161,18 +1171,19 @@ fn emission_status(result: &super::engine::AnalysisResult) -> MetricStatus {
     MetricStatus {
         pagerank: result.status.pagerank.clone(),
         betweenness,
-        eigenvector: skipped_quiet(),
-        hits: skipped_quiet(),
-        critical: skipped_quiet(),
-        cycles: skipped_quiet(),
-        kcore: skipped_quiet(),
-        articulation: skipped_quiet(),
-        slack: skipped_quiet(),
+        eigenvector: Some(skipped_quiet()),
+        hits: Some(skipped_quiet()),
+        critical: Some(skipped_quiet()),
+        cycles: Some(skipped_quiet()),
+        kcore: Some(skipped_quiet()),
+        articulation: Some(skipped_quiet()),
+        slack: Some(skipped_quiet()),
     }
 }
 
 /// True when PageRank/Betweenness did not finish (bv `ClaimUnsafeReasons`;
 /// pending | timeout | panic | error | skipped all block claiming).
+#[must_use]
 pub fn metric_claim_unsafe(status: &MetricStatus) -> bool {
     status
         .pagerank
@@ -1186,6 +1197,7 @@ pub fn metric_claim_unsafe(status: &MetricStatus) -> bool {
 
 /// Full triage payload over an owned issue set at a pinned instant.
 #[allow(clippy::too_many_lines)]
+#[must_use]
 pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> TriageResult {
     let started = std::time::Instant::now();
     let graph = TriageGraph::new(issues);
@@ -1219,7 +1231,7 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
                     .assignee
                     .clone()
                     .filter(|assignee| !assignee.trim().is_empty()),
-                priority: issue.priority.0 as i64,
+                priority: i64::from(issue.priority.0),
                 labels: issue.labels.clone(),
                 defer_until: issue.defer_until.map(go_time_nanos),
                 score: row.triage_score,
@@ -1251,6 +1263,8 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
                 0.0
             };
             let priority_bonus = if base.priority <= 1 { 0.5 } else { 0.0 };
+            // Go evaluates separate ops; fusing would perturb parity floats.
+            #[allow(clippy::suboptimal_flops)]
             (
                 unblock_impact * 0.4 + simplicity * 0.4 + priority_bonus * 0.2,
                 base,
@@ -1299,7 +1313,7 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
         .take(BLOCKERS_LIMIT)
         .map(|(id, issue)| {
             let unblocks_ids = graph.unblocks_of(id).to_vec();
-            let actionable = graph.open_blockers_of(id).is_empty();
+            let actionable = issue.status == Status::Open && graph.open_blockers_of(id).is_empty();
             BlockerItem {
                 blocked_by: if actionable {
                     Vec::new()
@@ -1367,8 +1381,12 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
                 node_count: analysis.ids.len(),
                 edge_count: analysis.graph.edge_count(),
                 density: analysis.density,
-                has_cycles: analysis.cycle_count > 0,
-                cycle_count: analysis.cycle_count,
+                // bv's triage fast config skips cycle ENUMERATION; its
+                // health block therefore reports the enumerated set (nil =>
+                // false/omitted) even when the graph is cyclic — SCC truth
+                // stays internal. Parity replicates the emitted shape.
+                has_cycles: false,
+                cycle_count: 0,
                 phase2_ready,
             },
             counts,
@@ -1396,11 +1414,11 @@ fn is_claimable_recommendation(
             .map(str::trim)
             .is_none_or(str::is_empty)
         && rec.blocked_by.is_empty()
-        && !graph
+        && graph
             .by_id
             .get(rec.id.as_str())
             .and_then(|issue| issue.defer_until)
-            .is_some_and(|at| at > now)
+            .is_none_or(|at| at <= now)
 }
 
 fn build_commands(top_id: &str) -> CommandHelpers {
@@ -1428,7 +1446,8 @@ fn build_commands(top_id: &str) -> CommandHelpers {
 }
 
 /// `skip_serializing_if` helper for numeric fields that vanish at zero
-/// (Go's `omitempty` on int fields).
+/// (Go's `omitempty` on int fields). serde requires a reference here.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero(value: &usize) -> bool {
     *value == 0
 }

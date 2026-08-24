@@ -22,12 +22,12 @@ mkdir -p "$tmp/.beads"
 cp "$fixtures/fixture_issues.jsonl" "$tmp/.beads/issues.jsonl"
 
 cd "$tmp"
+now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+commit="$("$bv_bin" --version 2>/dev/null | sed -n 's/.*-\([0-9a-f]\{7,\}\)$/\1/p')"
+
 for cmd in triage next plan insights; do
   "$bv_bin" --robot-"$cmd" --format json >"$tmp/robot-$cmd.json"
 done
-
-now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-commit="$("$bv_bin" --version 2>/dev/null | sed -n 's/.*-\([0-9a-f]\{7,\}\)$/\1/p')"
 
 for cmd in triage next plan insights; do
   if ! jq -e . "$tmp/robot-$cmd.json" >/dev/null 2>&1; then
