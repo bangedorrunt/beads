@@ -659,6 +659,63 @@ impl DatabaseFamilyWriteLock {
         }
         database_authority.identity = Some(replacement_identity);
         drop(database_authority);
+        Ok(FreshDatabaseReplacementWitness {
+            authority_path_sha256: self.authority_path_sha256.clone(),
+            installed_identity: replacement_identity,
+        })
+    }
+
+    /// Verify that a fresh-replacement witness still names this authority and
+    /// its currently installed database inode.
+    pub(crate) fn verify_fresh_database_replacement_witness(
+        &self,
+        witness: &FreshDatabaseReplacementWitness,
+    ) -> Result<()> {
+        self.verify_common_authority()?;
+        if witness.authority_path_sha256 != self.authority_path_sha256 {
+            return Err(BeadsError::SyncConflict {
+                message: "Fresh database replacement witness belongs to another authority"
+                    .to_string(),
+            });
+        }
+
+        let database_authority =
+            self.database_authority
+                .lock()
+                .map_err(|_| BeadsError::SyncConflict {
+                    message: "Database inode authority state was poisoned".to_string(),
+                })?;
+        let database_lock =
+            database_authority
+                .lock
+                .as_ref()
+                .ok_or_else(|| BeadsError::SyncConflict {
+                    message: "Fresh database replacement witness has no held inode authority"
+                        .to_string(),
+                })?;
+        verify_locked_file_identity(
+            database_lock,
+            &self.canonical_database_path,
+            "fresh database replacement authority",
+            true,
+        )?;
+        let current_identity = additive_metadata_identity(
+            &fs::metadata(&self.canonical_database_path).map_err(|error| {
+                BeadsError::Config(format!(
+                    "Could not re-witness fresh database replacement {}: {error}",
+                    database_path_descriptor(&self.canonical_database_path)
+                ))
+            })?,
+        );
+        if database_authority.identity != Some(current_identity)
+            || current_identity != witness.installed_identity
+        {
+            return Err(BeadsError::SyncConflict {
+                message: "Fresh database replacement witness no longer names the installed inode"
+                    .to_string(),
+            });
+        }
+        drop(database_authority);
         Ok(())
     }
 
@@ -13019,6 +13076,31 @@ pub(crate) fn import_from_jsonl_snapshot(
     source: &JsonlSourceSnapshot,
     config: &ImportConfig,
     expected_prefix: Option<&str>,
+) -> Result<ImportResult> {
+    import_from_jsonl_snapshot_impl(storage, source, config, expected_prefix, None)
+}
+
+/// Import into the exact empty replacement installed by a database-family
+/// authority.
+pub(crate) fn import_from_jsonl_snapshot_into_fresh_replacement(
+    storage: &mut SqliteStorage,
+    source: &JsonlSourceSnapshot,
+    config: &ImportConfig,
+    expected_prefix: Option<&str>,
+    witness: FreshDatabaseReplacementWitness,
+) -> Result<ImportResult> {
+    import_from_jsonl_snapshot_impl(storage, source, config, expected_prefix, Some(witness))
+}
+
+// Taking ownership is deliberate: callers must relinquish the linear witness,
+// while the transaction closure may need to borrow it across internal BUSY retries.
+#[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
+fn import_from_jsonl_snapshot_impl(
+    storage: &mut SqliteStorage,
+    source: &JsonlSourceSnapshot,
+    config: &ImportConfig,
+    expected_prefix: Option<&str>,
+    fresh_witness: Option<FreshDatabaseReplacementWitness>,
 ) -> Result<ImportResult> {
     if let Some(ref beads_dir) = config.beads_dir {
         validate_sync_path_with_external(
