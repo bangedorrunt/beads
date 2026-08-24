@@ -79,10 +79,10 @@ fn to_key(key: &crossterm::event::KeyEvent) -> Key {
         };
     }
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => Key::Down,
-        KeyCode::Char('k') | KeyCode::Up => Key::Up,
-        KeyCode::Char('g') | KeyCode::Home => Key::Home,
-        KeyCode::Char('G') | KeyCode::End => Key::End,
+        KeyCode::Down => Key::Down,
+        KeyCode::Up => Key::Up,
+        KeyCode::Home => Key::Home,
+        KeyCode::End => Key::End,
         KeyCode::Enter => Key::Enter,
         KeyCode::Esc => Key::Esc,
         KeyCode::Tab => Key::Tab,

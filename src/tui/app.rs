@@ -470,12 +470,12 @@ impl TuiApp {
             return;
         }
         match key {
-            Key::Down => {
+            Key::Down | Key::Char('j') => {
                 if self.selected + 1 < count {
                     self.selected += 1;
                 }
             }
-            Key::Up => self.selected = self.selected.saturating_sub(1),
+            Key::Up | Key::Char('k') => self.selected = self.selected.saturating_sub(1),
             Key::Home => self.selected = 0,
             Key::End => self.selected = count.saturating_sub(1),
             Key::PageDown | Key::CtrlD => {
@@ -543,7 +543,7 @@ impl TuiApp {
             return;
         }
         match key {
-            Key::Down => {
+            Key::Down | Key::Char('j') => {
                 let count = self.visible_count();
                 if count == 0 {
                     return;
@@ -552,11 +552,11 @@ impl TuiApp {
                     self.selected += 1;
                 }
             }
-            Key::Up => {
+            Key::Up | Key::Char('k') => {
                 self.selected = self.selected.saturating_sub(1);
             }
-            Key::Home => self.selected = 0,
-            Key::End => {
+            Key::Home | Key::Char('g') => self.selected = 0,
+            Key::End | Key::Char('G') => {
                 let count = self.visible_count();
                 self.selected = count.saturating_sub(1);
             }
@@ -608,8 +608,8 @@ impl TuiApp {
             Key::PageUp | Key::CtrlU => {
                 self.detail_scroll = self.detail_scroll.saturating_sub(self.page_step())
             }
-            Key::Home => self.detail_scroll = 0,
-            Key::End => self.detail_scroll = usize::MAX / 2, // clamped in draw
+            Key::Home | Key::Char('g') => self.detail_scroll = 0,
+            Key::End | Key::Char('G') => self.detail_scroll = usize::MAX / 2, // clamped in draw
             _ => {}
         }
     }
