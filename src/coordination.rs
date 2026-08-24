@@ -780,6 +780,88 @@ impl AgentMailReservationSnapshot {
     }
 }
 
+/// ADR-0001 Wave 3 / Layer 3 — READ-ONLY reservation display for `br show`.
+///
+/// br renders what a toron-derived snapshot reports; it never grants, renews,
+/// or releases leases (toron remains the sole grantor). The block carries no
+/// mutation affordances by construction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ShowReservationBlock {
+    /// `active` (a held lease matches), `expired` (a released/lapsed lease
+    /// matches — names its holder for reclaim decisions), or
+    /// `no_reservation` (snapshot supplied, nothing matches).
+    pub state: String,
+    /// Holder of the matching (active or expired) lease.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
+    /// Matching lease paths. Read-only projection of toron's board.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<ShowReservationPath>,
+    /// When the active lease lapses (RFC3339).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+/// One displayed lease path with its exclusivity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ShowReservationPath {
+    pub path_pattern: String,
+    pub exclusive: bool,
+}
+
+/// Build the show-view reservation block for one issue from an optional
+/// snapshot row set. Pure: no I/O, no grant authority.
+#[must_use]
+pub fn show_reservation_block(
+    issue_id: &str,
+    assignee: Option<&str>,
+    comments: &[Comment],
+    reservations: Option<&[AgentMailReservationSnapshot]>,
+    now: DateTime<Utc>,
+) -> Option<ShowReservationBlock> {
+    let reservations = reservations?;
+    match reservation_evidence_from_snapshots(issue_id, assignee, comments, Some(reservations), now)
+    {
+        ReservationEvidence::Active {
+            holder,
+            expires_at,
+            provenance,
+        } => Some(ShowReservationBlock {
+            state: "active".to_string(),
+            holder: Some(holder),
+            paths: provenance
+                .map(|p| {
+                    vec![ShowReservationPath {
+                        path_pattern: p.path_pattern,
+                        exclusive: p.exclusive,
+                    }]
+                })
+                .unwrap_or_default(),
+            expires_at,
+        }),
+        ReservationEvidence::Expired { holder, .. } => Some(ShowReservationBlock {
+            state: "expired".to_string(),
+            holder: Some(holder),
+            paths: Vec::new(),
+            expires_at: None,
+        }),
+        ReservationEvidence::NoSnapshot | ReservationEvidence::NoReservation => {
+            Some(ShowReservationBlock {
+                state: "no_reservation".to_string(),
+                holder: None,
+                paths: Vec::new(),
+                expires_at: None,
+            })
+        }
+        ReservationEvidence::InvalidSnapshot { .. } => Some(ShowReservationBlock {
+            state: "no_reservation".to_string(),
+            holder: None,
+            paths: Vec::new(),
+            expires_at: None,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

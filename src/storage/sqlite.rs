@@ -15092,6 +15092,7 @@ impl SqliteStorage {
             parent,
             rollup,
             inherited_context: Vec::new(),
+            reservation: None,
         }))
     }
 

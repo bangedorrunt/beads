@@ -181,6 +181,12 @@ pub struct IssueDetails {
     /// context that text mode renders (beads#430).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inherited_context: Vec<crate::inheritance::InheritedBlock>,
+    /// ADR-0001 Wave 3 / Layer 3: READ-ONLY toron reservation display.
+    /// Present only when the caller supplied `--reservations <snapshot>`;
+    /// br renders what toron reports and never grants or mutates leases
+    /// (toron remains the sole grantor).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservation: Option<crate::coordination::ShowReservationBlock>,
 }
 
 /// Derived parent-child subtree rollup for a parent issue (GitHub #384
@@ -451,6 +457,7 @@ mod tests {
             parent: Some("bd-parent".to_string()),
             rollup: None,
             inherited_context: Vec::new(),
+            reservation: None,
         };
 
         let json = serde_json::to_string(&details).unwrap();

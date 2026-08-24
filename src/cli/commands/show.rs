@@ -6,6 +6,7 @@ use crate::cli::commands::{
 };
 use crate::cli::{ShowArgs, resolve_output_format_basic_with_outer_mode};
 use crate::config;
+use crate::coordination::{AgentMailReservationSnapshot, show_reservation_block};
 use crate::error::{BeadsError, Result};
 use crate::format::{
     IssueDetails, IssueWithDependencyMetadata, format_priority_label, format_status_icon_colored,
@@ -19,6 +20,7 @@ use crate::util::id::{IdResolver, ResolverConfig, normalize_id};
 use chrono::{DateTime, Utc};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Write as FmtWrite;
+use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -150,6 +152,7 @@ fn execute_routed(
                     None
                 },
             );
+            attach_reservation_blocks(&mut batch_details, &batch_args);
             routed_details.push((batch.issue_inputs, batch_details));
         }
         let details_list =
@@ -248,6 +251,111 @@ fn requested_target_ids(args: &ShowArgs, beads_dir: &Path) -> Result<Vec<String>
     Ok(target_ids)
 }
 
+/// ADR-0001 Wave 3 / Layer 3: attach the READ-ONLY toron reservation block
+/// to each detail when the caller supplied `--reservations`. Pure display —
+/// br never grants or mutates leases; toron remains the sole grantor.
+/// Snapshot read failures are non-fatal (the block is optional enrichment).
+fn attach_reservation_blocks(details_list: &mut [IssueDetails], args: &ShowArgs) {
+    let Some(path) = args.reservations.as_ref() else {
+        return;
+    };
+    let reservations = match load_reservation_snapshot(path) {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %error,
+                "reservation snapshot unreadable; show proceeds without the reservation block"
+            );
+            return;
+        }
+    };
+    let now = Utc::now();
+    for details in details_list.iter_mut() {
+        // Match on the same evidence the coordination surface trusts: holder
+        // == assignee, or reason/thread naming the issue id. Comments ride
+        // along so degraded-coordination comment paths still attach.
+        details.reservation = show_reservation_block(
+            &details.issue.id,
+            details.issue.assignee.as_deref(),
+            &details.comments,
+            Some(&reservations),
+            now,
+        );
+    }
+}
+
+/// Read a toron-derived reservation snapshot: JSON array, wrapper object
+/// (`{"reservations": [...]}`), single object, or JSONL stream.
+fn load_reservation_snapshot(path: &Path) -> Result<Vec<AgentMailReservationSnapshot>> {
+    let raw = fs::read_to_string(path).map_err(|error| {
+        BeadsError::Config(format!(
+            "cannot read reservation snapshot {}: {error}",
+            path.display()
+        ))
+    })?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        return parse_reservation_snapshot_value(value, path);
+    }
+    // JSONL fallback.
+    let mut rows = Vec::new();
+    for (index, line) in trimmed.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(line).map_err(|error| {
+            BeadsError::Config(format!(
+                "reservation snapshot {} line {} is neither JSON nor JSONL: {error}",
+                path.display(),
+                index + 1
+            ))
+        })?;
+        rows.extend(parse_reservation_snapshot_value(value, path)?);
+    }
+    Ok(rows)
+}
+
+fn parse_reservation_snapshot_value(
+    value: serde_json::Value,
+    path: &Path,
+) -> Result<Vec<AgentMailReservationSnapshot>> {
+    match value {
+        serde_json::Value::Array(rows) => rows
+            .into_iter()
+            .map(|row| {
+                serde_json::from_value(row).map_err(|error| {
+                    BeadsError::Config(format!(
+                        "invalid reservation row in {}: {error}",
+                        path.display()
+                    ))
+                })
+            })
+            .collect(),
+        serde_json::Value::Object(mut object) => {
+            if let Some(rows) = object.remove("reservations") {
+                return parse_reservation_snapshot_value(rows, path);
+            }
+            Ok(vec![
+                serde_json::from_value(serde_json::Value::Object(object)).map_err(|error| {
+                    BeadsError::Config(format!(
+                        "invalid reservation snapshot {}: {error}",
+                        path.display()
+                    ))
+                })?,
+            ])
+        }
+        _ => Err(BeadsError::Config(format!(
+            "reservation snapshot {} must be a JSON array, wrapper object, or JSONL",
+            path.display()
+        ))),
+    }
+}
+
 /// Populate each issue's `inherited_context` field with the ancestor
 /// `agent_context` blocks (beads#297) so JSON/TOON output carries the
 /// same governing context that text mode renders (beads#430).
@@ -328,6 +436,10 @@ fn execute_inner(
             preloaded_storage_ctx,
         );
     }
+    // ADR-0001 Wave 3: read-only reservation display (JSON/TOON + text both
+    // benefit; the block serializes into structured output and is skipped
+    // by the text renderer when absent).
+    attach_reservation_blocks(&mut details_list, args);
     match output_format {
         crate::cli::OutputFormat::Json => {
             ctx.json_array(details_list.iter());
@@ -853,6 +965,7 @@ fn build_issue_details_from_exact_jsonl_index(
         // deliberately omit it.
         rollup: None,
         inherited_context: Vec::new(),
+        reservation: None,
     })
 }
 
@@ -926,6 +1039,7 @@ fn build_issue_details_from_jsonl(
         // deliberately omit it.
         rollup: None,
         inherited_context: Vec::new(),
+        reservation: None,
     })
 }
 
@@ -1605,6 +1719,7 @@ mod tests {
             parent: None,
             rollup: None,
             inherited_context: Vec::new(),
+            reservation: None,
         };
         let json = serde_json::to_string_pretty(&vec![details]).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1643,6 +1758,7 @@ mod tests {
             parent: None,
             rollup: None,
             inherited_context: Vec::new(),
+            reservation: None,
         };
         let output = format_issue_details(&details, false, false);
         assert!(output.contains("Dependencies:"));
@@ -1680,6 +1796,7 @@ mod tests {
             parent: None,
             rollup: None,
             inherited_context: Vec::new(),
+            reservation: None,
         };
 
         let output = format_issue_details(&details, false, false);
@@ -1884,6 +2001,7 @@ mod tests {
             parent: None,
             rollup: None,
             inherited_context: Vec::new(),
+            reservation: None,
         };
         let local_last = IssueDetails {
             issue: make_test_issue("bd-local-2", "Local last"),
@@ -1895,6 +2013,7 @@ mod tests {
             parent: None,
             rollup: None,
             inherited_context: Vec::new(),
+            reservation: None,
         };
         let external_middle = IssueDetails {
             issue: make_test_issue("ext-middle", "External middle"),
@@ -1906,6 +2025,7 @@ mod tests {
             parent: None,
             rollup: None,
             inherited_context: Vec::new(),
+            reservation: None,
         };
 
         let ordered = reorder_details_by_requested_inputs(

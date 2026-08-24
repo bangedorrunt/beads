@@ -1967,6 +1967,13 @@ pub struct ShowArgs {
     /// Show token savings stats when using TOON output
     #[arg(long)]
     pub stats: bool,
+
+    /// Offline Agent Mail reservation snapshot (JSON array, wrapper object,
+    /// or JSONL). ADR-0001 Wave 3: when supplied, `br show` renders a
+    /// READ-ONLY `reservation` block (holder + paths + state) for each issue
+    /// from what toron reports. Toron remains the grantor — br only displays.
+    #[arg(long)]
+    pub reservations: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
