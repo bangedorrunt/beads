@@ -1,5 +1,7 @@
 issues[3]:
   - id: <ISSUE_ID>
+    ac_shape: checkable
+    blast: normal
     title: Two
     status: open
     priority: 0
@@ -14,6 +16,8 @@ issues[3]:
     dependency_count: 0
     dependent_count: 0
   - id: <ISSUE_ID>
+    ac_shape: checkable
+    blast: normal
     title: Three
     status: open
     priority: 1
@@ -28,6 +32,8 @@ issues[3]:
     dependency_count: 0
     dependent_count: 0
   - id: <ISSUE_ID>
+    ac_shape: checkable
+    blast: normal
     title: One
     description: Short desc
     status: open

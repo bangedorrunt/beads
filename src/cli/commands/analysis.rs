@@ -296,7 +296,7 @@ fn plan_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
                 && result.actionable.contains(&issue.id)
         })
         .collect();
-    let actionable_ids: HashSet<&str> = actionable.iter().map(|issue| issue.id.as_str()).collect();
+    let _actionable_ids: HashSet<&str> = actionable.iter().map(|issue| issue.id.as_str()).collect();
     let open_count = issues
         .iter()
         .filter(|issue| {
@@ -733,6 +733,7 @@ fn insights_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
     })
 }
 
+#[allow(dead_code)]
 fn gated_full(map: &BTreeMap<String, f64>, has_edges: &dyn Fn(&str) -> bool) -> Value {
     let filtered: BTreeMap<String, f64> = map
         .iter()
@@ -1137,7 +1138,7 @@ fn cycle_break_value(result: &AnalysisResult) -> Value {
     );
     // bv empirics: has_cycles / cycle_count come from enumeration (result.cycles), not SCC truth.
     let has_cycles = result.cycles.as_ref().is_some_and(|v| !v.is_empty());
-    let cycle_count = result.cycles.as_ref().map(|v| v.len()).unwrap_or(0);
+    let cycle_count = result.cycles.as_ref().map(Vec::len).unwrap_or(0);
     entry.insert("cycle_count".into(), Value::from(cycle_count));
     entry.insert(
         "how_to_use".into(),

@@ -41,6 +41,8 @@ fn strip_volatile(value: &Value) -> Value {
 /// tight relative tolerance because ADR-0003 §3.1 makes float parity with
 /// Go best-effort ("same top pick, same ordering", not bit-equal doubles);
 /// everything else must match exactly.
+const FLOAT_TOLERANCE: f64 = 1e-9;
+
 fn collect_mismatches(actual: &Value, golden: &Value, path: &str, out: &mut Vec<String>) {
     // For metric maps where engine implementation differs from Go bv in
     // exact float values or ordering (HITS/pagerank etc.), only the
@@ -65,7 +67,6 @@ fn collect_mismatches(actual: &Value, golden: &Value, path: &str, out: &mut Vec<
     {
         return;
     }
-    const FLOAT_TOLERANCE: f64 = 1e-9;
     match (actual, golden) {
         (Value::Number(left), Value::Number(right)) => {
             let (Some(left), Some(right)) = (left.as_f64(), right.as_f64()) else {

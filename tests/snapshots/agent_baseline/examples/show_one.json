@@ -1,6 +1,8 @@
 [
   {
     "id": "<ISSUE_ID>",
+    "ac_shape": "checkable",
+    "blast": "normal",
     "title": "Two",
     "status": "open",
     "priority": 0,

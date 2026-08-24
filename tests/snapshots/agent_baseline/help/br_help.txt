@@ -30,6 +30,9 @@ Commands:
   lint          Check issues for missing template sections
   list          List issues
   orphans       List orphan issues (referenced in commits but open)
+  plan          Parallel execution tracks over the actionable set (bv parity)
+  triage        Unified triage payload for agents (bv parity, ADR-0003 §3.1)
+  next          The single top claimable pick, fail-closed (bv parity, ADR-0003 §3.2)
   q             Quick capture (create issue, print ID only)
   query         Manage saved queries
   ready         List ready issues (open, unblocked, not deferred)
@@ -41,6 +44,7 @@ Commands:
   show          Show issue details
   stale         List stale issues
   stats         Show project statistics
+  insights      Graph metric maps: bottlenecks, keystones, cycles, velocity (bv parity)
   status        Alias for stats
   sync          Sync database with JSONL file (export or import)
   undefer       Undefer issues (make ready again)

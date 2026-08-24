@@ -12,6 +12,60 @@
           "description": "Unique ID (e.g., \"bd-abc123\").",
           "type": "string"
         },
+        "verify": {
+          "description": "ADR-0001 §5.2: the VERIFY command that proves this bead done. Typed\ncolumn (schema 18), not description markdown for the loop to re-parse.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "principles": {
+          "description": "ADR-0001 §5.2: engineering principles cited at close, each pairing a\ncanonical principle name with the decision it changed on this bead.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PrincipleCitation"
+          }
+        },
+        "wave": {
+          "description": "ADR-0001 §5.2: wave this bead belongs to (dependency-wave ordering).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "pin": {
+          "description": "ADR-0001 §5.2: swarm pin (adjective+noun) that owns/owned this bead.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit_sha": {
+          "description": "ADR-0001 §5.2: commit SHA carrying the durable work signal.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "close_verdict": {
+          "description": "ADR-0001 §5.3: verdict kind recorded at close (command/unit/live).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ac_shape": {
+          "description": "ADR-0001 §5.2: acceptance-criteria shape (defaults to checkable).",
+          "$ref": "#/$defs/AcShape",
+          "default": "checkable"
+        },
+        "blast": {
+          "description": "ADR-0001 §5.2: blast-radius band (defaults to normal).",
+          "$ref": "#/$defs/Blast",
+          "default": "normal"
+        },
         "title": {
           "description": "Title (1-500 chars).",
           "type": "string"
@@ -296,6 +350,8 @@
       },
       "required": [
         "id",
+        "ac_shape",
+        "blast",
         "title",
         "status",
         "priority",
@@ -305,6 +361,54 @@
         "compaction_level"
       ],
       "$defs": {
+        "PrincipleCitation": {
+          "description": "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip.",
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "Canonical principle name (e.g. \"fix-root-causes\").",
+              "type": "string"
+            },
+            "decision": {
+              "description": "The decision this principle changed, on this bead.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "decision"
+          ]
+        },
+        "AcShape": {
+          "description": "ADR-0001 §5.2: acceptance-criteria shape. Mirrors\n`crate::verify::AcShape` (single canonical home pending oc2's re-export);\nduplicated here as an owned model type so schema-18 has a stable storage\nrepresentation independent of the classifier module.",
+          "oneOf": [
+            {
+              "description": "AC names a runnable command/test.",
+              "type": "string",
+              "const": "checkable"
+            },
+            {
+              "description": "AC is a judgment call (\"review\", \"design\") with no command to run.",
+              "type": "string",
+              "const": "judgment"
+            }
+          ]
+        },
+        "Blast": {
+          "description": "ADR-0001 §5.2: blast-radius band. `high` forces the P0/P1 priority band\nat lint time (lint/flags bead consumes this).",
+          "oneOf": [
+            {
+              "description": "Ordinary bead; default.",
+              "type": "string",
+              "const": "normal"
+            },
+            {
+              "description": "Touches fail-closed invariants or shared storage semantics.",
+              "type": "string",
+              "const": "high"
+            }
+          ]
+        },
         "Status": {
           "description": "Issue lifecycle status.",
           "anyOf": [

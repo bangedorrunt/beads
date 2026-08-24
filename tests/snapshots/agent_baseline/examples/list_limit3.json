@@ -2,6 +2,8 @@
   "issues": [
     {
       "id": "<ISSUE_ID>",
+      "ac_shape": "checkable",
+      "blast": "normal",
       "title": "Two",
       "status": "open",
       "priority": 0,
@@ -18,6 +20,8 @@
     },
     {
       "id": "<ISSUE_ID>",
+      "ac_shape": "checkable",
+      "blast": "normal",
       "title": "Three",
       "status": "open",
       "priority": 1,
@@ -34,6 +38,8 @@
     },
     {
       "id": "<ISSUE_ID>",
+      "ac_shape": "checkable",
+      "blast": "normal",
       "title": "One",
       "description": "Short desc",
       "status": "open",
