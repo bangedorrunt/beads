@@ -9,6 +9,9 @@
 //! gu7ts.7 + pagination fix adds: scroll-aware list (window keeps `selected`
 //! visible), detail scroll, board/graph/actionable/insights/tree/label views.
 
+use crate::analysis::{
+    AnalysisConfig, AnalysisEngine, engine::AnalysisResult, triage::TriageResult,
+};
 use crate::model::Issue;
 
 /// Keyboard focus owner (bv UX map §2.1, skeleton + extras + views).
@@ -84,12 +87,33 @@ pub struct TuiApp {
     shortcuts_scroll: usize,
     /// Scroll offset inside the detail viewport (j/k, ctrl+d/u, g/G).
     detail_scroll: usize,
+    /// Cached analysis for triage/graph sections (bv parity, computed once).
+    analysis: Option<AnalysisResult>,
+    triage: Option<TriageResult>,
 }
 
 impl TuiApp {
     /// State over `issues` (expected id-sorted) at bv's default 120x40.
     #[must_use]
     pub fn new(issues: Vec<Issue>) -> Self {
+        // Precompute analysis once for triage insights + graph analysis sections.
+        // Keep it cheap: full triage only for <2000 issues, else phase1.
+        let (analysis, triage) = if issues.is_empty() {
+            (None, None)
+        } else if issues.len() < 2000 {
+            let engine = AnalysisEngine::new(issues.clone());
+            let a = engine.analyze(&AnalysisConfig::full());
+            let t = crate::analysis::triage::compute_triage(
+                &issues,
+                chrono::Utc::now(),
+                env!("CARGO_PKG_VERSION"),
+            );
+            (Some(a), Some(t))
+        } else {
+            let engine = AnalysisEngine::new(issues.clone());
+            let a = engine.analyze_phase1();
+            (Some(a), None)
+        };
         Self {
             issues,
             selected: 0,
@@ -104,6 +128,8 @@ impl TuiApp {
             show_shortcuts: false,
             shortcuts_scroll: 0,
             detail_scroll: 0,
+            analysis,
+            triage,
         }
     }
 
@@ -170,6 +196,22 @@ impl TuiApp {
     #[must_use]
     pub const fn detail_scroll(&self) -> usize {
         self.detail_scroll
+    }
+
+    #[must_use]
+    pub fn analysis(&self) -> Option<&AnalysisResult> {
+        self.analysis.as_ref()
+    }
+
+    #[must_use]
+    pub fn triage_for(&self, id: &str) -> Option<crate::analysis::triage::Recommendation> {
+        let t = self.triage.as_ref()?;
+        t.recommendations.iter().find(|r| r.id == id).cloned()
+    }
+
+    #[must_use]
+    pub fn triage_result(&self) -> Option<&TriageResult> {
+        self.triage.as_ref()
     }
 
     /// Whether we are in incremental search input mode.

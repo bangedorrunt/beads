@@ -17,6 +17,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+
 use super::app::{Focus, TuiApp};
 use super::{keys, theme};
 
@@ -156,7 +158,51 @@ fn draw_view(
 }
 
 fn draw_board(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
+    if area.width < 20 || area.height < 5 {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled("(board: too small)", theme::dim())))
+                .block(Block::default().borders(Borders::ALL)),
+            area,
+        );
+        return;
+    }
     let visible = app.visible_indices();
+    // Mobile stacked mode when narrow (iphone): single column
+    if area.width <= 80 {
+        let mut lines = vec![Line::from(vec![
+            Span::styled(" Board ", theme::primary()),
+            Span::styled(format!("({} cards)", visible.len()), theme::dim()),
+        ])];
+        let window = viewport_window(
+            app.selected(),
+            visible.len(),
+            area.height.saturating_sub(2) as usize,
+        );
+        for vis_idx in window.0..window.1 {
+            let issue_idx = visible[vis_idx];
+            let issue = &app.issues()[issue_idx];
+            let sel = vis_idx == app.selected();
+            let style = if sel {
+                theme::selected_row()
+            } else {
+                theme::row()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(if sel { "› " } else { "  " }.to_string(), style),
+                Span::styled(format!("[{}] ", issue.status.as_str()), status_style(issue)),
+                Span::styled(format!("{:<10} ", issue.id), style),
+                Span::styled(truncate(&issue.title, 22), style),
+            ]));
+        }
+        if visible.is_empty() {
+            lines.push(Line::from(Span::styled("  (no cards)", theme::dim())));
+        }
+        frame.render_widget(
+            Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
+            area,
+        );
+        return;
+    }
     // Group by status
     let mut groups: std::collections::BTreeMap<&str, Vec<usize>> =
         std::collections::BTreeMap::new();
@@ -233,6 +279,12 @@ fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
         Layout::horizontal([Constraint::Min(0), Constraint::Length(0)]).areas(area)
     };
     let mut lines = vec![Line::from(Span::styled(" Nodes ", theme::primary()))];
+    if visible.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (no nodes — filter or empty)",
+            theme::dim(),
+        )));
+    }
     let window = viewport_window(app.selected(), visible.len(), list.height as usize);
     for vis_idx in window.0..window.1 {
         let issue_idx = visible[vis_idx];
@@ -540,11 +592,172 @@ fn draw_label_dashboard(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tu
     );
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
+#[allow(
+    clippy::too_many_lines,
+    clippy::wildcard_enum_match_arm,
+    clippy::needless_pass_by_value,
+    clippy::drain_collect
+)]
+#[allow(clippy::pedantic, clippy::nursery)]
+fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TABLES);
+    let parser = Parser::new_ext(md, opts);
+    let mut lines: Vec<Line> = Vec::new();
+    let mut cur_spans: Vec<Span<'static>> = Vec::new();
+    let mut in_code_block = false;
+    let mut code_lang: String = String::new();
+    let mut strong = false;
+    let mut em = false;
+    let mut _code_inline = false;
+    let mut heading_level: u8 = 0;
+    for ev in parser {
+        match ev {
+            Event::Start(Tag::Heading { level, .. }) => {
+                if !cur_spans.is_empty() {
+                    lines.push(Line::from(cur_spans.clone()));
+                    cur_spans.clear();
+                }
+                heading_level = level as u8;
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if !cur_spans.is_empty() {
+                    // style heading bold cyan
+                    let styled: Vec<Span> = cur_spans
+                        .drain(..)
+                        .map(|s| {
+                            Span::styled(
+                                s.content.to_string(),
+                                Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                            )
+                        })
+                        .collect();
+                    lines.push(Line::from(styled));
+                }
+                heading_level = 0;
+            }
+            Event::Start(Tag::Paragraph) => {
+                if !cur_spans.is_empty() {
+                    lines.push(Line::from(cur_spans.clone()));
+                    cur_spans.clear();
+                }
+            }
+            Event::End(TagEnd::Paragraph) => {
+                if !cur_spans.is_empty() {
+                    lines.push(Line::from(cur_spans.clone()));
+                    cur_spans.clear();
+                }
+                lines.push(Line::from(""));
+            }
+            Event::Start(Tag::CodeBlock(kind)) => {
+                if !cur_spans.is_empty() {
+                    lines.push(Line::from(cur_spans.clone()));
+                    cur_spans.clear();
+                }
+                in_code_block = true;
+                code_lang = match kind {
+                    pulldown_cmark::CodeBlockKind::Fenced(l) => l.to_string(),
+                    _ => String::new(),
+                };
+                if !code_lang.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        format!("  {} ─", code_lang),
+                        Style::new().fg(Color::DarkGray),
+                    )));
+                }
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                in_code_block = false;
+                code_lang.clear();
+            }
+            Event::Start(Tag::Strong) => strong = true,
+            Event::End(TagEnd::Strong) => strong = false,
+            Event::Start(Tag::Emphasis) => em = true,
+            Event::End(TagEnd::Emphasis) => em = false,
+            Event::Start(Tag::Strikethrough) => {}
+            Event::End(TagEnd::Strikethrough) => {}
+            Event::Start(Tag::List(_)) | Event::End(TagEnd::List(_)) => {}
+            Event::Start(Tag::Item) => cur_spans.push(Span::styled("• ".to_string(), theme::dim())),
+            Event::End(TagEnd::Item) => {
+                if !cur_spans.is_empty() {
+                    lines.push(Line::from(cur_spans.clone()));
+                    cur_spans.clear();
+                }
+            }
+            Event::Text(text) => {
+                let mut style = Style::new();
+                if in_code_block {
+                    style = style.fg(Color::Green).bg(Color::Rgb(40, 42, 54));
+                    // code block lines are kept as separate lines
+                    for l in text.lines() {
+                        lines.push(Line::from(Span::styled(format!("    {l}"), style)));
+                    }
+                    continue;
+                }
+                if strong {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                if em {
+                    style = style.add_modifier(Modifier::ITALIC);
+                }
+                if heading_level > 0 {
+                    style = style.fg(Color::Cyan).add_modifier(Modifier::BOLD);
+                }
+                // inline split by soft breaks already handled; just push
+                cur_spans.push(Span::styled(text.to_string(), style));
+            }
+            Event::Code(text) => {
+                _code_inline = true;
+                cur_spans.push(Span::styled(
+                    format!("`{text}`"),
+                    Style::new().fg(Color::Yellow),
+                ));
+                _code_inline = false;
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if !cur_spans.is_empty() {
+                    lines.push(Line::from(cur_spans.clone()));
+                    cur_spans.clear();
+                }
+            }
+            Event::Html(_) | Event::FootnoteReference(_) => {}
+            _ => {}
+        }
+    }
+    if !cur_spans.is_empty() {
+        lines.push(Line::from(cur_spans));
+    }
+    if width > 0 {
+        // crude wrap: split long lines
+        let mut wrapped: Vec<Line> = Vec::new();
+        for line in lines {
+            let s: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();
+            if s.len() <= width {
+                wrapped.push(line);
+            } else {
+                for chunk in s.chars().collect::<Vec<_>>().chunks(width) {
+                    let ch: String = chunk.iter().collect();
+                    wrapped.push(Line::from(Span::styled(ch, theme::row())));
+                }
+            }
+        }
+        wrapped
     } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
+        lines
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        s.to_string()
+    } else if max == 0 {
+        String::new()
+    } else {
+        let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
     }
 }
 
@@ -561,10 +774,17 @@ fn viewport_window(selected: usize, total: usize, viewport: usize) -> (usize, us
 }
 
 fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
-    let mut header_spans = vec![Span::styled(
-        "  TYPE PRI STATUS  ID             TITLE",
-        theme::primary(),
-    )];
+    // Responsive header per bv thresholds (ultrawide>180, wide>140, split>100, mobile<=60)
+    let header_text = if area.width <= 40 {
+        "  ID       TITLE"
+    } else if area.width <= 60 {
+        "  STATUS ID       TITLE"
+    } else if area.width <= 100 {
+        "  PRI STATUS ID       TITLE"
+    } else {
+        "  TYPE PRI STATUS  ID             TITLE"
+    };
+    let mut header_spans = vec![Span::styled(header_text, theme::primary())];
     if let Some(q) = app.active_filter_query() {
         if !q.is_empty() {
             header_spans.push(Span::styled(format!("  [filter: {q}]"), theme::dim()));
@@ -613,18 +833,41 @@ fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         } else {
             String::new()
         };
-        rows.push(Line::from(vec![
-            Span::styled(selector.to_string(), style),
-            Span::styled(format!("{:<4}", issue.issue_type.as_str()), style),
-            Span::styled(format!("P{:<2} ", issue.priority.0), style),
-            Span::styled(
-                format!("{:<7} ", issue.status.as_str()),
-                status_style(issue),
-            ),
-            Span::styled(format!("{:<14} ", issue.id), style),
-            Span::styled(issue.title.clone(), style),
-            Span::styled(label_tag, theme::dim()),
-        ]));
+        // Mobile: collapse to ID + title only for iphone readability
+        let row_spans = if area.width <= 40 {
+            vec![
+                Span::styled(selector.to_string(), style),
+                Span::styled(format!("{:<10} ", issue.id), style),
+                Span::styled(
+                    truncate(&issue.title, usize::from(area.width.saturating_sub(14))),
+                    style,
+                ),
+            ]
+        } else if area.width <= 60 {
+            vec![
+                Span::styled(selector.to_string(), style),
+                Span::styled(
+                    format!("{:<7} ", issue.status.as_str()),
+                    status_style(issue),
+                ),
+                Span::styled(format!("{:<10} ", issue.id), style),
+                Span::styled(truncate(&issue.title, 18), style),
+            ]
+        } else {
+            vec![
+                Span::styled(selector.to_string(), style),
+                Span::styled(format!("{:<4}", issue.issue_type.as_str()), style),
+                Span::styled(format!("P{:<2} ", issue.priority.0), style),
+                Span::styled(
+                    format!("{:<7} ", issue.status.as_str()),
+                    status_style(issue),
+                ),
+                Span::styled(format!("{:<14} ", issue.id), style),
+                Span::styled(truncate(&issue.title, 28), style),
+                Span::styled(label_tag, theme::dim()),
+            ]
+        };
+        rows.push(Line::from(row_spans));
     }
     if total == 0 {
         let empty_msg = if app.active_filter_query().is_some() {
@@ -774,16 +1017,123 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             )));
         }
     }
-    // Description
+    // Comments first (visible without scrolling past long description)
+    if !issue.comments.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("Comments", Style::new().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" ({})  j/k scroll to see more", issue.comments.len()),
+                theme::dim(),
+            ),
+        ]));
+        for c in issue.comments.iter().take(5) {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {}: ", c.author), Style::new().fg(Color::Yellow)),
+                Span::styled(c.created_at.format("%m/%d").to_string(), theme::dim()),
+            ]));
+            // render comment body with markdown
+            for l in markdown_lines(&c.body, usize::from(area.width.saturating_sub(6))) {
+                // indent comment body
+                let indented: Vec<Span> =
+                    std::iter::once(Span::styled("    ".to_string(), theme::dim()))
+                        .chain(l.spans)
+                        .collect();
+                lines.push(Line::from(indented));
+            }
+        }
+        if issue.comments.len() > 5 {
+            lines.push(Line::from(Span::styled(
+                format!("  … {} more", issue.comments.len() - 5),
+                theme::dim(),
+            )));
+        }
+    } else {
+        lines.push(Line::from(Span::styled("Comments: (none)", theme::dim())));
+    }
+
+    // Triage insight (from analysis cache)
+    if let Some(rec) = app.triage_for(&issue.id) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "🎯 Triage Insight:",
+            Style::new().add_modifier(Modifier::BOLD).fg(Color::Magenta),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  score {:.3} ", rec.score),
+                Style::new().fg(Color::Yellow),
+            ),
+            Span::styled(rec.action.clone(), theme::row()),
+        ]));
+        for reason in rec.reasons.iter().take(3) {
+            lines.push(Line::from(Span::styled(
+                format!("  • {reason}"),
+                theme::dim(),
+            )));
+        }
+        if rec.score > 0.5 {
+            lines.push(Line::from(Span::styled(
+                "  ⚡ Quick win candidate",
+                Style::new().fg(Color::Green),
+            )));
+        }
+    }
+    // Graph analysis for this bead
+    if let Some(analysis) = app.analysis() {
+        let mut graph_bits: Vec<String> = Vec::new();
+        if let Some(pr) = analysis.pagerank.as_ref().and_then(|m| m.get(&issue.id)) {
+            graph_bits.push(format!("PR {:.3}", pr));
+        }
+        if let Some(bw) = analysis.betweenness.as_ref().and_then(|m| m.get(&issue.id)) {
+            graph_bits.push(format!("BW {:.1}", bw));
+        }
+        if let Some(ev) = analysis.eigenvector.as_ref().and_then(|m| m.get(&issue.id)) {
+            graph_bits.push(format!("EV {:.3}", ev));
+        }
+        if !graph_bits.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "🔎 Graph Analysis:",
+                Style::new().add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {}  depth {:.0}",
+                    graph_bits.join(" │ "),
+                    analysis
+                        .critical_path_score
+                        .as_ref()
+                        .and_then(|m| m.get(&issue.id))
+                        .copied()
+                        .unwrap_or(0.0)
+                ),
+                theme::dim(),
+            )));
+        }
+        if analysis.has_cycles && analysis.cycle_count > 0 {
+            lines.push(Line::from(Span::styled(
+                format!("  ⚠ cycles: {} in workspace", analysis.cycle_count),
+                Style::new().fg(Color::Red),
+            )));
+        }
+    }
+
+    // Description with markdown + syntax highlighting
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Description:",
         Style::new().add_modifier(Modifier::BOLD),
     )));
     if let Some(description) = &issue.description {
-        // Simple word-wrap via Wrap widget; also split for scroll.
-        for chunk in split_for_wrap(description, usize::from(area.width.saturating_sub(4))) {
-            lines.push(Line::from(Span::styled(chunk, theme::row())));
+        if crate::format::markdown::contains_markdown(description) {
+            for l in markdown_lines(description, usize::from(area.width.saturating_sub(4))) {
+                lines.push(l);
+            }
+        } else {
+            for chunk in split_for_wrap(description, usize::from(area.width.saturating_sub(4))) {
+                lines.push(Line::from(Span::styled(chunk, theme::row())));
+            }
         }
     } else {
         lines.push(Line::from(Span::styled("  (no description)", theme::dim())));
@@ -794,27 +1144,14 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             "Design:",
             Style::new().add_modifier(Modifier::BOLD),
         )));
-        for chunk in split_for_wrap(design, usize::from(area.width.saturating_sub(4))) {
-            lines.push(Line::from(Span::styled(chunk, theme::row())));
-        }
-    }
-    if !issue.comments.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("Comments", Style::new().add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" ({})", issue.comments.len()), theme::dim()),
-        ]));
-        for c in issue.comments.iter().take(3) {
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {}: ", c.author), Style::new().fg(Color::Yellow)),
-                Span::styled(truncate(&c.body, 60), theme::dim()),
-            ]));
-        }
-        if issue.comments.len() > 3 {
-            lines.push(Line::from(Span::styled(
-                format!("  … {} more", issue.comments.len() - 3),
-                theme::dim(),
-            )));
+        if crate::format::markdown::contains_markdown(design) {
+            for l in markdown_lines(design, usize::from(area.width.saturating_sub(4))) {
+                lines.push(l);
+            }
+        } else {
+            for chunk in split_for_wrap(design, usize::from(area.width.saturating_sub(4))) {
+                lines.push(Line::from(Span::styled(chunk, theme::row())));
+            }
         }
     }
 
