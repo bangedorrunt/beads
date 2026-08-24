@@ -1,16 +1,17 @@
-//! Headless TUI state machine (bead gu7ts.6 + gu7ts.8 extras). governed-by: ADR-0003.
+//! Headless TUI state machine (bead gu7ts.6 + gu7ts.8 extras + gu7ts.7 views + pagination fix). governed-by: ADR-0003.
 //!
 //! Pure logic: no ratatui, no terminal I/O. `tests/tui_harness.rs` drives
 //! [`TuiApp::handle_key`] directly to pin the focus contract (ADR-0003 §5
 //! proof 4) without a pseudo-TTY.
 //!
 //! gu7ts.8 adds: search/filter (`/`), shortcuts sidebar (`;`/F2),
-//! help overlay (`?`/F1), and the keybinding registry surface via
-//! `src/tui/keys.rs` (bv UX map §3/§5).
+//! help overlay (`?`/F1), keybinding registry via `src/tui/keys.rs`.
+//! gu7ts.7 + pagination fix adds: scroll-aware list (window keeps `selected`
+//! visible), detail scroll, board/graph/actionable/insights/tree/label views.
 
 use crate::model::Issue;
 
-/// Keyboard focus owner (bv UX map §2.1, skeleton + extras).
+/// Keyboard focus owner (bv UX map §2.1, skeleton + extras + views).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     /// Main issue list; the root layer.
@@ -23,6 +24,18 @@ pub enum Focus {
     Search,
     /// Help overlay (focusHelp).
     Help,
+    /// Kanban board (grouped by status).
+    Board,
+    /// Dependency graph view.
+    Graph,
+    /// Actionable execution plan.
+    Actionable,
+    /// Insights metrics panel.
+    Insights,
+    /// Hierarchical tree.
+    Tree,
+    /// Label dashboard.
+    LabelDashboard,
 }
 
 /// Terminal-independent key events the state machine understands.
@@ -36,7 +49,11 @@ pub enum Key {
     Esc,
     Tab,
     Backspace,
+    PageDown,
+    PageUp,
     CtrlC,
+    CtrlD,
+    CtrlU,
     CtrlJ,
     CtrlK,
     F1,
@@ -65,6 +82,8 @@ pub struct TuiApp {
     show_shortcuts: bool,
     /// Scroll offset inside the sidebar (ctrl+j/k).
     shortcuts_scroll: usize,
+    /// Scroll offset inside the detail viewport (j/k, ctrl+d/u, g/G).
+    detail_scroll: usize,
 }
 
 impl TuiApp {
@@ -84,6 +103,7 @@ impl TuiApp {
             search_buffer: String::new(),
             show_shortcuts: false,
             shortcuts_scroll: 0,
+            detail_scroll: 0,
         }
     }
 
@@ -147,6 +167,11 @@ impl TuiApp {
         self.shortcuts_scroll
     }
 
+    #[must_use]
+    pub const fn detail_scroll(&self) -> usize {
+        self.detail_scroll
+    }
+
     /// Whether we are in incremental search input mode.
     #[must_use]
     pub fn is_searching(&self) -> bool {
@@ -158,6 +183,19 @@ impl TuiApp {
     #[must_use]
     pub const fn is_split(&self) -> bool {
         self.width > 100
+    }
+
+    #[must_use]
+    pub fn is_view_focus(&self) -> bool {
+        matches!(
+            self.focus,
+            Focus::Board
+                | Focus::Graph
+                | Focus::Actionable
+                | Focus::Insights
+                | Focus::Tree
+                | Focus::LabelDashboard
+        )
     }
 
     /// Resize hook from the render loop.
@@ -193,6 +231,7 @@ impl TuiApp {
                 .unwrap_or("")
                 .to_lowercase()
                 .contains(&q)
+            || issue.labels.iter().any(|l| l.to_lowercase().contains(&q))
     }
 
     #[must_use]
@@ -216,7 +255,22 @@ impl TuiApp {
             .collect()
     }
 
+    fn viewport_rows(&self) -> usize {
+        // Body height = total - footer (1) - optional search bar (1).
+        let mut h = usize::from(self.height.saturating_sub(1));
+        if self.is_searching() {
+            h = h.saturating_sub(1);
+        }
+        // Reserve header line.
+        h.saturating_sub(1)
+    }
+
+    fn page_step(&self) -> usize {
+        (self.viewport_rows() / 3).max(1)
+    }
+
     /// Apply one key event. This is the whole focus contract.
+    #[allow(clippy::too_many_lines)]
     pub fn handle_key(&mut self, key: Key) {
         // Status messages clear on any keypress (bv footer rule §1.6).
         self.status_message = None;
@@ -234,7 +288,6 @@ impl TuiApp {
 
         // Help overlay: any key closes and restores focus (bv §5.2).
         if self.focus == Focus::Help {
-            // Any key closes help; ctrl+c already handled.
             let prev = self.focus_before_help.take().unwrap_or(Focus::List);
             self.focus = prev;
             if key != Key::Esc && key != Key::Char('?') && key != Key::F1 {
@@ -254,7 +307,41 @@ impl TuiApp {
             return;
         }
 
-        // Shortcuts sidebar scroll when visible (ctrl+j/k) — available from any non-search/help/quit layer.
+        // View overlays: q/esc/tab close back to list.
+        if self.is_view_focus() {
+            match key {
+                Key::Char('q') | Key::Esc => {
+                    self.focus = Focus::List;
+                    self.detail_scroll = 0;
+                    return;
+                }
+                Key::Enter => {
+                    // Drill-down: keep selection, open detail (split keeps pane, single replaces).
+                    self.focus = Focus::Detail;
+                    self.detail_scroll = 0;
+                    return;
+                }
+                Key::Tab if self.is_split() => {
+                    self.focus = Focus::List;
+                    return;
+                }
+                Key::Down
+                | Key::Up
+                | Key::Home
+                | Key::End
+                | Key::PageDown
+                | Key::PageUp
+                | Key::CtrlD
+                | Key::CtrlU => {
+                    self.handle_view_nav(key);
+                    return;
+                }
+                _ => {}
+            }
+            // Fall through to global toggles for view switching (b/g/… switch views directly).
+        }
+
+        // Shortcuts sidebar scroll when visible (ctrl+j/k) — available from any non-search/help/quit/view layer.
         if self.show_shortcuts {
             match key {
                 Key::CtrlJ => {
@@ -270,40 +357,95 @@ impl TuiApp {
         }
 
         // Global toggles when not filtering (bv §3.1, filtering gates)
-        // Note: filtering means search input active; applied filter does NOT suppress these.
-        let is_filtering_input = false; // we already returned if Search; so false here
-        if !is_filtering_input {
-            match key {
-                Key::Char('?') | Key::F1 => {
-                    self.focus_before_help = Some(self.focus);
-                    self.focus = Focus::Help;
-                    return;
-                }
-                Key::Char(';') | Key::F2 => {
-                    self.show_shortcuts = !self.show_shortcuts;
-                    if self.show_shortcuts {
-                        self.shortcuts_scroll = 0;
-                        self.set_status("Shortcuts sidebar: ; hide | ctrl+j/k scroll");
-                    } else {
-                        self.set_status("shortcuts hidden");
-                    }
-                    return;
-                }
-                _ => {}
+        // Applied filter does NOT suppress these.
+        match key {
+            Key::Char('?') | Key::F1 => {
+                self.focus_before_help = Some(self.focus);
+                self.focus = Focus::Help;
+                return;
             }
+            Key::Char(';') | Key::F2 => {
+                self.show_shortcuts = !self.show_shortcuts;
+                if self.show_shortcuts {
+                    self.shortcuts_scroll = 0;
+                    self.set_status("Shortcuts sidebar: ; hide | ctrl+j/k scroll");
+                } else {
+                    self.set_status("shortcuts hidden");
+                }
+                return;
+            }
+            Key::Char('b') => {
+                return self.toggle_view(Focus::Board);
+            }
+            Key::Char('g') => {
+                return self.toggle_view(Focus::Graph);
+            }
+            Key::Char('a') => {
+                return self.toggle_view(Focus::Actionable);
+            }
+            Key::Char('i') => {
+                return self.toggle_view(Focus::Insights);
+            }
+            Key::Char('E') => {
+                return self.toggle_view(Focus::Tree);
+            }
+            Key::Char('[') => {
+                return self.toggle_view(Focus::LabelDashboard);
+            }
+            _ => {}
         }
 
         match self.focus {
             Focus::List => self.handle_list_key(key),
             Focus::Detail => self.handle_detail_key(key),
-            Focus::Search | Focus::Help | Focus::QuitConfirm => unreachable!(),
+            Focus::Search
+            | Focus::Help
+            | Focus::QuitConfirm
+            | Focus::Board
+            | Focus::Graph
+            | Focus::Actionable
+            | Focus::Insights
+            | Focus::Tree
+            | Focus::LabelDashboard => unreachable!(),
+        }
+    }
+
+    fn toggle_view(&mut self, view: Focus) {
+        if self.focus == view {
+            self.focus = Focus::List;
+        } else {
+            self.focus = view;
+        }
+        self.detail_scroll = 0;
+    }
+
+    fn handle_view_nav(&mut self, key: Key) {
+        let count = self.visible_count();
+        if count == 0 {
+            return;
+        }
+        match key {
+            Key::Down => {
+                if self.selected + 1 < count {
+                    self.selected += 1;
+                }
+            }
+            Key::Up => self.selected = self.selected.saturating_sub(1),
+            Key::Home => self.selected = 0,
+            Key::End => self.selected = count.saturating_sub(1),
+            Key::PageDown | Key::CtrlD => {
+                self.selected = (self.selected + self.page_step()).min(count.saturating_sub(1));
+            }
+            Key::PageUp | Key::CtrlU => {
+                self.selected = self.selected.saturating_sub(self.page_step());
+            }
+            _ => {}
         }
     }
 
     fn handle_search_key(&mut self, key: Key) {
         match key {
             Key::Esc => {
-                // Cancel search: clear buffer and filter, return to list.
                 self.search_buffer.clear();
                 self.filter = None;
                 self.focus = Focus::List;
@@ -311,7 +453,6 @@ impl TuiApp {
                 self.set_status("search cancelled");
             }
             Key::Enter => {
-                // Commit filter: keep buffer as applied filter if non-empty, else clear.
                 let committed = self.search_buffer.trim().to_string();
                 if committed.is_empty() {
                     self.filter = None;
@@ -343,7 +484,6 @@ impl TuiApp {
                 self.selected = 0;
             }
             Key::Other(k) => {
-                // Treat other printable as char if possible — handled via to_key as Char already.
                 let _ = k;
             }
             _ => {}
@@ -351,7 +491,6 @@ impl TuiApp {
     }
 
     fn handle_list_key(&mut self, key: Key) {
-        // Esc at top list: first clear applied filter if active, else quit-confirm (bv §3.0).
         if key == Key::Esc && self.filter.is_some() {
             self.filter = None;
             self.selected = 0;
@@ -376,28 +515,56 @@ impl TuiApp {
                 let count = self.visible_count();
                 self.selected = count.saturating_sub(1);
             }
-            Key::Enter => self.focus = Focus::Detail,
-            Key::Tab if self.is_split() => self.focus = Focus::Detail,
-            // Top of the layer stack: q quits outright, esc asks first.
+            Key::PageDown | Key::CtrlD => {
+                let count = self.visible_count();
+                if count == 0 {
+                    return;
+                }
+                self.selected = (self.selected + self.page_step()).min(count.saturating_sub(1));
+            }
+            Key::PageUp | Key::CtrlU => {
+                self.selected = self.selected.saturating_sub(self.page_step());
+            }
+            Key::Enter => {
+                self.focus = Focus::Detail;
+                self.detail_scroll = 0;
+            }
+            Key::Tab if self.is_split() => {
+                self.focus = Focus::Detail;
+                self.detail_scroll = 0;
+            }
             Key::Char('q') => self.should_quit = true,
             Key::Esc => self.focus = Focus::QuitConfirm,
             Key::Char('/') => {
-                // Enter incremental search.
                 self.focus = Focus::Search;
                 self.search_buffer.clear();
                 self.selected = 0;
             }
-            // Sidebar toggle already handled globally, but keep here for List context redundancy.
             _ => {}
         }
     }
 
+    #[allow(clippy::semicolon_if_nothing_returned)]
     fn handle_detail_key(&mut self, key: Key) {
         match key {
-            // q/esc close the detail layer back to the list (split keeps the
-            // pane visible but returns focus to the list).
-            Key::Char('q') | Key::Esc => self.focus = Focus::List,
-            Key::Tab if self.is_split() => self.focus = Focus::List,
+            Key::Char('q') | Key::Esc => {
+                self.focus = Focus::List;
+                self.detail_scroll = 0;
+            }
+            Key::Tab if self.is_split() => {
+                self.focus = Focus::List;
+                self.detail_scroll = 0;
+            }
+            Key::Down | Key::Char('j') => self.detail_scroll = self.detail_scroll.saturating_add(1),
+            Key::Up | Key::Char('k') => self.detail_scroll = self.detail_scroll.saturating_sub(1),
+            Key::PageDown | Key::CtrlD => {
+                self.detail_scroll = self.detail_scroll.saturating_add(self.page_step())
+            }
+            Key::PageUp | Key::CtrlU => {
+                self.detail_scroll = self.detail_scroll.saturating_sub(self.page_step())
+            }
+            Key::Home => self.detail_scroll = 0,
+            Key::End => self.detail_scroll = usize::MAX / 2, // clamped in draw
             _ => {}
         }
     }

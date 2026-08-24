@@ -66,9 +66,11 @@ fn to_key(key: &crossterm::event::KeyEvent) -> Key {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return match key.code {
             KeyCode::Char('c') => Key::CtrlC,
+            KeyCode::Char('d') => Key::CtrlD,
+            KeyCode::Char('u') => Key::CtrlU,
             KeyCode::Char('j') => Key::CtrlJ,
             KeyCode::Char('k') => Key::CtrlK,
-            KeyCode::Char('r') => Key::Other(KeyCode::Char('r')), // keep as Other; app handles sidebar scroll via CtrlJ/K only
+            KeyCode::Char('r') => Key::Other(KeyCode::Char('r')),
             other => Key::Other(other),
         };
     }
@@ -81,6 +83,8 @@ fn to_key(key: &crossterm::event::KeyEvent) -> Key {
         KeyCode::Esc => Key::Esc,
         KeyCode::Tab => Key::Tab,
         KeyCode::Backspace => Key::Backspace,
+        KeyCode::PageDown => Key::PageDown,
+        KeyCode::PageUp => Key::PageUp,
         KeyCode::F(1) => Key::F1,
         KeyCode::F(2) => Key::F2,
         KeyCode::Char('q') => Key::Char('q'),

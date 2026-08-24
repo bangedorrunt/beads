@@ -180,3 +180,64 @@ fn key_registry_has_expected_entries() {
     let help_bindings = keys::all_bindings_for_focus("help");
     assert!(help_bindings.iter().any(|b| b.key == "q"));
 }
+
+#[test]
+fn pagination_window_keeps_selection_visible() {
+    let mut app = TuiApp::new(
+        (0..60)
+            .map(|n| {
+                serde_json::from_str(&format!(
+                    r#"{{"id": "fx-{n:03}", "title": "issue {n}", "status": "open", "priority": 2, "issue_type": "task", "created_at": "2026-08-01T10:00:00Z", "updated_at": "2026-08-01T10:00:00Z"}}"#
+                ))
+                .unwrap()
+            })
+            .collect(),
+    );
+    app.set_size(120, 20); // small viewport
+    for _ in 0..50 {
+        app.handle_key(Key::Down);
+    }
+    assert_eq!(app.selected(), 50);
+    // paged navigation
+    app.handle_key(Key::PageDown);
+    assert!(app.selected() > 50);
+    app.handle_key(Key::PageUp);
+    assert!(app.selected() < 60);
+    app.handle_key(Key::Home);
+    assert_eq!(app.selected(), 0);
+    app.handle_key(Key::End);
+    assert_eq!(app.selected(), 59);
+}
+
+#[test]
+fn detail_scroll_and_view_toggles() {
+    let mut app = app();
+    app.handle_key(Key::Enter);
+    assert_eq!(app.focus(), Focus::Detail);
+    app.handle_key(Key::Down);
+    assert_eq!(app.detail_scroll(), 1);
+    app.handle_key(Key::Up);
+    assert_eq!(app.detail_scroll(), 0);
+    app.handle_key(Key::PageDown);
+    assert!(app.detail_scroll() > 0);
+    app.handle_key(Key::Char('q'));
+    assert_eq!(app.focus(), Focus::List);
+
+    for (key, view) in [
+        (Key::Char('b'), Focus::Board),
+        (Key::Char('g'), Focus::Graph),
+        (Key::Char('a'), Focus::Actionable),
+        (Key::Char('i'), Focus::Insights),
+        (Key::Char('E'), Focus::Tree),
+        (Key::Char('['), Focus::LabelDashboard),
+    ] {
+        app.handle_key(key);
+        assert_eq!(app.focus(), view, "toggle {view:?}");
+        app.handle_key(Key::Esc);
+        assert_eq!(app.focus(), Focus::List);
+        app.handle_key(key);
+        assert_eq!(app.focus(), view);
+        app.handle_key(Key::Char('q'));
+        assert_eq!(app.focus(), Focus::List);
+    }
+}
