@@ -13923,7 +13923,6 @@ mod tests {
     use crate::model::{Issue, IssueType, Priority, Status};
     use crate::storage::Connection;
     use crate::storage::SqliteStorage;
-    use assert_cmd::Command as AssertCommand;
     use chrono::Utc;
     use std::collections::BTreeMap;
     use std::fs;
@@ -14113,7 +14112,13 @@ mod tests {
     }
 
     fn run_br(cwd: &Path, args: &[&str]) -> std::process::Output {
-        let mut command = AssertCommand::cargo_bin("br").expect("locate br binary");
+        // `CARGO_BIN_EXE_br` is only set for integration tests; unit tests need a
+        // fallback that still finds the just-built `br` binary.
+        let br_bin = std::env::var("CARGO_BIN_EXE_br").unwrap_or_else(|_| {
+            let manifest_dir = env!("CARGO_MANIFEST_DIR");
+            format!("{manifest_dir}/target/debug/br")
+        });
+        let mut command = std::process::Command::new(br_bin);
         command.current_dir(cwd);
         command.env("NO_COLOR", "1");
         command.env("RUST_LOG", "warn");
@@ -14415,8 +14420,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "drives the br binary via assert_cmd; CARGO_BIN_EXE_br only exists for \
-                integration tests — relocate to tests/ to activate"]
     fn pending_merge_read_only_cli_is_byte_identical_and_skips_newer_jsonl() {
         let (temp, db_path) = pending_merge_workspace_with_newer_jsonl();
         let before_bytes = database_family_bytes(&db_path);
@@ -14457,8 +14460,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "drives the br binary via assert_cmd; CARGO_BIN_EXE_br only exists for \
-                integration tests — relocate to tests/ to activate"]
     fn pending_merge_mutation_refuses_before_auto_import_or_storage_write() {
         let (temp, db_path) = pending_merge_workspace_with_newer_jsonl();
         let before_bytes = database_family_bytes(&db_path);
@@ -14493,8 +14494,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "drives the br binary via assert_cmd; CARGO_BIN_EXE_br only exists for \
-                integration tests — relocate to tests/ to activate"]
     fn pending_merge_refuses_no_db_jsonl_writer_without_changing_either_artifact() {
         let (temp, db_path) = pending_merge_workspace_with_newer_jsonl();
         let before_bytes = database_family_bytes(&db_path);
@@ -14549,8 +14548,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "drives the br binary via assert_cmd; CARGO_BIN_EXE_br only exists for \
-                integration tests — relocate to tests/ to activate"]
     fn pending_merge_doctor_reports_read_only_and_refuses_all_mutation_surfaces() {
         let (temp, db_path) = pending_merge_workspace_with_newer_jsonl();
         let before_bytes = database_family_bytes(&db_path);

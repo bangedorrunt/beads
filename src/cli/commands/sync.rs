@@ -5563,9 +5563,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "carried red from the stranded sync-safety workstream (failed identically on its own \
-                pre-merge snapshot); tracked for completion by the owning workstream"]
     fn sync_status_fast_open_miss_reuses_caller_write_lock_for_rebuild() {
+        use std::sync::Arc;
+
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -5577,17 +5577,25 @@ mod tests {
             format!("{}\n", serde_json::to_string(&issue).unwrap()),
         )
         .unwrap();
-        let _held_lock = crate::sync::blocking_write_lock(&beads_dir).unwrap();
+        let held = Arc::new(
+            crate::sync::blocking_database_family_write_lock_with_timeout(
+                &beads_dir,
+                &db_path,
+                Some(1_000),
+            )
+            .unwrap(),
+        );
         let args = SyncArgs {
             status: true,
             ..SyncArgs::default()
         };
-        let cli = CliOverrides {
+        let mut cli = CliOverrides {
             db: Some(db_path.clone()),
             lock_timeout: Some(1),
             read_only_fast_open: true,
             ..CliOverrides::default()
         };
+        cli.mark_database_family_lock_held(&beads_dir, &held);
 
         let startup = prepare_sync_startup(&args, &cli, true)
             .expect("caller-held write lock should not be reacquired on fast-open miss");

@@ -3844,6 +3844,23 @@ fn open_storage_with_owned_write_authority(
     }
 
     if cli.read_only_fast_open {
+        // Same-process reuse: if the caller already holds the database-family
+        // authority (sync_status fast-open miss rebuild), reuse it instead of
+        // trying to acquire a new one with the tiny cli lock_timeout.
+        if let Some(authority) = cli
+            .database_family_write_authority_for(&startup.paths.beads_dir, &startup.paths.db_path)
+        {
+            authority.verify_database_authority()?;
+            let mut result = open_storage_with_startup_config_impl(
+                startup,
+                cli,
+                defer_jsonl_recovery,
+                Some(authority),
+                allow_external_jsonl,
+            )?;
+            result.write_authority = Some(Arc::clone(authority));
+            return Ok(result);
+        }
         return open_storage_with_startup_config_impl(
             startup,
             cli,
@@ -4753,8 +4770,22 @@ impl CliOverrides {
 
     #[must_use]
     pub fn holds_write_lock_for(&self, beads_dir: &Path) -> bool {
-        self.held_write_authority.is_some()
-            && self.held_write_lock_beads_dir.as_deref() == Some(beads_dir)
+        let Some(held_dir) = self.held_write_lock_beads_dir.as_deref() else {
+            return false;
+        };
+        if self.held_write_authority.is_none() {
+            return false;
+        }
+        if held_dir == beads_dir {
+            return true;
+        }
+        // Handle /var vs /private/var canonicalization on macOS (same
+        // physical directory appears under two logical prefixes).
+        let canonical_held =
+            std::fs::canonicalize(held_dir).unwrap_or_else(|_| held_dir.to_path_buf());
+        let canonical_query =
+            std::fs::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+        canonical_held == canonical_query
     }
 
     pub(crate) fn database_family_write_authority_for(

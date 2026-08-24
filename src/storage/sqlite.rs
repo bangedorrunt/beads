@@ -28577,54 +28577,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "superseded by the merge decision keeping shipped auto-migration on ordinary \
-                opens (open_auto_migrates_legacy_integer_datetimes_and_done_status); the \
-                reviewed migrate-schema lifecycle remains the explicit operator surface"]
-    fn test_open_refuses_runtime_compatible_legacy_db_without_reviewed_migration() {
-        let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("legacy_runtime_compatible.db");
-
-        {
-            let storage = SqliteStorage::open(&db_path).unwrap();
-            storage
-                .conn
-                .execute("DROP INDEX IF EXISTS idx_issues_external_ref_unique")
-                .unwrap();
-            storage.conn.execute("PRAGMA user_version = 0").unwrap();
-        }
-
-        let error = SqliteStorage::open(&db_path)
-            .expect_err("ordinary open must not cross a schema-version boundary");
-        assert!(
-            error.to_string().contains("br doctor migrate-schema plan"),
-            "refusal must provide the reviewed migration command: {error}"
-        );
-
-        let unchanged = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
-        let user_version = unchanged
-            .query_row("PRAGMA user_version")
-            .unwrap()
-            .get(0)
-            .and_then(SqliteValue::as_integer)
-            .unwrap();
-        assert_eq!(
-            user_version, 0,
-            "refused ordinary open must not stamp the stale database"
-        );
-
-        let indexes: HashSet<String> = unchanged
-            .query("SELECT name FROM sqlite_master WHERE type='index'")
-            .unwrap()
-            .iter()
-            .filter_map(|row| row.get(0).and_then(SqliteValue::as_text).map(str::to_owned))
-            .collect();
-        assert!(
-            !indexes.contains("idx_issues_external_ref_unique"),
-            "refused ordinary open must not repair DDL as a side effect"
-        );
-    }
-
-    #[test]
     fn test_open_repairs_missing_canonical_indexes_even_when_user_version_is_current() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("current_version_missing_index.db");
@@ -33321,8 +33273,6 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    #[ignore = "carried red from the stranded sync-safety workstream (failed identically on its own \
-                pre-merge snapshot); tracked for completion by the owning workstream"]
     fn write_transaction_reports_post_commit_authority_loss_without_retrying() {
         let dir = TempDir::new().unwrap();
         let beads_dir = dir.path().join(".beads");
@@ -33367,7 +33317,7 @@ mod tests {
             structured
                 .context
                 .as_ref()
-                .and_then(|context| context.get("committed"))
+                .and_then(|context| context.get("primary_committed"))
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
