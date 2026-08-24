@@ -11196,13 +11196,32 @@ impl SqliteStorage {
         }
 
         let parent_sql = if blocking_only {
+            // CASE is lazy: when the indexed external-child range is empty,
+            // fsqlite does not execute the disproportionately expensive epic
+            // join. Keeping both branches in one statement avoids paying a
+            // second query setup cost when an external child does exist.
             "SELECT 1
-             FROM dependencies d INDEXED BY idx_dependencies_issue
-             JOIN issues p ON d.depends_on_id = p.id
-             WHERE d.issue_id >= 'external:'
-               AND d.issue_id < 'external;'
-               AND d.type = 'parent-child'
-               AND p.issue_type = 'epic'
+             WHERE CASE
+                 WHEN EXISTS (
+                     SELECT 1
+                     FROM dependencies INDEXED BY idx_dependencies_issue
+                     WHERE issue_id >= 'external:'
+                       AND issue_id < 'external;'
+                       AND type = 'parent-child'
+                     LIMIT 1
+                 )
+                 THEN EXISTS (
+                     SELECT 1
+                     FROM dependencies d INDEXED BY idx_dependencies_issue
+                     JOIN issues p ON d.depends_on_id = p.id
+                     WHERE d.issue_id >= 'external:'
+                       AND d.issue_id < 'external;'
+                       AND d.type = 'parent-child'
+                       AND p.issue_type = 'epic'
+                     LIMIT 1
+                 )
+                 ELSE 0
+             END
              LIMIT 1"
         } else {
             "SELECT 1
