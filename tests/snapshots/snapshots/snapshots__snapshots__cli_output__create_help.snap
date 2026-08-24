@@ -76,6 +76,27 @@ Options:
 
           Accepts the same forms as `br update --ID-REDACTED`: inline JSON, `@path/to/file.json`, or `@path/to/file.yaml` (normalized to JSON). An empty string leaves the field unset. Invalid context is rejected before any issue, event, or JSONL record is created.
 
+      --verify <CMD>
+          VERIFY command that proves this bead done (single line)
+
+      --principle <NAME — DECISION>
+          Cite an engineering principle: 'name — decision' (repeatable). The name must be ID-REDACTED; the decision is the concrete choice it changed on this bead
+
+      --wave <N>
+          Wave index this bead belongs to
+
+      --pin <PIN>
+          Swarm pin (adjective+noun) that owns this bead
+
+      --ID-REDACTED <SHA>
+          Commit SHA carrying the durable work signal for this bead
+
+      --blast <normal|high>
+          ID-REDACTED band (default normal; high forces the P0/P1 band at close)
+
+      --ac <checkable|judgment>
+          ID-REDACTED shape (default checkable when --verify is given; judgment only without a VERIFY command)
+
       --ID-REDACTED
           Preview without creating
 

@@ -1229,6 +1229,36 @@ schemas:
       id:
         description: "Unique ID (e.g., \"bd-abc123\")."
         type: string
+      verify:
+        description: "ADR-0001 §5.2: the VERIFY command that proves this bead done. Typed\ncolumn (schema 18), not description markdown for the loop to re-parse."
+        type[2]: string,"null"
+      principles:
+        description: "ADR-0001 §5.2: engineering principles cited at close, each pairing a\ncanonical principle name with the decision it changed on this bead."
+        type: array
+        items:
+          "$ref": #/$defs/PrincipleCitation
+      wave:
+        description: "ADR-0001 §5.2: wave this bead belongs to (dependency-wave ordering)."
+        type[2]: integer,"null"
+        format: uint32
+        minimum: 0
+      pin:
+        description: "ADR-0001 §5.2: swarm pin (adjective+noun) that owns/owned this bead."
+        type[2]: string,"null"
+      commit_sha:
+        description: "ADR-0001 §5.2: commit SHA carrying the durable work signal."
+        type[2]: string,"null"
+      close_verdict:
+        description: "ADR-0001 §5.3: verdict kind recorded at close (command/unit/live)."
+        type[2]: string,"null"
+      ac_shape:
+        description: "ADR-0001 §5.2: acceptance-criteria shape (defaults to checkable)."
+        "$ref": #/$defs/AcShape
+        default: checkable
+      blast:
+        description: "ADR-0001 §5.2: blast-radius band (defaults to normal)."
+        "$ref": #/$defs/Blast
+        default: normal
       title:
         description: Title (1-500 chars).
         type: string
@@ -1342,8 +1372,29 @@ schemas:
         type: array
         items:
           "$ref": #/$defs/Comment
-    required[8]: id,title,status,priority,issue_type,created_at,updated_at,compaction_level
+    required[10]: id,ac_shape,blast,title,status,priority,issue_type,created_at,updated_at,compaction_level
     "$defs":
+      PrincipleCitation:
+        description: "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip."
+        type: object
+        properties:
+          name:
+            description: "Canonical principle name (e.g. \"fix-root-causes\")."
+            type: string
+          decision:
+            description: "The decision this principle changed, on this bead."
+            type: string
+        required[2]: name,decision
+      AcShape:
+        description: "ADR-0001 §5.2: acceptance-criteria shape. Mirrors\n`crate::verify::AcShape` (single canonical home pending oc2's re-export);\nduplicated here as an owned model type so schema-18 has a stable storage\nrepresentation independent of the classifier module."
+        oneOf[2]{description,type,const}:
+          AC names a runnable command/test.,string,checkable
+          "AC is a judgment call (\"review\", \"design\") with no command to run.",string,judgment
+      Blast:
+        description: "ADR-0001 §5.2: blast-radius band. `high` forces the P0/P1 priority band\nat lint time (lint/flags bead consumes this)."
+        oneOf[2]{description,type,const}:
+          Ordinary bead; default.,string,normal
+          Touches fail-closed invariants or shared storage semantics.,string,high
       Status:
         description: Issue lifecycle status.
         anyOf[2]:
@@ -1416,6 +1467,36 @@ schemas:
       id:
         description: "Unique ID (e.g., \"bd-abc123\")."
         type: string
+      verify:
+        description: "ADR-0001 §5.2: the VERIFY command that proves this bead done. Typed\ncolumn (schema 18), not description markdown for the loop to re-parse."
+        type[2]: string,"null"
+      principles:
+        description: "ADR-0001 §5.2: engineering principles cited at close, each pairing a\ncanonical principle name with the decision it changed on this bead."
+        type: array
+        items:
+          "$ref": #/$defs/PrincipleCitation
+      wave:
+        description: "ADR-0001 §5.2: wave this bead belongs to (dependency-wave ordering)."
+        type[2]: integer,"null"
+        format: uint32
+        minimum: 0
+      pin:
+        description: "ADR-0001 §5.2: swarm pin (adjective+noun) that owns/owned this bead."
+        type[2]: string,"null"
+      commit_sha:
+        description: "ADR-0001 §5.2: commit SHA carrying the durable work signal."
+        type[2]: string,"null"
+      close_verdict:
+        description: "ADR-0001 §5.3: verdict kind recorded at close (command/unit/live)."
+        type[2]: string,"null"
+      ac_shape:
+        description: "ADR-0001 §5.2: acceptance-criteria shape (defaults to checkable)."
+        "$ref": #/$defs/AcShape
+        default: checkable
+      blast:
+        description: "ADR-0001 §5.2: blast-radius band (defaults to normal)."
+        "$ref": #/$defs/Blast
+        default: normal
       title:
         description: Title (1-500 chars).
         type: string
@@ -1548,8 +1629,29 @@ schemas:
         type: array
         items:
           "$ref": #/$defs/InheritedBlock
-    required[8]: id,title,status,priority,issue_type,created_at,updated_at,compaction_level
+    required[10]: id,ac_shape,blast,title,status,priority,issue_type,created_at,updated_at,compaction_level
     "$defs":
+      PrincipleCitation:
+        description: "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip."
+        type: object
+        properties:
+          name:
+            description: "Canonical principle name (e.g. \"fix-root-causes\")."
+            type: string
+          decision:
+            description: "The decision this principle changed, on this bead."
+            type: string
+        required[2]: name,decision
+      AcShape:
+        description: "ADR-0001 §5.2: acceptance-criteria shape. Mirrors\n`crate::verify::AcShape` (single canonical home pending oc2's re-export);\nduplicated here as an owned model type so schema-18 has a stable storage\nrepresentation independent of the classifier module."
+        oneOf[2]{description,type,const}:
+          AC names a runnable command/test.,string,checkable
+          "AC is a judgment call (\"review\", \"design\") with no command to run.",string,judgment
+      Blast:
+        description: "ADR-0001 §5.2: blast-radius band. `high` forces the P0/P1 priority band\nat lint time (lint/flags bead consumes this)."
+        oneOf[2]{description,type,const}:
+          Ordinary bead; default.,string,normal
+          Touches fail-closed invariants or shared storage semantics.,string,high
       Status:
         description: Issue lifecycle status.
         anyOf[2]:
@@ -1696,6 +1798,36 @@ schemas:
       id:
         description: "Unique ID (e.g., \"bd-abc123\")."
         type: string
+      verify:
+        description: "ADR-0001 §5.2: the VERIFY command that proves this bead done. Typed\ncolumn (schema 18), not description markdown for the loop to re-parse."
+        type[2]: string,"null"
+      principles:
+        description: "ADR-0001 §5.2: engineering principles cited at close, each pairing a\ncanonical principle name with the decision it changed on this bead."
+        type: array
+        items:
+          "$ref": #/$defs/PrincipleCitation
+      wave:
+        description: "ADR-0001 §5.2: wave this bead belongs to (dependency-wave ordering)."
+        type[2]: integer,"null"
+        format: uint32
+        minimum: 0
+      pin:
+        description: "ADR-0001 §5.2: swarm pin (adjective+noun) that owns/owned this bead."
+        type[2]: string,"null"
+      commit_sha:
+        description: "ADR-0001 §5.2: commit SHA carrying the durable work signal."
+        type[2]: string,"null"
+      close_verdict:
+        description: "ADR-0001 §5.3: verdict kind recorded at close (command/unit/live)."
+        type[2]: string,"null"
+      ac_shape:
+        description: "ADR-0001 §5.2: acceptance-criteria shape (defaults to checkable)."
+        "$ref": #/$defs/AcShape
+        default: checkable
+      blast:
+        description: "ADR-0001 §5.2: blast-radius band (defaults to normal)."
+        "$ref": #/$defs/Blast
+        default: normal
       title:
         description: Title (1-500 chars).
         type: string
@@ -1817,8 +1949,29 @@ schemas:
         type: integer
         format: uint
         minimum: 0
-    required[10]: id,title,status,priority,issue_type,created_at,updated_at,compaction_level,dependency_count,dependent_count
+    required[12]: id,ac_shape,blast,title,status,priority,issue_type,created_at,updated_at,compaction_level,dependency_count,dependent_count
     "$defs":
+      PrincipleCitation:
+        description: "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip."
+        type: object
+        properties:
+          name:
+            description: "Canonical principle name (e.g. \"fix-root-causes\")."
+            type: string
+          decision:
+            description: "The decision this principle changed, on this bead."
+            type: string
+        required[2]: name,decision
+      AcShape:
+        description: "ADR-0001 §5.2: acceptance-criteria shape. Mirrors\n`crate::verify::AcShape` (single canonical home pending oc2's re-export);\nduplicated here as an owned model type so schema-18 has a stable storage\nrepresentation independent of the classifier module."
+        oneOf[2]{description,type,const}:
+          AC names a runnable command/test.,string,checkable
+          "AC is a judgment call (\"review\", \"design\") with no command to run.",string,judgment
+      Blast:
+        description: "ADR-0001 §5.2: blast-radius band. `high` forces the P0/P1 priority band\nat lint time (lint/flags bead consumes this)."
+        oneOf[2]{description,type,const}:
+          Ordinary bead; default.,string,normal
+          Touches fail-closed invariants or shared storage semantics.,string,high
       Status:
         description: Issue lifecycle status.
         anyOf[2]:
@@ -1907,15 +2060,31 @@ schemas:
         items.type: string
       notes.type[2]: string,"null"
       owner.type[2]: string,"null"
+      pin:
+        description: "Mail pin of the live claim holder, if any (ADR-0001 §5.5 JSON shape)."
+        type[2]: string,"null"
       priority:
         "$ref": #/$defs/Priority
+      principles:
+        description: "Principles citations for the loop's legal-close check (ADR-0001 §5.5).\n\nAlways emitted (as `[]` when empty)."
+        type: array
+        items:
+          "$ref": #/$defs/PrincipleCitation
       status:
         "$ref": #/$defs/Status
+      verify:
+        description: The runnable VERIFY command the loop must execute (ADR-0001 §5.5).
+        type[2]: string,"null"
+      wave:
+        description: "Wave number; lower waves gate higher ones in the ready predicate\n(ADR-0001 §5.5 condition 6). Always emitted (`null` when un-waved)."
+        type[2]: integer,"null"
+        format: uint32
+        minimum: 0
       title.type: string
       updated_at:
         type: string
         format: date-time
-    required[8]: created_at,id,issue_type,labels,priority,status,title,updated_at
+    required[12]: created_at,id,issue_type,labels,pin,priority,principles,status,verify,wave,title,updated_at
     "$defs":
       IssueType:
         description: Issue type category.
@@ -1927,6 +2096,17 @@ schemas:
         description: "Issue priority (0=Critical, 4=Backlog)."
         type: integer
         format: int32
+      PrincipleCitation:
+        description: "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip."
+        type: object
+        properties:
+          name:
+            description: "Canonical principle name (e.g. \"fix-root-causes\")."
+            type: string
+          decision:
+            description: "The decision this principle changed, on this bead."
+            type: string
+        required[2]: name,decision
       Status:
         description: Issue lifecycle status.
         anyOf[2]:

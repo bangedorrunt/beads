@@ -1,12 +1,13 @@
 ---
 source: tests/snapshots/json_output.rs
-assertion_line: 643
-expression: normalized
+expression: SnapshotJson(&normalized)
 ---
 {
   "issues": [
     {
       "id": "ISSUE_ID",
+      "ac_shape": "checkable",
+      "blast": "normal",
       "title": "Critical task",
       "status": "open",
       "priority": 0,
@@ -23,6 +24,8 @@ expression: normalized
     },
     {
       "id": "ISSUE_ID",
+      "ac_shape": "checkable",
+      "blast": "normal",
       "title": "High priority task",
       "status": "open",
       "priority": 1,
@@ -39,6 +42,8 @@ expression: normalized
     },
     {
       "id": "ISSUE_ID",
+      "ac_shape": "checkable",
+      "blast": "normal",
       "title": "Low priority task",
       "status": "open",
       "priority": 3,

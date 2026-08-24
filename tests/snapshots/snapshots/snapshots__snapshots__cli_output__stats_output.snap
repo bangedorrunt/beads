@@ -6,13 +6,10 @@ expression: normalize_output(&output.stdout)
 
 Summary:
   Total Issues:           3
-  Open:                   2
+  Open:                   3
   In Progress:            0
   Blocked:                1
-  Closed:                 1
-  Ready to Work:          1
-
-Extended:
-  Avg Lead Time:          0.0 hours
+  Closed:                 0
+  Ready to Work:          2
 
 For more details, use 'br list' to see individual issues.

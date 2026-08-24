@@ -1,12 +1,13 @@
 ---
 source: tests/snapshots/json_output.rs
-assertion_line: 203
-expression: normalize_json(&json)
+expression: SnapshotJson(&normalize_json(&json))
 ---
 {
   "issues": [
     {
       "id": "ISSUE_ID",
+      "ac_shape": "checkable",
+      "blast": "normal",
       "title": "Bug: Fix login",
       "status": "open",
       "priority": 2,

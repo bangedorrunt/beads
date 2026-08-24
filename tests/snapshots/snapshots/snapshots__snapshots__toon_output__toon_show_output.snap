@@ -4,6 +4,8 @@ expression: normalized
 ---
 [1]:
   - id: bd-ready-p0
+    ac_shape: checkable
+    blast: normal
     title: "01 Ready Critical Unassigned"
     status: open
     priority: 0
