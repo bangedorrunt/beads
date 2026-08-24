@@ -10,13 +10,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub mod agents;
 pub mod analysis;
 pub mod audit;
 pub mod blocked;
 pub mod capabilities;
-pub mod capacity;
-pub mod changelog;
 pub mod close;
 pub mod comments;
 pub mod completions;

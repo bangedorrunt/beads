@@ -746,9 +746,6 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Manage AGENTS.md workflow instructions
-    Agents(AgentsArgs),
-
     /// Record and label agent interactions (append-only JSONL)
     Audit {
         #[command(subcommand)]
@@ -760,15 +757,6 @@ pub enum Commands {
 
     /// Describe br's machine-readable contracts and safety guarantees
     Capabilities(CapabilitiesArgs),
-
-    /// Workflow capacity management: audited issue-specific exemptions (GitHub #384)
-    Capacity {
-        #[command(subcommand)]
-        command: CapacityCommands,
-    },
-
-    /// Generate changelog from closed issues
-    Changelog(ChangelogArgs),
 
     /// Close an issue
     Close(CloseArgs),
@@ -1740,7 +1728,6 @@ pub const fn command_requests_robot_json(cmd: &Commands) -> bool {
         Commands::Insights(args) => args.robot,
         Commands::Triage(args) => args.robot,
         Commands::Next(args) => args.robot,
-        Commands::Changelog(args) => args.robot,
         Commands::Sync(args) => args.robot,
         Commands::VcsStatus(args) => args.robot,
         Commands::Doctor(args) => args.robot_triage,
@@ -1755,12 +1742,6 @@ pub const fn command_requests_robot_json(cmd: &Commands) -> bool {
         Commands::Gate { command } => match command {
             GateCommands::Report(args) => args.robot,
             GateCommands::List(args) => args.robot,
-        },
-        Commands::Capacity { command } => match command {
-            CapacityCommands::Exempt(args) => args.robot,
-            CapacityCommands::Renew(args) => args.robot,
-            CapacityCommands::Revoke(args) => args.robot,
-            CapacityCommands::Exemptions(args) => args.robot,
         },
         _ => false,
     }
@@ -2093,128 +2074,6 @@ pub struct GateListArgs {
     /// Issue ID whose gate results to show
     #[arg(add = ArgValueCompleter::new(issue_id_completer))]
     pub id: String,
-
-    /// Emit machine-readable JSON
-    #[arg(long)]
-    pub robot: bool,
-}
-
-/// Subcommands for workflow capacity management (GitHub #384 phase 4).
-#[derive(Subcommand, Debug)]
-pub enum CapacityCommands {
-    /// Grant an audited issue-specific exemption from one named capacity
-    Exempt(CapacityExemptArgs),
-    /// Renew an active exemption's expiry
-    Renew(CapacityRenewArgs),
-    /// Revoke an active exemption
-    Revoke(CapacityRevokeArgs),
-    /// List exemption state (and optionally the append-only audit history)
-    Exemptions(CapacityExemptionsArgs),
-}
-
-/// Arguments for `br capacity exempt`.
-#[derive(Args, Debug, Clone)]
-pub struct CapacityExemptArgs {
-    /// Issue the exemption applies to (one issue, one named capacity)
-    #[arg(add = ArgValueCompleter::new(issue_id_completer))]
-    pub id: String,
-
-    /// Named status capacity to exempt the issue from (e.g. blocked)
-    #[arg(long, value_name = "STATUS", conflicts_with = "group", add = ArgValueCompleter::new(status_completer))]
-    pub status: Option<String>,
-
-    /// Named capacity group to exempt the issue from
-    #[arg(long, value_name = "GROUP", conflicts_with = "status")]
-    pub group: Option<String>,
-
-    /// Approving provider; must be listed in workflow.capacity.exemptions.providers
-    #[arg(long)]
-    pub provider: String,
-
-    /// Mandatory rationale recorded with the grant
-    #[arg(long)]
-    pub reason: String,
-
-    /// Expiration: RFC3339, YYYY-MM-DD, or relative (+7d). Required when
-    /// policy sets workflow.capacity.exemptions.require_expiry
-    #[arg(long, value_name = "WHEN")]
-    pub expires: Option<String>,
-
-    /// Emit machine-readable JSON
-    #[arg(long)]
-    pub robot: bool,
-}
-
-/// Arguments for `br capacity renew`.
-#[derive(Args, Debug, Clone)]
-pub struct CapacityRenewArgs {
-    /// Issue whose exemption to renew
-    #[arg(add = ArgValueCompleter::new(issue_id_completer))]
-    pub id: String,
-
-    /// Named status capacity of the exemption
-    #[arg(long, value_name = "STATUS", conflicts_with = "group", add = ArgValueCompleter::new(status_completer))]
-    pub status: Option<String>,
-
-    /// Named capacity group of the exemption
-    #[arg(long, value_name = "GROUP", conflicts_with = "status")]
-    pub group: Option<String>,
-
-    /// Approving provider; must be listed in workflow.capacity.exemptions.providers
-    #[arg(long)]
-    pub provider: String,
-
-    /// New expiration: RFC3339, YYYY-MM-DD, or relative (+7d)
-    #[arg(long, value_name = "WHEN")]
-    pub expires: Option<String>,
-
-    /// Optional note recorded with the renewal
-    #[arg(long)]
-    pub reason: Option<String>,
-
-    /// Emit machine-readable JSON
-    #[arg(long)]
-    pub robot: bool,
-}
-
-/// Arguments for `br capacity revoke`.
-#[derive(Args, Debug, Clone)]
-pub struct CapacityRevokeArgs {
-    /// Issue whose exemption to revoke
-    #[arg(add = ArgValueCompleter::new(issue_id_completer))]
-    pub id: String,
-
-    /// Named status capacity of the exemption
-    #[arg(long, value_name = "STATUS", conflicts_with = "group", add = ArgValueCompleter::new(status_completer))]
-    pub status: Option<String>,
-
-    /// Named capacity group of the exemption
-    #[arg(long, value_name = "GROUP", conflicts_with = "status")]
-    pub group: Option<String>,
-
-    /// Revoking provider, recorded for audit (not required to be authorized)
-    #[arg(long)]
-    pub provider: String,
-
-    /// Optional note recorded with the revocation
-    #[arg(long)]
-    pub reason: Option<String>,
-
-    /// Emit machine-readable JSON
-    #[arg(long)]
-    pub robot: bool,
-}
-
-/// Arguments for `br capacity exemptions`.
-#[derive(Args, Debug, Clone)]
-pub struct CapacityExemptionsArgs {
-    /// Restrict to one issue (all exemptions when omitted)
-    #[arg(add = ArgValueCompleter::new(issue_id_completer))]
-    pub id: Option<String>,
-
-    /// Include the append-only audit history
-    #[arg(long)]
-    pub history: bool,
 
     /// Emit machine-readable JSON
     #[arg(long)]
@@ -3589,26 +3448,6 @@ pub struct InsightsArgs {
     pub robot: bool,
 }
 
-/// Arguments for the changelog command.
-#[derive(Args, Debug, Clone, Default)]
-pub struct ChangelogArgs {
-    /// Start date (RFC3339, YYYY-MM-DD, or relative like +7d)
-    #[arg(long)]
-    pub since: Option<String>,
-
-    /// Start from git tag date
-    #[arg(long, conflicts_with = "since")]
-    pub since_tag: Option<String>,
-
-    /// Start from git commit date
-    #[arg(long, conflicts_with_all = ["since", "since_tag"])]
-    pub since_commit: Option<String>,
-
-    /// Machine-readable output (alias for --json)
-    #[arg(long)]
-    pub robot: bool,
-}
-
 /// Subcommands for the query command.
 #[derive(Subcommand, Debug)]
 pub enum QueryCommands {
@@ -3689,35 +3528,6 @@ pub struct GraphArgs {
     /// Emit Graphviz DOT notation (pipe to `dot -Tsvg`); overrides text/JSON rendering
     #[arg(long)]
     pub dot: bool,
-}
-
-/// Arguments for the agents command.
-#[derive(Args, Debug, Clone, Default)]
-#[allow(clippy::struct_excessive_bools)]
-pub struct AgentsArgs {
-    /// Add beads workflow instructions to AGENTS.md
-    #[arg(long, conflicts_with_all = ["remove", "update", "check"])]
-    pub add: bool,
-
-    /// Remove beads workflow instructions from AGENTS.md
-    #[arg(long, conflicts_with_all = ["add", "update", "check"])]
-    pub remove: bool,
-
-    /// Update beads workflow instructions to latest version
-    #[arg(long, conflicts_with_all = ["add", "remove", "check"])]
-    pub update: bool,
-
-    /// Check status only (default behavior)
-    #[arg(long, conflicts_with_all = ["add", "remove", "update"])]
-    pub check: bool,
-
-    /// Preview changes without modifying files
-    #[arg(long)]
-    pub dry_run: bool,
-
-    /// Skip confirmation prompts
-    #[arg(long, short = 'f')]
-    pub force: bool,
 }
 
 #[cfg(test)]
@@ -3884,13 +3694,6 @@ mod tests {
 
         assert_eq!(plain.first().map(String::as_str), Some("bug"));
         assert_eq!(delimited, expected);
-    }
-
-    #[test]
-    fn test_agents_add_conflicts_with_check() {
-        let err = Cli::try_parse_from(["br", "agents", "--add", "--check"])
-            .expect_err("agents actions should conflict");
-        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]

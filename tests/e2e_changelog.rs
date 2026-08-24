@@ -1,3 +1,4 @@
+// stripped-surface: changelog CLI surface removed in wave-5 strip (beads_rust-wave5-cli-strip-ly1u6); storage-level fixture remains in src/storage/sqlite.rs tests
 //! E2E tests for the changelog command.
 //!
 //! Tests cover:

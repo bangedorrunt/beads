@@ -1,3 +1,4 @@
+// stripped-surface: capacity CLI removed in wave-5 strip (beads_rust-wave5-cli-strip-ly1u6, ADR-0001 §5.9); session-scope helper retained for occupancy
 //! End-to-end coverage for multi-agent capacity scopes (GitHub #384
 //! phase 5, bead beads-8nbk.5).
 //!

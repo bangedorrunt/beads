@@ -897,7 +897,6 @@ pub fn classify_command(command: &Commands) -> CommandCompatibility {
         | Commands::Lint(_)
         | Commands::Stats(_)
         | Commands::Status(_)
-        | Commands::Changelog(_)
         | Commands::Graph(_)
         | Commands::Info(_)
         | Commands::Schema(_)

@@ -58,7 +58,10 @@ pub(crate) struct ListRelationMetadata {
     pub(crate) dependent_count: usize,
 }
 
+/// Retained as an internal test fixture after the CLI surface was removed
+/// (ADR-0001 §5.9 wave-5 strip): the query exercises closed-issue projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) struct ChangelogIssueRow {
     pub(crate) id: String,
     pub(crate) title: String,
@@ -8512,6 +8515,7 @@ impl SqliteStorage {
     /// # Errors
     ///
     /// Returns an error if the database query fails or a stored timestamp is invalid.
+    #[allow(dead_code)]
     pub(crate) fn list_changelog_issues(&self) -> Result<Vec<ChangelogIssueRow>> {
         let rows = self.conn.query(
             r"SELECT id, title, priority, issue_type, created_at, closed_at
@@ -15832,6 +15836,7 @@ impl SqliteStorage {
         })
     }
 
+    #[allow(dead_code)]
     fn changelog_issue_from_row(row: &Row) -> Result<ChangelogIssueRow> {
         let get_str = |idx: usize| -> String {
             row.get(idx)

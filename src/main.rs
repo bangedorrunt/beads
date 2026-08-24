@@ -637,9 +637,6 @@ fn main() {
             }
         }
         Commands::Gate { command } => commands::gate::execute(&command, &overrides, &output_ctx),
-        Commands::Capacity { command } => {
-            commands::capacity::execute(&command, &overrides, &output_ctx)
-        }
         Commands::Label { command } => {
             if let Some(res) = storage_result.as_ref() {
                 match commands::label::execute_with_storage(
@@ -803,20 +800,6 @@ fn main() {
         Commands::Orphans(args) => {
             commands::orphans::execute(&args, cli.json || args.robot, &overrides, &output_ctx)
         }
-        Commands::Changelog(args) => {
-            if let (Some(res), Some(beads_dir)) = (storage_result.as_ref(), ctx.beads_dir.as_ref())
-            {
-                commands::changelog::execute_with_storage_ctx(
-                    &args,
-                    cli.json || args.robot,
-                    &output_ctx,
-                    beads_dir,
-                    res,
-                )
-            } else {
-                commands::changelog::execute(&args, cli.json || args.robot, &overrides, &output_ctx)
-            }
-        }
         Commands::Query { command } => {
             if is_read_only_query_command(&command) {
                 if let Some(res) = storage_result.as_mut() {
@@ -852,17 +835,6 @@ fn main() {
             } else {
                 commands::graph::execute(&args, &overrides, &output_ctx)
             }
-        }
-        Commands::Agents(args) => {
-            let agents_args = commands::agents::AgentsArgs {
-                add: args.add,
-                remove: args.remove,
-                update: args.update,
-                check: args.check,
-                dry_run: args.dry_run,
-                force: args.force,
-            };
-            commands::agents::execute(&agents_args, &output_ctx)
         }
     };
 
@@ -1238,7 +1210,6 @@ const fn command_must_refuse_during_pending_merge(cmd: &Commands) -> bool {
                 | beads::cli::AuditCommands::Coordination(_)
                 | beads::cli::AuditCommands::Label(_)
         ),
-        Commands::Agents(args) => !args.dry_run && (args.add || args.remove || args.update),
         _ => false,
     }
 }
@@ -1440,7 +1411,6 @@ const fn needs_write_lock(cmd: &Commands) -> bool {
         | Commands::Lint(_)
         | Commands::Stats(_)
         | Commands::Status(_)
-        | Commands::Changelog(_)
         | Commands::Graph(_)
         | Commands::Comments(_)
         | Commands::Dep { .. }
@@ -1483,7 +1453,6 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::Lint(_)
         | Commands::Stats(_)
         | Commands::Status(_)
-        | Commands::Changelog(_)
         | Commands::Graph(_)
         | Commands::Create(_)
         | Commands::Update(_)
@@ -1498,7 +1467,6 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::Label { .. }
         | Commands::Epic { .. }
         | Commands::Gate { .. }
-        | Commands::Capacity { .. }
         | Commands::Query { .. } => true,
 
         Commands::Init { .. }
@@ -1516,7 +1484,8 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::Orphans(_)
         | Commands::Config { .. }
         | Commands::History(_)
-        | Commands::Agents(_) => false,
+        // wave-5 strip: agents/capacity/changelog no longer parse.
+        => false,
 
         Commands::Plan(_) | Commands::Insights(_) | Commands::Triage(_) | Commands::Next(_) => {
             false
@@ -1544,7 +1513,6 @@ const fn supports_read_only_fast_open(cmd: &Commands) -> bool {
         | Commands::Count(_)
         | Commands::Stale(_)
         | Commands::Lint(_)
-        | Commands::Changelog(_)
         | Commands::Graph(_)
         | Commands::Plan(_)
         | Commands::Insights(_)
@@ -2448,15 +2416,6 @@ mod tests {
         let ready = Cli::parse_from(["br", "--no-auto-import", "--no-auto-flush", "ready"]);
         assert!(build_cli_overrides(&ready).read_only_fast_open);
 
-        let changelog = Cli::parse_from([
-            "br",
-            "--no-auto-import",
-            "--no-auto-flush",
-            "changelog",
-            "--json",
-        ]);
-        assert!(build_cli_overrides(&changelog).read_only_fast_open);
-
         let comments_list = Cli::parse_from([
             "br",
             "--no-auto-import",
@@ -2574,9 +2533,6 @@ mod tests {
 
         let lint_issue = Cli::parse_from(["br", "lint", "br-123"]);
         assert!(!build_cli_overrides(&lint_issue).read_only_fast_open);
-
-        let changelog = Cli::parse_from(["br", "changelog"]);
-        assert!(!build_cli_overrides(&changelog).read_only_fast_open);
 
         let graph = Cli::parse_from(["br", "graph", "--all"]);
         assert!(!build_cli_overrides(&graph).read_only_fast_open);
@@ -3071,7 +3027,6 @@ mod tests {
             Cli::parse_from(["br", "doctor", "--repair"]).command,
             Cli::parse_from(["br", "doctor", "--repair-indexes"]).command,
             Cli::parse_from(["br", "doctor", "undo", "latest"]).command,
-            Cli::parse_from(["br", "agents", "--add", "--force"]).command,
         ];
 
         for command in &mutations {
@@ -3101,7 +3056,6 @@ mod tests {
             Cli::parse_from(["br", "audit", "summary"]).command,
             Cli::parse_from(["br", "doctor", "--repair", "--dry-run"]).command,
             Cli::parse_from(["br", "doctor", "undo", "latest", "--dry-run"]).command,
-            Cli::parse_from(["br", "agents", "--add", "--dry-run"]).command,
         ];
 
         for command in &read_only {

@@ -1,3 +1,4 @@
+// stripped-surface: capacity exemption CLI removed in wave-5 strip (beads_rust-wave5-cli-strip-ly1u6, ADR-0001 §5.9)
 //! End-to-end coverage for audited issue-specific capacity exemptions
 //! (GitHub #384 phase 4, bead beads-8nbk.4).
 //!

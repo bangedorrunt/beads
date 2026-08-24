@@ -20,7 +20,11 @@ pub mod schema;
 pub mod sqlite;
 
 pub use db::{Connection, DbError, PreparedStatement, Row, SqliteValue};
-pub(crate) use sqlite::{BulkDependencyInsert, ChangelogIssueRow};
+pub(crate) use sqlite::BulkDependencyInsert;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use sqlite::ChangelogIssueRow;
+
 pub use sqlite::{
     CloseMetadataRow, EventAttribution, IssueUpdate, ListFilters, ReadyFilters, ReadySortPolicy,
     SqliteStorage, StatsIssueRow,
