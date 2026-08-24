@@ -139,7 +139,7 @@ fn render_lint_output(summary: LintSummary, ctx: &OutputContext) {
         if summary.results.is_empty() {
             return;
         }
-        std::process::exit(summary.exit_code(false));
+        crate::shutdown::exit_process(summary.exit_code(false));
     }
 
     if ctx.is_rich() {
@@ -172,7 +172,7 @@ fn render_lint_output(summary: LintSummary, ctx: &OutputContext) {
         }
     }
 
-    std::process::exit(summary.exit_code(false));
+    crate::shutdown::exit_process(summary.exit_code(false));
 }
 
 fn render_lint_rich(summary: &LintSummary, ctx: &OutputContext) {

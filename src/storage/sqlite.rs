@@ -15456,11 +15456,7 @@ impl SqliteStorage {
         })
     }
 
-<<<<<<< HEAD
-    fn blocked_command_issue_from_row(row: &Row) -> Result<Issue> {
-||||||| parent of 0064a5dd (perf(ready): project labels in SQL for structured ready output (GitHub #309))
-    fn blocked_command_issue_from_row(row: &fsqlite::Row) -> Result<Issue> {
-=======
+
     fn structured_ready_issue_from_row(row: &fsqlite::Row) -> Result<Issue> {
         let mut issue = Self::ready_issue_from_row(row)?;
         let labels_json = row.get(14).and_then(SqliteValue::as_text).unwrap_or("[]");
@@ -15473,9 +15469,7 @@ impl SqliteStorage {
         Ok(issue)
     }
 
-    fn blocked_command_issue_from_row(row: &fsqlite::Row) -> Result<Issue> {
->>>>>>> 0064a5dd (perf(ready): project labels in SQL for structured ready output (GitHub #309))
-        let get_str = |idx: usize| -> String {
+    fn blocked_command_issue_from_row(row: &fsqlite::Row) -> Result<Issue> {        let get_str = |idx: usize| -> String {
             row.get(idx)
                 .and_then(SqliteValue::as_text)
                 .unwrap_or("")

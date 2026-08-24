@@ -256,8 +256,8 @@ fn main() {
                                  Underlying error: {e}",
                             );
                         }
-                        std::process::exit(beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost.as_i32());
-                    }
+
+                        beads::shutdown::exit_process(beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost.as_i32());                    }
                     if doctor_args.subcommand.is_none() {
                         if is_unwritable_write_lock_open_error(&lock_path, &e) {
                             emit_read_only_doctor_write_lock_diagnostic(
@@ -893,7 +893,7 @@ fn main() {
     if let Some(exit_code) = beads::shutdown::exit_code() {
         drop(storage_result);
         drop(write_lock);
-        std::process::exit(exit_code);
+        beads::shutdown::exit_process(exit_code);
     }
 
     // Phase 5: Auto-Flush (with advisory flock to serialize concurrent access)
@@ -955,20 +955,29 @@ fn main() {
         }
     }
 
+<<<<<<< HEAD
     if let Some(err) = beads::output::take_output_serialization_failure() {
         std::process::exit(err.exit_code());
+||||||| parent of 0b74719e (fix(shutdown): route every deliberate exit through shutdown::exit_process (GitHub #439))
+    if let Some(err) = beads::output::take_output_serialization_failure() {
+        std::process::exit(err.exit_code());
+=======
+    if let Some(err) = beads::output::take_output_serialization_failure() {
+        beads::shutdown::exit_process(err.exit_code());
+>>>>>>> 0b7
+    if let Some(err) = beads::output::take_output_serialization_failure() {
+        beads::shutdown::exit_process(err.exit_code());     beads::shutdown::exit_process(exit_code);
     }
 
-    // A command emitted its normal output and any auto-flush has now completed,
-    // but detected a condition that must surface to scripted callers via a
-    // non-zero exit code (e.g. `dep cycles` with cycles present, or `create -f`
-    // that dropped declared dependency edges) — see #368. Drop storage first so
-    // `SqliteStorage::Drop` checkpoints the WAL before the process exits (#270).
-    if let Some(exit_code) = beads::output::take_pending_exit_code() {
-        drop(storage_result);
-        drop(write_lock);
-        std::process::exit(exit_code);
-    }
+    // Successful exit goes through the same funnel as every other exit
+    // path (#439): on Windows, letting `main` return would reach the CRT
+    // `exit()` teardown, where an atexit/TLS destructor joining a thread
+    // that `ExitProcess` already terminated aborts with 0xC0000409 and
+    // corrupts the exit code of a command that worked. Storage is dropped
+    // first so `SqliteStorage::Drop` checkpoints the WAL (#270).
+    drop(storage_result);
+    drop(write_lock);
+    beads::shutdown::exit_process(0);
 }
 
 struct StartupContext {
@@ -1753,7 +1762,7 @@ fn handle_error(err: &BeadsError, json_mode: bool, color_mode: bool) -> ! {
         eprintln!("{}", structured.to_human(color_mode));
     }
 
-    std::process::exit(exit_code);
+    beads::shutdown::exit_process(exit_code);
 }
 
 fn emit_read_only_doctor_write_lock_diagnostic(
@@ -1804,7 +1813,7 @@ fn emit_read_only_doctor_write_lock_diagnostic(
         );
     }
 
-    std::process::exit(exit_code.as_i32());
+    beads::shutdown::exit_process(exit_code.as_i32());
 }
 
 fn is_unwritable_write_lock_open_error(lock_path: &Path, err: &BeadsError) -> bool {
@@ -1861,7 +1870,7 @@ fn emit_read_only_doctor_live_write_lock_diagnostic(
         );
     }
 
-    std::process::exit(exit_code.as_i32());
+    beads::shutdown::exit_process(exit_code.as_i32());
 }
 
 fn read_only_doctor_live_write_lock_triage_payload(

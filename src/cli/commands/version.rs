@@ -7,7 +7,6 @@ use crate::output::{OutputContext, OutputMode};
 use rich_rust::prelude::*;
 use serde::Serialize;
 use std::fmt::Write as _;
-use std::process;
 
 #[derive(Serialize)]
 struct VersionOutput<'a> {
@@ -235,7 +234,7 @@ fn execute_update_check(current_version: &str, ctx: &OutputContext) {
             } else if !ctx.is_quiet() {
                 eprintln!("Error checking for updates: {e}");
             }
-            process::exit(2);
+            crate::shutdown::exit_process(2);
         }
     };
 
@@ -268,7 +267,7 @@ fn execute_update_check(current_version: &str, ctx: &OutputContext) {
     }
 
     if update_available {
-        process::exit(1);
+        crate::shutdown::exit_process(1);
     }
 }
 
