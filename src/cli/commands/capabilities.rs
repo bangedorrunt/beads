@@ -23,8 +23,15 @@ struct CapabilitiesOutput {
     env_vars: &'static [EnvVarCapability],
     safety: &'static [SafetyCapability],
     recommended_entrypoints: &'static [&'static str],
+    bv_compat: BvCompat,
     #[serde(skip_serializing_if = "Option::is_none")]
     command_detail: Option<CommandDetail>,
+}
+
+#[derive(Debug, Serialize)]
+struct BvCompat {
+    contract_version: &'static str,
+    flag_map: std::collections::BTreeMap<&'static str, &'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -287,6 +294,11 @@ pub fn execute(args: &CapabilitiesArgs, outer_ctx: &OutputContext) -> Result<()>
         .map(command_detail_for_path)
         .transpose()?;
 
+    let mut flag_map = std::collections::BTreeMap::new();
+    flag_map.insert("--robot-triage", "triage");
+    flag_map.insert("--robot-next", "next");
+    flag_map.insert("--robot-plan", "plan");
+    flag_map.insert("--robot-insights", "insights");
     let payload = CapabilitiesOutput {
         tool: "br",
         version: env!("CARGO_PKG_VERSION"),
@@ -299,6 +311,10 @@ pub fn execute(args: &CapabilitiesArgs, outer_ctx: &OutputContext) -> Result<()>
         env_vars: ENV_VARS,
         safety: SAFETY,
         recommended_entrypoints: RECOMMENDED_ENTRYPOINTS,
+        bv_compat: BvCompat {
+            contract_version: "1",
+            flag_map,
+        },
         command_detail,
     };
 

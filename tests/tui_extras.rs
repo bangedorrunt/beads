@@ -3,7 +3,7 @@
 //! Driven via TuiApp::handle_key headless, per ADR-0003 §5 proof 4.
 
 use beads::model::Issue;
-use beads::tui::{keys, Focus, Key, TuiApp};
+use beads::tui::{Focus, Key, TuiApp, keys};
 
 fn fixture_issues() -> Vec<Issue> {
     ["fx-a", "fx-b", "fx-c", "other"]
@@ -168,7 +168,10 @@ fn help_suppressed_while_searching() {
 fn key_registry_has_expected_entries() {
     let reg = keys::registry();
     assert!(!reg.is_empty());
-    assert!(reg.iter().any(|b| b.key == "j" && b.contexts.contains(&"all")));
+    assert!(
+        reg.iter()
+            .any(|b| b.key == "j" && b.contexts.contains(&"all"))
+    );
     assert!(reg.iter().any(|b| b.key == "/"));
     assert!(reg.iter().any(|b| b.key == "?"));
     assert!(reg.iter().any(|b| b.key == ";"));

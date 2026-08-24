@@ -9,7 +9,7 @@ use beads::sync::{
 use beads::{BeadsError, Result, StructuredError};
 use clap::{CommandFactory, Parser};
 use clap_complete::CompleteEnv;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
@@ -17,6 +17,48 @@ use std::sync::Arc;
 
 #[cfg(not(test))]
 const DISABLE_READ_ONLY_FAST_OPEN_ENV: &str = "BR_DISABLE_READ_ONLY_FAST_OPEN";
+
+fn maybe_rewrite_robot_args() -> Option<Vec<OsString>> {
+    let raw: Vec<OsString> = std::env::args_os().collect();
+    let pos = raw
+        .iter()
+        .position(|a| a.to_string_lossy().starts_with("--robot-"))?;
+    let flag = raw[pos].to_string_lossy().to_string();
+    let subcmd = match flag.as_str() {
+        "--robot-triage" => "triage",
+        "--robot-next" => "next",
+        "--robot-plan" => "plan",
+        "--robot-insights" => "insights",
+        "--robot-capabilities" => "capabilities",
+        _ => {
+            let payload = serde_json::json!({
+                "error": format!("unknown robot flag {}", flag),
+                "not_ported": true
+            });
+            eprintln!("{}", payload);
+            std::process::exit(2);
+        }
+    };
+    let mut rewritten = Vec::new();
+    rewritten.push(raw[0].clone());
+    rewritten.push(OsString::from(subcmd));
+    for (i, arg) in raw.iter().enumerate() {
+        if i == 0 || i == pos {
+            continue;
+        }
+        rewritten.push(arg.clone());
+    }
+    if subcmd == "capabilities"
+        && !rewritten.iter().any(|a| {
+            let s = a.to_string_lossy();
+            s == "--format" || s == "--json" || s == "json"
+        })
+    {
+        rewritten.push(OsString::from("--format"));
+        rewritten.push(OsString::from("json"));
+    }
+    Some(rewritten)
+}
 
 #[allow(clippy::too_many_lines)]
 fn main() {
@@ -29,18 +71,25 @@ fn main() {
     // completion subprocess (above) would also be safe.
     beads::shutdown::install();
 
+    // ADR-0003 §3.4 bv compat: `bv --robot-X` (or `br --robot-X`) maps to the
+    // native `br <subcommand>` shape. Unknown --robot-* fails closed with a
+    // JSON envelope on stderr and exit 2, never clap help text.
+    let robot_rewritten = maybe_rewrite_robot_args();
     // Bare `br` in a TTY opens the TUI (ADR-0003 §3.3 bare-br entry). Any
     // argument at all — including global flags — falls through to clap, and
-    // non-TTY stdout keeps the classic help text.
-    if std::env::args().count() == 1 && io::stdout().is_terminal() {
-        if let Err(error) = beads::tui::run() {
-            eprintln!("br: tui failed: {error}");
-            std::process::exit(1);
+    // non-TTY stdout keeps the classic help text. Robot invocations skip TUI.
+    let cli = if let Some(rewritten) = robot_rewritten {
+        Cli::parse_from(rewritten)
+    } else {
+        if std::env::args().count() == 1 && io::stdout().is_terminal() {
+            if let Err(error) = beads::tui::run() {
+                eprintln!("br: tui failed: {error}");
+                std::process::exit(1);
+            }
+            return;
         }
-        return;
-    }
-
-    let cli = Cli::parse();
+        Cli::parse()
+    };
     let json_error_mode = should_render_errors_as_json(&cli);
     let color_error_mode = should_color_human_errors_for_cli(&cli);
     let output_ctx = OutputContext::from_args(&cli);
