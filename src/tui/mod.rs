@@ -37,6 +37,10 @@ pub fn run() -> crate::error::Result<()> {
         .map_err(|e| crate::error::BeadsError::Config(format!("TUI backend: {e}")))?;
 
     loop {
+        // Keep responsive layout in sync with actual terminal size (iphone/mobile needs width <= 80 to collapse to single-column)
+        if let Ok(size) = terminal.size() {
+            app.set_size(size.width, size.height);
+        }
         terminal
             .draw(|frame| ui::draw(frame, &app))
             .map_err(|e| crate::error::BeadsError::Config(format!("TUI draw: {e}")))?;

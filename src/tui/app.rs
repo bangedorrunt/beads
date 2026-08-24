@@ -440,15 +440,18 @@ impl TuiApp {
         match self.focus {
             Focus::List => self.handle_list_key(key),
             Focus::Detail => self.handle_detail_key(key),
-            Focus::Search
-            | Focus::Help
-            | Focus::QuitConfirm
-            | Focus::Board
+            Focus::Board
             | Focus::Graph
             | Focus::Actionable
             | Focus::Insights
             | Focus::Tree
-            | Focus::LabelDashboard => unreachable!(),
+            | Focus::LabelDashboard => {
+                // View overlays reuse list navigation for any unhandled key (don't panic on stray input)
+                self.handle_view_nav(key);
+            }
+            Focus::Search | Focus::Help | Focus::QuitConfirm => {
+                // Already returned above; reaching here means a stray key arrived after early return race — ignore
+            }
         }
     }
 
