@@ -92,10 +92,30 @@ pub struct TuiApp {
     triage: Option<TriageResult>,
 }
 
+fn status_sort_key(s: &crate::model::Status) -> u8 {
+    match s.as_str() {
+        "open" => 0,
+        "in_progress" => 1,
+        "blocked" => 2,
+        "deferred" => 3,
+        "draft" => 4,
+        "closed" => 5,
+        "tombstone" => 6,
+        _ => 7,
+    }
+}
+
 impl TuiApp {
-    /// State over `issues` (expected id-sorted) at bv's default 120x40.
+    /// State over `issues` at bv's default 120x40.
+    /// Display order: open → in_progress → blocked/deferred → closed last (so first page is actionable, not 1000 closed).
     #[must_use]
-    pub fn new(issues: Vec<Issue>) -> Self {
+    pub fn new(mut issues: Vec<Issue>) -> Self {
+        // Display order: actionable first (open/in_progress), closed last — otherwise 1000 closed dominate first page (user report).
+        issues.sort_by(|a, b| {
+            status_sort_key(&a.status)
+                .cmp(&status_sort_key(&b.status))
+                .then_with(|| a.id.cmp(&b.id))
+        });
         // Precompute analysis once for triage insights + graph analysis sections.
         // Keep it cheap: full triage only for <2000 issues, else phase1.
         let (analysis, triage) = if issues.is_empty() {
