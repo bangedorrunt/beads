@@ -15458,13 +15458,15 @@ impl SqliteStorage {
 
     fn structured_ready_issue_from_row(row: &Row) -> Result<Issue> {
         let mut issue = Self::ready_issue_from_row(row)?;
-        let labels_json = row.get(14).and_then(SqliteValue::as_text).unwrap_or("[]");
-        issue.labels = serde_json::from_str(labels_json).map_err(|error| {
-            BeadsError::Config(format!(
-                "Malformed structured-ready labels JSON for {}: {error}",
-                issue.id
-            ))
-        })?;
+        // json_group_array may return NULL (not "[]") for zero-label issues
+        // under some SQLite builds; default gracefully instead of dropping
+        // the row via `?` propagation.
+        let labels: Vec<String> = row
+            .get(14)
+            .and_then(SqliteValue::as_text)
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or_default();
+        issue.labels = labels;
         Ok(issue)
     }
 
