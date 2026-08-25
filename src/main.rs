@@ -257,7 +257,8 @@ fn main() {
                             );
                         }
 
-                        beads::shutdown::exit_process(beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost.as_i32());                    }
+                        beads::shutdown::exit_process(beads::cli::commands::doctor_subsystems::exit_codes::DoctorExitCode::ConcurrencyLost.as_i32());
+                    }
                     if doctor_args.subcommand.is_none() {
                         if is_unwritable_write_lock_open_error(&lock_path, &e) {
                             emit_read_only_doctor_write_lock_diagnostic(
@@ -955,18 +956,8 @@ fn main() {
         }
     }
 
-<<<<<<< HEAD
-    if let Some(err) = beads::output::take_output_serialization_failure() {
-        std::process::exit(err.exit_code());
-||||||| parent of 0b74719e (fix(shutdown): route every deliberate exit through shutdown::exit_process (GitHub #439))
-    if let Some(err) = beads::output::take_output_serialization_failure() {
-        std::process::exit(err.exit_code());
-=======
     if let Some(err) = beads::output::take_output_serialization_failure() {
         beads::shutdown::exit_process(err.exit_code());
->>>>>>> 0b7
-    if let Some(err) = beads::output::take_output_serialization_failure() {
-        beads::shutdown::exit_process(err.exit_code());     beads::shutdown::exit_process(exit_code);
     }
 
     // Successful exit goes through the same funnel as every other exit
@@ -1608,7 +1599,6 @@ const fn supports_read_only_fast_open(cmd: &Commands) -> bool {
     }
 }
 
-
 /// Commands whose default freshness contract can use a nonmutating JSONL
 /// probe on a current-schema read-only connection, reopening writable storage
 /// only after a positive probe has been repeated under database-family
@@ -1645,7 +1635,8 @@ const fn supports_auto_import_read_only_probe(cmd: &Commands) -> bool {
     }
 }
 
-const fn is_read_only_dep_command(command: &beads::cli::DepCommands) -> bool {    match command {
+const fn is_read_only_dep_command(command: &beads::cli::DepCommands) -> bool {
+    match command {
         beads::cli::DepCommands::List(_)
         | beads::cli::DepCommands::Tree(_)
         | beads::cli::DepCommands::Cycles(_) => true,
@@ -2647,8 +2638,7 @@ mod tests {
         let lint_issue = Cli::parse_from(["br", "lint", "br-123"]);
         assert!(!build_cli_overrides(&lint_issue).read_only_fast_open);
 
-
-se_from(["br", "dep", "tree", "br-123"]);
+        let dep_tree = Cli::parse_from(["br", "dep", "tree", "br-123"]);
         assert!(build_cli_overrides(&dep_tree).read_only_fast_open);
 
         let dep_list = Cli::parse_from(["br", "dep", "list", "br-123"]);
