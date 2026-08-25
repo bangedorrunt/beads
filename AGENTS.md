@@ -1,10 +1,33 @@
-# AGENTS.md — beads (bangedorrunt fork of beads_rust)
+# AGENTS.md — beads (bangedorrunt's flywheel × toron work-ledger)
 
 > **Governing decision:** [ADR-0001](docs/decisions/0001-make-beads-the-fail-closed-work-ledger.md).
-> This is a dedicated work-ledger for flywheel × toron, forked from `Dicklesworthstone/beads_rust` at the 2026-08-21 fast-forward (`9c45f79a`). Close is fail-closed. Binary remains `br`. Do not add MCP tools. Do not run git from `br`.
+> This is **bangedorrunt's fork of `beads_rust`** — a dedicated work-ledger
+> built to maximize the flywheel × toron experience. It no longer shares the
+> upstream author's vision: the fork exists for the fail-closed ledger,
+> wave-gated dispatch, and the `bd-###` coordination contract, and is the
+> authority on its own semantics. The upstream lineage (`Dicklesworthstone/beads_rust`,
+> fast-forward `9c45f79a`, 2026-08-21) is historical — a source of fixes to
+> cherry-pick on request, never a direction to follow. Close is fail-closed.
+> Binary remains `br`. Do not add MCP tools. Do not run git from `br`.
+>
+> **Coordination contract (this fork, flywheel × toron):** bead IDs are `bd-###`
+> (the configured `issue_prefix`). The bead ID is the shared key across the
+> stack: toron mail `--thread` = bead ID, reservation `--reason` = bead ID,
+> commit message cites the bead ID. Close is **one report, two channels**:
+> commit BEFORE close with the bead ID in the message → `br gate report` +
+> `br close --commit-sha <sha>` (the durable, ledger-gated copy) → mail the
+> captain `[{id}] done` on `thread_id=<id>` (the captain's copy; the loop's
+> dispatch-guard reads the `] done` subject as a dedupe hold, and the loop
+> sends its own verified `[{id}] done` since 2026-08-18). `--as`/`--to` are
+> pins (adjective+noun), never the host username; mail to the captain is
+> always `--to captain`. Full mail/reserve args live in the toron skill —
+> do not restate them here.
 > **Upstream:** do not fetch/merge/cherry-pick from `Dicklesworthstone/beads_rust` unless the captain says **fork sync**. Then review and take only commits this fork still needs. Never merge `upstream/main` wholesale. See **RULE 2**.
 >
-> Guidelines below are upstream agent rules. Where they conflict with ADR-0001 or RULE 2, **ADR-0001 and RULE 2 win**.
+> Guidelines below are THIS FORK's rules (inherited from upstream, now
+> bangedorrunt's own). They serve the flywheel × toron contract, not upstream.
+> Where anything below conflicts with ADR-0001, RULE 2, or this banner's
+> coordination contract, **this fork wins** — upstream opinion is irrelevant.
 
 ---
 
@@ -398,7 +421,7 @@ self_update = ["dep:self_update"]   # Self-update from GitHub releases (rustls T
 - **Non-invasive by design** — `br` NEVER executes git commands automatically; all git operations are explicit user actions
 - **SQLite + JSONL hybrid** — Primary storage is SQLite for speed; JSONL export for git-based sync and human readability
 - **Content-addressed deduplication** — SHA-256 content hashes prevent duplicate issues across sync boundaries
-- **Hash-based short IDs** — e.g., `proj-abc12` (not auto-increment integers) for stable cross-repo references
+- **Hash-based short IDs** — e.g., `bd-abc12` in this fork (not auto-increment integers) for stable cross-repo references
 - **Go parity** — Rust `br` produces identical output to Go `bd` for equivalent inputs; conformance tests validate this
 - **Schema compatibility** — Database schema matches Go beads for potential cross-tool usage
 - **Multiple output modes** — Rich (TTY), Plain (pipe/NO_COLOR), JSON (--json/--robot), Quiet (--quiet) — auto-detected
@@ -410,6 +433,35 @@ self_update = ["dep:self_update"]   # Self-update from GitHub releases (rustls T
 ## VERIFY Fence Honesty (legal-close interaction)
 
 A VERIFY fence that is a single loop-runnable command (`cargo test ...`, `timeout ...`) legally closes ONLY via `command-verified` (row 1). If you actually verified via unit tests, the fence must state the composed commands you really ran — the ledger checks the fence shape, and a bare runnable line makes `unit-test-verified` an illegal close. (Lesson: bd-2mdo, 2026-08-23 — first fence was refused by ledger check until it matched reality.)
+
+## The Close Ceremony (fail-closed + captain copy)
+
+A bead is NOT closed by `br close` alone — the loop watches both the ledger
+and the mail thread. Full ceremony, in order:
+
+```bash
+# 1. commit BEFORE close; the bead id IN the commit message
+git add .beads/ && git commit -m "feat: X (bd-123)"
+
+# 2. durable copy: gate row + legal close (fail-closed — no sha = no close)
+br gate report bd-123 --gate <verdict> --provider <pin> --status pass --to closed
+br close bd-123 --commit-sha <sha> --reason \
+  "status; sha; verdict; ran <VERIFY>; deviations; PRINCIPLES: <name> — <decision>"
+
+# 3. captain's copy (toron mail on the bead thread)
+toron mail send --project "$SLUG" --as "$PIN" --to captain \
+  --subject "[bd-123] done" --body "<same REPORT fields>" --thread bd-123
+
+# 4. sync the ledger (never automatic)
+br sync --flush-only
+```
+
+The `[{id}] done` subject is a contract, not a convention: the loop's
+dispatch-guard reads it as a dedupe hold while `br` catches up, and since
+2026-08-18 the loop also sends its own verified `[{id}] done` on a legal
+close — the captain may see two copies, one courtesy, one loop-verified.
+Both are plane P (NIP-17). `--as`/`--to` are pins; mail to the captain is
+always `--to captain`. Full mail/reserve args live in the toron skill.
 
 ---
 
