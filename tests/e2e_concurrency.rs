@@ -66,6 +66,11 @@ fn clear_inherited_br_env_std(cmd: &mut StdCommand) {
     }
 }
 
+fn isolated_temp_dir(label: &str) -> TempDir {
+    TempDir::new_in(common::cli::isolated_temp_root())
+        .unwrap_or_else(|error| panic!("create {label}: {error}"))
+}
+
 fn spawn_br_child_in_dir<I, S>(root: &Path, args: I) -> std::process::Child
 where
     I: IntoIterator<Item = S>,
@@ -460,7 +465,7 @@ fn e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace() {
     let _log =
         common::test_log("e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -542,7 +547,7 @@ fn e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace() {
 fn e2e_mutating_command_fails_when_write_lock_path_unusable() {
     let _log = common::test_log("e2e_mutating_command_fails_when_write_lock_path_unusable");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -583,7 +588,7 @@ fn e2e_mutating_command_fails_when_write_lock_path_unusable() {
 fn e2e_write_lock_contention_respects_lock_timeout() {
     let _log = common::test_log("e2e_write_lock_contention_respects_lock_timeout");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -652,7 +657,7 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
     use std::os::unix::fs::MetadataExt;
 
     let _log = common::test_log("e2e_doctor_reports_live_write_lock_without_mutating_workspace");
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -818,7 +823,7 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
 fn e2e_read_command_auto_import_waits_for_write_lock() {
     let _log = common::test_log("e2e_read_command_auto_import_waits_for_write_lock");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -892,7 +897,7 @@ fn e2e_read_command_auto_import_waits_for_write_lock() {
 fn e2e_read_command_witness_refresh_waits_for_write_lock() {
     let _log = common::test_log("e2e_read_command_witness_refresh_waits_for_write_lock");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -960,7 +965,7 @@ fn e2e_concurrent_writes_succeed_with_retry() {
     let _log = common::test_log("e2e_concurrent_writes_succeed_with_retry");
 
     // Create workspace
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     // Initialize workspace
@@ -1054,7 +1059,7 @@ fn e2e_concurrent_writes_succeed_with_retry() {
 fn e2e_lock_timeout_behavior() {
     let _log = common::test_log("e2e_lock_timeout_behavior");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     // Initialize workspace
@@ -1140,7 +1145,7 @@ fn e2e_lock_timeout_behavior() {
 fn e2e_concurrent_reads_succeed() {
     let _log = common::test_log("e2e_concurrent_reads_succeed");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     // Initialize and create some issues
@@ -1307,7 +1312,7 @@ fn e2e_parallel_read_only_commands_serialize_without_busy_on_drop() {
 fn e2e_lock_timeout_timing() {
     let _log = common::test_log("e2e_lock_timeout_timing");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     // Initialize workspace
@@ -1347,7 +1352,7 @@ fn e2e_lock_timeout_timing() {
 fn e2e_write_serialization() {
     let _log = common::test_log("e2e_write_serialization");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     // Initialize
@@ -1447,7 +1452,7 @@ fn e2e_write_serialization() {
 fn e2e_mixed_read_write_concurrency() {
     let _log = common::test_log("e2e_mixed_read_write_concurrency");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     // Initialize with some existing data
@@ -1558,7 +1563,7 @@ fn e2e_mixed_read_write_concurrency() {
 fn e2e_interleaved_command_families_remain_bounded() {
     let _log = common::test_log("e2e_interleaved_command_families_remain_bounded");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -1711,8 +1716,8 @@ fn e2e_interleaved_command_families_remain_bounded() {
 fn e2e_routed_external_mutation_succeeds_during_local_updates() {
     let _log = common::test_log("e2e_routed_external_mutation_succeeds_during_local_updates");
 
-    let main_temp = TempDir::new().expect("create main temp dir");
-    let external_temp = TempDir::new().expect("create external temp dir");
+    let main_temp = isolated_temp_dir("main temp dir");
+    let external_temp = isolated_temp_dir("external temp dir");
     let main_root = main_temp.path().to_path_buf();
     let external_root = external_temp.path().to_path_buf();
 
@@ -1852,7 +1857,7 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
 fn e2e_sync_status_observer_stays_available_during_writes() {
     let _log = common::test_log("e2e_sync_status_observer_stays_available_during_writes");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -1932,7 +1937,7 @@ fn e2e_sync_status_observer_stays_available_during_writes() {
 fn e2e_lock_error_reporting() {
     let _log = common::test_log("e2e_lock_error_reporting");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     // Initialize
@@ -1959,7 +1964,7 @@ fn e2e_lock_error_reporting() {
 fn e2e_interleaved_command_families_preserve_workspace_integrity() {
     let _log = common::test_log("e2e_interleaved_command_families_preserve_workspace_integrity");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -2171,7 +2176,7 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
     let _log =
         common::test_log("e2e_external_access_and_background_status_are_bounded_during_mutation");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -2183,7 +2188,7 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
     assert!(!issue_id.is_empty(), "missing seed issue id");
 
     let beads_dir = Arc::new(root.join(".beads").display().to_string());
-    let external_temp_dir = TempDir::new().expect("create external temp dir");
+    let external_temp_dir = isolated_temp_dir("external temp dir");
     let external_root = Arc::new(external_temp_dir.path().to_path_buf());
 
     let barrier = Arc::new(Barrier::new(3));
@@ -2324,7 +2329,7 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
 fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
     let _log = common::test_log("e2e_actor_oriented_command_families_preserve_workspace_integrity");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -2630,7 +2635,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
 fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
     let _log = common::test_log("e2e_close_update_reopen_preserve_blocked_cache_integrity");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -2881,7 +2886,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
 fn e2e_parallel_mixed_db_commands_preserve_sqlite_integrity() {
     let _log = common::test_log("e2e_parallel_mixed_db_commands_preserve_sqlite_integrity");
 
-    let temp_dir = TempDir::new().expect("create temp dir");
+    let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
     let init = run_br_in_dir(&root, ["init"]);
@@ -3180,8 +3185,8 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
 fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
     let _log = common::test_log("e2e_routed_access_remains_bounded_while_remote_workspace_mutates");
 
-    let main_temp_dir = TempDir::new().expect("create main temp dir");
-    let external_temp_dir = TempDir::new().expect("create external temp dir");
+    let main_temp_dir = isolated_temp_dir("main temp dir");
+    let external_temp_dir = isolated_temp_dir("external temp dir");
     let main_root = main_temp_dir.path().to_path_buf();
     let external_root = external_temp_dir.path().to_path_buf();
 
