@@ -3291,6 +3291,11 @@ pub struct OpenStorageResult {
     loaded_jsonl_state: JsonlSourceStateWitness,
     loaded_jsonl_source: RetainedJsonlSource,
     pending_recovery_backup: Option<RecoveryBackupSet>,
+    /// True when a storage-replacement transition could not restore a
+    /// verified persistent database handle (fail-closed). Callers must
+    /// surface the transition error instead of attempting recovery through
+    /// the state-carrying in-memory sentinel.
+    database_transition_failed_closed: bool,
 }
 
 impl OpenStorageResult {
@@ -3387,6 +3392,20 @@ impl OpenStorageResult {
     pub(crate) fn should_attempt_jsonl_recovery(&self, err: &BeadsError) -> bool {
         !self.no_db
             && should_attempt_jsonl_recovery(err, &self.paths.db_path, &self.paths.jsonl_path)
+    }
+
+    /// True when a storage-replacement transition could not restore a
+    /// verified persistent database handle. Callers must surface the
+    /// transition error instead of attempting recovery through the
+    /// state-carrying in-memory sentinel.
+    #[must_use]
+    pub(crate) const fn database_transition_is_fail_closed(&self) -> bool {
+        self.database_transition_failed_closed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mark_database_transition_failed_closed_for_test(&mut self) {
+        self.database_transition_failed_closed = true;
     }
 
     /// Rebuild the current SQLite database from the resolved JSONL export.
@@ -4160,6 +4179,7 @@ fn open_storage_with_startup_config_impl(
             loaded_jsonl_state,
             loaded_jsonl_source,
             pending_recovery_backup: None,
+            database_transition_failed_closed: false,
         })
     } else {
         let (mut sqlite_open, owned_write_authority) = open_sqlite_storage_for_startup(
@@ -4212,6 +4232,7 @@ fn open_storage_with_startup_config_impl(
             loaded_jsonl_state,
             loaded_jsonl_source,
             pending_recovery_backup: sqlite_open.pending_recovery_backup,
+            database_transition_failed_closed: false,
         })
     }
 }

@@ -550,6 +550,27 @@ where
         Err(operation_err) => {
             if !allow_recovery || !matches!(operation_err, BeadsError::Database(_)) {
                 return Err(operation_err);
+            }            // Fail-closed storage transition (upstream 8d5af3a0, adapted):
+            // when a storage-replacement transition could not restore a
+            // verified persistent database handle, surface the transition
+            // error instead of attempting recovery through the in-memory
+            // sentinel. Upstream attached this check to its fsqlite
+            // WAL-certificate quarantine retry arm; the fork's recovery
+            // decision point is here, ahead of
+            // `should_attempt_mutation_jsonl_recovery`.
+            if storage_ctx.database_transition_is_fail_closed() {
+                tracing::error!(
+                    command = command,
+                    original_error = %operation_err,
+                    db_path = %storage_ctx.paths.db_path.display(),
+                    "Storage transition left the database without a verified persistent handle; refusing JSONL recovery"
+                );
+                return Err(BeadsError::WithContext {
+                    context: format!(
+                        "storage transition failed during {command} write and left storage without a verified persistent database handle; refusing JSONL recovery; original write error: {operation_err}"
+                    ),
+                    source: Box::new(operation_err),
+                });
             }
 
             let mut recovery_signal =
@@ -864,6 +885,43 @@ mod tests {
                 .get_issue("bd-1")
                 .expect("load issue")
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn stale_wal_certificate_recovery_surfaces_fail_closed_transition() {
+        let (_temp, mut storage_ctx) = storage_ctx_with_exported_issue();
+        storage_ctx.mark_database_transition_failed_closed_for_test();
+        let mut attempts = 0;
+
+        let error = retry_mutation_with_jsonl_recovery(
+            &mut storage_ctx,
+            true,
+            "update",
+            Some("bd-1"),
+            |_storage| -> crate::Result<()> {
+                attempts += 1;
+                Err(BeadsError::Database(crate::storage::db::DbError::DatabaseCorrupt {
+                    detail: "parallel WAL certificate suffix has unsupported record version 999"
+                        .to_string(),
+                }))
+            },
+        )
+        .expect_err("a fail-closed storage transition must stop mutation recovery");
+
+        assert_eq!(attempts, 1, "fail-closed recovery must not retry the write");
+        let BeadsError::WithContext { context, source } = error else {
+            panic!("expected transition context, got {error:?}");
+        };
+        assert!(
+            context.contains("without a verified persistent database handle")
+                && context.contains("refusing JSONL recovery")
+                && context.contains("unsupported record version 999"),
+            "unexpected retry context: {context}"
+        );
+        assert!(
+            source.to_string().contains("unsupported record version 999"),
+            "the causal transition error must be preserved: {source}"
         );
     }
 
