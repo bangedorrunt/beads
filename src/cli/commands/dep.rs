@@ -86,15 +86,33 @@ fn execute_dep_add(
     ctx: &OutputContext,
     local_beads_dir: &Path,
 ) -> Result<()> {
-    validate_dependency_target_route(local_beads_dir, &args.issue, &args.depends_on)?;
+    let effective_depends_on = if let Some(on) = &args.on {
+        resolve_on_to_external(on, local_beads_dir)?
+    } else if let Some(dep) = &args.depends_on {
+        dep.clone()
+    } else {
+        return Err(BeadsError::validation(
+            "depends_on",
+            "either provide target issue ID or --on <path/bead-id>",
+        ));
+    };
+    validate_dependency_target_route(local_beads_dir, &args.issue, &effective_depends_on)?;
     let (mut storage_ctx, route_cli, auto_flush_external, _routed_write_lock) =
         open_routed_storage_for_input(local_beads_dir, cli, &args.issue)?;
     let config_layer = storage_ctx.load_config(&route_cli)?;
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
     let actor = config::resolve_actor(&config_layer);
+    // Build effective args with resolved external id so inner dep_add stores correctly
+    let effective_args = DepAddArgs {
+        issue: args.issue.clone(),
+        depends_on: Some(effective_depends_on),
+        on: None,
+        dep_type: args.dep_type.clone(),
+        metadata: args.metadata.clone(),
+    };
     dep_add(
-        args,
+        &effective_args,
         &mut storage_ctx,
         &resolver,
         &actor,
@@ -102,6 +120,46 @@ fn execute_dep_add(
         local_beads_dir,
         auto_flush_external,
     )
+}
+
+fn resolve_on_to_external(on: &str, _local_beads_dir: &Path) -> Result<String> {
+    if on.starts_with("external:") {
+        return Ok(on.to_string());
+    }
+    // Path/bead form: ../toron/bd-xxx or /abs/path/to/repo/bd-xxx
+    // Split by '/' to get project and bead
+    if let Some((path_part, bead)) = on.rsplit_once('/') {
+        let bead = bead.trim();
+        if bead.is_empty() {
+            return Err(BeadsError::validation(
+                "on",
+                "expected <path>/<bead-id> or external:project:cap",
+            ));
+        }
+        let project = std::path::Path::new(path_part)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path_part)
+            .trim()
+            .to_string();
+        if project.is_empty() {
+            return Err(BeadsError::validation(
+                "on",
+                "could not derive project name from path",
+            ));
+        }
+        return Ok(format!("external:{}:{}", project, bead));
+    }
+    // Fallback: project:bead form like toron:bd-xxx
+    if let Some((proj, bead)) = on.split_once(':') {
+        if !proj.is_empty() && !bead.is_empty() {
+            return Ok(format!("external:{}:{}", proj.trim(), bead.trim()));
+        }
+    }
+    Err(BeadsError::validation(
+        "on",
+        "expected <path>/<bead-id>, <project>:<bead-id>, or external:project:cap",
+    ))
 }
 
 fn execute_dep_remove(
@@ -553,11 +611,15 @@ fn dep_add(
 ) -> Result<()> {
     let issue_id = resolve_issue_id(&storage_ctx.storage, resolver, &args.issue)?;
 
+    let raw_depends_on = args
+        .depends_on
+        .as_deref()
+        .ok_or_else(|| BeadsError::validation("depends_on", "missing dependency target"))?;
     // External dependencies don't need resolution
-    let depends_on_id = if args.depends_on.starts_with("external:") {
-        args.depends_on.clone()
+    let depends_on_id = if raw_depends_on.starts_with("external:") {
+        raw_depends_on.to_string()
     } else {
-        resolve_issue_id(&storage_ctx.storage, resolver, &args.depends_on)?
+        resolve_issue_id(&storage_ctx.storage, resolver, raw_depends_on)?
     };
 
     let dep_type = parse_dependency_type(&args.dep_type)?;

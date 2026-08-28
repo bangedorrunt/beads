@@ -16708,12 +16708,38 @@ fn query_external_project_capabilities(
     }
 
     let conn = open_existing_read_only_connection(db_path)?;
+    let mut satisfied = HashSet::new();
+
+    // Direct bead-id check: if foreign issue id == capability and is closed, satisfy.
+    // This supports `external:project:bead-id` for cross-repo bead gating
+    // (beads_rust-cross-repo-dep-edges-mvzxq) — complements the provides-label path.
+    for cap_chunk in capabilities
+        .iter()
+        .collect::<Vec<_>>()
+        .chunks(SQLITE_VAR_LIMIT)
+    {
+        let placeholders: Vec<&str> = cap_chunk.iter().map(|_| "?").collect();
+        let sql = format!(
+            "SELECT id FROM issues WHERE status = 'closed' AND id IN ({})",
+            placeholders.join(",")
+        );
+        let params: Vec<SqliteValue> = cap_chunk
+            .iter()
+            .map(|cap| SqliteValue::from(cap.as_str()))
+            .collect();
+        if let Ok(rows) = conn.query_with_params(&sql, &params) {
+            for row in &rows {
+                if let Some(id) = row.get(0).and_then(SqliteValue::as_text) {
+                    satisfied.insert(id.to_string());
+                }
+            }
+        }
+    }
+
     let labels: Vec<String> = capabilities
         .iter()
         .map(|cap| format!("provides:{cap}"))
         .collect();
-
-    let mut satisfied = HashSet::new();
 
     for chunk in labels.chunks(SQLITE_VAR_LIMIT) {
         let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();

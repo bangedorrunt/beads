@@ -193,10 +193,46 @@ fn diagnostic_from(pick: &TopPick) -> NextDiagnosticPick {
 /// Strict claimability reasons over the RAW issue (bv
 /// `robotNextClaimabilityReasons`): unlike the triage gate this counts
 /// dangling dependency ids as open blockers (`"<id> (missing)"`).
+#[allow(clippy::manual_let_else)]
+fn external_statuses_for_claimability(
+    issues: &[Issue],
+    cli: &CliOverrides,
+) -> std::collections::HashMap<String, bool> {
+    let mut external_ids = std::collections::HashSet::new();
+    for issue in issues {
+        for dep in &issue.dependencies {
+            if crate::analysis::triage::is_triage_blocking(&dep.dep_type)
+                && dep.depends_on_id.starts_with("external:")
+            {
+                external_ids.insert(dep.depends_on_id.clone());
+            }
+        }
+    }
+    if external_ids.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    // Resolve via storage's external resolution (read-only, per-query cache).
+    // Best-effort: if beads dir discovery fails, treat all external as unsatisfied (blocked).
+    let beads_dir = match crate::config::discover_beads_dir_with_cli(cli) {
+        Ok(dir) => dir,
+        Err(_) => return external_ids.into_iter().map(|id| (id, false)).collect(),
+    };
+    let external_db_paths = crate::config::external_project_db_paths(
+        &crate::config::load_config(&beads_dir, None, cli)
+            .unwrap_or_else(|_| crate::config::ConfigLayer::default()),
+        &beads_dir,
+    );
+    crate::storage::SqliteStorage::resolve_external_dependency_statuses_for_ids(
+        &external_ids,
+        &external_db_paths,
+    )
+}
+
 fn claimability_reasons(
     pick: &TopPick,
     by_id: &HashMap<&str, &Issue>,
     now: DateTime<Utc>,
+    external_statuses: &std::collections::HashMap<String, bool>,
 ) -> Vec<String> {
     let Some(issue) = by_id.get(pick.id.as_str()) else {
         return vec![format!("{} is absent from loaded Beads records", pick.id)];
@@ -231,7 +267,6 @@ fn claimability_reasons(
             go_time_nanos(issue.defer_until.expect("checked above"))
         ));
     }
-
     let mut open_blockers: Vec<String> = Vec::new();
     for dep in &issue.dependencies {
         if !crate::analysis::triage::is_triage_blocking(&dep.dep_type) {
@@ -240,6 +275,13 @@ fn claimability_reasons(
         let blocker_id = dep.depends_on_id.trim();
         if blocker_id.is_empty() {
             open_blockers.push("<missing blocker id>".to_string());
+            continue;
+        }
+        if blocker_id.starts_with("external:") {
+            let satisfied = external_statuses.get(blocker_id).copied().unwrap_or(false);
+            if !satisfied {
+                open_blockers.push(format!("{blocker_id}:blocked"));
+            }
             continue;
         }
         match by_id.get(blocker_id) {
@@ -352,11 +394,12 @@ pub fn execute_next(
         .iter()
         .map(|issue| (issue.id.as_str(), issue))
         .collect();
+    let external_statuses = external_statuses_for_claimability(&issues, cli);
     let first_diagnostic = diagnostic_from(&picks[0]);
     let mut first_unsafe_reasons: Option<Vec<String>> = None;
     let mut chosen: Option<&TopPick> = None;
     for pick in picks {
-        let reasons = claimability_reasons(pick, &by_id, now);
+        let reasons = claimability_reasons(pick, &by_id, now, &external_statuses);
         if reasons.is_empty() {
             chosen = Some(pick);
             break;

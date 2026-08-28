@@ -1765,7 +1765,8 @@ mod tests {
         let add = Commands::Dep {
             command: DepCommands::Add(DepAddArgs {
                 issue: "br-1".to_string(),
-                depends_on: "br-2".to_string(),
+                depends_on: Some("br-2".to_string()),
+                on: None,
                 dep_type: "blocks".to_string(),
                 metadata: None,
             }),
@@ -1792,7 +1793,8 @@ mod tests {
         let command = Commands::Dep {
             command: DepCommands::Add(DepAddArgs {
                 issue: "br-1".to_string(),
-                depends_on: "br-2".to_string(),
+                depends_on: Some("br-2".to_string()),
+                on: None,
                 dep_type: "blocks".to_string(),
                 metadata: Some("{\"source\":\"import\"}".to_string()),
             }),

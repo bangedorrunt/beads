@@ -2095,7 +2095,11 @@ pub struct DepAddArgs {
 
     /// Target issue ID (the one being depended on)
     #[arg(add = ArgValueCompleter::new(issue_id_completer))]
-    pub depends_on: String,
+    pub depends_on: Option<String>,
+
+    /// External dependency via sibling tracker path/bead-id (e.g. --on ../toron/bd-xxx or --on external:proj:cap). When set, the positional target is ignored.
+    #[arg(long = "on")]
+    pub on: Option<String>,
 
     /// Dependency type (blocks, parent-child, related, etc.)
     #[arg(long = "type", short = 't', default_value = "blocks", add = ArgValueCompleter::new(dep_type_completer))]
