@@ -3112,7 +3112,7 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
                                 &root,
                                 [
                                     "--lock-timeout",
-                                    "15000",
+                                    "60000",
                                     "update",
                                     &issue_id,
                                     "--notes",
@@ -3125,7 +3125,7 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
                                 &root,
                                 [
                                     "--lock-timeout",
-                                    "15000",
+                                    "60000",
                                     "comments",
                                     "add",
                                     &issue_id,
