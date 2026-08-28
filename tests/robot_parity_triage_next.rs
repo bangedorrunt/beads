@@ -123,11 +123,33 @@ fn workspace_with_fixture() -> BrWorkspace {
     let beads_dir = workspace.root.join(".beads");
     std::fs::create_dir_all(&beads_dir).expect("create .beads dir");
 
-    // The fixture ships inline dependencies exactly as bv reads them; br's
-    // JSONL rebuild path imports them verbatim (including the fx-h/fx-i
-    // cycle, which `br dep add` would refuse but storage accepts on import).
-    std::fs::write(beads_dir.join("issues.jsonl"), FIXTURE_ISSUES)
-        .expect("write fixture issues.jsonl");
+    // Stamp ADR-0001 §5.5 dispatchability fields so `br next`'s fail-closed
+    // claimability parity matches `br ready`'s SQL gate (beads_rust-ready-empty-set-bug-g0wra).
+    // The bv fixture ships without verify/principles; br now requires them
+    // for P≤2 dispatchability, so next would otherwise degrade and diverge
+    // from the golden. Stamping keeps the fixture's graph and the golden's
+    // top pick while satisfying the §5.5 gate.
+    let stamped: String = FIXTURE_ISSUES
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let mut v: Value = serde_json::from_str(line).expect("fixture line parses");
+            if let Some(obj) = v.as_object_mut() {
+                obj.entry("verify".to_string())
+                    .or_insert(Value::String("cargo test --offline ready_".to_string()));
+                obj.entry("principles".to_string()).or_insert(serde_json::json!([
+                    {"name": "prove-it-works", "decision": "each exclusion rule has a named test"}
+                ]));
+                // Ensure wave/pin for structured output completeness (golden expects them).
+                obj.entry("wave".to_string()).or_insert(Value::Null);
+                obj.entry("pin".to_string()).or_insert(Value::Null);
+            }
+            serde_json::to_string(&v).expect("serialize stamped issue")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    std::fs::write(beads_dir.join("issues.jsonl"), stamped).expect("write fixture issues.jsonl");
     let import = Command::new(env!("CARGO_BIN_EXE_br"))
         .current_dir(&workspace.root)
         .args(["sync", "--import-only", "--force"])

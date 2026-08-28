@@ -220,7 +220,7 @@ fn execute_inner(
             };
             let ctx = OutputContext::from_output_format(output_format, quiet, !use_color);
             if ready_issues.is_empty() {
-                println!("{}", empty_ready_message(storage)?);
+                println!("{}", empty_ready_message(storage, &filters)?);
             } else if matches!(ctx.mode(), OutputMode::Rich) {
                 let columns = IssueTableColumns {
                     id: true,
@@ -272,13 +272,31 @@ fn execute_inner(
     Ok(())
 }
 
-fn empty_ready_message(storage: &SqliteStorage) -> Result<&'static str> {
+fn empty_ready_message(storage: &SqliteStorage, filters: &ReadyFilters) -> Result<String> {
     let has_non_closed_issues = storage.has_active_issues()?;
-    Ok(if has_non_closed_issues {
-        "✨ No ready issues — all remaining work is blocked, deferred, or in progress"
-    } else {
-        "✨ All work complete — no issues to work on"
-    })
+    if !has_non_closed_issues {
+        return Ok("✨ All work complete — no issues to work on".to_string());
+    }
+    let diag = storage.count_ready_nondispatchable(filters)?;
+    if diag.missing_verify > 0 || diag.missing_principles > 0 {
+        let mut parts: Vec<String> = Vec::new();
+        if diag.missing_verify > 0 {
+            parts.push(format!(
+                "{} bead(s) lack a VERIFY command (e.g. {} — br update {} --verify '<cmd>')",
+                diag.missing_verify, diag.missing_verify_example, diag.missing_verify_example
+            ));
+        }
+        if diag.missing_principles > 0 {
+            parts.push(format!(
+                "{} P≤2 bead(s) lack a principles citation (e.g. {} — br update {} --principle 'name — decision')",
+                diag.missing_principles,
+                diag.missing_principles_example,
+                diag.missing_principles_example
+            ));
+        }
+        return Ok(format!("✨ No dispatchable issues — {}", parts.join("; ")));
+    }
+    Ok("✨ No ready issues — all remaining work is blocked, deferred, or in progress".to_string())
 }
 
 fn get_ready_issues_for_output(

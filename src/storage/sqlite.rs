@@ -1539,6 +1539,38 @@ struct ReadyReadinessProbe {
     blocked_cache_stale: bool,
 }
 
+#[allow(clippy::struct_field_names)]
+pub(crate) struct ReadyNondispatchable {
+    pub(crate) missing_verify: usize,
+    pub(crate) missing_verify_example: String,
+    pub(crate) missing_principles: usize,
+    pub(crate) missing_principles_example: String,
+}
+
+fn resolved_ready_status_list(filters: &ReadyFilters) -> Vec<String> {
+    let mut statuses = if filters.ready_statuses.is_empty() {
+        vec!["open".to_string()]
+    } else {
+        filters.ready_statuses.clone()
+    };
+    if filters.include_deferred
+        && !statuses
+            .iter()
+            .any(|status| status.eq_ignore_ascii_case("deferred"))
+    {
+        statuses.push("deferred".to_string());
+    }
+    statuses
+}
+
+fn inline_status_list(statuses: &[String]) -> String {
+    statuses
+        .iter()
+        .map(|status| format!("'{}'", status.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 struct IssueDetailRelationPresence {
     has_labels: bool,
     has_dependencies: bool,
@@ -1593,7 +1625,7 @@ impl ReadyIssueProjection {
             Self::StructuredCommand => {
                 r"SELECT id, title, description, acceptance_criteria, notes, status, priority,
                          issue_type, assignee, owner, estimated_minutes, created_at, created_by,
-                         updated_at,
+                         updated_at, verify, principles, wave, pin,
                          (SELECT json_group_array(label ORDER BY label)
                           FROM labels
                           WHERE labels.issue_id = issues.id)"
@@ -2039,19 +2071,15 @@ impl SqliteStorage {
             Err(error) => Err(error.into()),
         }
     }
-
-    fn ready_readiness_probe(&self, include_deferred: bool) -> Result<ReadyReadinessProbe> {
-        let sql = if include_deferred {
+    fn ready_readiness_probe(&self, ready_statuses: &[String]) -> Result<ReadyReadinessProbe> {
+        let list = inline_status_list(ready_statuses);
+        let sql = format!(
             "SELECT
-                EXISTS(SELECT 1 FROM issues WHERE status IN ('open', 'deferred') LIMIT 1),
+                EXISTS(SELECT 1 FROM issues WHERE status IN ({list}) LIMIT 1),
                 COALESCE((SELECT value = ? FROM metadata WHERE key = ? ORDER BY rowid DESC LIMIT 1), 0)"
-        } else {
-            "SELECT
-                EXISTS(SELECT 1 FROM issues WHERE status = 'open' LIMIT 1),
-                COALESCE((SELECT value = ? FROM metadata WHERE key = ? ORDER BY rowid DESC LIMIT 1), 0)"
-        };
+        );
         let row = self.conn.query_row_with_params(
-            sql,
+            &sql,
             &[
                 SqliteValue::from(BLOCKED_CACHE_STATE_STALE),
                 SqliteValue::from(BLOCKED_CACHE_STATE_KEY),
@@ -2067,6 +2095,70 @@ impl SqliteStorage {
                 .get(1)
                 .and_then(SqliteValue::as_integer)
                 .is_some_and(|value| value != 0),
+        })
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::redundant_closure_for_method_calls
+    )]
+    pub(crate) fn count_ready_nondispatchable(
+        &self,
+        filters: &ReadyFilters,
+    ) -> Result<ReadyNondispatchable> {
+        let statuses = inline_status_list(&resolved_ready_status_list(filters));
+        let defer_clause = if filters.include_deferred {
+            String::new()
+        } else {
+            " AND (defer_until IS NULL OR datetime(defer_until) <= datetime('now'))".to_string()
+        };
+        let sql = format!(
+            "SELECT \
+            COALESCE(SUM(CASE WHEN issues.verify IS NULL OR trim(issues.verify) = '' \
+                OR instr(issues.verify, char(10)) > 0 OR instr(issues.verify, char(13)) > 0 \
+                THEN 1 ELSE 0 END), 0), \
+            COALESCE(MIN(CASE WHEN issues.verify IS NULL OR trim(issues.verify) = '' \
+                OR instr(issues.verify, char(10)) > 0 OR instr(issues.verify, char(13)) > 0 \
+                THEN issues.id END), ''), \
+            COALESCE(SUM(CASE WHEN issues.priority <= 2 AND NOT (\
+                issues.principles IS NOT NULL AND json_valid(issues.principles) \
+                AND json_array_length(issues.principles) >= 1 \
+                AND NOT EXISTS (SELECT 1 FROM json_each(issues.principles) je \
+                    WHERE je.value ->> '$.name' IS NULL OR je.value ->> '$.decision' IS NULL \
+                    OR trim(je.value ->> '$.name') = '' OR trim(je.value ->> '$.decision') = '')) \
+                THEN 1 ELSE 0 END), 0), \
+            COALESCE(MIN(CASE WHEN issues.priority <= 2 AND NOT (\
+                issues.principles IS NOT NULL AND json_valid(issues.principles) \
+                AND json_array_length(issues.principles) >= 1 \
+                AND NOT EXISTS (SELECT 1 FROM json_each(issues.principles) je \
+                    WHERE je.value ->> '$.name' IS NULL OR je.value ->> '$.decision' IS NULL \
+                    OR trim(je.value ->> '$.name') = '' OR trim(je.value ->> '$.decision') = '')) \
+                THEN issues.id END), '') \
+        FROM issues \
+        WHERE status IN ({statuses}) \
+            AND issues.id NOT IN (SELECT issue_id FROM blocked_issues_cache) \
+            {defer_clause} \
+            AND (pinned = 0 OR pinned IS NULL) \
+            AND (ephemeral = 0 OR ephemeral IS NULL) \
+            AND id NOT LIKE '%-wisp-%' \
+            AND (is_template = 0 OR is_template IS NULL) \
+            AND (issues.wave IS NULL OR NOT EXISTS (\
+                SELECT 1 FROM issues lower_wave \
+                WHERE lower_wave.wave IS NOT NULL AND lower_wave.wave < issues.wave \
+                AND lower_wave.status IN ('open', 'in_progress')))"
+        );
+        let row = self.conn.query_row_with_params(&sql, &[])?;
+        Ok(ReadyNondispatchable {
+            missing_verify: row.get(0).and_then(SqliteValue::as_integer).unwrap_or(0) as usize,
+            missing_verify_example: row
+                .get(1)
+                .and_then(|v| v.as_text().map(|s| s.to_string()))
+                .unwrap_or_default(),
+            missing_principles: row.get(2).and_then(SqliteValue::as_integer).unwrap_or(0) as usize,
+            missing_principles_example: row
+                .get(3)
+                .and_then(|v| v.as_text().map(|s| s.to_string()))
+                .unwrap_or_default(),
         })
     }
 
@@ -9457,7 +9549,8 @@ impl SqliteStorage {
         sort: ReadySortPolicy,
         projection: ReadyIssueProjection,
     ) -> Result<Vec<Issue>> {
-        let readiness = self.ready_readiness_probe(filters.include_deferred)?;
+        let ready_statuses = resolved_ready_status_list(filters);
+        let readiness = self.ready_readiness_probe(&ready_statuses)?;
         if !readiness.has_candidate_status {
             return Ok(Vec::new());
         }
@@ -9589,18 +9682,7 @@ impl SqliteStorage {
         // behavior (in_progress means already claimed). `--include-deferred`
         // additionally folds in `deferred` without double-counting it if the
         // configured group already lists it.
-        let mut ready_statuses: Vec<String> = if filters.ready_statuses.is_empty() {
-            vec!["open".to_string()]
-        } else {
-            filters.ready_statuses.clone()
-        };
-        if filters.include_deferred
-            && !ready_statuses
-                .iter()
-                .any(|status| status.eq_ignore_ascii_case("deferred"))
-        {
-            ready_statuses.push("deferred".to_string());
-        }
+        let ready_statuses = resolved_ready_status_list(filters);
         // The status list is inlined as SQL string literals rather than bound
         // `?` params. Status values are internal, validated, lowercased policy
         // names (never raw user input reaching SQL); a bound `IN (?)` predicate
@@ -9612,11 +9694,8 @@ impl SqliteStorage {
         // widened groups index-coverable. Single quotes are still escaped
         // defensively in case a project configures an exotic custom status.
         {
-            let escaped: Vec<String> = ready_statuses
-                .iter()
-                .map(|status| format!("'{}'", status.replace('\'', "''")))
-                .collect();
-            let _ = write!(sql, " AND status IN ({})", escaped.join(","));
+            let list = inline_status_list(&ready_statuses);
+            let _ = write!(sql, " AND status IN ({list})");
         }
 
         // Ready condition 2: blocked issues are filtered in SQL when the cache
@@ -15462,7 +15541,7 @@ impl SqliteStorage {
         // under some SQLite builds; default gracefully instead of dropping
         // the row via `?` propagation.
         let labels: Vec<String> = row
-            .get(14)
+            .get(18)
             .and_then(SqliteValue::as_text)
             .and_then(|text| serde_json::from_str(text).ok())
             .unwrap_or_default();
@@ -32807,7 +32886,9 @@ mod tests {
             )
             .unwrap();
 
-        let readiness = storage.ready_readiness_probe(false).unwrap();
+        let readiness = storage
+            .ready_readiness_probe(&["open".to_string()])
+            .unwrap();
 
         assert!(readiness.has_candidate_status);
         assert!(

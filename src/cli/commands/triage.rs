@@ -259,6 +259,34 @@ fn claimability_reasons(
         ));
     }
 
+    // ADR-0001 §5.5 conditions 4–5 (parity with `br ready`'s SQL gate): a bead
+    // without a single-line VERIFY command — or a P≤2 bead without a valid
+    // principles citation — is not dispatchable (beads_rust-ready-empty-set-bug-g0wra).
+    match issue.verify.as_deref().map(str::trim) {
+        None | Some("") => reasons.push(format!(
+            "{} has no VERIFY command (br update {} --verify '<cmd>')",
+            pick.id, pick.id
+        )),
+        Some(v) if v.contains('\n') || v.contains('\r') => {
+            reasons.push(format!("{} VERIFY command must be a single line", pick.id));
+        }
+        _ => {}
+    }
+    if issue.priority.0 <= 2 {
+        let valid = issue
+            .principles
+            .iter()
+            .any(|c| !c.name.trim().is_empty() && !c.decision.trim().is_empty());
+        if !valid {
+            reasons.push(format!(
+                "{} is P{} and needs a principles citation (br update {} --principle 'name — decision')",
+                pick.id,
+                issue.priority.0,
+                pick.id
+            ));
+        }
+    }
+
     reasons
 }
 
