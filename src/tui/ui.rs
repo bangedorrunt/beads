@@ -234,7 +234,7 @@ fn draw_board(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         let vis_indices = groups.get(status).cloned().unwrap_or_default();
         let mut lines = vec![Line::from(Span::styled(
             format!(" {status} "),
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            theme::status_warning().add_modifier(Modifier::BOLD),
         ))];
         for &vis_idx in vis_indices
             .iter()
@@ -259,9 +259,9 @@ fn draw_board(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         frame.render_widget(
             Paragraph::new(lines).block(Block::default().borders(Borders::ALL).border_style(
                 if is_first {
-                    theme::primary()
+                    theme::border_focused()
                 } else {
-                    Style::new().fg(Color::DarkGray)
+                    theme::border_unfocused()
                 },
             )),
             col_areas[ci],
@@ -330,7 +330,7 @@ fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
             for dep in &issue.dependencies {
                 r_lines.push(Line::from(vec![
                     Span::styled(format!("  {} ", dep.dep_type.as_str()), theme::dim()),
-                    Span::styled(dep.depends_on_id.clone(), Style::new().fg(Color::Cyan)),
+                    Span::styled(dep.depends_on_id.clone(), theme::primary_fg()),
                 ]));
             }
         }
@@ -344,7 +344,7 @@ fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
             theme::dim(),
         )));
         frame.render_widget(
-            Paragraph::new(r_lines).block(Block::default().borders(Borders::ALL).title(" Edges ")),
+            Paragraph::new(r_lines).block(Block::default().borders(Borders::ALL).title(" Edges ").border_style(theme::border_unfocused())),
             detail,
         );
     }
@@ -453,7 +453,7 @@ fn draw_insights(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     {
         lines.push(Line::from(Span::styled(
             format!("  filter 🔍 {q}"),
-            Style::new().fg(Color::Yellow),
+            theme::status_warning(),
         )));
     }
     frame.render_widget(
@@ -580,7 +580,7 @@ fn draw_label_dashboard(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tu
             Span::styled(if is_sel { "› " } else { "  " }.to_string(), style),
             Span::styled(format!("{label:<18} "), style),
             Span::styled(format!("{count:>3} "), theme::dim()),
-            Span::styled(bar, Style::new().fg(Color::Cyan)),
+            Span::styled(bar, theme::primary_fg()),
         ]));
     }
     if sorted.is_empty() {
@@ -629,7 +629,7 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
                         .map(|s| {
                             Span::styled(
                                 s.content.to_string(),
-                                Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                                theme::primary_fg(),
                             )
                         })
                         .collect();
@@ -661,9 +661,9 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
                     _ => String::new(),
                 };
                 if !code_lang.is_empty() {
-                    lines.push(Line::from(Span::styled(
+                    lines.push(Line::from(                    Span::styled(
                         format!("  {} ─", code_lang),
-                        Style::new().fg(Color::DarkGray),
+                        theme::dim(),
                     )));
                 }
             }
@@ -688,7 +688,7 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
             Event::Text(text) => {
                 let mut style = Style::new();
                 if in_code_block {
-                    style = style.fg(Color::Green).bg(Color::Rgb(40, 42, 54));
+                    style = theme::status_open().bg(Color::Rgb(0x12, 0x12, 0x2a));
                     // code block lines are kept as separate lines
                     for l in text.lines() {
                         lines.push(Line::from(Span::styled(format!("    {l}"), style)));
@@ -702,16 +702,16 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
                     style = style.add_modifier(Modifier::ITALIC);
                 }
                 if heading_level > 0 {
-                    style = style.fg(Color::Cyan).add_modifier(Modifier::BOLD);
+                    style = theme::primary_fg();
                 }
                 // inline split by soft breaks already handled; just push
                 cur_spans.push(Span::styled(text.to_string(), style));
             }
             Event::Code(text) => {
                 _code_inline = true;
-                cur_spans.push(Span::styled(
+                cur_spans.push(                    Span::styled(
                     format!("`{text}`"),
-                    Style::new().fg(Color::Yellow),
+                    theme::status_warning(),
                 ));
                 _code_inline = false;
             }
@@ -915,7 +915,7 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             ),
             Span::styled(
                 issue.title.clone(),
-                Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
+                theme::row().add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(Span::styled(
@@ -940,12 +940,12 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             Span::styled("Assignee: ", theme::dim()),
             Span::styled(
                 issue.assignee.as_deref().unwrap_or("-").to_string(),
-                Style::new().fg(Color::Cyan),
+                theme::primary_fg(),
             ),
             Span::styled("  Pin: ", theme::dim()),
             Span::styled(
                 issue.pin.as_deref().unwrap_or("-").to_string(),
-                Style::new().fg(Color::Cyan),
+                theme::primary_fg(),
             ),
             Span::styled("  Wave: ", theme::dim()),
             Span::styled(
@@ -972,13 +972,13 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     if !issue.labels.is_empty() {
         lines.push(Line::from(vec![
             Span::styled("Labels: ", theme::dim()),
-            Span::styled(issue.labels.join(" • "), Style::new().fg(Color::Yellow)),
+            Span::styled(issue.labels.join(" • "), theme::status_warning()),
         ]));
     }
     if let Some(verify) = &issue.verify {
         lines.push(Line::from(vec![
             Span::styled("VERIFY: ", theme::dim()),
-            Span::styled(verify.clone(), Style::new().fg(Color::Green)),
+            Span::styled(verify.clone(), theme::status_open()),
         ]));
     }
     if !issue.principles.is_empty() {
@@ -987,7 +987,7 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("  • {} — ", p.name),
-                    Style::new().fg(Color::Magenta),
+                    theme::accent_lav(),
                 ),
                 Span::styled(p.decision.clone(), theme::row()),
             ]));
@@ -1007,7 +1007,7 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         for dep in issue.dependencies.iter().take(8) {
             lines.push(Line::from(vec![
                 Span::styled(format!("  {} ", dep.dep_type.as_str()), theme::dim()),
-                Span::styled(dep.depends_on_id.clone(), Style::new().fg(Color::Cyan)),
+                Span::styled(dep.depends_on_id.clone(), theme::primary_fg()),
             ]));
         }
         if issue.dependencies.len() > 8 {
@@ -1029,7 +1029,7 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         ]));
         for c in issue.comments.iter().take(5) {
             lines.push(Line::from(vec![
-                Span::styled(format!("  {}: ", c.author), Style::new().fg(Color::Yellow)),
+                Span::styled(format!("  {}: ", c.author), theme::status_warning()),
                 Span::styled(c.created_at.format("%m/%d").to_string(), theme::dim()),
             ]));
             // render comment body with markdown
@@ -1057,12 +1057,12 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "🎯 Triage Insight:",
-            Style::new().add_modifier(Modifier::BOLD).fg(Color::Magenta),
+            theme::accent_lav().add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  score {:.3} ", rec.score),
-                Style::new().fg(Color::Yellow),
+                theme::status_warning(),
             ),
             Span::styled(rec.action.clone(), theme::row()),
         ]));
@@ -1075,7 +1075,7 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         if rec.score > 0.5 {
             lines.push(Line::from(Span::styled(
                 "  ⚡ Quick win candidate",
-                Style::new().fg(Color::Green),
+                theme::status_open(),
             )));
         }
     }
@@ -1114,7 +1114,7 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         if analysis.has_cycles && analysis.cycle_count > 0 {
             lines.push(Line::from(Span::styled(
                 format!("  ⚠ cycles: {} in workspace", analysis.cycle_count),
-                Style::new().fg(Color::Red),
+                theme::status_blocked(),
             )));
         }
     }
@@ -1214,7 +1214,7 @@ fn draw_search_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
     let q = app.active_filter_query().unwrap_or("");
     let line = Line::from(vec![
         Span::styled(" / ", theme::primary()),
-        Span::styled(q.to_string(), Style::new().fg(Color::White)),
+        Span::styled(q.to_string(), theme::row()),
         Span::styled("  (enter keep • esc cancel)", theme::dim()),
     ]);
     frame.render_widget(Paragraph::new(line), area);
@@ -1237,7 +1237,7 @@ fn draw_shortcuts_sidebar(frame: &mut Frame, area: ratatui::layout::Rect, app: &
     ))];
     for b in &bindings[start..end] {
         lines.push(Line::from(vec![
-            Span::styled(format!(" {:>8} ", b.key), Style::new().fg(Color::Yellow)),
+            Span::styled(format!(" {:>8} ", b.key), theme::status_warning()),
             Span::styled(b.desc.to_string(), theme::row()),
             Span::styled(format!(" [{}]", b.category), theme::dim()),
         ]));
@@ -1356,7 +1356,7 @@ fn draw_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!("✓ {message}"),
-                Style::new().fg(Color::Green),
+                theme::status_open(),
             ))),
             area,
         );
@@ -1412,7 +1412,7 @@ fn draw_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(hint.to_string(), theme::dim()),
-            Span::styled(filtered_note, Style::new().fg(Color::Yellow)),
+            Span::styled(filtered_note, theme::status_warning()),
             Span::styled(" │ ", theme::dim()),
             Span::styled(format!("○{open} "), theme::status_open()),
             Span::styled(format!("●{closed} "), theme::status_closed()),

@@ -534,3 +534,17 @@ Schema discovery:
 - `br schema all --format json` emits JSON Schema documents for the main robot outputs
 - `br schema issue-details --format toon` for token-efficient schema viewing
 
+---
+
+## TUI — bare `br` (hacker-night, tui-design skill)
+
+Bare `br` in a TTY opens the interactive dashboard (`src/tui/*`, ratatui 0.30 + crossterm 0.29, ADR-0003 §3.3); `bv` is deprecated. Agents never run bare `br` — use `br --robot-triage` / `br triage|next|plan` with `--format json|toon`. `src/main.rs:84` is the TTY gate; non-TTY keeps `br --help`.
+
+**Theme:** Ghostty v2 **hacker-night** (`#08080e` void / `#c8d0e8` fg / `#0db9d7` cyan / `#bb9af7` lav / `#73daca` mint / `#e0af68` amber / `#f7768e` red / `#89ddff` ice / `#1a1a3e` selection). Single source: `src/tui/theme.rs` (`HackerNight` slots: `primary()`, `selected_row()`, `status_open`/`blocked`/`in_progress`/`closed`/`warning`, `border_focused`/`_unfocused`, `dim()`, `danger_border()`; 3-tier degrade truecolor→256→16, `NO_COLOR`/`TERM=dumb` → `Reset`). `src/tui/ui.rs` references **semantic slots only** — never hardcodes hex/ANSI (skill §4).
+
+**Layout:** body + footer (1 line); split list+detail at `>100` cols, single-column `≤100` (board stacks at `≤80`, `src/tui/ui.rs:171`); shortcuts sidebar 34 cols (`;`/F2, `src/tui/app.rs:44` + `keys.rs:34`); search bar 1 line (`/`, `app::Focus::Search`); view overlays (board/graph/actionable/insights/tree/label) replace body. Test at 80×24 / 120×40 / 200×60, inside tmux, with `NO_COLOR=1` and `COLORTERM=truecolor`.
+
+**Interaction:** vim `j/k, g/G, ctrl+d/u`, `?` help overlay (restores `focus_before_help`), `/` search, `b/g/a/i/E/[/` view toggles, `enter` drill-down, `q`/`esc` pop layers (quit-confirm at top list). `src/tui/keys.rs:34` `REGISTRY` is the authoritative binding doc. Footer is context-aware; status message `✓` replaces bar and clears on next keypress. Use `tui-design` skill before touching TUI (layout §1, responsive §2, interaction §3 inc. four keyboard layers + focus + three-tier help, visual hierarchy §4, animation §6, anti-patterns §7, checklist §9).
+
+**Verify:** `cargo test --lib` (keys + theme), cargo-TTY manual: `cargo run` (bare) → `j/k`, `b` board, `?` help, `;` sidebar, `br` + `NO_COLOR=1` disables color.
+
