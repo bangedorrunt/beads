@@ -534,70 +534,6 @@ where
                 return Err(operation_err);
             }
 
-            // GitHub #441: a `-wal-cert` sidecar left behind by a different
-            // fsqlite engine generation fails every cert-regenerating write
-            // while reads stay healthy. The certificate is derived state, so
-            // the fix is to quarantine the sidecar pair (verified backups in
-            // `.br_recovery`; the `-wal` file is real data and is never
-            // touched), reopen the healthy database in place, and retry the
-            // write once — without the JSONL rebuild below, which is heavier
-            // and wedges when the JSONL merge anchor is stale. Only attempted
-            // while the main database file is present: a missing database is
-            // the orphaned-sidecar open path's job, not this one's.
-            if crate::config::is_stale_wal_certificate_version_error(&operation_err)
-                && storage_ctx.paths.db_path.is_file()
-                && !storage_ctx.no_db
-            {
-                match storage_ctx.quarantine_stale_wal_certificate_sidecars_and_reopen() {
-                    Ok(quarantined_paths) => {
-                        tracing::warn!(
-                            command = command,
-                            original_error = %operation_err,
-                            db_path = %storage_ctx.paths.db_path.display(),
-                            quarantined_paths = ?quarantined_paths,
-                            "Write hit a stale parallel-WAL certificate sidecar; quarantined the certificate sidecars and retrying the write once"
-                        );
-                        return operation(&mut storage_ctx.storage).map_err(|retry_err| {
-                            BeadsError::WithContext {
-                                context: format!(
-                                    "retry after quarantining stale WAL-certificate sidecars ({}) failed during {command} write; original write error: {operation_err}",
-                                    quarantined_paths
-                                        .iter()
-                                        .map(|path| path.display().to_string())
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                ),
-                                source: Box::new(retry_err),
-                            }
-                        });
-                    }
-                    Err(quarantine_err) => {
-                        if storage_ctx.database_transition_is_fail_closed() {
-                            tracing::error!(
-                                command = command,
-                                original_error = %operation_err,
-                                quarantine_error = %quarantine_err,
-                                db_path = %storage_ctx.paths.db_path.display(),
-                                "Stale parallel-WAL certificate recovery left storage fail-closed; refusing JSONL recovery"
-                            );
-                            return Err(BeadsError::WithContext {
-                                context: format!(
-                                    "stale WAL-certificate recovery failed during {command} write and left storage without a verified persistent database handle; refusing JSONL recovery; original write error: {operation_err}"
-                                ),
-                                source: Box::new(quarantine_err),
-                            });
-                        }
-                        tracing::warn!(
-                            command = command,
-                            original_error = %operation_err,
-                            quarantine_error = %quarantine_err,
-                            db_path = %storage_ctx.paths.db_path.display(),
-                            "Failed to quarantine stale parallel-WAL certificate sidecars after restoring persistent storage; evaluating JSONL recovery"
-                        );
-                    }
-                }
-            }
-
             let mut recovery_signal =
                 should_attempt_mutation_jsonl_recovery(storage_ctx, &operation_err, None);
             let mut probe_error: Option<BeadsError> = None;
@@ -910,45 +846,6 @@ mod tests {
                 .get_issue("bd-1")
                 .expect("load issue")
                 .is_some()
-        );
-    }
-
-    #[test]
-    fn stale_wal_certificate_recovery_surfaces_fail_closed_transition() {
-        let (_temp, mut storage_ctx) = storage_ctx_with_exported_issue();
-        storage_ctx.mark_database_transition_failed_closed_for_test();
-        let mut attempts = 0;
-
-        let error = retry_mutation_with_jsonl_recovery(
-            &mut storage_ctx,
-            true,
-            "update",
-            Some("bd-1"),
-            |_storage| -> crate::Result<()> {
-                attempts += 1;
-                Err(BeadsError::Database(FrankenError::WalCorrupt {
-                    detail: "parallel WAL certificate suffix has unsupported record version 999"
-                        .to_string(),
-                }))
-            },
-        )
-        .expect_err("a fail-closed storage transition must stop mutation recovery");
-
-        assert_eq!(attempts, 1, "fail-closed recovery must not retry the write");
-        let BeadsError::WithContext { context, source } = error else {
-            panic!("expected transition context, got {error:?}");
-        };
-        assert!(
-            context.contains("without a verified persistent database handle")
-                && context.contains("refusing JSONL recovery")
-                && context.contains("unsupported record version 999"),
-            "unexpected retry context: {context}"
-        );
-        assert!(
-            source
-                .to_string()
-                .contains("prior database-handle transition"),
-            "the causal transition error must be preserved: {source}"
         );
     }
 
