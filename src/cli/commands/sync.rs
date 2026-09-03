@@ -2726,9 +2726,6 @@ fn execute_flush(
 
     // Output result
     let cleared_dirty = export_result.exported_marked_at.len();
-    // Only a downgraded publication is worth a field: the atomic protocol is
-    // the documented default, and keeping the field absent leaves every
-    // existing `--json` consumer and golden untouched (#419).
     let result = FlushResult {
         exported_issues: report.issues_exported,
         exported_dependencies: report.dependencies_exported,
