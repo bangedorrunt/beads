@@ -550,7 +550,7 @@ where
         Err(operation_err) => {
             if !allow_recovery || !matches!(operation_err, BeadsError::Database(_)) {
                 return Err(operation_err);
-            }            // Fail-closed storage transition (upstream 8d5af3a0, adapted):
+            } // Fail-closed storage transition (upstream 8d5af3a0, adapted):
             // when a storage-replacement transition could not restore a
             // verified persistent database handle, surface the transition
             // error instead of attempting recovery through the in-memory
@@ -901,10 +901,13 @@ mod tests {
             Some("bd-1"),
             |_storage| -> crate::Result<()> {
                 attempts += 1;
-                Err(BeadsError::Database(crate::storage::db::DbError::DatabaseCorrupt {
-                    detail: "parallel WAL certificate suffix has unsupported record version 999"
-                        .to_string(),
-                }))
+                Err(BeadsError::Database(
+                    crate::storage::db::DbError::DatabaseCorrupt {
+                        detail:
+                            "parallel WAL certificate suffix has unsupported record version 999"
+                                .to_string(),
+                    },
+                ))
             },
         )
         .expect_err("a fail-closed storage transition must stop mutation recovery");
@@ -920,7 +923,9 @@ mod tests {
             "unexpected retry context: {context}"
         );
         assert!(
-            source.to_string().contains("unsupported record version 999"),
+            source
+                .to_string()
+                .contains("unsupported record version 999"),
             "the causal transition error must be preserved: {source}"
         );
     }
