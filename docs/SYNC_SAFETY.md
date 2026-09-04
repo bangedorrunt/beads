@@ -116,6 +116,7 @@ target is still never overwritten, and any witness mismatch fails closed.
 |-------|-----------------|----------|
 | **Conflict marker scan** | Importing unresolved merge conflicts | **None** - must resolve conflicts |
 | **Schema validation** | Importing malformed JSON | **None** - must fix JSONL |
+| **Global positive comment-ID uniqueness** | Silently reallocating one of two cross-issue comments that claim the same persisted identity | **None** - renumber one source comment explicitly |
 | **Tombstone protection** | Resurrecting deleted issues | **None** - by design |
 
 ### Merge Guards
