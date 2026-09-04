@@ -360,6 +360,7 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            revision: 1,
             id: id.to_string(),
             title: title.to_string(),
             description: Some("Test description".to_string()),

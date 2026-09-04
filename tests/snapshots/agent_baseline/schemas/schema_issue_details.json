@@ -66,6 +66,13 @@
           "$ref": "#/$defs/Blast",
           "default": "normal"
         },
+        "revision": {
+          "description": "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 1
+        },
         "title": {
           "description": "Title (1-500 chars).",
           "type": "string"
@@ -363,6 +370,7 @@
         "id",
         "ac_shape",
         "blast",
+        "revision",
         "title",
         "status",
         "priority",

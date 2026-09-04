@@ -4504,6 +4504,8 @@ fn additive_issues_semantically_equal(left: &Issue, right: &Issue) -> bool {
     }
     canonicalize_additive_issue(&mut left);
     canonicalize_additive_issue(&mut right);
+    left.revision = 1;
+    right.revision = 1;
     left == right
 }
 
@@ -4518,6 +4520,8 @@ fn additive_relations_semantically_equal(left: &Issue, right: &Issue) -> bool {
     }
     canonicalize_additive_issue(&mut left);
     canonicalize_additive_issue(&mut right);
+    left.revision = 1;
+    right.revision = 1;
     left.labels == right.labels
         && left.dependencies == right.dependencies
         && left.comments == right.comments
@@ -4543,6 +4547,10 @@ fn additive_scalar_update_witness(
         object.remove("labels");
         object.remove("dependencies");
         object.remove("comments");
+        // Revision is a local monotonic mutation token, not source scalar
+        // content. It is assigned by the target transaction and must not
+        // appear as a scalar drift in an additive reconciliation witness.
+        object.remove("revision");
     }
     let before = before.as_object().ok_or_else(|| {
         BeadsError::Config("Existing scalar witness was not an object".to_string())
@@ -5032,6 +5040,7 @@ fn parse_strict_additive_issue(trimmed: &str, line_num: usize) -> Result<Issue> 
         "close_verdict",
         "ac_shape",
         "blast",
+        "revision",
         "deleted_at",
         "deleted_by",
         "delete_reason",
@@ -7031,6 +7040,12 @@ fn plan_additive_reconcile_in_snapshot(
                 }
 
                 let mut persisted_issue = issue.clone();
+                persisted_issue.revision = existing.revision.checked_add(1).ok_or_else(|| {
+                    BeadsError::Config(format!(
+                        "Issue revision overflow during additive reconciliation for {}",
+                        issue.id
+                    ))
+                })?;
                 persisted_issue.labels.clone_from(&existing.labels);
                 persisted_issue
                     .dependencies
@@ -15157,6 +15172,7 @@ mod tests {
 
     fn make_test_issue(id: &str, title: &str) -> Issue {
         Issue {
+            revision: 1,
             verify: None,
             principles: Vec::new(),
             wave: None,
@@ -15759,6 +15775,7 @@ mod tests {
     fn make_issue_at(id: &str, title: &str, updated_at: chrono::DateTime<Utc>) -> Issue {
         let created_at = updated_at - chrono::Duration::seconds(60);
         Issue {
+            revision: 1,
             verify: None,
             principles: Vec::new(),
             wave: None,
@@ -17102,9 +17119,11 @@ mod tests {
             Some("true")
         );
         let stored = hydrate_additive_database_issues(&storage).unwrap();
+        let mut expected_shared = source_equal.clone();
+        expected_shared.revision = 2;
         assert_eq!(
             stored["bd-shared"],
-            canonical_additive_test_issue(source_equal)
+            canonical_additive_test_issue(expected_shared)
         );
         assert_eq!(stored["bd-db-only"], canonical_additive_test_issue(db_only));
     }
@@ -18481,6 +18500,7 @@ mod tests {
         issues.insert(
             "bd-base".to_string(),
             Issue {
+                revision: 1,
                 id: "bd-base".to_string(),
                 title: "New base snapshot".to_string(),
                 ..Issue::default()
@@ -18530,6 +18550,7 @@ mod tests {
         issues.insert(
             "bd-base".to_string(),
             Issue {
+                revision: 1,
                 id: "bd-base".to_string(),
                 title: "New base snapshot".to_string(),
                 ..Issue::default()
@@ -18567,6 +18588,7 @@ mod tests {
         issues.insert(
             "bd-z".to_string(),
             Issue {
+                revision: 1,
                 id: "bd-z".to_string(),
                 title: "Last".to_string(),
                 ..Issue::default()
@@ -18575,6 +18597,7 @@ mod tests {
         issues.insert(
             "bd-a".to_string(),
             Issue {
+                revision: 1,
                 id: "bd-a".to_string(),
                 title: "First".to_string(),
                 ..Issue::default()
@@ -22266,6 +22289,7 @@ mod tests {
     ) -> Issue {
         let created_at = updated_at - chrono::Duration::seconds(60);
         Issue {
+            revision: 1,
             verify: None,
             principles: Vec::new(),
             wave: None,

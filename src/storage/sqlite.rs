@@ -1616,12 +1616,12 @@ impl ReadyIssueProjection {
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
                          sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
-                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast"
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision"
             }
             Self::Command => {
                 r"SELECT id, title, description, acceptance_criteria, notes, status, priority,
                          issue_type, assignee, owner, estimated_minutes, created_at, created_by,
-                         updated_at, verify, principles, wave, pin"
+                         updated_at, verify, principles, wave, pin, revision"
             }
             Self::StructuredCommand => {
                 r"SELECT id, title, description, acceptance_criteria, notes, status, priority,
@@ -1629,10 +1629,10 @@ impl ReadyIssueProjection {
                          updated_at, verify, principles, wave, pin,
                          (SELECT json_group_array(label ORDER BY label)
                           FROM labels
-                          WHERE labels.issue_id = issues.id)"
+                          WHERE labels.issue_id = issues.id), revision"
             }
             Self::Summary => {
-                r"SELECT id, title, status, priority, issue_type, created_at, updated_at"
+                r"SELECT id, title, status, priority, issue_type, created_at, updated_at, revision"
             }
         }
     }
@@ -1658,13 +1658,13 @@ impl SearchIssueProjection {
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
                          sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
-                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision
                   FROM issues
                   WHERE 1=1"
             }
             Self::CommandText => {
                 r"SELECT id, title, description, status, priority, issue_type, assignee,
-                         created_at, updated_at
+                         created_at, updated_at, revision
                   FROM issues
                   WHERE 1=1"
             }
@@ -1691,12 +1691,12 @@ impl BlockedIssueProjection {
                      i.compacted_at, i.compacted_at_commit, i.original_size, i.sender, i.ephemeral,
                      i.pinned, i.is_template, i.source_repo_path, i.agent_context,
                      i.verify, i.principles, i.wave, i.pin, i.commit_sha,
-                     i.close_verdict, i.ac_shape, i.blast,
+                     i.close_verdict, i.ac_shape, i.blast, i.revision,
                      bc.blocked_by"
             }
             Self::Command => {
                 r"SELECT i.id, i.title, i.description, i.status, i.priority, i.issue_type,
-                         i.created_at, i.created_by, i.updated_at, bc.blocked_by"
+                         i.created_at, i.created_by, i.updated_at, i.revision, bc.blocked_by"
             }
         }
     }
@@ -1710,23 +1710,22 @@ impl BlockedIssueProjection {
                      due_at, defer_until, external_ref, source_system, source_repo,
                      deleted_at, deleted_by, delete_reason, original_type, compaction_level,
                      compacted_at, compacted_at_commit, original_size, sender, ephemeral,
-                     pinned, is_template, source_repo_path, agent_context"
+                     pinned, is_template, source_repo_path, agent_context,
+                     verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision"
             }
             Self::Command => {
                 r"SELECT id, title, description, status, priority, issue_type,
-                         created_at, created_by, updated_at"
+                         created_at, created_by, updated_at, revision"
             }
         }
     }
 
     const fn cached_blocked_by_index(self) -> usize {
         match self {
-            // Bumped from 37 → 38 after `agent_context` was appended
-            // to the Full SELECT at position 37 (beads#297).
-            // Source_repo_path is at 36, agent_context is at 37, so
-            // bc.blocked_by lands at 38 in the joined projection.
-            Self::Full => 38,
-            Self::Command => 9,
+            // Full cached projection has issue columns 0..46, followed by
+            // `bc.blocked_by` at position 47.
+            Self::Full => 47,
+            Self::Command => 10,
         }
     }
 
@@ -6420,8 +6419,9 @@ impl SqliteStorage {
                     compaction_level, compacted_at, compacted_at_commit, original_size,
                     sender, ephemeral, pinned, is_template, agent_context,
                     verify, principles, wave, pin, commit_sha, close_verdict,
-                    ac_shape, blast
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ac_shape, blast, revision
+                 ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 &[
                     SqliteValue::from(issue.id.as_str()),
                     SqliteValue::from(content_hash.as_str()),
@@ -6478,6 +6478,7 @@ impl SqliteStorage {
                         crate::model::Blast::Normal => "normal",
                         crate::model::Blast::High => "high",
                     }),
+                    SqliteValue::from(i64::try_from(issue.revision).unwrap_or(i64::MAX)),
                 ],
             )?;
 
@@ -7061,6 +7062,16 @@ impl SqliteStorage {
             }
         }
 
+        if let Some(expected) = updates.expected_revision
+            && expected != issue.revision
+        {
+            return Err(BeadsError::StaleRevision {
+                issue_id: id.to_string(),
+                expected,
+                actual: Some(issue.revision),
+            });
+        }
+
         let mut set_clauses: Vec<String> = vec![];
         let mut params: Vec<SqliteValue> = vec![];
 
@@ -7426,6 +7437,13 @@ impl SqliteStorage {
                 val.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
             );
         }
+        if let Some(ref val) = updates.close_verdict {
+            issue.close_verdict.clone_from(val);
+            add_update(
+                "close_verdict",
+                val.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
+            );
+        }
         if let Some(val) = updates.blast {
             issue.blast = val;
             add_update("blast", SqliteValue::from(blast_as_str(val)));
@@ -7433,6 +7451,44 @@ impl SqliteStorage {
         if let Some(val) = updates.ac_shape {
             issue.ac_shape = val;
             add_update("ac_shape", SqliteValue::from(ac_shape_as_str(val)));
+        }
+
+        if let Some(metadata) = &updates.close_metadata {
+            if issue.status != Status::Closed {
+                return Err(BeadsError::validation(
+                    "close_metadata",
+                    format!("issue {id}: close metadata requires a closed status"),
+                ));
+            }
+            let gates_json =
+                serde_json::to_string(&metadata.policy_gates_fired).map_err(BeadsError::from)?;
+            conn.execute_with_params(
+                "INSERT OR REPLACE INTO close_metadata (
+                    issue_id, closed_by_agent_name, closed_by_harness, closed_by_model,
+                    bypassed_policy, bypass_reason, policy_gates_fired, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                &[
+                    SqliteValue::from(id),
+                    metadata
+                        .agent_name
+                        .as_deref()
+                        .map_or(SqliteValue::Null, SqliteValue::from),
+                    metadata
+                        .harness
+                        .as_deref()
+                        .map_or(SqliteValue::Null, SqliteValue::from),
+                    metadata
+                        .model
+                        .as_deref()
+                        .map_or(SqliteValue::Null, SqliteValue::from),
+                    SqliteValue::from(i64::from(metadata.bypassed_policy)),
+                    metadata
+                        .bypass_reason
+                        .as_deref()
+                        .map_or(SqliteValue::Null, SqliteValue::from),
+                    SqliteValue::from(gates_json.as_str()),
+                ],
+            )?;
         }
 
         if set_clauses.is_empty() {
@@ -7453,11 +7509,29 @@ impl SqliteStorage {
         set_clauses.push("content_hash = ?".to_string());
         params.push(SqliteValue::from(new_hash));
 
+        // Every successful durable issue update advances the CAS token exactly
+        // once. The SQL predicate below makes the increment part of the same
+        // atomic write as the field mutation.
+        issue.revision = issue
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| BeadsError::Config(format!("issue {id} revision exhausted")))?;
+        set_clauses.push("revision = ?".to_string());
+        params.push(SqliteValue::from(
+            i64::try_from(issue.revision).unwrap_or(i64::MAX),
+        ));
+
         // Build and execute SQL. Claim operations use an additional
         // compare-and-set predicate so exactly one contender can win even
         // if two writers both observed the row as unassigned earlier.
         let mut where_clause = "id = ?".to_string();
         params.push(SqliteValue::from(id));
+        if let Some(expected_revision) = updates.expected_revision {
+            where_clause.push_str(" AND revision = ?");
+            params.push(SqliteValue::from(
+                i64::try_from(expected_revision).unwrap_or(i64::MAX),
+            ));
+        }
         if updates.expect_unassigned {
             where_clause.push_str(" AND (assignee IS NULL OR TRIM(assignee) = ''");
             if !updates.claim_exclusive
@@ -7478,6 +7552,21 @@ impl SqliteStorage {
         );
         let updated_rows = conn.execute_with_params(&sql, &params)?;
         if updated_rows == 0 {
+            if let Some(expected) = updates.expected_revision {
+                let actual = conn
+                    .query_row_with_params(
+                        "SELECT revision FROM issues WHERE id = ?",
+                        &[SqliteValue::from(id)],
+                    )
+                    .ok()
+                    .and_then(|row| row.get(0).and_then(SqliteValue::as_integer))
+                    .and_then(|value| u64::try_from(value).ok());
+                return Err(BeadsError::StaleRevision {
+                    issue_id: id.to_string(),
+                    expected,
+                    actual,
+                });
+            }
             if updates.expect_unassigned {
                 let current_assignee = match conn.query_row_with_params(
                     "SELECT assignee FROM issues WHERE id = ?",
@@ -7521,11 +7610,37 @@ impl SqliteStorage {
         reason: &str,
         deleted_at: Option<DateTime<Utc>>,
     ) -> Result<Issue> {
+        self.delete_issue_with_expected_revision(id, actor, reason, deleted_at, None)
+    }
+
+    /// Tombstone an issue only if it still has the caller's observed revision.
+    ///
+    /// The revision predicate is evaluated in the same write transaction as the
+    /// tombstone update, so a stale delete cannot overwrite a newer claim or
+    /// status transition.
+    #[allow(clippy::too_many_lines)]
+    pub fn delete_issue_with_expected_revision(
+        &mut self,
+        id: &str,
+        actor: &str,
+        reason: &str,
+        deleted_at: Option<DateTime<Utc>>,
+        expected_revision: Option<u64>,
+    ) -> Result<Issue> {
         let issue = self
             .get_issue(id)?
             .ok_or_else(|| BeadsError::IssueNotFound { id: id.to_string() })?;
 
         if issue.status == Status::Tombstone {
+            if let Some(expected) = expected_revision
+                && expected != issue.revision
+            {
+                return Err(BeadsError::StaleRevision {
+                    issue_id: id.to_string(),
+                    expected,
+                    actual: Some(issue.revision),
+                });
+            }
             return Ok(issue);
         }
 
@@ -7536,6 +7651,10 @@ impl SqliteStorage {
         let mut tombstone_issue = issue;
         tombstone_issue.status = Status::Tombstone;
         let tombstone_hash = crate::util::content_hash(&tombstone_issue);
+        let next_revision = tombstone_issue
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| BeadsError::Config(format!("issue {id} revision exhausted")))?;
 
         let capacity_policy = self.workflow_capacity_policy.clone();
         let tombstone_assignee = tombstone_issue.assignee.clone();
@@ -7566,26 +7685,57 @@ impl SqliteStorage {
                 "tombstone",
                 actor,
             )?;
-            conn.execute_with_params(
-                "UPDATE issues SET
-                    content_hash = ?,
-                    status = 'tombstone',
-                    deleted_at = ?,
-                    deleted_by = ?,
-                    delete_reason = ?,
-                    original_type = ?,
-                    updated_at = ?
-                 WHERE id = ?",
-                &[
-                    SqliteValue::from(tombstone_hash.as_str()),
-                    SqliteValue::from(timestamp.to_rfc3339()),
-                    SqliteValue::from(actor),
-                    SqliteValue::from(reason),
-                    SqliteValue::from(original_type.as_str()),
-                    SqliteValue::from(Utc::now().to_rfc3339()),
-                    SqliteValue::from(id),
-                ],
+            let mut where_clause = "id = ?".to_string();
+            let mut update_params = vec![
+                SqliteValue::from(tombstone_hash.as_str()),
+                SqliteValue::from(timestamp.to_rfc3339()),
+                SqliteValue::from(actor),
+                SqliteValue::from(reason),
+                SqliteValue::from(original_type.as_str()),
+                SqliteValue::from(Utc::now().to_rfc3339()),
+                SqliteValue::from(i64::try_from(next_revision).unwrap_or(i64::MAX)),
+                SqliteValue::from(id),
+            ];
+            if let Some(expected) = expected_revision {
+                where_clause.push_str(" AND revision = ?");
+                update_params.push(SqliteValue::from(
+                    i64::try_from(expected).unwrap_or(i64::MAX),
+                ));
+            }
+            let updated_rows = conn.execute_with_params(
+                &format!(
+                    "UPDATE issues SET
+                        content_hash = ?,
+                        status = 'tombstone',
+                        deleted_at = ?,
+                        deleted_by = ?,
+                        delete_reason = ?,
+                        original_type = ?,
+                        updated_at = ?,
+                        revision = ?
+                     WHERE {where_clause}"
+                ),
+                &update_params,
             )?;
+            if updated_rows == 0 {
+                if let Some(expected) = expected_revision {
+                    let actual = conn
+                        .query_row_with_params(
+                            "SELECT revision FROM issues WHERE id = ?",
+                            &[SqliteValue::from(id)],
+                        )
+                        .ok()
+                        .and_then(|row| row.get(0).and_then(SqliteValue::as_integer))
+                        .and_then(|value| u64::try_from(value).ok());
+                    return Err(BeadsError::StaleRevision {
+                        issue_id: id.to_string(),
+                        expected,
+                        actual,
+                    });
+                }
+                return Err(BeadsError::IssueNotFound { id: id.to_string() });
+            }
+
             conn.execute_with_params(
                 "DELETE FROM close_metadata WHERE issue_id = ?",
                 &[SqliteValue::from(id)],
@@ -7777,7 +7927,7 @@ impl SqliteStorage {
                    deleted_at, deleted_by, delete_reason, original_type,
                    compaction_level, compacted_at, compacted_at_commit, original_size,
                    sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
-                   verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast
+                   verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision
             FROM issues
             WHERE id = ?
         ";
@@ -7818,7 +7968,7 @@ impl SqliteStorage {
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
                          sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
-                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision
                   FROM issues WHERE id IN ({})",
                 placeholders.join(",")
             );
@@ -8144,7 +8294,7 @@ impl SqliteStorage {
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
                          sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
-                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision
                   FROM issues
                   WHERE {status_filter}
                     AND (is_template = 0 OR is_template IS NULL)
@@ -8213,7 +8363,7 @@ impl SqliteStorage {
         }
 
         let mut sql = String::from(
-            "SELECT id, title, status, priority, issue_type, created_at, updated_at
+            "SELECT id, title, status, priority, issue_type, created_at, updated_at, revision
              FROM issues
              WHERE status NOT IN ('closed', 'tombstone')
                AND (is_template = 0 OR is_template IS NULL)
@@ -8256,7 +8406,7 @@ impl SqliteStorage {
 
             let query_limit = remaining.saturating_add(offset);
             let rows = self.conn.query_with_params(
-                "SELECT id, title, status, priority, issue_type, created_at, updated_at
+                "SELECT id, title, status, priority, issue_type, created_at, updated_at, revision
                  FROM issues INDEXED BY idx_issues_list_active_order
                  WHERE status NOT IN ('closed', 'tombstone')
                    AND COALESCE(is_template, 0) = 0
@@ -8324,7 +8474,8 @@ impl SqliteStorage {
         }
 
         let mut sql = String::from(
-            "SELECT id, title, status, priority, issue_type, assignee, created_at, updated_at
+            "SELECT id, title, status, priority, issue_type, assignee,
+             created_at, updated_at, revision
              FROM issues WHERE 1=1",
         );
         let mut params = Vec::new();
@@ -8422,7 +8573,7 @@ impl SqliteStorage {
             // for the principles rule, verify/principles for the schema), so
             // this projection carries them instead of re-hydrating full rows.
             "SELECT id, title, description, status, priority, issue_type, \
-             created_at, updated_at, verify, principles
+             created_at, updated_at, verify, principles, revision
              FROM issues WHERE 1=1",
         );
         let mut params = Vec::new();
@@ -8521,7 +8672,7 @@ impl SqliteStorage {
         }
 
         let rows = self.conn.query(
-            "SELECT id, title, status, priority, issue_type, created_at, updated_at
+            "SELECT id, title, status, priority, issue_type, created_at, updated_at, revision
              FROM issues
              WHERE status IN ('open', 'in_progress')
                AND (is_template = 0 OR is_template IS NULL)
@@ -8583,7 +8734,7 @@ impl SqliteStorage {
         }
 
         let rows = self.conn.query(
-            "SELECT id, title, status, priority, issue_type, created_at, updated_at
+            "SELECT id, title, status, priority, issue_type, created_at, updated_at, revision
              FROM issues
              WHERE status NOT IN ('closed', 'tombstone')
                AND (is_template = 0 OR is_template IS NULL)
@@ -11827,6 +11978,23 @@ impl SqliteStorage {
             .collect())
     }
 
+    /// Return the greatest durable issue revision, or zero for an empty store.
+    ///
+    /// This is used as the source witness in publication manifests; timestamps
+    /// are deliberately not used as concurrency or publication identity.
+    pub fn max_issue_revision(&self) -> Result<u64> {
+        let row = self
+            .conn
+            .query_row("SELECT COALESCE(MAX(revision), 0) FROM issues")?;
+        let revision = row.get(0).and_then(SqliteValue::as_integer).unwrap_or(0);
+        Ok(u64::try_from(revision).unwrap_or(0))
+    }
+
+    /// Get all issue IDs in the database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub fn get_all_ids(&self) -> Result<Vec<String>> {
         let rows = self.conn.query("SELECT id FROM issues ORDER BY id")?;
         Ok(rows
@@ -11836,7 +12004,7 @@ impl SqliteStorage {
     }
 
     /// IDs of closed issues that carry a `close_verdict` — the set whose
-    /// closes must be provable from the gates.jsonl sidecar (ADR-0001 §5.4).
+    /// closes must be provable from the `gates.jsonl` sidecar (ADR-0001 §5.4).
     ///
     /// # Errors
     ///
@@ -12062,7 +12230,7 @@ impl SqliteStorage {
             }
 
             conn.execute_with_params(
-                "UPDATE issues SET updated_at = ? WHERE id = ?",
+                "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                 &[
                     SqliteValue::from(Utc::now().to_rfc3339()),
                     SqliteValue::from(issue_id),
@@ -12259,7 +12427,7 @@ impl SqliteStorage {
 
             for issue_id in &touched_issue_ids {
                 conn.execute_with_params(
-                    "UPDATE issues SET updated_at = ? WHERE id = ?",
+                    "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                     &[
                         SqliteValue::from(now.as_str()),
                         SqliteValue::from(issue_id.as_str()),
@@ -12299,7 +12467,7 @@ impl SqliteStorage {
 
             if rows > 0 {
                 conn.execute_with_params(
-                    "UPDATE issues SET updated_at = ? WHERE id = ?",
+                    "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                     &[
                         SqliteValue::from(Utc::now().to_rfc3339()),
                         SqliteValue::from(issue_id),
@@ -12350,14 +12518,14 @@ impl SqliteStorage {
                 let now = Utc::now().to_rfc3339();
 
                 conn.execute_with_params(
-                    "UPDATE issues SET updated_at = ? WHERE id = ?",
+                    "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                     &[SqliteValue::from(now.as_str()), SqliteValue::from(issue_id)],
                 )?;
 
                 for chunk in affected.chunks(400) {
                     for id in chunk {
                         conn.execute_with_params(
-                            "UPDATE issues SET updated_at = ? WHERE id = ?",
+                            "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                             &[
                                 SqliteValue::from(now.as_str()),
                                 SqliteValue::from(id.as_str()),
@@ -12410,7 +12578,7 @@ impl SqliteStorage {
 
             if rows > 0 {
                 conn.execute_with_params(
-                    "UPDATE issues SET updated_at = ? WHERE id = ?",
+                    "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                     &[
                         SqliteValue::from(Utc::now().to_rfc3339()),
                         SqliteValue::from(issue_id),
@@ -12533,7 +12701,7 @@ impl SqliteStorage {
             }
 
             conn.execute_with_params(
-                "UPDATE issues SET updated_at = ? WHERE id = ?",
+                "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                 &[
                     SqliteValue::from(Utc::now().to_rfc3339()),
                     SqliteValue::from(issue_id),
@@ -12622,7 +12790,7 @@ impl SqliteStorage {
             ctx.mark_dirty(issue_id);
 
             conn.execute_with_params(
-                "UPDATE issues SET updated_at = ? WHERE id = ?",
+                "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                 &[
                     SqliteValue::from(Utc::now().to_rfc3339()),
                     SqliteValue::from(issue_id),
@@ -12814,7 +12982,7 @@ impl SqliteStorage {
                     );
                     conn.execute_with_params(
                         &format!(
-                            "UPDATE issues SET updated_at = ? WHERE id IN ({})",
+                            "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id IN ({})",
                             update_placeholders.join(",")
                         ),
                         &update_params,
@@ -12857,7 +13025,7 @@ impl SqliteStorage {
 
             if rows > 0 {
                 conn.execute_with_params(
-                    "UPDATE issues SET updated_at = ? WHERE id = ?",
+                    "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                     &[
                         SqliteValue::from(Utc::now().to_rfc3339()),
                         SqliteValue::from(issue_id),
@@ -13019,7 +13187,7 @@ impl SqliteStorage {
                     );
                     conn.execute_with_params(
                         &format!(
-                            "UPDATE issues SET updated_at = ? WHERE id IN ({})",
+                            "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id IN ({})",
                             update_placeholders.join(",")
                         ),
                         &update_params,
@@ -13047,7 +13215,7 @@ impl SqliteStorage {
 
             if rows > 0 {
                 conn.execute_with_params(
-                    "UPDATE issues SET updated_at = ? WHERE id = ?",
+                    "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                     &[
                         SqliteValue::from(Utc::now().to_rfc3339()),
                         SqliteValue::from(issue_id),
@@ -13159,7 +13327,7 @@ impl SqliteStorage {
                 ctx.mark_dirty(issue_id);
 
                 conn.execute_with_params(
-                    "UPDATE issues SET updated_at = ? WHERE id = ?",
+                    "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                     &[
                         SqliteValue::from(Utc::now().to_rfc3339()),
                         SqliteValue::from(issue_id),
@@ -13498,7 +13666,7 @@ impl SqliteStorage {
                 ctx.mark_dirty(issue_id);
 
                 conn.execute_with_params(
-                    "UPDATE issues SET updated_at = ? WHERE id = ?",
+                    "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                     &[
                         SqliteValue::from(now.as_str()),
                         SqliteValue::from(issue_id.as_str()),
@@ -13664,7 +13832,7 @@ impl SqliteStorage {
             let comment_id = insert_comment_row(conn, issue_id, author, text)?;
 
             conn.execute_with_params(
-                "UPDATE issues SET updated_at = ? WHERE id = ?",
+                "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                 &[
                     SqliteValue::from(Utc::now().to_rfc3339()),
                     SqliteValue::from(issue_id),
@@ -14514,7 +14682,7 @@ impl SqliteStorage {
                            compacted_at, compacted_at_commit, original_size, sender, ephemeral,
                            pinned, is_template, source_repo_path, agent_context,
                            verify, principles, wave, pin, commit_sha,
-                           close_verdict, ac_shape, blast
+                           close_verdict, ac_shape, blast, revision
                     FROM issues
                     WHERE (ephemeral = 0 OR ephemeral IS NULL)
                       AND id NOT LIKE '%-wisp-%'
@@ -15465,6 +15633,11 @@ impl SqliteStorage {
             close_verdict: get_non_empty_str(43),
             ac_shape: parse_ac_shape(row.get(44).and_then(SqliteValue::as_text)),
             blast: parse_blast(row.get(45).and_then(SqliteValue::as_text)),
+            revision: row
+                .get(46)
+                .and_then(SqliteValue::as_integer)
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(1),
             labels: vec![],
             dependencies: vec![],
             comments: vec![],
@@ -15497,6 +15670,11 @@ impl SqliteStorage {
         };
 
         Ok(Issue {
+            revision: row
+                .get(18)
+                .and_then(SqliteValue::as_integer)
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(1),
             id: get_str(0),
             content_hash: None,
             title: get_str(1),
@@ -15566,6 +15744,11 @@ impl SqliteStorage {
             .and_then(|text| serde_json::from_str(text).ok())
             .unwrap_or_default();
         issue.labels = labels;
+        issue.revision = row
+            .get(19)
+            .and_then(SqliteValue::as_integer)
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or(1);
         Ok(issue)
     }
 
@@ -15590,6 +15773,11 @@ impl SqliteStorage {
         };
 
         Ok(Issue {
+            revision: row
+                .get(9)
+                .and_then(SqliteValue::as_integer)
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(1),
             id: get_str(0),
             content_hash: None,
             title: get_str(1),
@@ -15663,6 +15851,11 @@ impl SqliteStorage {
         };
 
         Ok(Issue {
+            revision: row
+                .get(8)
+                .and_then(SqliteValue::as_integer)
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(1),
             id: get_str(0),
             content_hash: None,
             title: get_str(1),
@@ -15736,6 +15929,11 @@ impl SqliteStorage {
         };
 
         Ok(Issue {
+            revision: row
+                .get(10)
+                .and_then(SqliteValue::as_integer)
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(1),
             id: get_str(0),
             content_hash: None,
             title: get_str(1),
@@ -15809,6 +16007,11 @@ impl SqliteStorage {
         };
 
         Ok(Issue {
+            revision: row
+                .get(9)
+                .and_then(SqliteValue::as_integer)
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(1),
             id: get_str(0),
             content_hash: None,
             title: get_str(1),
@@ -15876,6 +16079,11 @@ impl SqliteStorage {
         };
 
         Ok(Issue {
+            revision: row
+                .get(7)
+                .and_then(SqliteValue::as_integer)
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(1),
             id: get_str(0),
             content_hash: None,
             title: get_str(1),
@@ -16247,6 +16455,17 @@ pub struct CloseMetadataRow {
     pub recorded_at: String,
 }
 
+/// Closure witness written in the same transaction as the status mutation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloseMetadataUpdate {
+    pub agent_name: Option<String>,
+    pub harness: Option<String>,
+    pub model: Option<String>,
+    pub bypassed_policy: bool,
+    pub bypass_reason: Option<String>,
+    pub policy_gates_fired: Vec<String>,
+}
+
 /// Lean issue row used by the stats command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatsIssueRow {
@@ -16311,6 +16530,11 @@ pub struct IssueUpdate {
     pub wave: Option<Option<u32>>,
     pub pin: Option<Option<String>>,
     pub commit_sha: Option<Option<String>>,
+    pub close_verdict: Option<Option<String>>,
+    /// Optional closure witness persisted in the same transaction as the
+    /// issue status mutation. This is intentionally storage-shaped so the
+    /// close command cannot accidentally fall back to a second transaction.
+    pub close_metadata: Option<CloseMetadataUpdate>,
     pub blast: Option<crate::model::Blast>,
     pub ac_shape: Option<crate::model::AcShape>,
     /// Audited reason for explicitly bypassing workflow transition gates and
@@ -16327,6 +16551,9 @@ pub struct IssueUpdate {
     pub claim_exclusive: bool,
     /// The actor performing the claim (used for idempotent same-actor check).
     pub claim_actor: Option<String>,
+    /// Optional optimistic-concurrency token. When set, the update must apply
+    /// to exactly this issue revision inside the write transaction.
+    pub expected_revision: Option<u64>,
 }
 
 impl IssueUpdate {
@@ -16362,8 +16589,11 @@ impl IssueUpdate {
             && self.wave.is_none()
             && self.pin.is_none()
             && self.commit_sha.is_none()
+            && self.close_verdict.is_none()
+            && self.close_metadata.is_none()
             && self.blast.is_none()
             && self.ac_shape.is_none()
+            && self.expected_revision.is_none()
             && !self.expect_unassigned
     }
 }
@@ -17619,7 +17849,7 @@ impl SqliteStorage {
                      compacted_at, compacted_at_commit, original_size, sender, ephemeral,
                      pinned, is_template, source_repo_path, agent_context,
                      verify, principles, wave, pin, commit_sha,
-                     close_verdict, ac_shape, blast
+                     close_verdict, ac_shape, blast, revision
                FROM issues WHERE external_ref = ?",
             &[SqliteValue::from(external_ref)],
         ) {
@@ -17644,7 +17874,7 @@ impl SqliteStorage {
                      compacted_at, compacted_at_commit, original_size, sender, ephemeral,
                      pinned, is_template, source_repo_path, agent_context,
                      verify, principles, wave, pin, commit_sha,
-                     close_verdict, ac_shape, blast
+                     close_verdict, ac_shape, blast, revision
                FROM issues WHERE content_hash = ?",
             &[SqliteValue::from(content_hash)],
         ) {
@@ -17776,6 +18006,7 @@ impl SqliteStorage {
                 crate::model::Blast::Normal => "normal",
                 crate::model::Blast::High => "high",
             }),
+            SqliteValue::from(i64::try_from(issue.revision).unwrap_or(i64::MAX)),
         ]
     }
 
@@ -17785,9 +18016,9 @@ impl SqliteStorage {
     pub(crate) fn import_issue_raw_row_for_witness(issue: &Issue) -> Result<Vec<SqliteValue>> {
         let timestamps = ImportIssueTimestampStrings::from_issue(issue);
         let mut fields = Self::import_issue_field_values(issue, &timestamps);
-        if fields.len() != 45 {
+        if fields.len() != 46 {
             return Err(BeadsError::Config(format!(
-                "Import issue raw witness expected 45 fields, found {}",
+                "Import issue raw witness expected 46 fields, found {}",
                 fields.len()
             )));
         }
@@ -17803,15 +18034,15 @@ impl SqliteStorage {
         let agent_context = fields.pop().ok_or_else(|| {
             BeadsError::Config("Import issue raw witness lost the agent_context field".to_string())
         })?;
-        let mut row = Vec::with_capacity(46);
+        let mut row = Vec::with_capacity(47);
         row.push(SqliteValue::from(issue.id.as_str()));
         row.extend(fields);
         row.push(source_repo_path);
         row.push(agent_context);
         row.extend(v18_tail);
-        if row.len() != 46 {
+        if row.len() != 47 {
             return Err(BeadsError::Config(format!(
-                "Import issue raw witness expected 46 columns, found {}",
+                "Import issue raw witness expected 47 columns, found {}",
                 row.len()
             )));
         }
@@ -17837,11 +18068,11 @@ impl SqliteStorage {
                 compacted_at, compacted_at_commit, original_size, sender, ephemeral,
                 pinned, is_template, agent_context,
                 verify, principles, wave, pin, commit_sha, close_verdict,
-                ac_shape, blast
+                ac_shape, blast, revision
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )",
             &insert_params,
         )?;
@@ -17855,6 +18086,11 @@ impl SqliteStorage {
         timestamps: &ImportIssueTimestampStrings,
     ) -> Result<usize> {
         let mut params = Self::import_issue_field_values(issue, timestamps);
+        // An import is a durable local mutation. Preserve the local CAS
+        // sequence instead of replacing it with a source repository's token.
+        let _source_revision = params.pop().ok_or_else(|| {
+            BeadsError::Config("Import issue update lost the source revision field".to_string())
+        })?;
         params.push(SqliteValue::from(issue.id.as_str()));
         let rows = self.conn.execute_with_params(
             r"UPDATE issues SET
@@ -17868,7 +18104,8 @@ impl SqliteStorage {
                 compacted_at = ?, compacted_at_commit = ?, original_size = ?, sender = ?,
                 ephemeral = ?, pinned = ?, is_template = ?, agent_context = ?,
                 verify = ?, principles = ?, wave = ?, pin = ?,
-                commit_sha = ?, close_verdict = ?, ac_shape = ?, blast = ?
+                commit_sha = ?, close_verdict = ?, ac_shape = ?, blast = ?,
+                revision = revision + 1
               WHERE id = ?",
             &params,
         )?;
@@ -18026,6 +18263,41 @@ impl SqliteStorage {
         Ok(())
     }
 
+    fn advance_issue_revision_in_tx(&self, issue_id: &str) -> Result<()> {
+        let row = self.conn.query_row_with_params(
+            "SELECT revision FROM issues WHERE id = ?",
+            &[SqliteValue::from(issue_id)],
+        )?;
+        let current = row
+            .get(0)
+            .and_then(SqliteValue::as_integer)
+            .and_then(|value| u64::try_from(value).ok())
+            .ok_or_else(|| {
+                BeadsError::Config(format!("issue {issue_id} has an invalid revision"))
+            })?;
+        let next = current
+            .checked_add(1)
+            .ok_or_else(|| BeadsError::Config(format!("issue {issue_id} revision exhausted")))?;
+        // Revision is a local CAS token (ADR-0004), not source content identity:
+        // advancing it must not invent a new `updated_at`. The caller's source
+        // timestamp already describes this state, and overwriting it here would
+        // make the row look newer than the JSONL that produced it, turning
+        // identical re-imports into perpetual "database newer" conflicts.
+        let changed = self.conn.execute_with_params(
+            "UPDATE issues SET revision = ? WHERE id = ?",
+            &[
+                SqliteValue::from(i64::try_from(next).unwrap_or(i64::MAX)),
+                SqliteValue::from(issue_id),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(BeadsError::IssueNotFound {
+                id: issue_id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     /// Sync labels for an issue (remove existing, add new).
     ///
     /// # Errors
@@ -18043,8 +18315,31 @@ impl SqliteStorage {
         issue_id: &str,
         labels: &[String],
     ) -> Result<()> {
+        self.sync_labels_for_import_in_tx_with_revision(issue_id, labels, true)
+    }
+
+    fn sync_labels_for_import_in_tx_with_revision(
+        &self,
+        issue_id: &str,
+        labels: &[String],
+        advance_revision: bool,
+    ) -> Result<()> {
         let unique_labels = unique_label_refs(labels);
         validate_storage_label_refs(&unique_labels)?;
+
+        let existing_rows = self.conn.query_with_params(
+            "SELECT label FROM labels WHERE issue_id = ? ORDER BY label",
+            &[SqliteValue::from(issue_id)],
+        )?;
+        let existing_labels = existing_rows
+            .iter()
+            .filter_map(|row| row.get(0).and_then(SqliteValue::as_text))
+            .collect::<Vec<_>>();
+        let desired_labels = unique_labels
+            .iter()
+            .map(|label| label.as_str())
+            .collect::<Vec<_>>();
+        let relation_changed = existing_labels != desired_labels;
 
         // Remove existing labels
         self.conn.execute_with_params(
@@ -18052,7 +18347,13 @@ impl SqliteStorage {
             &[SqliteValue::from(issue_id)],
         )?;
 
-        self.insert_label_refs_for_import(issue_id, &unique_labels)
+        self.insert_label_refs_for_import(issue_id, &unique_labels)?;
+        if advance_revision && relation_changed {
+            self.advance_issue_revision_in_tx(issue_id)?;
+            self.replace_dirty_issue_marker_in_tx(issue_id, &Utc::now().to_rfc3339())?;
+            self.set_metadata_in_tx("needs_flush", "true")?;
+        }
+        Ok(())
     }
 
     fn insert_labels_for_import(&self, issue_id: &str, labels: &[String]) -> Result<()> {
@@ -18106,15 +18407,90 @@ impl SqliteStorage {
         issue_id: &str,
         dependencies: &[crate::model::Dependency],
     ) -> Result<()> {
-        let unique_deps = Self::validated_unique_import_dependencies(issue_id, dependencies)?;
+        self.sync_dependencies_for_import_in_tx_with_revision(issue_id, dependencies, true)
+    }
 
-        // Remove existing dependencies where this issue is the dependent
+    fn sync_dependencies_for_import_in_tx_with_revision(
+        &self,
+        issue_id: &str,
+        dependencies: &[crate::model::Dependency],
+        advance_revision: bool,
+    ) -> Result<()> {
+        let unique_deps = Self::validated_unique_import_dependencies(issue_id, dependencies)?;
+        let existing_rows = self.conn.query_with_params(
+            "SELECT depends_on_id, type, created_at, created_by, metadata, thread_id
+             FROM dependencies WHERE issue_id = ? ORDER BY depends_on_id",
+            &[SqliteValue::from(issue_id)],
+        )?;
+        let existing_deps = existing_rows
+            .iter()
+            .map(|row| {
+                (
+                    row.get(0).and_then(SqliteValue::as_text).unwrap_or(""),
+                    row.get(1).and_then(SqliteValue::as_text).unwrap_or(""),
+                    row.get(2).and_then(SqliteValue::as_text).unwrap_or(""),
+                    row.get(3).and_then(SqliteValue::as_text).unwrap_or(""),
+                    row.get(4).and_then(SqliteValue::as_text).unwrap_or("{}"),
+                    row.get(5).and_then(SqliteValue::as_text).unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>();
+        let desired_deps = unique_deps
+            .iter()
+            .map(|dep| {
+                (
+                    dep.depends_on_id.as_str(),
+                    dep.dep_type.as_str(),
+                    dep.created_at.to_rfc3339(),
+                    dep.created_by.as_deref().unwrap_or("import").to_string(),
+                    dep.metadata.as_deref().unwrap_or("{}").to_string(),
+                    dep.thread_id.as_deref().unwrap_or("").to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let relation_changed = existing_deps
+            .iter()
+            .map(
+                |(target, kind, created_at, created_by, metadata, thread_id)| {
+                    (
+                        *target,
+                        *kind,
+                        *created_at,
+                        *created_by,
+                        *metadata,
+                        *thread_id,
+                    )
+                },
+            )
+            .collect::<Vec<_>>()
+            != desired_deps
+                .iter()
+                .map(
+                    |(target, kind, created_at, created_by, metadata, thread_id)| {
+                        (
+                            *target,
+                            *kind,
+                            created_at.as_str(),
+                            created_by.as_str(),
+                            metadata.as_str(),
+                            thread_id.as_str(),
+                        )
+                    },
+                )
+                .collect::<Vec<_>>();
+
+        // Remove existing dependencies where this issue is the dependent.
         self.conn.execute_with_params(
             "DELETE FROM dependencies WHERE issue_id = ?",
             &[SqliteValue::from(issue_id)],
         )?;
-
-        self.insert_dependency_refs_for_import(issue_id, &unique_deps)
+        self.insert_dependency_refs_for_import(issue_id, &unique_deps)?;
+        if advance_revision && relation_changed {
+            self.advance_issue_revision_in_tx(issue_id)?;
+            self.replace_dirty_issue_marker_in_tx(issue_id, &Utc::now().to_rfc3339())?;
+            self.set_metadata_in_tx("needs_flush", "true")?;
+        }
+        Ok(())
     }
 
     fn insert_dependencies_for_import(
@@ -18251,15 +18627,62 @@ impl SqliteStorage {
         issue_id: &str,
         comments: &[crate::model::Comment],
     ) -> Result<()> {
-        validate_import_comments_for_issue(issue_id, comments)?;
+        self.sync_comments_for_import_in_tx_with_revision(issue_id, comments, true)
+    }
 
-        // Remove existing comments
+    fn sync_comments_for_import_in_tx_with_revision(
+        &self,
+        issue_id: &str,
+        comments: &[crate::model::Comment],
+        advance_revision: bool,
+    ) -> Result<()> {
+        validate_import_comments_for_issue(issue_id, comments)?;
+        let existing_rows = self.conn.query_with_params(
+            "SELECT author, text, created_at FROM comments WHERE issue_id = ?
+             ORDER BY created_at, id",
+            &[SqliteValue::from(issue_id)],
+        )?;
+        let existing_comments = existing_rows
+            .iter()
+            .map(|row| {
+                (
+                    row.get(0).and_then(SqliteValue::as_text).unwrap_or(""),
+                    row.get(1).and_then(SqliteValue::as_text).unwrap_or(""),
+                    row.get(2).and_then(SqliteValue::as_text).unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>();
+        let desired_comments = comments
+            .iter()
+            .map(|comment| {
+                (
+                    comment.author.as_str(),
+                    comment.body.as_str(),
+                    comment.created_at.to_rfc3339(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let relation_changed = existing_comments
+            .iter()
+            .map(|(author, text, created_at)| (*author, *text, *created_at))
+            .collect::<Vec<_>>()
+            != desired_comments
+                .iter()
+                .map(|(author, text, created_at)| (*author, *text, created_at.as_str()))
+                .collect::<Vec<_>>();
+
+        // Remove existing comments.
         self.conn.execute_with_params(
             "DELETE FROM comments WHERE issue_id = ?",
             &[SqliteValue::from(issue_id)],
         )?;
-
-        self.insert_comment_rows_for_import(issue_id, comments)
+        self.insert_comment_rows_for_import(issue_id, comments)?;
+        if advance_revision && relation_changed {
+            self.advance_issue_revision_in_tx(issue_id)?;
+            self.replace_dirty_issue_marker_in_tx(issue_id, &Utc::now().to_rfc3339())?;
+            self.set_metadata_in_tx("needs_flush", "true")?;
+        }
+        Ok(())
     }
 
     /// Delete comments owned by issues that an outer import transaction will
@@ -18320,9 +18743,13 @@ impl SqliteStorage {
     pub(crate) fn upsert_issue_and_relations_for_import(&self, issue: &Issue) -> Result<bool> {
         self.with_connection_write_transaction(|_| {
             let changed = self.upsert_issue_for_import_in_tx(issue)?;
-            self.sync_labels_for_import_in_tx(&issue.id, &issue.labels)?;
-            self.sync_dependencies_for_import_in_tx(&issue.id, &issue.dependencies)?;
-            self.sync_comments_for_import_in_tx(&issue.id, &issue.comments)?;
+            self.sync_labels_for_import_in_tx_with_revision(&issue.id, &issue.labels, false)?;
+            self.sync_dependencies_for_import_in_tx_with_revision(
+                &issue.id,
+                &issue.dependencies,
+                false,
+            )?;
+            self.sync_comments_for_import_in_tx_with_revision(&issue.id, &issue.comments, false)?;
             Ok(changed)
         })
     }
@@ -18571,7 +18998,8 @@ impl SqliteStorage {
                         deleted_by = ?,
                         delete_reason = ?,
                         original_type = ?,
-                        updated_at = ?
+                        updated_at = ?,
+                        revision = revision + 1
                      WHERE id = ?",
                     &[
                         SqliteValue::from(tombstone_hash.as_str()),
@@ -18625,7 +19053,7 @@ impl SqliteStorage {
                     ],
                 )?;
                 storage.conn.execute_with_params(
-                    "UPDATE issues SET updated_at = ? WHERE id = ?",
+                    "UPDATE issues SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                     &[
                         SqliteValue::from(created_at.as_str()),
                         SqliteValue::from(issue_id.as_str()),
@@ -19417,6 +19845,7 @@ mod tests {
         defer_until: Option<DateTime<Utc>>,
     ) -> Issue {
         Issue {
+            revision: 1,
             id: id.to_string(),
             title: title.to_string(),
             status,
@@ -22564,6 +22993,7 @@ mod tests {
     fn test_create_issue() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let issue = Issue {
+            revision: 1,
             id: "bd-1".to_string(),
             title: "Test Issue".to_string(),
             status: Status::Open,
@@ -23391,6 +23821,127 @@ mod tests {
         assert_eq!(updated.description.as_deref(), Some("New description"));
     }
 
+    #[test]
+    fn test_update_issue_revision_increments_and_rejects_stale_writer() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap();
+        storage
+            .create_issue(
+                &make_issue("bd-revision", "CAS issue", Status::Open, 2, None, t1, None),
+                "tester",
+            )
+            .unwrap();
+        storage.clear_all_dirty_issues().unwrap();
+
+        let observed = storage.get_issue("bd-revision").unwrap().unwrap();
+        assert_eq!(observed.revision, 1);
+
+        let updated = storage
+            .update_issue(
+                "bd-revision",
+                &IssueUpdate {
+                    title: Some("CAS issue updated".to_string()),
+                    expected_revision: Some(observed.revision),
+                    ..IssueUpdate::default()
+                },
+                "tester",
+            )
+            .unwrap();
+        assert_eq!(updated.revision, 2);
+        assert_eq!(updated.title, "CAS issue updated");
+
+        let stale = storage
+            .update_issue(
+                "bd-revision",
+                &IssueUpdate {
+                    priority: Some(Priority::HIGH),
+                    expected_revision: Some(observed.revision),
+                    ..IssueUpdate::default()
+                },
+                "late-writer",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            stale,
+            BeadsError::StaleRevision {
+                issue_id,
+                expected: 1,
+                actual: Some(2),
+            } if issue_id == "bd-revision"
+        ));
+
+        let reread = storage.get_issue("bd-revision").unwrap().unwrap();
+        assert_eq!(reread.revision, 2);
+        assert_eq!(reread.priority, Priority::MEDIUM);
+        assert_eq!(reread.title, "CAS issue updated");
+    }
+
+    #[test]
+    fn test_delete_issue_revision_cas_and_increment() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap();
+        storage
+            .create_issue(
+                &make_issue(
+                    "bd-delete-revision",
+                    "Delete CAS",
+                    Status::Open,
+                    2,
+                    None,
+                    t1,
+                    None,
+                ),
+                "tester",
+            )
+            .unwrap();
+
+        let observed = storage.get_issue("bd-delete-revision").unwrap().unwrap();
+        assert_eq!(observed.revision, 1);
+        storage
+            .update_issue(
+                "bd-delete-revision",
+                &IssueUpdate {
+                    title: Some("Changed before delete".to_string()),
+                    expected_revision: Some(observed.revision),
+                    ..IssueUpdate::default()
+                },
+                "writer",
+            )
+            .unwrap();
+
+        let stale = storage
+            .delete_issue_with_expected_revision(
+                "bd-delete-revision",
+                "deleter",
+                "stale delete",
+                None,
+                Some(observed.revision),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            stale,
+            BeadsError::StaleRevision {
+                issue_id,
+                expected: 1,
+                actual: Some(2),
+            } if issue_id == "bd-delete-revision"
+        ));
+        let unchanged = storage.get_issue("bd-delete-revision").unwrap().unwrap();
+        assert_eq!(unchanged.status, Status::Open);
+        assert_eq!(unchanged.revision, 2);
+
+        let deleted = storage
+            .delete_issue_with_expected_revision(
+                "bd-delete-revision",
+                "deleter",
+                "current delete",
+                None,
+                Some(unchanged.revision),
+            )
+            .unwrap();
+        assert_eq!(deleted.status, Status::Tombstone);
+        assert_eq!(deleted.revision, 3);
+    }
     #[test]
     fn test_update_issue_writes_source_repo_path() {
         // Regression for #289: `br update --source-repo-path PATH` must
@@ -26035,6 +26586,7 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2025, 7, 4, 0, 0, 0).unwrap();
 
         let issue = Issue {
+            revision: 1,
             id: "bd-c1".to_string(),
             content_hash: None,
             title: "Comment issue".to_string(),
@@ -26124,6 +26676,7 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2025, 7, 4, 0, 0, 0).unwrap();
 
         let issue = Issue {
+            revision: 1,
             id: "bd-c-invalid".to_string(),
             content_hash: None,
             title: "Comment issue".to_string(),
@@ -26207,6 +26760,7 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2025, 7, 4, 0, 0, 0).unwrap();
 
         let issue = Issue {
+            revision: 1,
             id: "bd-c-numeric-time".to_string(),
             content_hash: None,
             title: "Comment issue".to_string(),
@@ -26347,6 +26901,7 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2025, 7, 4, 0, 0, 0).unwrap();
 
         let issue = Issue {
+            revision: 1,
             id: "bd-c2".to_string(),
             content_hash: None,
             title: "Comment issue".to_string(),
@@ -26968,6 +27523,7 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2025, 7, 4, 0, 0, 0).unwrap();
 
         let issue = Issue {
+            revision: 1,
             id: "bd-c3".to_string(),
             content_hash: None,
             title: "Comment issue".to_string(),
@@ -29298,6 +29854,7 @@ mod tests {
     fn test_upsert_issue_for_import_coalesces_optional_text_fields_to_empty_strings() {
         let storage = SqliteStorage::open_memory().unwrap();
         let issue = Issue {
+            revision: 1,
             id: "bd-import-null-optional-text".to_string(),
             title: "Import null optional text".to_string(),
             ..Issue::default()
@@ -32143,7 +32700,8 @@ mod tests {
                 commit_sha TEXT,
                 close_verdict TEXT,
                 ac_shape TEXT NOT NULL DEFAULT 'checkable',
-                blast TEXT NOT NULL DEFAULT 'normal'
+                blast TEXT NOT NULL DEFAULT 'normal',
+                revision INTEGER NOT NULL DEFAULT 1
             );
             CREATE TABLE dependencies (
                 issue_id TEXT NOT NULL,

@@ -15,7 +15,7 @@ use crate::error::{BeadsError, Result};
 use crate::format::sanitize_terminal_inline;
 use crate::model::{Issue, IssueType, Status};
 use crate::output::OutputContext;
-use crate::storage::{EventAttribution, IssueUpdate, SqliteStorage};
+use crate::storage::{CloseMetadataUpdate, EventAttribution, IssueUpdate, SqliteStorage};
 use crate::util::id::{IdResolver, ResolverConfig};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,8 @@ pub struct CloseArgs {
     /// ADR-0001 §5.3: SHA of the commit whose message cites the bead id.
     /// Required on close unless policy is bypassed by an operator.
     pub commit_sha: Option<String>,
+    /// Expected issue revision for optimistic-concurrency protection.
+    pub expected_revision: Option<u64>,
 }
 
 impl From<&CliCloseArgs> for CloseArgs {
@@ -67,6 +69,7 @@ impl From<&CliCloseArgs> for CloseArgs {
             bypass_policy: cli.bypass_policy,
             bypass_reason: cli.bypass_reason.clone(),
             commit_sha: cli.commit_sha.clone(),
+            expected_revision: cli.expected_revision,
         }
     }
 }
@@ -1284,6 +1287,24 @@ fn run_close_core(
             } else {
                 None
             },
+            commit_sha: Some(args.commit_sha.clone()),
+            close_verdict: Some(
+                policy_evaluations_by_id
+                    .get(id)
+                    .and_then(|evaluation| evaluation.close_verdict.clone()),
+            ),
+            close_metadata: policy_active.then(|| CloseMetadataUpdate {
+                agent_name: attribution.agent_name.clone(),
+                harness: attribution.harness.clone(),
+                model: attribution.model.clone(),
+                bypassed_policy: args.bypass_policy && !gates_fired.is_empty(),
+                bypass_reason: args
+                    .bypass_policy
+                    .then(|| args.bypass_reason.clone())
+                    .flatten(),
+                policy_gates_fired: gates_fired.clone(),
+            }),
+            expected_revision: args.expected_revision,
             skip_cache_rebuild: true,
             ..Default::default()
         };
@@ -1320,35 +1341,8 @@ fn run_close_core(
         cache_dirty = true;
     }
 
-    for (outcome_index, id, issue, gates_fired, now, close_reason) in planned_closes {
+    for (outcome_index, id, issue, _gates_fired, now, close_reason) in planned_closes {
         tracing::info!(id = %id, reason = ?args.reason, "Issue closed");
-
-        if policy_active {
-            // Best-effort persistence of attribution + bypass auditing. Failure
-            // to record metadata never undoes a successful close: the close
-            // already committed, and burning down a successful close because of
-            // an optional auxiliary table would be a regression for users whose
-            // schema could not migrate. We log and move on.
-            let bypass_reason = if args.bypass_policy {
-                args.bypass_reason.as_deref()
-            } else {
-                None
-            };
-            let metadata_result = storage_ctx.storage.record_close_metadata(
-                &id,
-                &attribution,
-                args.bypass_policy && !gates_fired.is_empty(),
-                bypass_reason,
-                &gates_fired,
-            );
-            if let Err(error) = metadata_result {
-                tracing::warn!(
-                    issue_id = %id,
-                    error = %error,
-                    "failed to record closure-time policy metadata; close already committed"
-                );
-            }
-        }
 
         let closed = ClosedIssue {
             id: id.clone(),
@@ -1551,6 +1545,7 @@ mod tests {
             bypass_policy: true,
             bypass_reason: Some("Manual override approved".to_string()),
             commit_sha: None,
+            expected_revision: None,
         };
         assert_eq!(args.ids.len(), 2);
         assert_eq!(args.ids[0], "bd-abc");
@@ -1987,6 +1982,7 @@ mod tests {
             bypass_policy: true,
             bypass_reason: Some("Clone bypass reason".to_string()),
             commit_sha: None,
+            expected_revision: None,
         };
         let cloned = args.clone();
         assert_eq!(cloned.ids, args.ids);

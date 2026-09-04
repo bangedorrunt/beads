@@ -2688,12 +2688,40 @@ fn execute_flush(
 
     // Write manifest if requested (atomic: temp + fsync + durable_rename)
     let manifest_path = if args.manifest {
+        // `br.publication.v1` is the clone-visible publication contract. The
+        // generation is deterministic for one issue/gate byte pair and schema
+        // version; wall-clock time remains useful metadata but is not identity.
+        let mut generation_hasher = Sha256::new();
+        generation_hasher.update(export_result.content_hash.as_bytes());
+        generation_hasher.update(gates_export.content_hash.as_bytes());
+        generation_hasher.update(crate::storage::schema::CURRENT_SCHEMA_VERSION.to_le_bytes());
+        let generation_digest = generation_hasher.finalize();
+        let generation = u64::from_be_bytes(
+            generation_digest[..8]
+                .try_into()
+                .expect("SHA-256 digest has at least eight bytes"),
+        );
+        let source_revision = storage.max_issue_revision()?;
         let manifest = serde_json::json!({
+            "format": "br.publication.v1",
+            "generation": generation,
+            "schema_version": crate::storage::schema::CURRENT_SCHEMA_VERSION,
             "export_time": chrono::Utc::now().to_rfc3339(),
+            "issues_sha256": export_result.content_hash,
+            "gates_sha256": gates_export.content_hash,
             "issues_count": export_result.exported_count,
+            "gates_count": gates_export.exported_count,
+            "issues_line_count": export_result.exported_count,
+            "gates_line_count": gates_export.exported_count,
+            "source_revision": source_revision,
             "content_hash": export_result.content_hash,
             "exported_ids": export_result.exported_ids,
             "policy": report.policy_used,
+            "filters": {
+                "include_ephemeral": false,
+                "include_memories": false,
+                "excluded_owners": []
+            },
             "errors": &report.errors,
         });
         let manifest_file = path_policy.manifest_path.clone();
@@ -4960,6 +4988,7 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            revision: 1,
             id: id.to_string(),
             content_hash: None,
             title: title.to_string(),

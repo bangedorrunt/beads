@@ -49,6 +49,7 @@ fn seed_issue(storage: &mut SqliteStorage, id: &str, assignee: Option<&str>) {
         close_verdict: None,
         ac_shape: beads::model::AcShape::Checkable,
         blast: beads::model::Blast::Normal,
+        revision: 1,
         compaction_level: None,
         compacted_at: None,
         compacted_at_commit: None,

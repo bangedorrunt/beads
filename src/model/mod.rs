@@ -492,6 +492,10 @@ pub enum AcShape {
     Judgment,
 }
 
+fn default_issue_revision() -> u64 {
+    1
+}
+
 /// The primary issue entity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct Issue {
@@ -531,6 +535,11 @@ pub struct Issue {
     /// ADR-0001 §5.2: blast-radius band (defaults to normal).
     #[serde(default)]
     pub blast: Blast,
+    /// ADR-0004: monotonic durable CAS token for issue mutations. It is not
+    /// part of content identity and defaults to one for legacy JSONL records.
+    #[serde(default = "default_issue_revision")]
+    pub revision: u64,
+
     /// Content hash for deduplication and sync.
     #[serde(skip)]
     pub content_hash: Option<String>,
@@ -708,6 +717,7 @@ impl Default for Issue {
             close_verdict: None,
             ac_shape: AcShape::Checkable,
             blast: Blast::Normal,
+            revision: 1,
             id: String::new(),
             content_hash: None,
             title: String::new(),
@@ -1078,6 +1088,7 @@ mod tests {
             close_verdict: None,
             ac_shape: AcShape::Checkable,
             blast: Blast::Normal,
+            revision: 1,
             id: "bd-123".to_string(),
             content_hash: Some("abc".to_string()),
             title: "Test Issue".to_string(),
@@ -1555,6 +1566,7 @@ mod tests {
             close_verdict: None,
             ac_shape: AcShape::Checkable,
             blast: Blast::Normal,
+            revision: 1,
             id: "bd-test".to_string(),
             content_hash: None,
             title: "Test Title".to_string(),

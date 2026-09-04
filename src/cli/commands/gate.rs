@@ -163,6 +163,8 @@ fn execute_report(
 
     crate::util::set_last_touched_id(beads_dir, &issue_id);
 
+    publish_gate_sidecar(&storage_ctx.storage, beads_dir, cli)?;
+
     let output = GateReportOutput {
         id: record.id,
         issue_id: issue_id.clone(),
@@ -192,6 +194,37 @@ fn execute_report(
             output.status_revision,
         ));
     }
+    Ok(())
+}
+
+fn publish_gate_sidecar(
+    storage: &crate::storage::SqliteStorage,
+    beads_dir: &Path,
+    cli: &config::CliOverrides,
+) -> Result<()> {
+    // Gate proofs are durable ledger state, not ordinary issue-dirty state.
+    // Publish the sidecar while the workspace/database authority is still
+    // held, so a subsequent close or doctor invocation sees the same proof
+    // that this command just recorded. The sidecar has its own stable
+    // authority because it is atomically replaced independently of issues.jsonl.
+    let gates_path = beads_dir.join("gates.jsonl");
+    let gates_authority =
+        crate::sync::blocking_jsonl_family_write_lock_with_timeout(&gates_path, cli.lock_timeout)?;
+    let gates_export = crate::sync::export_gates_to_jsonl(
+        storage,
+        &gates_path,
+        &crate::sync::ExportConfig {
+            beads_dir: Some(beads_dir.to_path_buf()),
+            ..crate::sync::ExportConfig::default()
+        },
+    )?;
+    gates_authority.verify_jsonl_authority()?;
+    tracing::debug!(
+        gates = gates_export.exported_count,
+        path = %gates_path.display(),
+        content_hash = %gates_export.content_hash,
+        "Published gate verdict sidecar"
+    );
     Ok(())
 }
 
@@ -509,6 +542,7 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            revision: 1,
             id: id.to_string(),
             title: format!("issue {id}"),
             status,
@@ -555,6 +589,9 @@ mod tests {
         assert_eq!(results[0].provider, "ci");
         assert!(results[0].passed);
         assert_eq!(results[0].note.as_deref(), Some("build #42"));
+        let gates_path = beads_dir.join("gates.jsonl");
+        let gates = fs::read_to_string(gates_path).expect("gate sidecar should be published");
+        assert!(gates.contains("ci_green"));
     }
 
     #[test]

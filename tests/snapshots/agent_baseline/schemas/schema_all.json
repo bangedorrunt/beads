@@ -2728,7 +2728,6 @@
     "Issue": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "title": "Issue",
-      "description": "The primary issue entity.",
       "type": "object",
       "properties": {
         "id": {
@@ -2788,6 +2787,13 @@
           "description": "ADR-0001 §5.2: blast-radius band (defaults to normal).",
           "$ref": "#/$defs/Blast",
           "default": "normal"
+        },
+        "revision": {
+          "description": "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 1
         },
         "title": {
           "description": "Title (1-500 chars).",
@@ -3039,6 +3045,7 @@
         "id",
         "ac_shape",
         "blast",
+        "revision",
         "title",
         "status",
         "priority",
@@ -3311,6 +3318,13 @@
           "description": "ADR-0001 §5.2: blast-radius band (defaults to normal).",
           "$ref": "#/$defs/Blast",
           "default": "normal"
+        },
+        "revision": {
+          "description": "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 1
         },
         "title": {
           "description": "Title (1-500 chars).",
@@ -3609,6 +3623,7 @@
         "id",
         "ac_shape",
         "blast",
+        "revision",
         "title",
         "status",
         "priority",
@@ -4088,6 +4103,13 @@
           "$ref": "#/$defs/Blast",
           "default": "normal"
         },
+        "revision": {
+          "description": "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 1
+        },
         "title": {
           "description": "Title (1-500 chars).",
           "type": "string"
@@ -4348,6 +4370,7 @@
         "id",
         "ac_shape",
         "blast",
+        "revision",
         "title",
         "status",
         "priority",

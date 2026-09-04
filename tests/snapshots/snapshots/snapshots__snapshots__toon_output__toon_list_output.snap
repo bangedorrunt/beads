@@ -6,6 +6,7 @@ issues[5]:
   - id: bd-blocker
     ac_shape: checkable
     blast: normal
+    revision: 1
     title: "00 Blocking Root"
     description: Unblocks dependent work
     status: open
@@ -23,6 +24,7 @@ issues[5]:
   - id: bd-ready-p0
     ac_shape: checkable
     blast: normal
+    revision: 1
     title: "01 Ready Critical Unassigned"
     status: open
     priority: 0
@@ -39,6 +41,7 @@ issues[5]:
   - id: bd-ready-p1-assigned
     ac_shape: checkable
     blast: normal
+    revision: 1
     title: "02 Ready Assigned Feature"
     status: open
     priority: 1
@@ -57,6 +60,7 @@ issues[5]:
   - id: bd-blocked
     ac_shape: checkable
     blast: normal
+    revision: 1
     title: "03 Blocked By Root"
     status: open
     priority: 1
@@ -73,6 +77,7 @@ issues[5]:
   - id: bd-closed
     ac_shape: checkable
     blast: normal
+    revision: 1
     title: "04 Closed Done"
     status: closed
     priority: 2

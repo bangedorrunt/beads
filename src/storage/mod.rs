@@ -26,6 +26,6 @@ pub(crate) use sqlite::BulkDependencyInsert;
 pub(crate) use sqlite::ChangelogIssueRow;
 
 pub use sqlite::{
-    CloseMetadataRow, EventAttribution, IssueUpdate, ListFilters, ReadyFilters, ReadySortPolicy,
-    SqliteStorage, StatsIssueRow,
+    CloseMetadataRow, CloseMetadataUpdate, EventAttribution, IssueUpdate, ListFilters,
+    ReadyFilters, ReadySortPolicy, SqliteStorage, StatsIssueRow,
 };

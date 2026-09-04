@@ -46,6 +46,14 @@ pub enum BeadsError {
     #[error("Issue not found: {id}")]
     IssueNotFound { id: String },
 
+    /// An optimistic-concurrency token no longer matches the durable issue row.
+    #[error("Stale issue revision for {issue_id}: expected {expected}, actual {actual:?}")]
+    StaleRevision {
+        issue_id: String,
+        expected: u64,
+        actual: Option<u64>,
+    },
+
     /// Attempted to create an issue with an ID that already exists.
     #[error("Issue ID collision: {id}")]
     IdCollision { id: String },
@@ -365,6 +373,7 @@ impl BeadsError {
             Self::DatabaseNotFound { .. }
                 | Self::NotInitialized
                 | Self::IssueNotFound { .. }
+                | Self::StaleRevision { .. }
                 | Self::Validation { .. }
                 | Self::InvalidStatus { .. }
                 | Self::InvalidType { .. }
@@ -414,6 +423,9 @@ impl BeadsError {
             Self::NotInitialized => Some("Run: br init"),
             Self::DatabaseNotFound { .. } => Some("Check path or run: br init"),
             Self::AmbiguousId { .. } => Some("Provide more characters of the ID"),
+            Self::StaleRevision { .. } => {
+                Some("Reload the issue and retry with its current revision")
+            }
             Self::HasDependents { .. } => Some("Use --force or --cascade to delete anyway"),
             Self::ImportCollision { .. } => Some("Use --force to overwrite or resolve manually"),
             Self::DependencyCycle { .. } => Some(

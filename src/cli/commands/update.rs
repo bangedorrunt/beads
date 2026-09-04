@@ -1257,6 +1257,8 @@ fn build_update(args: &UpdateArgs, actor: &str, claim_exclusive: bool) -> Result
         wave: optional_u32_field(args.wave.as_deref())?,
         pin: optional_string_field(args.pin.as_deref()),
         commit_sha: optional_string_field(args.commit_sha.as_deref()),
+        close_verdict: None,
+        close_metadata: None,
         blast: parse_blast_arg(args.blast.as_deref())?,
         ac_shape: parse_ac_arg(args.ac.as_deref())?,
         closed_at,
@@ -1270,6 +1272,7 @@ fn build_update(args: &UpdateArgs, actor: &str, claim_exclusive: bool) -> Result
         skip_cache_rebuild: false,
         expect_unassigned: args.claim,
         claim_exclusive: args.claim && claim_exclusive,
+        expected_revision: args.expected_revision,
         claim_actor: if args.claim {
             Some(actor.to_string())
         } else {

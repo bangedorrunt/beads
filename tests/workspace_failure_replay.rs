@@ -979,8 +979,9 @@ fn assert_core_write_success(
     );
     assert!(
         update.status.success(),
-        "{} update failed: {}",
+        "{} update failed: stdout={} stderr={}",
         fixture.metadata.name,
+        update.stdout,
         update.stderr
     );
 
@@ -1242,8 +1243,9 @@ fn workspace_failure_replay_core_write_surfaces_match_expected_posture() {
             | WorkspaceFailureCommandOutcome::SuccessWithAutoRecovery => {
                 assert!(
                     create.status.success(),
-                    "{} create failed: {}",
+                    "{} create failed: stdout={} stderr={}",
                     fixture.metadata.name,
+                    create.stdout,
                     create.stderr
                 );
                 assert_core_write_success(&workspace, &create, expected_create);

@@ -6,6 +6,7 @@ expression: SnapshotJson(&normalize_json(&json))
   "id": "ISSUE_ID",
   "ac_shape": "checkable",
   "blast": "normal",
+  "revision": 1,
   "title": "New feature request",
   "status": "open",
   "priority": 1,

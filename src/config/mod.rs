@@ -6107,6 +6107,17 @@ mod tests {
             .with_write_transaction(|storage| storage.rebuild_child_counters_in_tx())
             .expect("rebuild child counters");
 
+        // Standalone import relation sync legitimately marks the touched issues
+        // dirty (unflushed local state) so the next flush exports the change.
+        // A rebuilt database mirrors the JSONL exactly, so emulate post-rebuild
+        // cleanliness before verifying the recovery postconditions.
+        storage
+            .clear_dirty_issues_legacy(&[parent.id.clone(), child.id.clone()])
+            .expect("clear dirty markers");
+        storage
+            .set_metadata("needs_flush", "false")
+            .expect("reset flush marker");
+
         RelationRichFixture {
             _temp: temp,
             storage,

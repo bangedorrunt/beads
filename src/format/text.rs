@@ -435,6 +435,7 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            revision: 1,
             id: "bd-test".to_string(),
             content_hash: None,
             title: "Test title".to_string(),

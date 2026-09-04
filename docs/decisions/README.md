@@ -25,4 +25,5 @@ An ADR is an executable spec for coding agents. A human accepts the decision; an
 | [0001](0001-make-beads-the-fail-closed-work-ledger.md) | Make beads the fail-closed work-ledger for flywheel × toron | **Accepted** |
 | [0002](0002-replace-fsqlite-asupersync-with-rusqlite-and-strip-platform-surface.md) | Replace fsqlite/asupersync with rusqlite and strip platform surface | **Accepted** |
 | [0003](0003-absorb-beads-viewer-into-br.md) | Absorb beads_viewer (bv) into br — robot commands, graph analysis, and TUI | **Proposed** |
+| [0004](0004-adopt-revisioned-witnessed-mutations.md) | Adopt revisioned witnessed mutations for the flywheel × toron × br stack | **Accepted** |
 

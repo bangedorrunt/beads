@@ -80,6 +80,7 @@ fn create_test_issue(i: usize) -> Issue {
         close_verdict: None,
         ac_shape: beads::model::AcShape::Checkable,
         blast: beads::model::Blast::Normal,
+        revision: 1,
         compaction_level: None,
         compacted_at: None,
         compacted_at_commit: None,

@@ -8,6 +8,7 @@ expression: SnapshotJson(&normalize_json(&json))
       "id": "ISSUE_ID",
       "ac_shape": "checkable",
       "blast": "normal",
+      "revision": 1,
       "title": "Bug: Fix login",
       "status": "open",
       "priority": 2,

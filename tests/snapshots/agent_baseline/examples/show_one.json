@@ -3,6 +3,7 @@
     "id": "<ISSUE_ID>",
     "ac_shape": "checkable",
     "blast": "normal",
+    "revision": 1,
     "title": "Two",
     "status": "open",
     "priority": 0,

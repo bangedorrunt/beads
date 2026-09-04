@@ -7,7 +7,7 @@ use crate::error::{BeadsError, Result};
 use crate::model::{IssueType, Priority, Status};
 use crate::util::content_hash_from_parts;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 18;
+pub const CURRENT_SCHEMA_VERSION: i32 = 19;
 const ISSUES_CLOSED_AT_CHECK: &str = "CHECK ((status = 'closed' AND closed_at IS NOT NULL) OR (status = 'tombstone') OR (status NOT IN ('closed', 'tombstone') AND closed_at IS NULL))";
 const GATE_RESULT_HISTORY_MIGRATION_SQL: &str = r"
     CREATE TABLE IF NOT EXISTS gate_result_history (
@@ -263,6 +263,7 @@ pub const SCHEMA_SQL: &str = r"
         close_verdict TEXT,
         ac_shape TEXT NOT NULL DEFAULT 'checkable',
         blast TEXT NOT NULL DEFAULT 'normal',
+        revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
         CHECK (
             (status = 'closed' AND closed_at IS NOT NULL) OR
             (status = 'tombstone') OR
@@ -731,6 +732,16 @@ pub(crate) fn execute_batch(conn: &Connection, sql: &str) -> Result<()> {
     Ok(())
 }
 
+/// Add the revision column introduced by ADR-0004. This remains separate from
+/// the typed work-ledger migration so a schema-18 database can be upgraded
+/// without rebuilding the issues table.
+fn add_missing_issue_revision_column(conn: &Connection) -> Result<()> {
+    if table_exists(conn, "issues") && !column_exists(conn, "issues", "revision") {
+        conn.execute("ALTER TABLE issues ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)")?;
+    }
+    Ok(())
+}
+
 /// Apply the schema to the database.
 ///
 /// This splits the DDL script into individual statements and executes them.
@@ -825,10 +836,10 @@ fn connection_user_version(conn: &Connection) -> Result<u32> {
 /// `br doctor migrate-schema` lifecycle. Every released schema since v13 must
 /// stay upgradeable here: 13/14 (pre-gate-history releases), 15 (the #388
 /// gate-history schema shipped in the v0.2.19-era line), 16 (the #384
-/// capacity-exemptions schema created by the released v0.2.19 binary) and 17
-/// (the W4-era release every fleet tracker sits at). See GitHub #398 and
-/// beads_rust-migrate-17-18-7jduh.
-pub const REVIEWED_MIGRATION_SOURCE_VERSIONS: [u32; 5] = [13, 14, 15, 16, 17];
+/// capacity-exemptions schema created by the released v0.2.19 binary), 17
+/// (the W4-era release), and 18 (the typed work-ledger release). See GitHub
+/// #398 and beads_rust-migrate-17-18-7jduh.
+pub const REVIEWED_MIGRATION_SOURCE_VERSIONS: [u32; 6] = [13, 14, 15, 16, 17, 18];
 
 fn current_schema_version_u32() -> Result<u32> {
     u32::try_from(CURRENT_SCHEMA_VERSION).map_err(|_| {
@@ -905,6 +916,10 @@ fn add_missing_typed_work_ledger_columns(conn: &Connection) -> Result<()> {
         ("close_verdict", "close_verdict TEXT"),
         ("ac_shape", "ac_shape TEXT NOT NULL DEFAULT 'checkable'"),
         ("blast", "blast TEXT NOT NULL DEFAULT 'normal'"),
+        (
+            "revision",
+            "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)",
+        ),
     ] {
         if !existing.contains(name) {
             conn.execute(&format!("ALTER TABLE issues ADD COLUMN {decl}"))?;
@@ -920,7 +935,7 @@ fn add_missing_typed_work_ledger_columns(conn: &Connection) -> Result<()> {
 /// `BEGIN IMMEDIATE` transaction before calling it. All validation occurs
 /// before the first migration write.
 ///
-/// Sources in [`REVIEWED_MIGRATION_SOURCE_VERSIONS`] (13, 14, 15, 16, 17) are
+/// Sources in [`REVIEWED_MIGRATION_SOURCE_VERSIONS`] (13, 14, 15, 16, 17, 18) are
 /// accepted, each running exactly the version-gated step chain up to
 /// `CURRENT_SCHEMA_VERSION` (#398). `marked_at` is written verbatim to every
 /// `dirty_issues` row rewritten by the v13 content-hash step, making the
@@ -1222,9 +1237,22 @@ const ISSUE_COLUMNS: &[(&str, &str)] = &[
     // produces the same final column order as a fresh SCHEMA_SQL build.
     ("source_repo_path", "TEXT"),
     // beads#297: inherited governing instructions, JSON-stored.
-    // Append-at-end keeps EXPECTED_ISSUE_COLUMN_ORDER aligned for fresh
-    // and migrated databases.
     ("agent_context", "TEXT"),
+    // Schema v18 typed work-ledger columns. Keep these in the same order as
+    // SCHEMA_SQL and EXPECTED_ISSUE_COLUMN_ORDER so legacy table rebuilds
+    // produce the complete runtime shape.
+    ("verify", "TEXT"),
+    ("principles", "TEXT"),
+    ("wave", "INTEGER"),
+    ("pin", "TEXT"),
+    ("commit_sha", "TEXT"),
+    ("close_verdict", "TEXT"),
+    ("ac_shape", "TEXT NOT NULL DEFAULT 'checkable'"),
+    ("blast", "TEXT NOT NULL DEFAULT 'normal'"),
+    (
+        "revision",
+        "INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)",
+    ),
 ];
 
 const DEPENDENCY_COLUMNS: &[(&str, &str)] = &[
@@ -1396,6 +1424,7 @@ const EXPECTED_ISSUE_COLUMN_ORDER: &[&str] = &[
     "close_verdict",
     "ac_shape",
     "blast",
+    "revision",
 ];
 
 /// Check whether the issues table has columns in the expected order.
@@ -2272,6 +2301,15 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
             }
             Err(err) => return Err(err),
         }
+    }
+
+    // v19 (ADR-0004): durable optimistic-concurrency revision. The column is
+    // additive and defaults legacy rows to revision 1; keep the operation
+    // idempotent because ordinary opens may encounter partially-shaped v18
+    // databases produced by an interrupted migration.
+    if user_version < 19 && table_exists(conn, "issues") {
+        tracing::info!("Migrating database to schema version 19 (issue revisions)");
+        add_missing_issue_revision_column(conn)?;
     }
 
     // Migration: Add missing indexes for bd parity

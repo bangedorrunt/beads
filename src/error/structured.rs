@@ -60,6 +60,9 @@ pub enum ErrorCode {
     // === Issue Errors (exit code 3) ===
     /// Issue with specified ID not found
     IssueNotFound,
+    /// An optimistic-concurrency conflict means the caller observed an old
+    /// issue revision and must reload before retrying.
+    StaleRevision,
     /// Partial ID matches multiple issues
     AmbiguousId,
     /// Issue ID collision on create
@@ -154,6 +157,7 @@ impl ErrorCode {
             Self::AlreadyInitialized => "ALREADY_INITIALIZED",
             // Issue
             Self::IssueNotFound => "ISSUE_NOT_FOUND",
+            Self::StaleRevision => "STALE_REVISION",
             Self::AmbiguousId => "AMBIGUOUS_ID",
             Self::IdCollision => "ID_COLLISION",
             Self::InvalidId => "INVALID_ID",
@@ -241,6 +245,7 @@ impl ErrorCode {
             | Self::AlreadyInitialized => 2,
             // Issue / Operational (3)
             Self::IssueNotFound
+            | Self::StaleRevision
             | Self::AmbiguousId
             | Self::IdCollision
             | Self::InvalidId
@@ -651,6 +656,19 @@ impl StructuredError {
             BeadsError::IssueNotFound { id } => {
                 (ErrorCode::IssueNotFound, Some(json!({"searched_id": id})))
             }
+            BeadsError::StaleRevision {
+                issue_id,
+                expected,
+                actual,
+            } => (
+                ErrorCode::StaleRevision,
+                Some(json!({
+                    "issue_id": issue_id,
+                    "expected_revision": expected,
+                    "actual_revision": actual,
+                    "retryable": true,
+                })),
+            ),
             BeadsError::AmbiguousId { partial, matches } => (
                 ErrorCode::AmbiguousId,
                 Some(json!({"partial_id": partial, "matches": matches})),

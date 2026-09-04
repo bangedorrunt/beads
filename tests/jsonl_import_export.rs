@@ -715,6 +715,60 @@ fn schema18_import_of_schema17_jsonl_fills_defaults() {
     assert_eq!(round_tripped.commit_sha.as_deref(), Some("8615bac8"));
 }
 
+/// ADR-0004 (beads_rust-revisioned-storage-contract-hcvq3): the durable
+/// `revision` CAS token is not part of content identity and defaults to one
+/// for legacy JSONL records that predate it. A legacy row without the key
+/// must import cleanly with `revision == 1`, survive export, and never
+/// collide with an explicit revision carried by a newer record.
+// governed-by: ADR-0004
+#[test]
+fn legacy_jsonl_without_revision_imports_with_revision_one() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("issues.jsonl");
+
+    // Raw legacy line: no `revision` key (and none of the newer v18 fields).
+    let legacy_line = r#"{"id":"bd-legacy-rev","title":"legacy row","status":"open","priority":2,"issue_type":"task","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","created_by":"ubuntu"}"#;
+    // Explicit-revision line: a newer record that carries its own token.
+    let revised_line = r#"{"id":"bd-revised-rev","title":"revised row","status":"open","priority":2,"issue_type":"task","created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-02T00:00:00Z","created_by":"ubuntu","revision":7}"#;
+    fs::write(&path, format!("{legacy_line}\n{revised_line}\n")).unwrap();
+
+    let mut storage = SqliteStorage::open_memory().unwrap();
+    let import =
+        import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("bd-")).unwrap();
+    assert_eq!(import.imported_count, 2);
+
+    let legacy = storage.get_issue("bd-legacy-rev").unwrap().unwrap();
+    assert_eq!(
+        legacy.revision, 1,
+        "legacy record without `revision` defaults to 1"
+    );
+
+    let revised = storage.get_issue("bd-revised-rev").unwrap().unwrap();
+    assert_eq!(
+        revised.revision, 7,
+        "explicit `revision` in the source record is preserved"
+    );
+
+    // Round-trip: both tokens survive export + re-import unchanged.
+    let out_path = temp.path().join("out.jsonl");
+    export_to_jsonl(&storage, &out_path, &ExportConfig::default()).unwrap();
+
+    let mut fresh = SqliteStorage::open_memory().unwrap();
+    let re =
+        import_from_jsonl(&mut fresh, &out_path, &ImportConfig::default(), Some("bd-")).unwrap();
+    assert_eq!(re.imported_count, 2);
+    assert_eq!(
+        fresh.get_issue("bd-legacy-rev").unwrap().unwrap().revision,
+        1,
+        "legacy token stays 1 after round-trip"
+    );
+    assert_eq!(
+        fresh.get_issue("bd-revised-rev").unwrap().unwrap().revision,
+        7,
+        "explicit token stays 7 after round-trip"
+    );
+}
+
 /// ADR-0001 §5.4 (beads_rust-gates-jsonl-ea54): gate verdicts are ledger rows
 /// that survive a git clone. Flush writes the `.beads/gates.jsonl` sidecar;
 /// import-only reloads it; the roundtrip proves a fresh database can still

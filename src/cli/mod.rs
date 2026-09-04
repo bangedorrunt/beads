@@ -1389,9 +1389,12 @@ pub struct UpdateArgs {
     #[arg(long)]
     pub session: Option<String>,
 
-    // Tier 1 attribution (issue #312, Layer 3 — capture-only). Recorded on the
-    // update/status-change audit event as a trail; NEVER gated or enforced on.
-    // Match the flag/env names used by `br close`.
+    /// Expected issue revision for optimistic-concurrency protection.
+    /// When supplied, the mutation fails with a structured stale-write conflict
+    /// if the issue changed after it was observed.
+    #[arg(long = "expected-revision", value_name = "N")]
+    pub expected_revision: Option<u64>,
+
     /// Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only.
     #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
     pub agent_name: Option<String>,
@@ -1411,6 +1414,11 @@ pub struct DeleteArgs {
     /// Issue IDs to delete
     #[arg(add = ArgValueCompleter::new(issue_id_completer))]
     pub ids: Vec<String>,
+
+    /// Expected issue revision for optimistic-concurrency protection.
+    /// When supplied, the tombstone transition fails if the issue changed.
+    #[arg(long = "expected-revision", value_name = "N")]
+    pub expected_revision: Option<u64>,
 
     /// Delete reason (default: "delete")
     #[arg(long, default_value = "delete")]
@@ -2735,6 +2743,12 @@ pub struct CloseArgs {
     /// Machine-readable output (alias for --json)
     #[arg(long)]
     pub robot: bool,
+
+    /// Expected issue revision for optimistic-concurrency protection.
+    /// When supplied, the close fails with a structured stale-write conflict
+    /// if the issue changed after it was observed.
+    #[arg(long = "expected-revision", value_name = "N")]
+    pub expected_revision: Option<u64>,
 
     // Closure-time policy gates (issue #274 — Phase 1).
     //

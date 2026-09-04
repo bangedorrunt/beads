@@ -39,6 +39,64 @@ fn manifest_is_valid_json_after_flush() {
     let parsed: serde_json::Value =
         serde_json::from_str(&content).expect("manifest should be valid JSON");
     assert!(parsed.is_object(), "manifest should be a JSON object");
+    assert_eq!(
+        parsed.get("format").and_then(serde_json::Value::as_str),
+        Some("br.publication.v1"),
+        "manifest should identify the publication contract"
+    );
+    assert!(
+        parsed
+            .get("generation")
+            .and_then(serde_json::Value::as_u64)
+            .is_some(),
+        "manifest should contain a deterministic generation"
+    );
+    assert!(
+        parsed
+            .get("schema_version")
+            .and_then(serde_json::Value::as_i64)
+            .is_some(),
+        "manifest should contain the storage schema version"
+    );
+    assert!(
+        parsed
+            .get("issues_sha256")
+            .and_then(serde_json::Value::as_str)
+            .is_some(),
+        "manifest should contain the issue publication hash"
+    );
+    assert!(
+        parsed
+            .get("gates_sha256")
+            .and_then(serde_json::Value::as_str)
+            .is_some(),
+        "manifest should contain the gate publication hash"
+    );
+    assert!(
+        parsed
+            .get("source_revision")
+            .and_then(serde_json::Value::as_u64)
+            .is_some(),
+        "manifest should contain the durable source revision"
+    );
+    assert_eq!(
+        parsed
+            .get("issues_line_count")
+            .and_then(serde_json::Value::as_u64),
+        parsed
+            .get("issues_count")
+            .and_then(serde_json::Value::as_u64),
+        "issue count and line count should agree"
+    );
+    assert_eq!(
+        parsed
+            .get("gates_line_count")
+            .and_then(serde_json::Value::as_u64),
+        parsed
+            .get("gates_count")
+            .and_then(serde_json::Value::as_u64),
+        "gate count and line count should agree"
+    );
     assert!(
         parsed.get("export_time").is_some(),
         "manifest should have export_time"

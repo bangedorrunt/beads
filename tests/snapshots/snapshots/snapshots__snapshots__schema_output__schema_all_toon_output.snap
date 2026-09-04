@@ -1259,6 +1259,12 @@ schemas:
         description: "ADR-0001 §5.2: blast-radius band (defaults to normal)."
         "$ref": #/$defs/Blast
         default: normal
+      revision:
+        description: "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records."
+        type: integer
+        format: uint64
+        minimum: 0
+        default: 1
       title:
         description: Title (1-500 chars).
         type: string
@@ -1372,7 +1378,7 @@ schemas:
         type: array
         items:
           "$ref": #/$defs/Comment
-    required[10]: id,ac_shape,blast,title,status,priority,issue_type,created_at,updated_at,compaction_level
+    required[11]: id,ac_shape,blast,revision,title,status,priority,issue_type,created_at,updated_at,compaction_level
     "$defs":
       PrincipleCitation:
         description: "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip."
@@ -1497,6 +1503,12 @@ schemas:
         description: "ADR-0001 §5.2: blast-radius band (defaults to normal)."
         "$ref": #/$defs/Blast
         default: normal
+      revision:
+        description: "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records."
+        type: integer
+        format: uint64
+        minimum: 0
+        default: 1
       title:
         description: Title (1-500 chars).
         type: string
@@ -1634,7 +1646,7 @@ schemas:
         anyOf[2]:
           - "$ref": #/$defs/ShowReservationBlock
           - type: "null"
-    required[10]: id,ac_shape,blast,title,status,priority,issue_type,created_at,updated_at,compaction_level
+    required[11]: id,ac_shape,blast,revision,title,status,priority,issue_type,created_at,updated_at,compaction_level
     "$defs":
       PrincipleCitation:
         description: "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip."
@@ -1860,6 +1872,12 @@ schemas:
         description: "ADR-0001 §5.2: blast-radius band (defaults to normal)."
         "$ref": #/$defs/Blast
         default: normal
+      revision:
+        description: "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records."
+        type: integer
+        format: uint64
+        minimum: 0
+        default: 1
       title:
         description: Title (1-500 chars).
         type: string
@@ -1981,7 +1999,7 @@ schemas:
         type: integer
         format: uint
         minimum: 0
-    required[12]: id,ac_shape,blast,title,status,priority,issue_type,created_at,updated_at,compaction_level,dependency_count,dependent_count
+    required[13]: id,ac_shape,blast,revision,title,status,priority,issue_type,created_at,updated_at,compaction_level,dependency_count,dependent_count
     "$defs":
       PrincipleCitation:
         description: "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip."

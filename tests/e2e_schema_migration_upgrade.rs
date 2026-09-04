@@ -21,6 +21,7 @@
 
 mod common;
 
+use beads::storage::schema::CURRENT_SCHEMA_VERSION;
 use common::cli::{BrWorkspace, extract_json_payload, run_br};
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -35,10 +36,9 @@ fn fixture_dir() -> PathBuf {
         .join("schema_migration")
 }
 
-/// Migration target asserted by this suite: `CURRENT_SCHEMA_VERSION` (18, the
-/// ADR-0001 typed work-ledger schema). Kept as a named constant so a future
-/// bump is a one-line change plus fixture refresh.
-const TARGET_SCHEMA_VERSION: u32 = 18;
+/// Migration target asserted by this suite: `CURRENT_SCHEMA_VERSION`.
+/// Kept as a named constant so a future bump is a one-line change plus fixture refresh.
+const TARGET_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION as u32;
 
 fn install_fixture_workspace(workspace: &BrWorkspace, db_gz: &str, issues: &str, config: &str) {
     let beads_dir = workspace.root.join(".beads");
