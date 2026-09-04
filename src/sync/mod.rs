@@ -12197,8 +12197,10 @@ fn auto_flush_internal(
             storage,
             jsonl_path,
             &export_config,
-            expected_previous_source
-                .expect("retained-authority auto-flush requires a captured expected JSONL source"),
+            expected_previous_source.ok_or_else(|| BeadsError::SyncConflict {
+                message: "Retained-authority auto-flush has no captured expected JSONL source"
+                    .to_string(),
+            })?,
             authority,
         )?,
         None => export_to_jsonl_with_policy_expected(
