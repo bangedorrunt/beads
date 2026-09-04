@@ -807,11 +807,8 @@ impl Issue {
             || self.ephemeral != other.ephemeral
             || self.pinned != other.pinned
             || self.is_template != other.is_template
-            // Inherited governance context (beads_rust#297): a live,
-            // JSONL-serialized payload field, so an agent_context-only change
-            // must count as a difference. Omitting it here silently dropped a
-            // peer's context update during three-way merge / import de-dup
-            // (persisted_import_issue_equals had to re-add it as a workaround).
+            // Live JSONL payload field (beads_rust#297): an agent_context-only
+            // change must count as a difference or three-way merge would drop it.
             || self.agent_context != other.agent_context
         {
             return false;
@@ -842,55 +839,45 @@ impl Issue {
 
         // Compare dependencies (order independent)
         let mut self_deps = self.dependencies.clone();
-        self_deps.sort_by(|left, right| {
-            left.issue_id
-                .cmp(&right.issue_id)
-                .then_with(|| left.depends_on_id.cmp(&right.depends_on_id))
-                .then_with(|| left.dep_type.as_str().cmp(right.dep_type.as_str()))
-                .then_with(|| left.created_at.cmp(&right.created_at))
-                .then_with(|| left.created_by.cmp(&right.created_by))
-                .then_with(|| left.metadata.cmp(&right.metadata))
-                .then_with(|| left.thread_id.cmp(&right.thread_id))
-        });
+        self_deps.sort_by(Self::cmp_dependency);
         let mut other_deps = other.dependencies.clone();
-        other_deps.sort_by(|left, right| {
-            left.issue_id
-                .cmp(&right.issue_id)
-                .then_with(|| left.depends_on_id.cmp(&right.depends_on_id))
-                .then_with(|| left.dep_type.as_str().cmp(right.dep_type.as_str()))
-                .then_with(|| left.created_at.cmp(&right.created_at))
-                .then_with(|| left.created_by.cmp(&right.created_by))
-                .then_with(|| left.metadata.cmp(&right.metadata))
-                .then_with(|| left.thread_id.cmp(&right.thread_id))
-        });
+        other_deps.sort_by(Self::cmp_dependency);
         if self_deps != other_deps {
             return false;
         }
 
         // Compare comments (order independent)
         let mut self_comments = self.comments.clone();
-        self_comments.sort_by(|left, right| {
-            left.issue_id
-                .cmp(&right.issue_id)
-                .then_with(|| left.created_at.cmp(&right.created_at))
-                .then_with(|| left.author.cmp(&right.author))
-                .then_with(|| left.body.cmp(&right.body))
-                .then_with(|| left.id.cmp(&right.id))
-        });
+        self_comments.sort_by(Self::cmp_comment);
         let mut other_comments = other.comments.clone();
-        other_comments.sort_by(|left, right| {
-            left.issue_id
-                .cmp(&right.issue_id)
-                .then_with(|| left.created_at.cmp(&right.created_at))
-                .then_with(|| left.author.cmp(&right.author))
-                .then_with(|| left.body.cmp(&right.body))
-                .then_with(|| left.id.cmp(&right.id))
-        });
+        other_comments.sort_by(Self::cmp_comment);
         if self_comments != other_comments {
             return false;
         }
 
         true
+    }
+
+    /// Order-independent comparison key for a dependency edge.
+    fn cmp_dependency(left: &Dependency, right: &Dependency) -> std::cmp::Ordering {
+        left.issue_id
+            .cmp(&right.issue_id)
+            .then_with(|| left.depends_on_id.cmp(&right.depends_on_id))
+            .then_with(|| left.dep_type.as_str().cmp(right.dep_type.as_str()))
+            .then_with(|| left.created_at.cmp(&right.created_at))
+            .then_with(|| left.created_by.cmp(&right.created_by))
+            .then_with(|| left.metadata.cmp(&right.metadata))
+            .then_with(|| left.thread_id.cmp(&right.thread_id))
+    }
+
+    /// Order-independent comparison key for a comment.
+    fn cmp_comment(left: &Comment, right: &Comment) -> std::cmp::Ordering {
+        left.issue_id
+            .cmp(&right.issue_id)
+            .then_with(|| left.created_at.cmp(&right.created_at))
+            .then_with(|| left.author.cmp(&right.author))
+            .then_with(|| left.body.cmp(&right.body))
+            .then_with(|| left.id.cmp(&right.id))
     }
 
     /// Check if this issue is a tombstone that has exceeded its TTL.
