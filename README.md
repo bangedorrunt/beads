@@ -772,7 +772,7 @@ GitHub #384 acceptance matrix.
 
 | Variable | Description |
 |----------|-------------|
-| `BD_DB` / `BD_DATABASE` | Override database path |
+| `BD_DB` / `BD_DATABASE` / `BEADS_DB` | Override database path (checked in that order) |
 | `BEADS_JSONL` | Override JSONL path (requires `--allow-external-jsonl`) |
 | `RUST_LOG` | Logging level (debug, info, warn, error) |
 
