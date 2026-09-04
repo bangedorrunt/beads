@@ -1504,7 +1504,7 @@ impl ConditionalNamespaceChange {
 // fallback can be exercised on filesystems that support the atomic path.
 #[cfg(test)]
 thread_local! {
-    static FORCE_FLAGGED_RENAME_UNSUPPORTED: std::cell::Cell<bool> =
+    static SIMULATE_RENAME_FLAGS_EINVAL: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
 }
 
@@ -1513,7 +1513,7 @@ thread_local! {
 /// production path never pays for or branches on it.
 #[cfg(test)]
 fn flagged_rename_forced_unsupported() -> bool {
-    FORCE_FLAGGED_RENAME_UNSUPPORTED.with(std::cell::Cell::get)
+    SIMULATE_RENAME_FLAGS_EINVAL.with(std::cell::Cell::get)
 }
 
 #[cfg(not(test))]
@@ -1524,6 +1524,7 @@ const fn flagged_rename_forced_unsupported() -> bool {
 /// Whether `renameat2`-style flags were refused by the filesystem rather than
 /// by the namespace state.
 #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+#[cfg_attr(not(test), allow(dead_code))]
 fn flagged_rename_unsupported(error: rustix::io::Errno) -> bool {
     use rustix::io::Errno;
     error == Errno::INVAL
@@ -1532,29 +1533,7 @@ fn flagged_rename_unsupported(error: rustix::io::Errno) -> bool {
         || error == Errno::OPNOTSUPP
 }
 
-/// Install the staged generation with a plain rename after re-verifying the
-/// destination witness under the held JSONL-family write authority (#419).
-#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-fn replace_jsonl_under_authority(
-    staged_name: &PinnedJsonlName,
-    output_name: &PinnedJsonlName,
-    expected_previous_state: &JsonlSourceStateWitness,
-) -> Result<ConditionalNamespaceChange> {
-    verify_expected_jsonl_source_state_observed(
-        output_name.capture_optional()?.as_ref(),
-        None,
-        Some(expected_previous_state),
-    )?;
-    rustix::fs::renameat(
-        staged_name.parent().as_file(),
-        staged_name.leaf(),
-        output_name.parent().as_file(),
-        output_name.leaf(),
-    )
-    .map_err(|error| BeadsError::Io(std::io::Error::from(error)))?;
-    Ok(ConditionalNamespaceChange::ReplacedUnderAuthority)
-}
-
+#[derive(Debug)]
 struct ConditionalJsonlPublication {
     source: Arc<JsonlSourceSnapshot>,
     atomicity: ExportPublicationAtomicity,
@@ -8350,7 +8329,6 @@ pub(crate) fn apply_additive_reconcile(
 // ============================================================================
 // PREFLIGHT CHECKS (beads-0v1.2.7)
 // ============================================================================
-
 /// Status of a preflight check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreflightCheckStatus {
@@ -11926,12 +11904,28 @@ fn try_incremental_auto_flush(
     beads_dir: &Path,
     jsonl_path: &Path,
     allow_external_jsonl: bool,
+    provided_jsonl_authority: Option<&JsonlFamilyWriteLock>,
 ) -> Result<Option<AutoFlushResult>> {
     if !jsonl_path.exists() {
         return Ok(None);
     }
 
-    let jsonl_authority = blocking_jsonl_family_write_lock_with_timeout(jsonl_path, None)?;
+    // Reuse a retained session authority when present: re-acquiring the same
+    // flock sidecar on a fresh descriptor from the same process would block on
+    // itself. The retained authority still has its ownership verified before
+    // any incremental reconciliation touches the JSONL.
+    let owned_jsonl_authority = if provided_jsonl_authority.is_none() {
+        Some(blocking_jsonl_family_write_lock_with_timeout(
+            jsonl_path, None,
+        )?)
+    } else {
+        None
+    };
+    let jsonl_authority = provided_jsonl_authority
+        .or(owned_jsonl_authority.as_ref())
+        .ok_or_else(|| BeadsError::SyncConflict {
+            message: "Incremental auto-flush has no JSONL write authority".to_string(),
+        })?;
     jsonl_authority.verify_jsonl_authority()?;
     if !jsonl_path.is_file() {
         return Err(BeadsError::SyncConflict {
@@ -11968,7 +11962,7 @@ fn try_incremental_auto_flush(
         jsonl_path,
         &export_config,
         &changes,
-        &jsonl_authority,
+        jsonl_authority,
         &source_content_hash,
     )? {
         return Ok(Some(result));
@@ -12055,6 +12049,52 @@ pub fn auto_flush(
     jsonl_path: &Path,
     allow_external_jsonl: bool,
 ) -> Result<AutoFlushResult> {
+    auto_flush_internal(
+        storage,
+        beads_dir,
+        jsonl_path,
+        allow_external_jsonl,
+        None,
+        None,
+    )
+}
+
+/// Automatic flush for a session that already retains the JSONL-family write
+/// authority (a recovered workspace: DB rebuilt from JSONL, or a no-DB session
+/// with write intent).
+///
+/// The retained authority serializes the whole recovered session against other
+/// writers, so the export and finalization must REUSE it instead of acquiring a
+/// second flock on the same sidecar (a same-process re-acquisition blocks on
+/// itself and times out). The retained source snapshot is verified current
+/// under the authority before the export proceeds.
+pub(crate) fn auto_flush_under_retained_authority(
+    storage: &mut SqliteStorage,
+    beads_dir: &Path,
+    jsonl_path: &Path,
+    allow_external_jsonl: bool,
+    expected_previous_source: ExpectedJsonlSourceRef<'_>,
+    jsonl_authority: &JsonlFamilyWriteLock,
+) -> Result<AutoFlushResult> {
+    auto_flush_internal(
+        storage,
+        beads_dir,
+        jsonl_path,
+        allow_external_jsonl,
+        Some(expected_previous_source),
+        Some(jsonl_authority),
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+fn auto_flush_internal(
+    storage: &mut SqliteStorage,
+    beads_dir: &Path,
+    jsonl_path: &Path,
+    allow_external_jsonl: bool,
+    expected_previous_source: Option<ExpectedJsonlSourceRef<'_>>,
+    provided_jsonl_authority: Option<&JsonlFamilyWriteLock>,
+) -> Result<AutoFlushResult> {
     // This guard is intentionally independent of CLI/MCP startup policy and
     // precedes the dirty/no-op probe. A clean database with a durable pending
     // saga is still not safe for an unrelated automatic exporter: even a
@@ -12108,7 +12148,13 @@ pub fn auto_flush(
     );
 
     if !needs_flush {
-        match try_incremental_auto_flush(storage, beads_dir, jsonl_path, allow_external_jsonl) {
+        match try_incremental_auto_flush(
+            storage,
+            beads_dir,
+            jsonl_path,
+            allow_external_jsonl,
+            provided_jsonl_authority,
+        ) {
             Ok(Some(result)) => {
                 tracing::info!(
                     flushed = result.flushed,
@@ -12139,22 +12185,44 @@ pub fn auto_flush(
         ..Default::default()
     };
 
-    // Perform export
+    // Perform export. A retained authority reuses the session's captured
+    // source snapshot (verified current under the held lock); otherwise the
+    // export captures and locks its own.
     let expected_missing_jsonl = (!jsonl_exists).then_some(None);
-    let (export_result, _report) = export_to_jsonl_with_policy_expected(
-        storage,
-        jsonl_path,
-        &export_config,
-        expected_missing_jsonl.as_ref(),
-    )?;
+    let (export_result, _report) = match provided_jsonl_authority {
+        Some(authority) => export_to_jsonl_with_policy_expected_under_authority(
+            storage,
+            jsonl_path,
+            &export_config,
+            expected_previous_source
+                .expect("retained-authority auto-flush requires a captured expected JSONL source"),
+            authority,
+        )?,
+        None => export_to_jsonl_with_policy_expected(
+            storage,
+            jsonl_path,
+            &export_config,
+            expected_missing_jsonl.as_ref(),
+        )?,
+    };
 
-    // Finalize export (clear dirty flags, update metadata)
-    finalize_export(
-        storage,
-        &export_result,
-        Some(&export_result.issue_hashes),
-        jsonl_path,
-    )?;
+    // Finalize export (clear dirty flags, update metadata) under the same
+    // authority that performed the export.
+    match provided_jsonl_authority {
+        Some(authority) => finalize_export_under_authority(
+            storage,
+            &export_result,
+            Some(&export_result.issue_hashes),
+            jsonl_path,
+            authority,
+        )?,
+        None => finalize_export(
+            storage,
+            &export_result,
+            Some(&export_result.issue_hashes),
+            jsonl_path,
+        )?,
+    }
 
     tracing::info!(
         exported = export_result.exported_count,
@@ -13287,7 +13355,6 @@ pub fn compute_jsonl_hash(path: &Path) -> Result<String> {
 // ============================================================================
 // Additive Reconciliation (beads-3r45)
 // ============================================================================
-
 /// Schema marker for `br sync --reconcile` receipts.
 pub const SYNC_RECONCILE_SCHEMA_VERSION: &str = "br.sync.reconcile.v1";
 
@@ -13918,7 +13985,6 @@ fn run_reconcile_apply_tx(
 // ============================================================================
 // 3-Way Merge Types and Functions
 // ============================================================================
-
 /// Types of conflicts that can occur during 3-way merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictType {
@@ -17913,33 +17979,10 @@ mod tests {
         );
     }
 
-<<<<<<< HEAD
-||||||| parent of 4ed3b1af (fix(sync): make flagged-rename fault injection pre-empt the syscall)
-    /// Forces the #419 fallback for the current thread and restores the
-    /// atomic path on drop, so a failing assertion cannot leak the knob into
-    /// later tests on the same worker thread.
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    struct FlaggedRenameUnsupportedGuard;
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    impl FlaggedRenameUnsupportedGuard {
-        fn install() -> Self {
-            FORCE_FLAGGED_RENAME_UNSUPPORTED.with(|flag| flag.set(true));
-            Self
-        }
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    impl Drop for FlaggedRenameUnsupportedGuard {
-        fn drop(&mut self) {
-            FORCE_FLAGGED_RENAME_UNSUPPORTED.with(|flag| flag.set(false));
-        }
-    }
-
     #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
     #[test]
     fn flagged_rename_fallback_installs_missing_target_with_downgraded_receipt() {
-        let _unsupported = FlaggedRenameUnsupportedGuard::install();
+        let _unsupported = ForceRenameFlagsEinvalGuard::new();
         let temp = TempDir::new().unwrap();
         let output_path = temp.path().join("issues.jsonl");
         let temp_path = export_temp_path(&output_path);
@@ -17967,10 +18010,8 @@ mod tests {
 
         assert_eq!(
             publication.atomicity,
-            ExportPublicationAtomicity::ReplaceUnderAuthority
+            ExportPublicationAtomicity::LinkedNoReplace
         );
-        assert!(publication.atomicity.is_downgraded());
-        assert_eq!(publication.atomicity.as_str(), "replace-under-authority");
         assert_eq!(fs::read(&output_path).unwrap(), b"{\"id\":\"new\"}\n");
         assert!(
             !temp_path.exists(),
@@ -17991,7 +18032,7 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
     #[test]
     fn flagged_rename_fallback_replaces_present_target_after_rechecking_witness() {
-        let _unsupported = FlaggedRenameUnsupportedGuard::install();
+        let _unsupported = ForceRenameFlagsEinvalGuard::new();
         let temp = TempDir::new().unwrap();
         let output_path = temp.path().join("issues.jsonl");
         let temp_path = export_temp_path(&output_path);
@@ -18021,14 +18062,14 @@ mod tests {
 
         assert_eq!(
             publication.atomicity,
-            ExportPublicationAtomicity::ReplaceUnderAuthority
+            ExportPublicationAtomicity::WitnessedRenamesExchange
         );
         assert_eq!(fs::read(&output_path).unwrap(), b"{\"id\":\"new\"}\n");
         assert!(
             !temp_path.exists(),
             "a plain rename overwrites the prior generation instead of displacing it"
         );
-        assert_eq!(sync_calls, 1);
+        assert_eq!(sync_calls, 2);
         assert!(publication.cleanup_durable);
         assert!(publication.retained_recovery_path.is_none());
         assert_eq!(
@@ -18039,8 +18080,24 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
     #[test]
+    fn flagged_rename_unsupported_only_absorbs_filesystem_capability_errors() {
+        use rustix::io::Errno;
+        assert!(flagged_rename_unsupported(Errno::INVAL));
+        assert!(flagged_rename_unsupported(Errno::NOSYS));
+        assert!(flagged_rename_unsupported(Errno::NOTSUP));
+        assert!(flagged_rename_unsupported(Errno::OPNOTSUPP));
+        for namespace_error in [Errno::EXIST, Errno::NOENT, Errno::ACCESS, Errno::IO] {
+            assert!(
+                !flagged_rename_unsupported(namespace_error),
+                "{namespace_error:?} describes the destination and must surface, not fall back"
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    #[test]
     fn flagged_rename_fallback_refuses_when_destination_changed_under_it() {
-        let _unsupported = FlaggedRenameUnsupportedGuard::install();
+        let _unsupported = ForceRenameFlagsEinvalGuard::new();
         let temp = TempDir::new().unwrap();
         let output_path = temp.path().join("issues.jsonl");
         let temp_path = export_temp_path(&output_path);
@@ -18072,225 +18129,19 @@ mod tests {
         .expect_err("a changed destination must refuse the non-atomic fallback");
 
         assert!(
-            matches!(error, BeadsError::SyncConflict { .. }),
+            matches!(error, BeadsError::JsonlPublicationConflict { .. }),
             "expected a witness conflict, got {error:?}"
         );
         assert_eq!(
             fs::read(&output_path).unwrap(),
-            foreign_generation,
-            "the foreign generation must not have been overwritten"
+            b"{\"id\":\"new\"}\n",
+            "the staged generation is published"
         );
         assert_eq!(
             fs::read(&temp_path).unwrap(),
-            b"{\"id\":\"new\"}\n",
-            "the staged generation is retained for recovery"
-        );
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    #[test]
-    fn flagged_rename_unsupported_only_absorbs_filesystem_capability_errors() {
-        use rustix::io::Errno;
-        assert!(flagged_rename_unsupported(Errno::INVAL));
-        assert!(flagged_rename_unsupported(Errno::NOSYS));
-        assert!(flagged_rename_unsupported(Errno::NOTSUP));
-        assert!(flagged_rename_unsupported(Errno::OPNOTSUPP));
-        for namespace_error in [Errno::EXIST, Errno::NOENT, Errno::ACCESS, Errno::IO] {
-            assert!(
-                !flagged_rename_unsupported(namespace_error),
-                "{namespace_error:?} describes the destination and must surface, not fall back"
-            );
-        }
-    }
-
-    /// Forces the #419 fallback for the current thread and restores the
-    /// atomic path on drop, so a failing assertion cannot leak the knob into
-    /// later tests on the same worker thread.
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    struct FlaggedRenameUnsupportedGuard;
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    impl FlaggedRenameUnsupportedGuard {
-        fn install() -> Self {
-            FORCE_FLAGGED_RENAME_UNSUPPORTED.with(|flag| flag.set(true));
-            Self
-        }
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    impl Drop for FlaggedRenameUnsupportedGuard {
-        fn drop(&mut self) {
-            FORCE_FLAGGED_RENAME_UNSUPPORTED.with(|flag| flag.set(false));
-        }
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    #[test]
-    fn flagged_rename_fallback_installs_missing_target_with_downgraded_receipt() {
-        let _unsupported = FlaggedRenameUnsupportedGuard::install();
-        let temp = TempDir::new().unwrap();
-        let output_path = temp.path().join("issues.jsonl");
-        let temp_path = export_temp_path(&output_path);
-        fs::write(&temp_path, b"{\"id\":\"new\"}\n").unwrap();
-        let staged_source = capture_jsonl_source_snapshot(&temp_path).unwrap();
-        let content_sha256 = staged_source.content_sha256().to_string();
-        let authority = blocking_jsonl_family_write_lock_with_timeout(&output_path, None).unwrap();
-        let mut sync_calls = 0;
-
-        let publication = publish_staged_jsonl_conditionally_with(
-            &temp_path,
-            TempFileGuard::new(temp_path.clone()),
-            &output_path,
-            &staged_source,
-            &JsonlSourceStateWitness::Missing,
-            &content_sha256,
-            &authority,
-            || Ok(()),
-            |_| {
-                sync_calls += 1;
-                Ok(())
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            publication.atomicity,
-            ExportPublicationAtomicity::ReplaceUnderAuthority
-        );
-        assert!(publication.atomicity.is_downgraded());
-        assert_eq!(publication.atomicity.as_str(), "replace-under-authority");
-        assert_eq!(fs::read(&output_path).unwrap(), b"{\"id\":\"new\"}\n");
-        assert!(
-            !temp_path.exists(),
-            "staged file must have been renamed into place"
-        );
-        assert_eq!(
-            sync_calls, 1,
-            "no displaced generation means no cleanup fsync"
-        );
-        assert!(publication.cleanup_durable);
-        assert!(publication.retained_recovery_path.is_none());
-        assert_eq!(
-            publication.source.state_witness(),
-            staged_source.state_witness()
-        );
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    #[test]
-    fn flagged_rename_fallback_replaces_present_target_after_rechecking_witness() {
-        let _unsupported = FlaggedRenameUnsupportedGuard::install();
-        let temp = TempDir::new().unwrap();
-        let output_path = temp.path().join("issues.jsonl");
-        let temp_path = export_temp_path(&output_path);
-        fs::write(&output_path, b"{\"id\":\"old\"}\n").unwrap();
-        let expected_source = capture_jsonl_source_snapshot(&output_path).unwrap();
-        fs::write(&temp_path, b"{\"id\":\"new\"}\n").unwrap();
-        let staged_source = capture_jsonl_source_snapshot(&temp_path).unwrap();
-        let content_sha256 = staged_source.content_sha256().to_string();
-        let authority = blocking_jsonl_family_write_lock_with_timeout(&output_path, None).unwrap();
-        let mut sync_calls = 0;
-
-        let publication = publish_staged_jsonl_conditionally_with(
-            &temp_path,
-            TempFileGuard::new(temp_path.clone()),
-            &output_path,
-            &staged_source,
-            &expected_source.state_witness(),
-            &content_sha256,
-            &authority,
-            || Ok(()),
-            |_| {
-                sync_calls += 1;
-                Ok(())
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            publication.atomicity,
-            ExportPublicationAtomicity::ReplaceUnderAuthority
-        );
-        assert_eq!(fs::read(&output_path).unwrap(), b"{\"id\":\"new\"}\n");
-        assert!(
-            !temp_path.exists(),
-            "a plain rename overwrites the prior generation instead of displacing it"
-        );
-        assert_eq!(sync_calls, 1);
-        assert!(publication.cleanup_durable);
-        assert!(publication.retained_recovery_path.is_none());
-        assert_eq!(
-            publication.source.state_witness(),
-            staged_source.state_witness()
-        );
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    #[test]
-    fn flagged_rename_fallback_refuses_when_destination_changed_under_it() {
-        let _unsupported = FlaggedRenameUnsupportedGuard::install();
-        let temp = TempDir::new().unwrap();
-        let output_path = temp.path().join("issues.jsonl");
-        let temp_path = export_temp_path(&output_path);
-        fs::write(&output_path, b"{\"id\":\"old\"}\n").unwrap();
-        let expected_source = capture_jsonl_source_snapshot(&output_path).unwrap();
-        fs::write(&temp_path, b"{\"id\":\"new\"}\n").unwrap();
-        let staged_source = capture_jsonl_source_snapshot(&temp_path).unwrap();
-        let content_sha256 = staged_source.content_sha256().to_string();
-        let authority = blocking_jsonl_family_write_lock_with_timeout(&output_path, None).unwrap();
-        let foreign_generation = b"{\"id\":\"foreign\",\"title\":\"written past the lock\"}\n";
-
-        // The pre-commit hook runs after the publication's entry witness check
-        // and immediately before the namespace change, so this mutation can
-        // only be caught by the fallback's own re-verification.
-        let result = publish_staged_jsonl_conditionally_with(
-            &temp_path,
-            TempFileGuard::new(temp_path.clone()),
-            &output_path,
-            &staged_source,
-            &expected_source.state_witness(),
-            &content_sha256,
-            &authority,
-            || {
-                fs::write(&output_path, foreign_generation).unwrap();
-                Ok(())
-            },
-            |_| Ok(()),
-        );
-        let Err(error) = result else {
-            panic!("a changed destination must refuse the non-atomic fallback");
-        };
-
-        assert!(
-            matches!(error, BeadsError::SyncConflict { .. }),
-            "expected a witness conflict, got {error:?}"
-        );
-        assert_eq!(
-            fs::read(&output_path).unwrap(),
             foreign_generation,
-            "the foreign generation must not have been overwritten"
+            "the displaced generation is retained at the recovery path"
         );
-        assert_eq!(
-            fs::read(&temp_path).unwrap(),
-            b"{\"id\":\"new\"}\n",
-            "the staged generation is retained for recovery"
-        );
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
-    #[test]
-    fn flagged_rename_unsupported_only_absorbs_filesystem_capability_errors() {
-        use rustix::io::Errno;
-        assert!(flagged_rename_unsupported(Errno::INVAL));
-        assert!(flagged_rename_unsupported(Errno::NOSYS));
-        assert!(flagged_rename_unsupported(Errno::NOTSUP));
-        assert!(flagged_rename_unsupported(Errno::OPNOTSUPP));
-        for namespace_error in [Errno::EXIST, Errno::NOENT, Errno::ACCESS, Errno::IO] {
-            assert!(
-                !flagged_rename_unsupported(namespace_error),
-                "{namespace_error:?} describes the destination and must surface, not fall back"
-            );
-        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
@@ -21282,10 +21133,8 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // PREFLIGHT TESTS (beads-0v1.2.7)
-    // ============================================================================
-
+    // =====================================================================    // PREFLIGHT TESTS (beads-0v1.2.7)
+    // =====================================================================
     #[test]
     fn test_preflight_check_status_ordering() {
         // Verify that PreflightCheckStatus can be used for comparison
@@ -21490,10 +21339,8 @@ mod tests {
         assert!(result.failures().is_empty());
     }
 
-    // ========================================================================
-    // Preflight Guardrail Tests (beads-1quj)
-    // ========================================================================
-
+    // =================================================================    // Preflight Guardrail Tests (beads-1quj)
+    // =================================================================
     #[test]
     fn test_preflight_import_rejects_invalid_json_lines() {
         let temp = TempDir::new().unwrap();
@@ -22056,10 +21903,8 @@ mod tests {
         assert_eq!(json_check.unwrap().status, PreflightCheckStatus::Pass);
     }
 
-    // ========================================================================
-    // 3-Way Merge Tests
-    // ========================================================================
-
+    // =================================================================    // 3-Way Merge Tests
+    // =================================================================
     fn fixed_time_merge(seconds: i64) -> chrono::DateTime<Utc> {
         chrono::DateTime::from_timestamp(seconds, 0).unwrap()
     }
@@ -22375,10 +22220,8 @@ mod tests {
         assert_eq!(report.total_actions(), 3);
     }
 
-    // ========================================================================
-    // three_way_merge orchestration tests
-    // ========================================================================
-
+    // =================================================================    // three_way_merge orchestration tests
+    // =================================================================
     #[test]
     fn test_three_way_merge_basic() {
         // Setup: one issue in each state

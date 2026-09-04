@@ -270,9 +270,37 @@ fn snapshot_close_json() {
     let workspace = init_workspace();
     let id = create_issue(&workspace, "Issue to close", "create_close_json");
 
+    // Fail-closed ceremony: close requires a prior legal PASS gate row and
+    // a commit-sha citing the bead id.
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "snapshot-close-json",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_close_json",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let output = run_br(
         &workspace,
-        ["close", &id, "--reason", "Done", "--json"],
+        [
+            "close",
+            &id,
+            "--reason",
+            "Done",
+            "--commit-sha",
+            "abc1234",
+            "--json",
+        ],
         "close_json",
     );
     assert!(

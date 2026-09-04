@@ -9,7 +9,6 @@
 
 use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
-use std::process::Command;
 
 mod common;
 
@@ -102,53 +101,6 @@ fn routed_partial_id(issue_id: &str) -> String {
     let (prefix, hash) = issue_id.split_once('-').expect("issue id with prefix");
     let partial_hash = hash.chars().take(2).collect::<String>();
     format!("{prefix}-{partial_hash}")
-}
-
-fn init_test_git_repo(repo_root: &std::path::Path) -> String {
-    let init_git = Command::new("git")
-        .args(["init", "-b", "main"])
-        .current_dir(repo_root)
-        .output()
-        .expect("git init");
-    assert!(init_git.status.success(), "git init failed");
-    let config_name = Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(repo_root)
-        .output()
-        .expect("git config user.name");
-    assert!(config_name.status.success(), "git config user.name failed");
-    let config_email = Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(repo_root)
-        .output()
-        .expect("git config user.email");
-    assert!(
-        config_email.status.success(),
-        "git config user.email failed"
-    );
-    fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");
-    let add = Command::new("git")
-        .args(["add", "README.md"])
-        .current_dir(repo_root)
-        .output()
-        .expect("git add");
-    assert!(add.status.success(), "git add failed");
-    let commit = Command::new("git")
-        .args(["commit", "-m", "initial"])
-        .current_dir(repo_root)
-        .output()
-        .expect("git commit");
-    assert!(commit.status.success(), "git commit failed");
-    String::from_utf8_lossy(
-        &Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(repo_root)
-            .output()
-            .expect("git rev-parse")
-            .stdout,
-    )
-    .trim()
-    .to_string()
 }
 
 // =============================================================================
@@ -876,9 +828,27 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
+    let gate = run_br(
+        &external_workspace,
+        [
+            "gate",
+            "report",
+            &external_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_external_before_follow_up_close",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &main_workspace,
-        ["close", "--json"],
+        ["close", "--commit-sha", "e2e1234", "--json"],
         "close_follow_up_using_routed_last_touched",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -944,9 +914,27 @@ fn e2e_routing_close_external_issue_via_main_workspace() {
     let external_id = created["id"].as_str().expect("external id").to_string();
     let routed_input = routed_partial_id(&external_id);
 
+    let gate = run_br(
+        &external_workspace,
+        [
+            "gate",
+            "report",
+            &external_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_external_via_route",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &main_workspace,
-        ["close", &routed_input, "--json"],
+        ["close", &routed_input, "--commit-sha", "e2e1234", "--json"],
         "close_external_via_route",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -1012,9 +1000,27 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
     let external_id = created["id"].as_str().expect("external id").to_string();
 
     let routed_input = routed_partial_id(&external_id);
+    let gate = run_br(
+        &external_workspace,
+        [
+            "gate",
+            "report",
+            &external_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_external_before_follow_up_reopen",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &main_workspace,
-        ["close", &routed_input, "--json"],
+        ["close", &routed_input, "--commit-sha", "e2e1234", "--json"],
         "close_external_before_follow_up_reopen",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -1087,9 +1093,27 @@ fn e2e_routing_reopen_external_issue_via_main_workspace() {
     let external_id = created["id"].as_str().expect("external id").to_string();
     let routed_input = routed_partial_id(&external_id);
 
+    let gate = run_br(
+        &external_workspace,
+        [
+            "gate",
+            "report",
+            &external_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_external_before_routed_reopen",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &external_workspace,
-        ["close", &external_id],
+        ["close", &external_id, "--commit-sha", "e2e1234"],
         "close_external_before_routed_reopen",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -3396,77 +3420,10 @@ fn e2e_config_delete_db_flag_invalid_target_preserves_yaml() {
     );
 }
 
-#[test]
-fn e2e_changelog_since_commit_uses_target_repo_root() {
-    let _log = common::test_log("e2e_changelog_since_commit_uses_target_repo_root");
-    let workspace = BrWorkspace::new();
-
-    let external_root = workspace.root.join("external-repo");
-    let external_beads = external_root.join(".beads");
-    fs::create_dir_all(&external_beads).expect("create external beads dir");
-    let head = init_test_git_repo(&external_root);
-
-    let init = run_br_with_env(
-        &workspace,
-        ["init"],
-        [("BEADS_DIR", external_beads.to_str().unwrap())],
-        "init_external_repo",
-    );
-    assert!(init.status.success(), "init failed: {}", init.stderr);
-
-    let create = run_br(
-        &workspace,
-        [
-            "--db",
-            external_beads.join("beads.db").to_str().unwrap(),
-            "create",
-            "External closed issue",
-            "--type",
-            "task",
-            "--priority",
-            "2",
-            "--json",
-        ],
-        "create_external_closed_issue",
-    );
-    assert!(create.status.success(), "create failed: {}", create.stderr);
-    let payload = extract_json_payload(&create.stdout);
-    let issue: Value = serde_json::from_str(&payload).expect("parse create json");
-    let id = issue["id"].as_str().expect("issue id").to_string();
-
-    let close = run_br(
-        &workspace,
-        [
-            "--db",
-            external_beads.join("beads.db").to_str().unwrap(),
-            "close",
-            &id,
-            "--reason",
-            "done",
-        ],
-        "close_external_closed_issue",
-    );
-    assert!(close.status.success(), "close failed: {}", close.stderr);
-
-    let changelog = run_br(
-        &workspace,
-        [
-            "--db",
-            external_beads.join("beads.db").to_str().unwrap(),
-            "changelog",
-            "--since-commit",
-            &head,
-            "--json",
-        ],
-        "changelog_external_since_commit",
-    );
-    assert!(
-        changelog.status.success(),
-        "changelog should resolve git references in the targeted repo: {}",
-        changelog.stderr
-    );
-}
-
+// The `br changelog` subcommand was removed in the wave-5 strip, so the
+// former "changelog resolves git references in the targeted repo" routing
+// test has no subject; the routing machinery it exercised is covered by the
+// close/reopen/gate routing tests above.
 #[test]
 fn e2e_routing_path_normalization() {
     let _log = common::test_log("e2e_routing_path_normalization");

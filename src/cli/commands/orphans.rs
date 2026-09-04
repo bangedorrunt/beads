@@ -109,7 +109,7 @@ pub fn execute_with_storage_ctx(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
     beads_dir: &Path,
-    storage_ctx: &config::OpenStorageResult,
+    storage_ctx: &mut config::OpenStorageResult,
 ) -> Result<()> {
     execute_inner(args, json, cli, ctx, beads_dir, Some(storage_ctx))
 }
@@ -121,7 +121,7 @@ fn execute_inner(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
     beads_dir: &Path,
-    preloaded_storage_ctx: Option<&config::OpenStorageResult>,
+    preloaded_storage_ctx: Option<&mut config::OpenStorageResult>,
 ) -> Result<()> {
     // beads-750p: ordinary orphans scans must auto-import a newer JSONL
     // before scanning issue state, so JSONL-only closures (e.g. from `git
@@ -143,7 +143,7 @@ fn execute_inner(
     // import write; the worst observable outcome is one waiting briefly
     // for the other's transaction. This is acceptable for a read command
     // and is documented at SYNC_SAFETY_INVARIANTS.md.
-    let owned_storage_ctx = if preloaded_storage_ctx.is_some() {
+    let mut owned_storage_ctx = if preloaded_storage_ctx.is_some() {
         None
     } else {
         let mut ctx_owned = config::open_storage_with_cli(beads_dir, cli)?;
@@ -152,9 +152,12 @@ fn execute_inner(
         }
         Some(ctx_owned)
     };
-    let storage_ctx = preloaded_storage_ctx
-        .or(owned_storage_ctx.as_ref())
-        .expect("orphans should have an open storage context");
+    let storage_ctx: &mut config::OpenStorageResult = match preloaded_storage_ctx {
+        Some(ctx) => ctx,
+        None => owned_storage_ctx
+            .as_mut()
+            .expect("orphans should have an open storage context"),
+    };
     let storage = &storage_ctx.storage;
 
     // Get issue prefix from config
@@ -329,14 +332,35 @@ fn execute_inner(
             if io::stdin().read_line(&mut input).is_ok() {
                 let input = input.trim().to_lowercase();
                 if input == "y" || input == "yes" {
-                    // Close the issue directly using internal API
+                    // ADR-0001 §5.3 fail-closed close: a legal close cites the
+                    // commit whose message references the bead. The orphan scan
+                    // already detected that commit (`latest_commit`) — it is the
+                    // "commit BEFORE close" evidence for this bead, so we use it
+                    // as the ceremony's --commit-sha instead of fabricating
+                    // evidence. Gate rows must still be recorded first (`br gate
+                    // report <id> --gate <name> --provider <verifier> --status
+                    // pass --to closed`); a missing gate refuses the close below
+                    // and the operator is told exactly why.
                     let close_args = CloseArgs {
                         ids: vec![orphan.issue_id.clone()],
                         reason: Some("Implemented (detected by orphans scan)".to_string()),
+                        commit_sha: Some(orphan.latest_commit.clone()),
                         ..CloseArgs::default()
                     };
 
-                    if let Err(e) = close::execute_with_args(&close_args, false, cli, ctx) {
+                    // Close against the SAME storage context the scan used.
+                    // Re-entering `br close` would deadlock on the workspace
+                    // write lock this command already holds and publish through
+                    // a disconnected context. The close core flushes JSONL
+                    // through this context, so the export cannot lag the DB.
+                    if let Err(e) = close::execute_with_storage_ctx(
+                        &close_args,
+                        false,
+                        cli,
+                        ctx,
+                        beads_dir,
+                        storage_ctx,
+                    ) {
                         eprintln!(
                             "  Failed to close {}: {}",
                             issue_id,

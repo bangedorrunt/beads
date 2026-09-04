@@ -2,5 +2,4 @@
 source: tests/snapshots/error_messages.rs
 expression: "normalize_output(&format!(\"{}{}\", output.stdout, output.stderr))"
 ---
-Updated ID-REDACTED: Will close
-  status: closed → in_progress
+Error: Validation failed: status: transition 'closed' -> 'in_progress' is not permitted by the project workflow policy (.beads/policy.yaml workflow.transitions). Valid next statuses from 'closed': open.

@@ -91,8 +91,30 @@ fn snapshot_error_update_closed_issue() {
     let workspace = init_workspace();
     let id = create_issue(&workspace, "Will close", "create_for_close");
 
-    // Close the issue
-    let close = run_br(&workspace, ["close", &id], "close_issue");
+    // Close the issue (fail-closed ceremony: gate row then commit-sha close).
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "snapshot-error-update-closed",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_close_issue",
+    );
+    assert!(gate.status.success(), "gate should succeed");
+    let close = run_br(
+        &workspace,
+        ["close", &id, "--commit-sha", "abc1234"],
+        "close_issue",
+    );
     assert!(close.status.success(), "close should succeed");
 
     // Try to update it (should still work in br, but status is limited)

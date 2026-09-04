@@ -56,9 +56,8 @@ fi
 # closes WITHOUT the edge being removed — the normal completion of work
 # (#432): the audit must report it as informational, never degrade it.
 "$tool_bin" dep add "$blocked_id" "$blocker_id" >/dev/null 2>&1
-BR_OPERATOR=1 "$tool_bin" close "$blocker_id" \
-  --reason "fixture: blocker completed" \
-  --bypass-policy --bypass-reason "doctor fixture plant" >/dev/null 2>&1
+"$tool_bin" gate report "$blocker_id" --gate unit-test-verified --provider fixture --status pass --to closed >/dev/null 2>&1
+"$tool_bin" close "$blocker_id" --reason "fixture: blocker completed" --commit-sha fixture-dep-dead-closed >/dev/null 2>&1
 "$tool_bin" sync --flush-only >/dev/null 2>&1
 
 {

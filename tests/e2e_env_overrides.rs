@@ -1115,9 +1115,27 @@ fn e2e_close_honors_toon_env_mode() {
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let issue_id = created["id"].as_str().expect("issue id").to_string();
 
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &issue_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "close_toon_gate",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br_with_env(
         &workspace,
-        ["close", &issue_id],
+        ["close", &issue_id, "--commit-sha", "e2e1234"],
         [("BR_OUTPUT_FORMAT", "toon")],
         "close_toon_env",
     );
@@ -1153,7 +1171,29 @@ fn e2e_reopen_honors_toon_env_mode() {
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let issue_id = created["id"].as_str().expect("issue id").to_string();
 
-    let close = run_br(&workspace, ["close", &issue_id], "close_before_reopen");
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &issue_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "close_before_reopen_gate",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        ["close", &issue_id, "--commit-sha", "e2e1234"],
+        "close_before_reopen",
+    );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
     let reopen = run_br_with_env(
@@ -1489,9 +1529,31 @@ fn e2e_epic_close_eligible_honors_toon_env_mode() {
     );
     assert!(dep.status.success(), "dep add failed: {}", dep.stderr);
 
+    let gate_child = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &child_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "close_epic_child_gate",
+    );
+    assert!(
+        gate_child.status.success(),
+        "gate child failed: {}",
+        gate_child.stderr
+    );
     let close_child = run_br(
         &workspace,
-        ["close", &child_id, "--force"],
+        ["close", &child_id, "--force", "--commit-sha", "e2e1234"],
         "close_epic_child_toon",
     );
     assert!(

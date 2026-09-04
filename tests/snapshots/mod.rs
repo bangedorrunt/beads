@@ -23,6 +23,26 @@ pub fn create_issue(workspace: &BrWorkspace, title: &str, label: &str) -> String
     parse_created_id(&output.stdout)
 }
 
+/// Create an issue that passes ADR-0001 §5.5 wave-gated dispatch: it carries
+/// a single-line VERIFY command and a principles citation, so it appears in
+/// `ready` output (which only lists dispatchable beads).
+pub fn create_dispatchable_issue(workspace: &BrWorkspace, title: &str, label: &str) -> String {
+    let output = run_br(
+        workspace,
+        [
+            "create",
+            title,
+            "--verify",
+            "cargo test --lib",
+            "--principle",
+            "fixture — dispatchable snapshot issue",
+        ],
+        label,
+    );
+    assert!(output.status.success(), "create failed: {}", output.stderr);
+    parse_created_id(&output.stdout)
+}
+
 fn parse_created_id(stdout: &str) -> String {
     let line = stdout.lines().next().unwrap_or("");
     // Handle both formats: "Created bd-xxx: title" and "✓ Created bd-xxx: title"

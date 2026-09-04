@@ -108,10 +108,40 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     let id4 = parse_created_id(&issue4.stdout);
     // beads#301: terminal-state transitions go through `br close` so
     // close-policy fires uniformly. `br update --status closed` is rejected.
-    run_br(
+    let gate = run_br(
         &workspace,
-        ["close", &id4, "--reason", "fixture: closed in setup"],
+        [
+            "gate",
+            "report",
+            &id4,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_task2",
+    );
+    assert!(gate.status.success(), "gate task2 failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        [
+            "close",
+            &id4,
+            "--reason",
+            "fixture: closed in setup",
+            "--commit-sha",
+            "e2e1234",
+        ],
         "close_task2",
+    );
+    assert!(
+        close.status.success(),
+        "close task2 failed: {}",
+        close.stderr
     );
     ids.push(id4);
 

@@ -58,7 +58,34 @@ fn harness_full_workflow() {
     show.assert_success();
 
     // Close the issue
-    let close = ws.run_br(["close", &id, "--reason", "Test complete"], "close");
+    let gate = ws.run_br(
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate",
+    );
+    gate.assert_success();
+    let close = ws.run_br(
+        [
+            "close",
+            &id,
+            "--reason",
+            "Test complete",
+            "--commit-sha",
+            "e2e1234",
+        ],
+        "close",
+    );
     close.assert_success();
 
     // Finalize

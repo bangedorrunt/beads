@@ -4,6 +4,7 @@ mod common;
 
 use common::cli::{BrWorkspace, extract_json_payload, parse_created_id, run_br};
 use serde_json::Value;
+use std::fs;
 
 #[test]
 fn e2e_stale_basic() {
@@ -137,6 +138,14 @@ fn e2e_stale_default_includes_custom_nonterminal_statuses() {
     common::init_test_logging();
     let workspace = BrWorkspace::new();
     run_br(&workspace, ["init"], "init");
+
+    // The project workflow policy must permit the custom `review` status
+    // before `br update --status review` will accept it.
+    fs::write(
+        workspace.root.join(".beads/policy.yaml"),
+        "workflow:\n  strict: false\n  statuses: [open, in_progress, review, closed, deferred]\n",
+    )
+    .expect("write workflow policy");
 
     let create = run_br(&workspace, ["create", "Review Issue"], "create_review");
     assert!(create.status.success(), "create failed: {}", create.stderr);

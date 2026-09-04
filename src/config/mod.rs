@@ -3734,12 +3734,42 @@ impl OpenStorageResult {
             });
         }
 
-        auto_flush(
-            &mut self.storage,
-            &self.paths.beads_dir,
-            &self.paths.jsonl_path,
-            self.allow_external_jsonl,
-        )?;
+        // A recovered session (DB rebuilt from JSONL, or no-DB with write
+        // intent) retains the JSONL-family write authority for its whole
+        // lifetime. The auto-flush must reuse that authority instead of
+        // acquiring a second flock on the same sidecar — same-process
+        // re-acquisition blocks on itself and times out. The retained source
+        // snapshot is verified current under the held authority before export.
+        if let Some(jsonl_authority) = self.jsonl_write_authority.as_deref() {
+            let expected_source = match &self.loaded_jsonl_source {
+                RetainedJsonlSource::Uncaptured => {
+                    return Err(BeadsError::SyncConflict {
+                        message:
+                            "Retained JSONL authority has no captured source snapshot for auto-flush"
+                                .to_string(),
+                    });
+                }
+                RetainedJsonlSource::Missing => ExpectedJsonlSourceRef::Missing,
+                RetainedJsonlSource::Present(source) => {
+                    ExpectedJsonlSourceRef::Present(source.as_ref())
+                }
+            };
+            crate::sync::auto_flush_under_retained_authority(
+                &mut self.storage,
+                &self.paths.beads_dir,
+                &self.paths.jsonl_path,
+                self.allow_external_jsonl,
+                expected_source,
+                jsonl_authority,
+            )?;
+        } else {
+            auto_flush(
+                &mut self.storage,
+                &self.paths.beads_dir,
+                &self.paths.jsonl_path,
+                self.allow_external_jsonl,
+            )?;
+        }
         Ok(())
     }
 

@@ -98,9 +98,35 @@ fn stats_json_after_close() {
     let list_json: Value = serde_json::from_str(&list.stdout).expect("valid JSON");
     let first_id = list_json["issues"][0]["id"].as_str().expect("has issue id");
 
+    // Fail-closed close ceremony: recorded PASS gate + commit SHA.
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            first_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_first",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &workspace,
-        ["close", first_id, "--reason", "done"],
+        [
+            "close",
+            first_id,
+            "--reason",
+            "done",
+            "--commit-sha",
+            "e2e1234",
+        ],
         "close_first",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);

@@ -77,8 +77,15 @@ fn parse_created_id(stdout: &str) -> String {
     id_part.trim().to_string()
 }
 
+fn resolved_jsonl_path(workspace: &BrWorkspace) -> std::path::PathBuf {
+    let beads_dir = workspace.root.join(".beads");
+    beads::config::ConfigPaths::resolve(&beads_dir, None)
+        .expect("resolve workspace paths")
+        .jsonl_path
+}
+
 fn rewrite_jsonl_issue_as_closed(workspace: &BrWorkspace, issue_id: &str) {
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = resolved_jsonl_path(workspace);
     let contents = fs::read_to_string(&jsonl_path).expect("read issues.jsonl");
 
     let rewritten = contents
@@ -97,6 +104,9 @@ fn rewrite_jsonl_issue_as_closed(workspace: &BrWorkspace, issue_id: &str) {
         .collect::<Vec<_>>()
         .join("\n");
 
+    // Ensure coarse filesystem timestamp resolution still makes the edited
+    // JSONL newer than the database for the auto-import contract.
+    std::thread::sleep(std::time::Duration::from_millis(25));
     fs::write(&jsonl_path, format!("{rewritten}\n")).expect("write issues.jsonl");
 }
 
@@ -294,10 +304,32 @@ fn e2e_orphans_fix_auto_flushes_closed_issue_to_jsonl() {
         "commit_ref",
     );
 
+    // The fork's fail-closed close ceremony requires a recorded PASS gate
+    // before closing; the detected commit feeds `--commit-sha`. Report the
+    // gate so the interactive fix can close legally.
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &issue_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_fix_issue",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+
     let fix = run_br_with_stdin(&workspace, ["orphans", "--fix"], "y\n", "orphans_fix");
     assert!(fix.status.success(), "orphans --fix failed: {}", fix.stderr);
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = resolved_jsonl_path(&workspace);
     let exported_issue = fs::read_to_string(&jsonl_path)
         .expect("read issues.jsonl")
         .lines()
@@ -511,9 +543,34 @@ fn e2e_orphans_excludes_closed_issues() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &issue_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_issue",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &workspace,
-        ["close", &issue_id, "--reason", "done"],
+        [
+            "close",
+            &issue_id,
+            "--reason",
+            "done",
+            "--commit-sha",
+            "e2e1234",
+        ],
         "close_issue",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -711,7 +768,29 @@ fn e2e_orphans_multiple_issues_multiple_commits() {
     let id3 = parse_created_id(&create3.stdout);
 
     // Close the third issue
-    let close = run_br(&workspace, ["close", &id3, "--reason", "done"], "close_3");
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id3,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_3",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        ["close", &id3, "--reason", "done", "--commit-sha", "e2e1234"],
+        "close_3",
+    );
     assert!(close.status.success());
 
     // Make commits referencing all three

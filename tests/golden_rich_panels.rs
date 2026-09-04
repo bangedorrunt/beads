@@ -145,8 +145,26 @@ fn init_fixture() -> RichFixture {
     run_setup_br(
         &root,
         &[
+            "gate",
+            "report",
+            &closed_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "golden-rich-panels",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+    );
+    run_setup_br(
+        &root,
+        &[
             "close",
             &closed_id,
+            "--commit-sha",
+            "abc1234",
             "--reason",
             "Completed for golden snapshot coverage",
         ],

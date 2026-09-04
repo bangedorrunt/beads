@@ -941,6 +941,7 @@ fn assert_core_read_failure(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn assert_core_write_success(
     fixture: &FixtureWorkspace,
     create: &BrRun,
@@ -1007,9 +1008,43 @@ fn assert_core_write_success(
         comment.stderr
     );
 
+    // Fail-closed ceremony: close requires a prior legal PASS gate row and a
+    // commit-sha citing the bead id.
+    let gate = run_br(
+        &fixture.workspace,
+        [
+            "gate",
+            "report",
+            &issue_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "replay-core-write",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+            "--json",
+        ],
+        &surface_label(&fixture.metadata.name, "core_gate"),
+    );
+    assert!(
+        gate.status.success(),
+        "{} gate report failed: {}",
+        fixture.metadata.name,
+        gate.stderr
+    );
     let close = run_br(
         &fixture.workspace,
-        ["close", &issue_id, "--reason", "Replay close", "--json"],
+        [
+            "close",
+            &issue_id,
+            "--reason",
+            "Replay close",
+            "--commit-sha",
+            "abc1234",
+            "--json",
+        ],
         &surface_label(&fixture.metadata.name, "core_close"),
     );
     assert!(

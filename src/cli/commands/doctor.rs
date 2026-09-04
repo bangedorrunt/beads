@@ -7409,22 +7409,31 @@ fn check_workflow_statuses(conn: &Connection, beads_dir: &Path, checks: &mut Vec
         return;
     }
 
-    let rows =
-        match conn.query("SELECT id, status FROM issues WHERE status IS NOT NULL ORDER BY id") {
-            Ok(rows) => rows,
-            Err(err) => {
-                push_check(
-                    checks,
-                    "policy.workflow_statuses",
-                    CheckStatus::Warn,
-                    Some(format!(
-                        "Failed to query issue statuses for workflow audit: {err}"
-                    )),
-                    None,
-                );
-                return;
-            }
-        };
+    // Tombstones (rows with `deleted_at` set) are deletion markers, not
+    // workflow states: their `status` is `tombstone` because `br delete`
+    // writes it, and the recommended remediation (`br update --status`)
+    // is rejected for deleted issues. Flagging them would warn on every
+    // workspace that has ever deleted an issue and would fail post-repair
+    // verification whenever a rebuild legitimately preserves an unflushed
+    // tombstone. The audit governs live issues only, so deleted rows are
+    // excluded by the query itself.
+    let rows = match conn.query(
+        "SELECT id, status FROM issues WHERE status IS NOT NULL AND deleted_at IS NULL ORDER BY id",
+    ) {
+        Ok(rows) => rows,
+        Err(err) => {
+            push_check(
+                checks,
+                "policy.workflow_statuses",
+                CheckStatus::Warn,
+                Some(format!(
+                    "Failed to query issue statuses for workflow audit: {err}"
+                )),
+                None,
+            );
+            return;
+        }
+    };
 
     let mut offenders: Vec<serde_json::Value> = Vec::new();
     for row in rows {
@@ -16603,7 +16612,6 @@ mod tests {
             Some("completed")
         );
     }
-
     /// issue #311: when every issue conforms, the detector reports Ok.
     #[test]
     fn test_check_workflow_statuses_ok_when_all_conform() {
@@ -16627,6 +16635,44 @@ mod tests {
         check_workflow_statuses(&conn, beads_dir, &mut checks);
         let check = find_check(&checks, "policy.workflow_statuses").expect("check present");
         assert!(matches!(check.status, CheckStatus::Ok), "{check:?}");
+    }
+
+    /// A deleted issue is a tombstone, not a workflow state: its `status`
+    /// column is `tombstone` because `br delete` writes it, and the check's
+    /// remediation (`br update --status`) is rejected for deleted issues.
+    /// The workflow audit governs live issues only, so a tombstone must not
+    /// be reported as a status offender — otherwise every workspace that has
+    /// ever deleted an issue would warn, and post-repair verification would
+    /// fail when a rebuild legitimately preserves an unflushed tombstone.
+    #[test]
+    fn test_check_workflow_statuses_ignores_tombstones() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path();
+        let db_path = beads_dir.join("beads.db");
+        let mut storage = SqliteStorage::open(&db_path).unwrap();
+        storage
+            .create_issue(&sample_issue("bd-ok-live", "Live issue"), "tester")
+            .unwrap();
+        let mut tomb = sample_issue("bd-tomb", "Deleted issue");
+        tomb.status = Status::Tombstone;
+        tomb.deleted_at = Some(Utc::now());
+        storage.create_issue(&tomb, "tester").unwrap();
+        drop(storage);
+
+        fs::write(
+            beads_dir.join(crate::close_policy::POLICY_FILE_NAME),
+            "workflow:\n  strict: true\n  statuses: [\"open\", \"closed\"]\n",
+        )
+        .unwrap();
+
+        let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
+        let mut checks = Vec::new();
+        check_workflow_statuses(&conn, beads_dir, &mut checks);
+        let check = find_check(&checks, "policy.workflow_statuses").expect("check present");
+        assert!(
+            matches!(check.status, CheckStatus::Ok),
+            "tombstone must not be a workflow offender: {check:?}"
+        );
     }
 
     /// issue #311: with no workflow policy configured the detector stays

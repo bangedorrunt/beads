@@ -36,6 +36,7 @@ invocation (env override or flag) to pin the finding/check contract;
 | fm-configs-startup-cache-poisoned | startup_cache_poisoned | detect |
 | fm-configs-yaml-malformed | config_yaml_malformed | detect |
 | fm-dependencies-dead-closed-blocking-edges | dep_dead_closed_blocking_edges | detect |
+| fm-briefs-fence-import-pending | — | exception: fixer-only id; the fixer is self-probing and runs only when a pending fence-import warning is present, so no standalone fixture emits it as a finding |
 | fm-dependencies-fully-unblocked-open-issues | dep_dead_closed_blocking_edges | detect |
 | fm-external_artifacts-binary-version-mismatch | binary_version_mismatch | detect |
 | fm-external_artifacts-multiple-br-in-path | multiple_br_in_path | detect: the fixture builds its own $PATH with two `br` entries; on dual-install developer hosts the finding also fires ambiently in every fixture |

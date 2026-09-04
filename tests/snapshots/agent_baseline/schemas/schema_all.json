@@ -3592,6 +3592,17 @@
           "items": {
             "$ref": "#/$defs/InheritedBlock"
           }
+        },
+        "reservation": {
+          "description": "ADR-0001 Wave 3 / Layer 3: READ-ONLY toron reservation display.\nPresent only when the caller supplied `--reservations <snapshot>`;\nbr renders what toron reports and never grants or mutates leases\n(toron remains the sole grantor).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ShowReservationBlock"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -3958,6 +3969,57 @@
             "source_title",
             "field_used",
             "content"
+          ]
+        },
+        "ShowReservationBlock": {
+          "description": "ADR-0001 Wave 3 / Layer 3 — READ-ONLY reservation display for `br show`.\n\nbr renders what a toron-derived snapshot reports; it never grants, renews,\nor releases leases (toron remains the sole grantor). The block carries no\nmutation affordances by construction.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "description": "`active` (a held lease matches), `expired` (a released/lapsed lease\nmatches — names its holder for reclaim decisions), or\n`no_reservation` (snapshot supplied, nothing matches).",
+              "type": "string"
+            },
+            "holder": {
+              "description": "Holder of the matching (active or expired) lease.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "paths": {
+              "description": "Matching lease paths. Read-only projection of toron's board.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ShowReservationPath"
+              }
+            },
+            "expires_at": {
+              "description": "When the active lease lapses (RFC3339).",
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "state"
+          ]
+        },
+        "ShowReservationPath": {
+          "description": "One displayed lease path with its exclusivity.",
+          "type": "object",
+          "properties": {
+            "path_pattern": {
+              "type": "string"
+            },
+            "exclusive": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path_pattern",
+            "exclusive"
           ]
         }
       }

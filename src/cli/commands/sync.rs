@@ -2729,12 +2729,6 @@ fn execute_flush(
     // Only a downgraded publication is worth a field: the atomic protocol is
     // the documented default, and keeping the field absent leaves every
     // existing `--json` consumer and golden untouched (#419).
-    let publication_atomicity = export_result
-        .publication
-        .as_ref()
-        .map(crate::sync::ExportPublicationReceipt::atomicity)
-        .filter(|atomicity| atomicity.is_downgraded())
-        .map(|atomicity| atomicity.as_str().to_string());
     let result = FlushResult {
         exported_issues: report.issues_exported,
         exported_dependencies: report.dependencies_exported,

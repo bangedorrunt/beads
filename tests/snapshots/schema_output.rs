@@ -1,5 +1,5 @@
 use super::common::cli::{BrWorkspace, run_br};
-use super::{create_issue, init_workspace, normalize_json};
+use super::{create_dispatchable_issue, create_issue, init_workspace, normalize_json};
 use insta::assert_snapshot;
 use regex::Regex;
 use serde_json::Value;
@@ -308,10 +308,13 @@ fn run_success(workspace: &BrWorkspace, args: &[&str], label: &str) {
     );
 }
 
+#[allow(clippy::too_many_lines)]
 fn create_live_command_fixture() -> LiveCommandFixture {
     let workspace = init_workspace();
 
-    let ready_id = create_issue(
+    // The ready command only lists dispatchable beads (ADR-0001 §5.5), so the
+    // fixture issue must carry a VERIFY command and a principles citation.
+    let ready_id = create_dispatchable_issue(
         &workspace,
         "Ready contract fixture for schema filters",
         "schema_contract_create_ready",
@@ -391,6 +394,25 @@ fn create_live_command_fixture() -> LiveCommandFixture {
         ],
         "schema_contract_update_in_progress",
     );
+    // Fail-closed ceremony: close requires a prior legal PASS gate row and
+    // a commit-sha citing the bead id.
+    run_success(
+        &workspace,
+        &[
+            "gate",
+            "report",
+            &closed_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "schema-contract",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "schema_contract_gate_close",
+    );
     run_success(
         &workspace,
         &[
@@ -398,6 +420,8 @@ fn create_live_command_fixture() -> LiveCommandFixture {
             &closed_id,
             "--reason",
             "schema contract fixture",
+            "--commit-sha",
+            "abc1234",
             "--json",
         ],
         "schema_contract_close_issue",

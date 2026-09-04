@@ -209,6 +209,7 @@ fn golden_init_expected_file_set() {
         "config.yaml",
         "issues.jsonl",
         "metadata.json",
+        "policy.yaml",
     ]
     .iter()
     .map(std::string::ToString::to_string)

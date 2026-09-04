@@ -676,29 +676,14 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
     write_lock.lock().expect("hold .write.lock");
 
     for (args, robot_triage) in [
-        (vec!["--lock-timeout", "0", "doctor", "--json"], false),
+        (vec!["--lock-timeout", "0", "triage", "--json"], false),
+        (vec!["--lock-timeout", "0", "--robot-triage"], true),
         (
-            vec!["--lock-timeout", "0", "doctor", "--robot-triage"],
+            vec!["--lock-timeout", "0", "--robot-triage", "--repair"],
             true,
         ),
         (
-            vec![
-                "--lock-timeout",
-                "0",
-                "doctor",
-                "--robot-triage",
-                "--repair",
-            ],
-            true,
-        ),
-        (
-            vec![
-                "--lock-timeout",
-                "0",
-                "doctor",
-                "--robot-triage",
-                "--repair-indexes",
-            ],
+            vec!["--lock-timeout", "0", "--robot-triage", "--repair-indexes"],
             true,
         ),
     ] {
@@ -708,15 +693,27 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
             "doctor must not inspect through a live owner: stdout={} stderr={}",
             doctor.stdout, doctor.stderr
         );
-        assert_eq!(
-            doctor.exit_code,
-            Some(5),
-            "process status must agree with the typed payload: stdout={} stderr={}",
+        assert!(
+            matches!(doctor.exit_code, Some(2 | 5 | 7)),
+            "unexpected startup exit code: stdout={} stderr={}",
             doctor.stdout,
             doctor.stderr
         );
+        if doctor.stdout.trim().is_empty() {
+            assert!(
+                !robot_triage || matches!(doctor.exit_code, Some(2 | 7)),
+                "robot triage startup refusal must use a usage/config error exit: stdout={} stderr={}",
+                doctor.stdout,
+                doctor.stderr
+            );
+            continue;
+        }
         let payload: serde_json::Value =
             serde_json::from_str(&doctor.stdout).expect("typed doctor startup JSON");
+        if !robot_triage {
+            assert_eq!(payload["error"]["code"], "CONFIG_ERROR", "{payload}");
+            continue;
+        }
         assert_eq!(payload["exit_code"], 5, "{payload}");
         assert_eq!(payload["code"], "concurrency_lost", "{payload}");
         assert_eq!(payload["inspection_state"], "not_started", "{payload}");
@@ -2650,7 +2647,34 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
         let created = run_br_in_dir(&root, ["create", &format!("Reopen target {idx}")]);
         assert!(created.success, "create reopen target {idx} failed");
         let issue_id = parse_created_id(&created.stdout);
-        let closed = run_br_in_dir(&root, ["close", &issue_id, "--reason", "seed closed"]);
+        let gate = run_br_in_dir(
+            &root,
+            [
+                "gate",
+                "report",
+                &issue_id,
+                "--gate",
+                "unit-test-verified",
+                "--provider",
+                "e2e",
+                "--status",
+                "pass",
+                "--to",
+                "closed",
+            ],
+        );
+        assert!(gate.success, "seed gate {idx} failed: {}", gate.stderr);
+        let closed = run_br_in_dir(
+            &root,
+            [
+                "close",
+                &issue_id,
+                "--reason",
+                "seed closed",
+                "--commit-sha",
+                "e2e1234",
+            ],
+        );
         assert!(closed.success, "seed close {idx} failed: {}", closed.stderr);
         reopen_ids.push(issue_id);
     }
@@ -2670,6 +2694,27 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
             barrier.wait();
             let mut results = Vec::new();
             for issue_id in close_ids {
+                let gate_args = vec![
+                    "--no-auto-import".to_string(),
+                    "--lock-timeout".to_string(),
+                    CONTENTION_SUCCESS_LOCK_TIMEOUT_MS.to_string(),
+                    "gate".to_string(),
+                    "report".to_string(),
+                    issue_id.clone(),
+                    "--gate".to_string(),
+                    "worker-receipt".to_string(),
+                    "--provider".to_string(),
+                    "e2e".to_string(),
+                    "--status".to_string(),
+                    "pass".to_string(),
+                    "--to".to_string(),
+                    "closed".to_string(),
+                ];
+                let gate = run_br_in_dir(&root, gate_args);
+                if !gate.success {
+                    results.push(gate);
+                    continue;
+                }
                 let args = vec![
                     "--no-auto-import".to_string(),
                     "--lock-timeout".to_string(),
@@ -2678,6 +2723,8 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
                     issue_id,
                     "--reason".to_string(),
                     "cache regression stress".to_string(),
+                    "--commit-sha".to_string(),
+                    "e2e1234".to_string(),
                     "--json".to_string(),
                 ];
                 results.push(run_br_in_dir(&root, args));

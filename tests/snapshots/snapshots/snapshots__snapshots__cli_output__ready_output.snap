@@ -2,4 +2,8 @@
 source: tests/snapshots/cli_output.rs
 expression: normalize_output(&output.stdout)
 ---
-✨ No ready issues — all remaining work is blocked, deferred, or in progress
+📋 Ready work (3 issues with no blockers):
+
+1. [● P0] [task] ID-REDACTED: Critical bug
+2. [● P1] [task] ID-REDACTED: High priority feature
+3. [● P2] [task] ID-REDACTED: Medium task

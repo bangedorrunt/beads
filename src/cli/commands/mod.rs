@@ -88,6 +88,24 @@ pub fn report_auto_flush_failure(
     jsonl_path: &Path,
     error: &BeadsError,
 ) {
+    report_auto_flush_failure_with_exit(ctx, beads_dir, jsonl_path, error, true);
+}
+
+/// Render an auto-flush warning, optionally making it a process failure.
+///
+/// Lock contention is an advisory skip: no export was attempted, so callers
+/// may preserve a successful mutation status. Actual export errors must set
+/// the deferred sync exit code.
+pub fn report_auto_flush_failure_with_exit(
+    ctx: &OutputContext,
+    beads_dir: &Path,
+    jsonl_path: &Path,
+    error: &BeadsError,
+    record_exit: bool,
+) {
+    if record_exit {
+        crate::output::record_pending_exit_code(6);
+    }
     tracing::warn!(
         beads_dir = %beads_dir.display(),
         jsonl_path = %jsonl_path.display(),
@@ -669,7 +687,7 @@ mod tests {
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
         let _held = crate::sync::blocking_write_lock(&beads_dir).expect("hold write lock");
-        let result = acquire_routed_workspace_write_lock(&beads_dir, true, Some(1));
+        let result = acquire_routed_workspace_write_lock(&beads_dir, true, Some(0));
         let err = result.err().ok_or_else(|| {
             "external routed lock should wait for and time out on held lock".to_string()
         })?;
@@ -677,7 +695,7 @@ mod tests {
         assert!(
             message.contains("Routed external workspace is busy")
                 && message.contains("target write lock")
-                && message.contains("Timed out after 1ms waiting for write lock"),
+                && message.contains("Timed out after 0ms waiting for write lock"),
             "{message}"
         );
         Ok(())

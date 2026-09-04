@@ -1101,7 +1101,30 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
         show.stderr
     );
 
-    let close = run_br(&workspace, ["close", &last_id], "close");
+    // Fail-closed close ceremony: recorded PASS gate + commit SHA.
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &last_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_before_close",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        ["close", &last_id, "--commit-sha", "e2e1234"],
+        "close",
+    );
     artifacts.record_command(
         "close",
         &close.stdout,

@@ -1,5 +1,5 @@
 use super::common::cli::{BrWorkspace, run_br};
-use super::{create_issue, init_workspace, normalize_output};
+use super::{create_dispatchable_issue, create_issue, init_workspace, normalize_output};
 use insta::assert_snapshot;
 
 /// `br --help` no longer lists a `serve` subcommand: the optional `mcp`
@@ -82,10 +82,14 @@ fn snapshot_show_output() {
 #[test]
 fn snapshot_ready_output() {
     let workspace = init_workspace();
-    // Create issues with different priorities using update
-    let id1 = create_issue(&workspace, "Critical bug", "create_p0");
-    let id2 = create_issue(&workspace, "High priority feature", "create_p1");
-    let id3 = create_issue(&workspace, "Medium task", "create_p2");
+    // Create issues with different priorities using update. ADR-0001 §5.5
+    // wave-gated dispatch only lists beads carrying a VERIFY command and a
+    // principles citation, so the fixtures provide both to keep the ready
+    // snapshot exercising the rendered list rather than the empty-state
+    // dispatchability notice.
+    let id1 = create_dispatchable_issue(&workspace, "Critical bug", "create_p0");
+    let id2 = create_dispatchable_issue(&workspace, "High priority feature", "create_p1");
+    let id3 = create_dispatchable_issue(&workspace, "Medium task", "create_p2");
 
     // Update priorities
     let _ = run_br(&workspace, ["update", &id1, "--priority", "0"], "update_p0");
@@ -156,8 +160,31 @@ fn snapshot_reopen_output() {
     let workspace = init_workspace();
     let id = create_issue(&workspace, "Issue to reopen", "create_for_reopen");
 
-    // Close the issue first
-    let close = run_br(&workspace, ["close", &id], "close_for_reopen");
+    // Close the issue first (fail-closed ceremony: gate row then commit-sha
+    // close, mirroring the fork's coordination contract).
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "snapshot-reopen",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_for_reopen",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        ["close", &id, "--commit-sha", "abc1234"],
+        "close_for_reopen",
+    );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
     // Now reopen it

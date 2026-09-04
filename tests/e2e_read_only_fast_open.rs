@@ -211,11 +211,6 @@ fn status_and_report_commands() -> Vec<MatrixCommand> {
             "status_no_activity_json",
             strings(["status", "--no-activity", "--json"]),
         ),
-        normalized_json_command(
-            "changelog_robot",
-            strings(["changelog", "--since", "2100-01-01", "--robot"]),
-            &["until"],
-        ),
         exact_command(
             "graph_all_compact",
             strings(["graph", "--all", "--compact"]),

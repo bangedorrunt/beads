@@ -142,7 +142,30 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     assert!(issue6.status.success());
     let id6 = parse_created_id(&issue6.stdout);
-    run_br(&workspace, ["close", &id6], "close_bug");
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id6,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_bug_closed",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        ["close", &id6, "--commit-sha", "e2e1234"],
+        "close_bug",
+    );
+    assert!(close.status.success(), "close failed: {}", close.stderr);
     ids.push(id6);
 
     // Issue 7: In-progress P1 task

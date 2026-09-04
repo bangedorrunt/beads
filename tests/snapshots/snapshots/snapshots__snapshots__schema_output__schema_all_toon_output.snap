@@ -1629,6 +1629,11 @@ schemas:
         type: array
         items:
           "$ref": #/$defs/InheritedBlock
+      reservation:
+        description: "ADR-0001 Wave 3 / Layer 3: READ-ONLY toron reservation display.\nPresent only when the caller supplied `--reservations <snapshot>`;\nbr renders what toron reports and never grants or mutates leases\n(toron remains the sole grantor)."
+        anyOf[2]:
+          - "$ref": #/$defs/ShowReservationBlock
+          - type: "null"
     required[10]: id,ac_shape,blast,title,status,priority,issue_type,created_at,updated_at,compaction_level
     "$defs":
       PrincipleCitation:
@@ -1789,6 +1794,33 @@ schemas:
             description: "The raw content, as stored. For `agent_context` this is the\ncanonical JSON string; downstream renderers can parse it for\npretty-printing."
             type: string
         required[5]: source_id,source_role,source_title,field_used,content
+      ShowReservationBlock:
+        description: "ADR-0001 Wave 3 / Layer 3 — READ-ONLY reservation display for `br show`.\n\nbr renders what a toron-derived snapshot reports; it never grants, renews,\nor releases leases (toron remains the sole grantor). The block carries no\nmutation affordances by construction."
+        type: object
+        properties:
+          state:
+            description: "`active` (a held lease matches), `expired` (a released/lapsed lease\nmatches — names its holder for reclaim decisions), or\n`no_reservation` (snapshot supplied, nothing matches)."
+            type: string
+          holder:
+            description: Holder of the matching (active or expired) lease.
+            type[2]: string,"null"
+          paths:
+            description: Matching lease paths. Read-only projection of toron's board.
+            type: array
+            items:
+              "$ref": #/$defs/ShowReservationPath
+          expires_at:
+            description: When the active lease lapses (RFC3339).
+            type[2]: string,"null"
+            format: date-time
+        required[1]: state
+      ShowReservationPath:
+        description: One displayed lease path with its exclusivity.
+        type: object
+        properties:
+          path_pattern.type: string
+          exclusive.type: boolean
+        required[2]: path_pattern,exclusive
   IssueWithCounts:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: IssueWithCounts

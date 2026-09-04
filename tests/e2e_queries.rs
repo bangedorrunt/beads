@@ -25,9 +25,22 @@ fn e2e_queries_ready_stale_count_search() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
+    // Wave-gated dispatch (ADR-0001): ready only returns beads with a VERIFY
+    // command and a principles citation, so fixture issues must carry both.
     let blocker = run_br(
         &workspace,
-        ["create", "Blocker issue", "-p", "1"],
+        [
+            "create",
+            "Blocker issue",
+            "-p",
+            "1",
+            "-t",
+            "task",
+            "--verify",
+            "cargo test --lib",
+            "--principle",
+            "testing — verify ready behavior",
+        ],
         "create_blocker",
     );
     assert!(
@@ -39,7 +52,18 @@ fn e2e_queries_ready_stale_count_search() {
 
     let blocked = run_br(
         &workspace,
-        ["create", "Blocked issue", "-p", "2"],
+        [
+            "create",
+            "Blocked issue",
+            "-p",
+            "2",
+            "-t",
+            "task",
+            "--verify",
+            "cargo test --lib",
+            "--principle",
+            "testing — verify ready behavior",
+        ],
         "create_blocked",
     );
     assert!(
@@ -51,7 +75,18 @@ fn e2e_queries_ready_stale_count_search() {
 
     let deferred = run_br(
         &workspace,
-        ["create", "Deferred issue", "-p", "3"],
+        [
+            "create",
+            "Deferred issue",
+            "-p",
+            "3",
+            "-t",
+            "task",
+            "--verify",
+            "cargo test --lib",
+            "--principle",
+            "testing — verify ready behavior",
+        ],
         "create_deferred",
     );
     assert!(
@@ -63,7 +98,18 @@ fn e2e_queries_ready_stale_count_search() {
 
     let closed = run_br(
         &workspace,
-        ["create", "Closed issue", "-p", "0"],
+        [
+            "create",
+            "Closed issue",
+            "-p",
+            "0",
+            "-t",
+            "task",
+            "--verify",
+            "cargo test --lib",
+            "--principle",
+            "testing — verify ready behavior",
+        ],
         "create_closed",
     );
     assert!(
@@ -115,6 +161,30 @@ fn e2e_queries_ready_stale_count_search() {
 
     // beads#301: `br update --status closed` is rejected; use the
     // dedicated `br close` command so close-policy is enforced uniformly.
+    // The fail-closed ceremony requires a recorded PASS gate plus the
+    // commit SHA whose message cites the bead id.
+    let gate_issue = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &closed_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_issue",
+    );
+    assert!(
+        gate_issue.status.success(),
+        "gate failed: {}",
+        gate_issue.stderr
+    );
     let close_issue = run_br(
         &workspace,
         [
@@ -122,6 +192,8 @@ fn e2e_queries_ready_stale_count_search() {
             &closed_id,
             "--reason",
             "fixture: ready-after-close",
+            "--commit-sha",
+            "e2e1234",
         ],
         "close_issue",
     );
@@ -524,6 +596,7 @@ fn e2e_config_command() {
 
 /// E2E tests for reopen command.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_reopen_command() {
     let _log = common::test_log("e2e_reopen_command");
     let workspace = BrWorkspace::new();
@@ -541,10 +614,35 @@ fn e2e_reopen_command() {
     let issue_id = parse_created_id(&create.stdout);
     assert!(!issue_id.is_empty(), "failed to parse created ID");
 
-    // Close the issue
+    // Close the issue (fail-closed ceremony: gate row + commit SHA)
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &issue_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "reopen_gate",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &workspace,
-        ["close", &issue_id, "--reason", "Testing reopen"],
+        [
+            "close",
+            &issue_id,
+            "--reason",
+            "Testing reopen",
+            "--commit-sha",
+            "e2e1234",
+        ],
         "reopen_close",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -605,8 +703,34 @@ fn e2e_reopen_command() {
         assert_eq!(show_reopened_json["status"], "open");
     }
 
-    // Test reopen with JSON output
-    let close_again = run_br(&workspace, ["close", &issue_id], "reopen_close_again");
+    // Test reopen with JSON output (re-close needs the fail-closed ceremony)
+    let gate_again = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &issue_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "reopen_gate_again",
+    );
+    assert!(
+        gate_again.status.success(),
+        "gate again failed: {}",
+        gate_again.stderr
+    );
+    let close_again = run_br(
+        &workspace,
+        ["close", &issue_id, "--commit-sha", "e2e1234"],
+        "reopen_close_again",
+    );
     assert!(
         close_again.status.success(),
         "close again failed: {}",
@@ -653,7 +777,29 @@ fn e2e_reopen_honors_env_json_mode() {
         .expect("create should emit json");
     let issue_id = created["id"].as_str().expect("issue id");
 
-    let close = run_br(&workspace, ["close", issue_id], "reopen_env_close");
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            issue_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "reopen_env_gate",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        ["close", issue_id, "--commit-sha", "e2e1234"],
+        "reopen_env_close",
+    );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
     let reopen = run_br_with_env(

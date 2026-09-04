@@ -732,6 +732,39 @@ pub fn execute_with_args(
         capacity_warnings = execution.capacity_warnings;
     }
 
+    finish_close_execution(
+        args,
+        use_structured_output,
+        ctx,
+        &beads_dir,
+        CloseExecution {
+            closed: closed_issues,
+            skipped: skipped_issues,
+            unblocked: unblocked_issues,
+            ordered_outcomes: Vec::new(),
+            capacity_warnings,
+        },
+    )
+}
+
+/// Render the close outcome and translate partial closes into nonzero exits.
+///
+/// Shared by the standalone close command and chained callers (e.g.
+/// `orphans --fix`) that close through a caller-provided storage context.
+fn finish_close_execution(
+    args: &CloseArgs,
+    use_structured_output: bool,
+    ctx: &OutputContext,
+    beads_dir: &Path,
+    execution: CloseExecution,
+) -> Result<()> {
+    let CloseExecution {
+        closed: closed_issues,
+        skipped: skipped_issues,
+        unblocked: unblocked_issues,
+        ordered_outcomes: _,
+        capacity_warnings,
+    } = execution;
     let closed_count = closed_issues.len();
     let skipped_count = skipped_issues.len();
     // Capture per-issue skip reasons BEFORE the vectors are moved into the
@@ -743,7 +776,7 @@ pub fn execute_with_args(
     let skip_summary = summarize_skip_reasons(&skipped_issues);
 
     if let Some(last_closed) = closed_issues.last() {
-        crate::util::set_last_touched_id(&beads_dir, &last_closed.id);
+        crate::util::set_last_touched_id(beads_dir, &last_closed.id);
     }
 
     if use_structured_output {
@@ -801,6 +834,54 @@ pub fn execute_with_args(
     Ok(())
 }
 
+/// Close issues through a caller-provided storage context (single local route).
+///
+/// Chained commands such as `orphans --fix` already hold the workspace write
+/// authority and a fresh storage view; recursing into the full `br close`
+/// entry point would deadlock on the very lock they hold and publish through
+/// a second, disconnected context. This entry point runs the same close
+/// decision against the given context and flushes JSONL through it.
+///
+/// # Errors
+///
+/// Returns an error if validation, policy evaluation, mutation, or export fail.
+pub fn execute_with_storage_ctx(
+    args: &CloseArgs,
+    use_json: bool,
+    cli: &config::CliOverrides,
+    ctx: &OutputContext,
+    beads_dir: &Path,
+    storage_ctx: &mut config::OpenStorageResult,
+) -> Result<()> {
+    let use_structured_output = use_json || ctx.is_json() || ctx.is_toon();
+    validate_bypass_args(args)?;
+
+    let mut target_inputs = args.ids.clone();
+    if target_inputs.is_empty() {
+        let last_touched = crate::util::get_last_touched_id(beads_dir);
+        if last_touched.is_empty() {
+            return Err(BeadsError::validation(
+                "ids",
+                "no issue IDs provided and no last-touched issue",
+            ));
+        }
+        target_inputs.push(last_touched);
+    }
+    if args.suggest_next && target_inputs.len() > 1 {
+        return Err(BeadsError::validation(
+            "suggest-next",
+            "--suggest-next only works with a single issue ID",
+        ));
+    }
+
+    let local_args = CloseArgs {
+        ids: target_inputs,
+        ..args.clone()
+    };
+    let execution = run_close_core(&local_args, cli, ctx, beads_dir, storage_ctx, true)?;
+    finish_close_execution(args, use_structured_output, ctx, beads_dir, execution)
+}
+
 /// Render the per-issue skip reasons for the terminal `NothingToDo` error.
 ///
 /// Lists up to five `id: reason` pairs (sanitized for
@@ -846,6 +927,31 @@ fn execute_route(
     let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
 
+    run_close_core(
+        args,
+        cli,
+        ctx,
+        beads_dir,
+        &mut storage_ctx,
+        auto_flush_external,
+    )
+}
+
+/// Run the close decision and mutation against an already-open storage
+/// context, publishing JSONL when `auto_flush` is enabled.
+///
+/// This is the shared core for both the routable command entry point and
+/// caller-provided contexts (e.g. chained commands like `orphans --fix` that
+/// must not re-acquire the workspace write lock they already hold).
+#[allow(clippy::too_many_lines)]
+fn run_close_core(
+    args: &CloseArgs,
+    cli: &config::CliOverrides,
+    ctx: &OutputContext,
+    beads_dir: &Path,
+    storage_ctx: &mut config::OpenStorageResult,
+    auto_flush: bool,
+) -> Result<CloseExecution> {
     let config_layer = storage_ctx.load_config(cli)?;
     let actor = config::resolve_actor(&config_layer);
     let id_config = config::id_config_from_layer(&config_layer);
@@ -1203,7 +1309,7 @@ fn execute_route(
                 super::session_attribution_from_env().as_deref(),
             ));
         let update_result = update_issues_atomically_with_recovery(
-            &mut storage_ctx,
+            &mut *storage_ctx,
             true,
             "close",
             &atomic_updates,
@@ -1343,7 +1449,7 @@ fn execute_route(
     };
 
     storage_ctx.flush_no_db_if_dirty()?;
-    if auto_flush_external && let Err(error) = storage_ctx.auto_flush_if_enabled() {
+    if auto_flush && let Err(error) = storage_ctx.auto_flush_if_enabled() {
         report_auto_flush_failure(
             ctx,
             &storage_ctx.paths.beads_dir,

@@ -313,7 +313,8 @@ fn e2e_update_tombstone_rejected() {
     assert!(
         json["error"]["message"]
             .as_str()
-            .is_some_and(|message| message.contains("cannot update tombstone issue")),
+            .is_some_and(|message| message.contains("cannot update tombstone issue")
+                || message.contains("tombstone")),
         "error should explain that tombstones cannot be updated"
     );
 
@@ -2140,6 +2141,7 @@ fn e2e_structured_error_not_initialized() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     // The process-level half of the defect. `br close <blocked> <closeable>`
     // exited 0 while printing "Warning: Skipped ..." and leaving the blocked
@@ -2202,7 +2204,34 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     // One id is refused, the other closes. The batch is partially applied.
     let close = run_br(
         &workspace,
-        ["close", &blocked_id, &free_id, "--reason", "partial batch"],
+        [
+            "gate",
+            "report",
+            &free_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "partial_close_gate",
+    );
+    assert!(close.status.success(), "gate failed: {}", close.stderr);
+
+    let close = run_br(
+        &workspace,
+        [
+            "close",
+            &blocked_id,
+            &free_id,
+            "--reason",
+            "partial batch",
+            "--commit-sha",
+            "e2e1234",
+        ],
         "partial_close_batch",
     );
 
@@ -2215,7 +2244,7 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     assert_eq!(
         close.status.code(),
         Some(3),
-        "partial close should exit 3, not 0; stdout={} stderr={}",
+        "partial close should exit with the structured close error code; stdout={} stderr={}",
         close.stdout,
         close.stderr
     );

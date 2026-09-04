@@ -494,8 +494,30 @@ fn e2e_label_on_closed_issue() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Close the issue
-    let close = run_br(&workspace, ["close", &id], "close");
+    // Close the issue through the legal gate-plus-commit ceremony.
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_close",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        ["close", &id, "--commit-sha", "e2e1234"],
+        "close",
+    );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
     // Add label to closed issue - should work

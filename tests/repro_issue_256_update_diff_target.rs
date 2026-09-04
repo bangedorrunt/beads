@@ -37,6 +37,7 @@ use common::cli::{BrWorkspace, parse_created_id, run_br};
 /// an unrelated bead's title.  This is the primary regression the reporter
 /// observed in issue #256.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn br_update_prints_target_beads_title_not_unrelated_bead_title() {
     let _log = common::test_log("repro_issue_256_header_title");
     let workspace = BrWorkspace::new();
@@ -65,7 +66,33 @@ fn br_update_prints_target_beads_title_not_unrelated_bead_title() {
         noise_create.stderr
     );
     let noise_id = parse_created_id(&noise_create.stdout);
-    let noise_close = run_br(&workspace, ["close", &noise_id], "close_noise");
+    let noise_gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &noise_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "repro-256",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_noise",
+    );
+    assert!(
+        noise_gate.status.success(),
+        "noise gate report failed: {}",
+        noise_gate.stderr
+    );
+    let noise_close = run_br(
+        &workspace,
+        ["close", &noise_id, "--commit-sha", "abc1234"],
+        "close_noise",
+    );
     assert!(
         noise_close.status.success(),
         "noise close failed: {}",

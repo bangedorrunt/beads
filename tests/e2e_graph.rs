@@ -287,6 +287,13 @@ fn e2e_graph_all_includes_custom_status_issues() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
+    let policy_path = workspace.root.join(".beads").join("policy.yaml");
+    std::fs::write(
+        &policy_path,
+        "workflow:\n  strict: false\n  statuses: [open, in_progress, review, closed, deferred]\n",
+    )
+    .expect("write workflow policy");
+
     let review = run_br(&workspace, ["create", "Review issue"], "create_review");
     assert!(
         review.status.success(),

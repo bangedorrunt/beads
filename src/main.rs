@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 use beads::cli::commands;
 use beads::cli::{Cli, Commands, OutputFormat, command_requests_robot_json};
 use beads::config;
@@ -32,6 +34,13 @@ fn maybe_rewrite_robot_args() -> Option<Vec<OsString>> {
         return None;
     }
     let flag = raw[pos].to_string_lossy().to_string();
+    // Preserve an explicit `doctor` command: its `--robot-triage` flag
+    // produces the doctor-specific envelope, while the bare legacy flag maps
+    // to the general triage command. Re-prepending `triage` here would turn
+    // `br doctor --robot-triage` into the invalid `br triage doctor`.
+    if raw.iter().skip(1).any(|arg| arg == "doctor") {
+        return Some(raw);
+    }
     let subcmd = match flag.as_str() {
         "--robot-triage" => "triage",
         "--robot-next" => "next",
@@ -111,7 +120,7 @@ fn main() {
     // Text-mode commands are Unix filters: a reader that closes the pipe
     // early must end the process quietly, not as a SIGABRT core dump (#434).
     if should_restore_default_sigpipe(&cli, json_error_mode) {
-        beads_rust::shutdown::restore_default_sigpipe();
+        beads::shutdown::restore_default_sigpipe();
     }
     if let Commands::Sync(args) = &cli.command
         && let Err(error) = beads::cli::commands::sync::validate_sync_mode_args(args)
@@ -125,7 +134,12 @@ fn main() {
     let mut ctx = match StartupContext::init(&overrides) {
         Ok(ctx) => ctx,
         Err(e) => {
-            if command_supports_auto_import {
+            if command_supports_auto_import
+                && !matches!(
+                    cli.command,
+                    Commands::Orphans(beads::cli::OrphansArgs { fix: false, .. })
+                )
+            {
                 handle_error(&e, json_error_mode, color_error_mode);
             }
             StartupContext::empty(overrides.clone())
@@ -834,7 +848,7 @@ fn main() {
             commands::defer::execute_undefer(&args, cli.json || args.robot, &overrides, &output_ctx)
         }
         Commands::Orphans(args) if !args.fix => {
-            if let (Some(res), Some(beads_dir)) = (storage_result.as_ref(), ctx.beads_dir.as_ref())
+            if let (Some(res), Some(beads_dir)) = (storage_result.as_mut(), ctx.beads_dir.as_ref())
             {
                 commands::orphans::execute_with_storage_ctx(
                     &args,
@@ -849,7 +863,19 @@ fn main() {
             }
         }
         Commands::Orphans(args) => {
-            commands::orphans::execute(&args, cli.json || args.robot, &overrides, &output_ctx)
+            if let (Some(res), Some(beads_dir)) = (storage_result.as_mut(), ctx.beads_dir.as_ref())
+            {
+                commands::orphans::execute_with_storage_ctx(
+                    &args,
+                    cli.json || args.robot,
+                    &overrides,
+                    &output_ctx,
+                    beads_dir,
+                    res,
+                )
+            } else {
+                commands::orphans::execute(&args, cli.json || args.robot, &overrides, &output_ctx)
+            }
         }
         Commands::Query { command } => {
             if is_read_only_query_command(&command) {
@@ -922,11 +948,12 @@ fn main() {
                     "Automatic JSONL export skipped because sync lock at {} is held by another process",
                     paths.beads_dir.join(".sync.lock").display()
                 ));
-                commands::report_auto_flush_failure(
+                commands::report_auto_flush_failure_with_exit(
                     &output_ctx,
                     &paths.beads_dir,
                     &paths.jsonl_path,
                     &err,
+                    false,
                 );
                 None
             }
@@ -941,31 +968,36 @@ fn main() {
             }
         };
 
-        if let Some(_sync_lock) = sync_lock
-            && let Err(e) = auto_flush(
-                &mut res.storage,
-                &paths.beads_dir,
-                &paths.jsonl_path,
-                config::implicit_external_jsonl_allowed(
+        if let Some(_sync_lock) = sync_lock {
+            // DB sessions route through `OpenStorageResult` so a recovered
+            // session reuses its retained JSONL-family authority: re-acquiring
+            // the same flock sidecar on a fresh descriptor in-process blocks on
+            // itself and times out. No-DB sessions keep the legacy bare flush,
+            // which is a no-op once their `flush_no_db_then` wrapper has
+            // already persisted.
+            let flush_result = if res.no_db {
+                auto_flush(
+                    &mut res.storage,
                     &paths.beads_dir,
-                    &paths.db_path,
                     &paths.jsonl_path,
-                ),
-            )
-        {
-            commands::report_auto_flush_failure(
-                &output_ctx,
-                &paths.beads_dir,
-                &paths.jsonl_path,
-                &e,
-            );
-            // ADR-0001 §5.8 wave 4 (GH #435): a failed flush can leave the
-            // export ledger (export_hashes) stale against the JSONL it just
-            // failed to record. The warning alone is not enough — scripted
-            // callers must never see exit 0 with flush debt on the table,
-            // so surface the sync/JSONL error code (6) after output and
-            // teardown, matching `br sync`'s additive-reconcile debt signal.
-            beads::output::record_pending_exit_code(6);
+                    config::implicit_external_jsonl_allowed(
+                        &paths.beads_dir,
+                        &paths.db_path,
+                        &paths.jsonl_path,
+                    ),
+                )
+                .map(|_| ())
+            } else {
+                res.auto_flush_if_enabled()
+            };
+            if let Err(e) = flush_result {
+                commands::report_auto_flush_failure(
+                    &output_ctx,
+                    &paths.beads_dir,
+                    &paths.jsonl_path,
+                    &e,
+                );
+            }
         }
     }
 
@@ -981,7 +1013,8 @@ fn main() {
     // first so `SqliteStorage::Drop` checkpoints the WAL (#270).
     drop(storage_result);
     drop(write_lock);
-    beads::shutdown::exit_process(0);
+    let exit_code = beads::output::take_pending_exit_code().unwrap_or(0);
+    beads::shutdown::exit_process(exit_code);
 }
 
 struct StartupContext {
@@ -1548,7 +1581,13 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::Label { .. }
         | Commands::Epic { .. }
         | Commands::Gate { .. }
-        | Commands::Query { .. } => true,
+        | Commands::Query { .. }
+        // beads-750p: orphan SCANS auto-import a newer JSONL through the
+        // startup probe path (the scan itself stays read-only until a probe
+        // proves staleness). `--fix` never reaches this arm: it is mutating
+        // (`is_mutating_command`) and keeps the ordinary writable startup
+        // path so its nested close shares one storage authority.
+        | Commands::Orphans(beads::cli::OrphansArgs { fix: false, .. }) => true,
 
         Commands::Init { .. }
         | Commands::Sync(_)
@@ -1562,7 +1601,9 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::VcsStatus(_)
         | Commands::Completions(_)
         | Commands::Audit { .. }
-        | Commands::Orphans(_)
+        // `--fix` is a mutating interactive close path; it never benefits from
+        // a startup auto-import probe and must share one writable context.
+        | Commands::Orphans(beads::cli::OrphansArgs { fix: true, .. })
         | Commands::Config { .. }
         | Commands::History(_)
         // wave-5 strip: agents/capacity/changelog no longer parse.
@@ -1597,14 +1638,14 @@ const fn supports_read_only_fast_open(cmd: &Commands) -> bool {
         | Commands::Graph(_)
         | Commands::Plan(_)
         | Commands::Insights(_)
-        | Commands::Orphans(beads::cli::OrphansArgs { fix: false, .. })
         | Commands::Comments(beads::cli::CommentsArgs {
             command: None | Some(beads::cli::CommentCommands::List(_)),
             ..
         })
         | Commands::Epic {
             command: beads::cli::EpicCommands::Status(_),
-        } => true,
+        }
+        | Commands::Orphans(beads::cli::OrphansArgs { fix: false, .. }) => true,
         Commands::Dep { command } => is_read_only_dep_command(command),
         Commands::Label { command } => is_read_only_label_listing(command),
         Commands::Query { command } => is_read_only_query_command(command),
@@ -1621,6 +1662,7 @@ const fn supports_read_only_fast_open(cmd: &Commands) -> bool {
 const fn supports_auto_import_read_only_probe(cmd: &Commands) -> bool {
     match cmd {
         Commands::Sync(args) => args.status,
+        Commands::Orphans(args) => !args.fix,
         Commands::List(_)
         | Commands::Show(_)
         | Commands::Search(_)
@@ -1631,7 +1673,6 @@ const fn supports_auto_import_read_only_probe(cmd: &Commands) -> bool {
         | Commands::Count(_)
         | Commands::Stale(_)
         | Commands::Graph(_)
-        | Commands::Orphans(beads::cli::OrphansArgs { fix: false, .. })
         | Commands::Comments(beads::cli::CommentsArgs {
             command: None | Some(beads::cli::CommentCommands::List(_)),
             ..
@@ -1744,10 +1785,12 @@ const fn should_restore_default_sigpipe(cli: &Cli, structured_output: bool) -> b
     if structured_output {
         return false;
     }
+    #[allow(unexpected_cfgs)]
     #[cfg(feature = "mcp")]
     if matches!(cli.command, Commands::Serve(_)) {
         return false;
     }
+    #[allow(unexpected_cfgs)]
     #[cfg(not(feature = "mcp"))]
     let _ = cli;
     true
@@ -2820,6 +2863,11 @@ mod tests {
 
     #[test]
     fn read_only_fast_open_covers_non_fix_orphans_scan() {
+        // beads-750p: orphan SCANS may use the read-only fast-open path with
+        // its freshness probe (a stale JSONL reopens writable under authority
+        // before scanning). `--fix` is mutating and keeps the ordinary
+        // writable startup path so the nested close shares one storage
+        // authority with the scan.
         let orphans = Cli::parse_from(["br", "--no-auto-import", "--no-auto-flush", "orphans"]);
         assert!(build_cli_overrides(&orphans).read_only_fast_open);
 
@@ -3408,7 +3456,6 @@ mod tests {
             &["br", "schema"],
             &["br", "config", "path"],
             &["br", "history", "list"],
-            &["br", "orphans"],
         ];
 
         for argv in cases {
@@ -3421,9 +3468,14 @@ mod tests {
     }
 
     #[test]
-    fn orphans_defers_auto_import_but_keeps_write_lock_when_initialized() {
+    fn orphans_scan_auto_imports_but_defers_write_lock() {
         let command = Cli::parse_from(["br", "orphans"]).command;
-        assert!(!should_auto_import(&command));
+        // beads-750p: an orphan SCAN must see JSONL-only closures, so it
+        // auto-imports a newer JSONL through the read-only fast-open probe
+        // (the scan itself stays read-only until a probe proves staleness).
+        assert!(should_auto_import(&command));
+        assert!(supports_auto_import_read_only_probe(&command));
+        assert!(supports_read_only_fast_open(&command));
         assert!(needs_write_lock(&command));
     }
 
@@ -3656,6 +3708,7 @@ mod tests {
         }
     }
 
+    #[allow(unexpected_cfgs)]
     #[cfg(feature = "mcp")]
     #[test]
     fn keeps_sigpipe_ignored_for_the_mcp_server() {

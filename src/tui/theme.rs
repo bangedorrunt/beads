@@ -222,7 +222,8 @@ pub fn danger_border() -> Style {
 
 /// Expose raw palette for places that need Color values directly.
 pub mod palette {
-    use super::{CYAN, Color, FG, MUTED, SELECTION_BG, VOID, rgb_or_reset};
+    #[allow(clippy::wildcard_imports)]
+    use super::*;
     pub const VOID_RGB: Color = VOID;
     pub const FG_RGB: Color = FG;
     pub const MUTED_RGB: Color = MUTED;

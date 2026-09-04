@@ -949,7 +949,30 @@ fn e2e_audit_log_for_issue() {
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
-    let close = run_br(&workspace, ["close", &id, "--reason", "Done"], "close");
+    let close = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate",
+    );
+    assert!(close.status.success(), "gate failed: {}", close.stderr);
+
+    let close = run_br(
+        &workspace,
+        ["close", &id, "--reason", "Done", "--commit-sha", "e2e1234"],
+        "close",
+    );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
     // Check log
@@ -1001,7 +1024,30 @@ fn e2e_audit_summary() {
         .as_str()
         .unwrap();
 
-    run_br(&workspace, ["close", id1], "close");
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            id1,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        ["close", id1, "--commit-sha", "e2e1234"],
+        "close",
+    );
+    assert!(close.status.success(), "close failed: {}", close.stderr);
 
     // Check summary
     let summary = run_br(&workspace, ["audit", "summary"], "audit_summary");

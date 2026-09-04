@@ -331,9 +331,34 @@ fn e2e_list_and_count_status_all_matches_every_status() {
         "status_all_claim",
     );
     assert!(claim.status.success(), "claim failed: {}", claim.stderr);
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &ids[2],
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "status_all_gate",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &workspace,
-        ["close", &ids[2], "--reason", "done"],
+        [
+            "close",
+            &ids[2],
+            "--reason",
+            "done",
+            "--commit-sha",
+            "e2e1234",
+        ],
         "status_all_close",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -549,11 +574,32 @@ fn e2e_basic_lifecycle() {
     // Terminal-state transitions must go through `br close` so close-policy
     // (close-reason / AC / attribution) is enforced; `update --status closed`
     // refuses by design (#301).
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+
     let close_args = vec![
         "close".to_string(),
         id,
         "--reason".to_string(),
         "e2e lifecycle complete".to_string(),
+        "--commit-sha".to_string(),
+        "e2e1234".to_string(),
     ];
     let close = run_br(&workspace, close_args, "close");
     assert!(close.status.success(), "close failed: {}", close.stderr);

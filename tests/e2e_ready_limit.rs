@@ -6,11 +6,20 @@ fn test_ready_limit_with_external_blockers() {
     let workspace = BrWorkspace::new();
     run_br(&workspace, ["init"], "init");
 
-    // Create 10 issues
+    // Create 10 issues. Wave-gated dispatch (ADR-0001) only returns beads
+    // carrying a VERIFY command and a principles citation, so fixtures must
+    // provide both for the ready assertions to exercise the limit semantics.
     for i in 1..=10 {
         run_br(
             &workspace,
-            ["create", &format!("Issue {i}")],
+            [
+                "create",
+                &format!("Issue {i}"),
+                "--verify",
+                "cargo test --lib",
+                "--principle",
+                "testing — verify ready limit",
+            ],
             &format!("create_{i}"),
         );
     }

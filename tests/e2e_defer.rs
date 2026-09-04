@@ -30,7 +30,18 @@ fn setup_workspace_with_issue() -> (BrWorkspace, String) {
 
     let create = run_br(
         &workspace,
-        ["create", "Test issue for defer", "-p", "2", "-t", "task"],
+        [
+            "create",
+            "Test issue for defer",
+            "-p",
+            "2",
+            "-t",
+            "task",
+            "--verify",
+            "cargo test --lib",
+            "--principle",
+            "testing — verify defer behavior",
+        ],
         "create_issue",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -49,7 +60,18 @@ fn setup_workspace_with_multiple_issues() -> (BrWorkspace, Vec<String>) {
     for i in 1..=3 {
         let create = run_br(
             &workspace,
-            ["create", &format!("Issue {i}"), "-p", "2", "-t", "task"],
+            [
+                "create",
+                &format!("Issue {i}"),
+                "-p",
+                "2",
+                "-t",
+                "task",
+                "--verify",
+                "cargo test --lib",
+                "--principle",
+                "testing — verify defer behavior",
+            ],
             &format!("create_issue_{i}"),
         );
         assert!(create.status.success());
@@ -573,8 +595,30 @@ fn defer_closed_issue_skips() {
     info!("defer_closed_issue_skips: starting");
     let (workspace, id) = setup_workspace_with_issue();
 
-    let close = run_br(&workspace, ["close", &id], "close_first");
-    assert!(close.status.success());
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_close_first",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close = run_br(
+        &workspace,
+        ["close", &id, "--commit-sha", "e2e-defer-close"],
+        "close_first",
+    );
+    assert!(close.status.success(), "close failed: {}", close.stderr);
 
     // Closed issues should be reported as skipped instead of being deferred.
     let defer = run_br(&workspace, ["defer", &id, "--json"], "defer_closed");

@@ -428,10 +428,35 @@ fn e2e_comments_on_closed_issue() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Close the issue
+    // Close the issue through the legal gate-plus-commit ceremony.
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &workspace,
-        ["close", &id, "--reason", "Testing closed comments"],
+        [
+            "close",
+            &id,
+            "--reason",
+            "Testing closed comments",
+            "--commit-sha",
+            "e2e1234",
+        ],
         "close_issue",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);

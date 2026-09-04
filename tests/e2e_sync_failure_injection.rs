@@ -903,6 +903,28 @@ fn cli_mutation_crash_boundary_matrix_marks_dirty_until_recovered() {
     assert_stale_show_finds(&workspace, &issue_id, "matrix_create_stale_show");
     flush_and_assert_clean(&workspace, "matrix_create_recover_flush");
 
+    // The matrix's close case must satisfy the fail-closed close ceremony:
+    // record the PASS gate up front so the crash-boundary close is refused
+    // only by the injected crash, never by missing close evidence.
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &issue_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "matrix_gate",
+    );
+    assert_run_success(&gate, "matrix_gate");
+
     let cases = [
         (
             "update",
@@ -944,6 +966,8 @@ fn cli_mutation_crash_boundary_matrix_marks_dirty_until_recovered() {
                 issue_id.clone(),
                 "--reason".to_string(),
                 "crash boundary close".to_string(),
+                "--commit-sha".to_string(),
+                "e2e1234".to_string(),
                 "--json".to_string(),
                 "--no-auto-flush".to_string(),
             ],
@@ -983,6 +1007,30 @@ fn cli_mutation_crash_boundary_matrix_marks_dirty_until_recovered() {
 
     for (operation, args) in cases {
         let label = format!("matrix_{operation}_primary_write");
+        // Close gates are bound to the issue's status at record time: an
+        // earlier case moved the anchor to `in_progress`, so the up-front
+        // gate no longer covers the `in_progress -> closed` transition.
+        // Report a fresh gate immediately before the close case.
+        if operation == "close" {
+            let gate = run_br(
+                &workspace,
+                [
+                    "gate",
+                    "report",
+                    &issue_id,
+                    "--gate",
+                    "unit-test-verified",
+                    "--provider",
+                    "e2e",
+                    "--status",
+                    "pass",
+                    "--to",
+                    "closed",
+                ],
+                "matrix_gate_before_close",
+            );
+            assert_run_success(&gate, "matrix_gate_before_close");
+        }
         run_dirty_mutation(&workspace, args, &label);
         assert_stale_show_finds(
             &workspace,

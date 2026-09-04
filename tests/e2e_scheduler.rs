@@ -16,9 +16,22 @@ fn parse_created_id(stdout: &str) -> String {
 }
 
 fn create_issue(workspace: &BrWorkspace, title: &str, priority: &str) -> String {
+    // Wave-gated dispatch (ADR-0001): scheduler only ranks beads carrying a
+    // VERIFY command and a principles citation, so fixtures must provide both.
     let result = run_br(
         workspace,
-        ["create", title, "-p", priority, "-t", "task"],
+        [
+            "create",
+            title,
+            "-p",
+            priority,
+            "-t",
+            "task",
+            "--verify",
+            "cargo test --lib",
+            "--principle",
+            "testing — verify scheduler behavior",
+        ],
         "create_issue",
     );
     assert!(result.status.success(), "create failed: {}", result.stderr);
@@ -261,7 +274,29 @@ fn scheduler_candidate_limit_keeps_satisfied_external_prefix() {
     fs::write(&config_path, config).expect("write config");
 
     let provider = create_labeled_issue(&external, "Provide auth", "1", "provides:auth");
-    let close = run_br(&external, ["close", &provider], "close_provider");
+    let gate = run_br(
+        &external,
+        [
+            "gate",
+            "report",
+            &provider,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_provider",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close = run_br(
+        &external,
+        ["close", &provider, "--commit-sha", "e2e1234"],
+        "close_provider",
+    );
     assert!(
         close.status.success(),
         "external close failed: {}",

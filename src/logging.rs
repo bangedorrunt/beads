@@ -121,7 +121,14 @@ mod tests {
     #[test]
     fn default_filter_varies_with_verbosity() {
         assert_eq!(default_filter(1, false), "beads=debug");
-        assert_eq!(default_filter(0, false), "beads=debug");
+        assert_eq!(
+            default_filter(0, false),
+            if cfg!(debug_assertions) {
+                "beads=debug"
+            } else {
+                "error"
+            }
+        );
         assert_eq!(default_filter(2, false), "beads=info");
         assert_eq!(default_filter(3, false), "beads=trace");
     }

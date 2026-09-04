@@ -80,6 +80,7 @@ fn import_blocking_cycle(workspace: &BrWorkspace, issue_a_id: &str, issue_b_id: 
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it() {
     common::init_test_logging();
     info!("e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it: starting");
@@ -113,13 +114,59 @@ fn e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it() {
     // Inside a blocking cycle neither member can close normally (each is
     // blocked by the other), so archiving the cycle requires --force — the
     // same escape an operator uses on a real workspace.
-    let close_a = run_br(&workspace, ["close", &issue_a_id, "--force"], "close_a");
+    // Fail-closed close ceremony: recorded PASS gate + commit SHA cited in
+    // the commit message.
+    let gate_a = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &issue_a_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_a",
+    );
+    assert!(gate_a.status.success(), "gate A failed: {}", gate_a.stderr);
+    let gate_b = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &issue_b_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_b",
+    );
+    assert!(gate_b.status.success(), "gate B failed: {}", gate_b.stderr);
+    let close_a = run_br(
+        &workspace,
+        ["close", &issue_a_id, "--force", "--commit-sha", "e2e1234"],
+        "close_a",
+    );
     assert!(
         close_a.status.success(),
         "close A failed: {}",
         close_a.stderr
     );
-    let close_b = run_br(&workspace, ["close", &issue_b_id, "--force"], "close_b");
+    let close_b = run_br(
+        &workspace,
+        ["close", &issue_b_id, "--force", "--commit-sha", "e2e1234"],
+        "close_b",
+    );
     assert!(
         close_b.status.success(),
         "close B failed: {}",
@@ -870,7 +917,33 @@ fn e2e_dep_tree_external_nodes() {
         "external label failed: {}",
         label.stderr
     );
-    let close = run_br(&external, ["close", &provider_id], "ext_close");
+    let gate = run_br(
+        &external,
+        [
+            "gate",
+            "report",
+            &provider_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "ext_gate",
+    );
+    assert!(
+        gate.status.success(),
+        "external gate failed: {}",
+        gate.stderr
+    );
+    let close = run_br(
+        &external,
+        ["close", &provider_id, "--commit-sha", "e2e1234"],
+        "ext_close",
+    );
     assert!(
         close.status.success(),
         "external close failed: {}",
@@ -985,7 +1058,33 @@ fn e2e_dep_list_external_nodes() {
         "external label failed: {}",
         label.stderr
     );
-    let close = run_br(&external, ["close", &provider_id], "ext_close");
+    let gate = run_br(
+        &external,
+        [
+            "gate",
+            "report",
+            &provider_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "ext_gate",
+    );
+    assert!(
+        gate.status.success(),
+        "external gate failed: {}",
+        gate.stderr
+    );
+    let close = run_br(
+        &external,
+        ["close", &provider_id, "--commit-sha", "e2e1234"],
+        "ext_close",
+    );
     assert!(
         close.status.success(),
         "external close failed: {}",
@@ -1055,9 +1154,34 @@ fn e2e_close_suggest_next_unblocks() {
         dep_add.stderr
     );
 
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &blocker_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_blocker",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &workspace,
-        ["close", &blocker_id, "--suggest-next", "--json"],
+        [
+            "close",
+            &blocker_id,
+            "--suggest-next",
+            "--commit-sha",
+            "e2e1234",
+            "--json",
+        ],
         "close_suggest_next",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -1112,9 +1236,27 @@ fn e2e_close_blocked_requires_force() {
         dep_add.stderr
     );
 
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &blocked_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_blocked",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close_skip = run_br(
         &workspace,
-        ["close", &blocked_id, "--json"],
+        ["close", &blocked_id, "--commit-sha", "e2e1234", "--json"],
         "close_blocked_skip",
     );
     assert!(
@@ -1168,7 +1310,7 @@ fn e2e_close_blocked_requires_force() {
     // and findable, it just has an open blocker.
     let close_human = run_br(
         &workspace,
-        ["close", &blocked_id],
+        ["close", &blocked_id, "--commit-sha", "e2e1234"],
         "close_blocked_human_error",
     );
     assert!(
@@ -1192,7 +1334,14 @@ fn e2e_close_blocked_requires_force() {
 
     let close_force = run_br(
         &workspace,
-        ["close", &blocked_id, "--force", "--json"],
+        [
+            "close",
+            &blocked_id,
+            "--force",
+            "--commit-sha",
+            "e2e1234",
+            "--json",
+        ],
         "close_blocked_force",
     );
     assert!(
@@ -1211,6 +1360,7 @@ fn e2e_close_blocked_requires_force() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
     common::init_test_logging();
     info!("e2e_close_json_reports_closed_and_skipped_in_partial_batch: starting");
@@ -1258,9 +1408,36 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
         dep_add.stderr
     );
 
+    for gate_id in [&blocked_id, &independent_id] {
+        let gate = run_br(
+            &workspace,
+            [
+                "gate",
+                "report",
+                gate_id,
+                "--gate",
+                "unit-test-verified",
+                "--provider",
+                "e2e",
+                "--status",
+                "pass",
+                "--to",
+                "closed",
+            ],
+            "gate_partial",
+        );
+        assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    }
     let close = run_br(
         &workspace,
-        ["close", &blocked_id, &independent_id, "--json"],
+        [
+            "close",
+            &blocked_id,
+            &independent_id,
+            "--commit-sha",
+            "e2e1234",
+            "--json",
+        ],
         "close_partial_batch",
     );
     // EXPECTATION INVERTED DELIBERATELY [fgdb-h6kr]. This previously asserted
@@ -1341,9 +1518,27 @@ fn e2e_close_honors_env_json_mode() {
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let issue_id = created["id"].as_str().expect("issue id");
 
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            issue_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_env_close",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = common::cli::run_br_with_env(
         &workspace,
-        ["close", issue_id],
+        ["close", issue_id, "--commit-sha", "e2e1234"],
         [("BR_OUTPUT_FORMAT", "json")],
         "close_env_json",
     );
