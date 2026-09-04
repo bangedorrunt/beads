@@ -8,7 +8,7 @@
 > authority on its own semantics. The upstream lineage (`Dicklesworthstone/beads_rust`,
 > fast-forward `9c45f79a`, 2026-08-21) is historical — a source of fixes to
 > cherry-pick on request, never a direction to follow. Close is fail-closed.
-> Binary remains `br`. Do not add MCP tools. Do not run git from `br`.
+> Binary remains `br`. Do not add MCP tools. Do not run git from `br` — the only exception is the explicit, user-invoked `br vcs-status` diagnostic, which never runs automatically and never mutates state.
 >
 > **Coordination contract (this fork, flywheel × toron):** bead IDs are `bd-###`
 > (the configured `issue_prefix`). The bead ID is the shared key across the
@@ -62,7 +62,7 @@ When **fork sync** is requested, do this and nothing else:
 7. If `TAKE` is non-empty: cherry-pick those SHAs onto `main`, one commit at a time, in parent order. Resolve conflicts toward **our** close/ready/gate/schema-18 semantics. Never `git merge upstream/main`. Never rebase this fork onto upstream.
 8. After the cherry-picks: run the smallest relevant proof (`cargo test` on the touched modules, or `br doctor` in a scratch dir). Report TAKE/SKIP lists, new HEAD, and leftover parent bugs we still do not want.
 
-Baseline after the founding fast-forward: `9c45f79a`. Update the banner SHA only when a fork-sync TAKE actually lands.
+Baseline: founding fast-forward `9c45f79a` (2026-08-21); fork-sync TAKEs absorbed through upstream `34ca862b` (2026-09-01 era, comment-ID reject). Update the banner SHA only when a fork-sync TAKE actually lands.
 
 ---
 
@@ -538,13 +538,13 @@ Schema discovery:
 
 ## TUI — bare `br` (hacker-night, tui-design skill)
 
-Bare `br` in a TTY opens the interactive dashboard (`src/tui/*`, ratatui 0.30 + crossterm 0.29, ADR-0003 §3.3); `bv` is deprecated. Agents never run bare `br` — use `br --robot-triage` / `br triage|next|plan` with `--format json|toon`. `src/main.rs:84` is the TTY gate; non-TTY keeps `br --help`.
+Bare `br` in a TTY opens the interactive dashboard (`src/tui/*`, ratatui 0.30 + crossterm 0.29, ADR-0003 §3.3); `bv` is deprecated. Agents never run bare `br` — use `br --robot-triage` / `br triage|next|plan` with `--format json|toon`. `src/main.rs:93` is the TTY gate; non-TTY keeps `br --help`.
 
 **Theme:** Ghostty v2 **hacker-night** (`#08080e` void / `#c8d0e8` fg / `#0db9d7` cyan / `#bb9af7` lav / `#73daca` mint / `#e0af68` amber / `#f7768e` red / `#89ddff` ice / `#1a1a3e` selection). Single source: `src/tui/theme.rs` (`HackerNight` slots: `primary()`, `selected_row()`, `status_open`/`blocked`/`in_progress`/`closed`/`warning`, `border_focused`/`_unfocused`, `dim()`, `danger_border()`; 3-tier degrade truecolor→256→16, `NO_COLOR`/`TERM=dumb` → `Reset`). `src/tui/ui.rs` references **semantic slots only** — never hardcodes hex/ANSI (skill §4).
 
-**Layout:** body + footer (1 line); split list+detail at `>100` cols, single-column `≤100` (board stacks at `≤80`, `src/tui/ui.rs:171`); shortcuts sidebar 34 cols (`;`/F2, `src/tui/app.rs:44` + `keys.rs:34`); search bar 1 line (`/`, `app::Focus::Search`); view overlays (board/graph/actionable/insights/tree/label) replace body. Test at 80×24 / 120×40 / 200×60, inside tmux, with `NO_COLOR=1` and `COLORTERM=truecolor`.
+**Layout:** body + footer (1 line); split list+detail at `>100` cols, single-column `≤100` (board stacks at `≤80`, `src/tui/ui.rs:171`); shortcuts sidebar 34 cols (`;`/F2, `src/tui/ui.rs:43` split + `src/tui/app.rs:84` state + `keys.rs:34`); search bar 1 line (`/`, `app::Focus::Search`); view overlays (board/graph/actionable/insights/tree/label) replace body. Test at 80×24 / 120×40 / 200×60, inside tmux, with `NO_COLOR=1` and `COLORTERM=truecolor`.
 
-**Interaction:** vim `j/k, g/G, ctrl+d/u`, `?` help overlay (restores `focus_before_help`), `/` search, `b/g/a/i/E/[/` view toggles, `enter` drill-down, `q`/`esc` pop layers (quit-confirm at top list). `src/tui/keys.rs:34` `REGISTRY` is the authoritative binding doc. Footer is context-aware; status message `✓` replaces bar and clears on next keypress. Use `tui-design` skill before touching TUI (layout §1, responsive §2, interaction §3 inc. four keyboard layers + focus + three-tier help, visual hierarchy §4, animation §6, anti-patterns §7, checklist §9).
+**Interaction:** vim `j/k, g/G, ctrl+d/u`, `?` help overlay (restores `focus_before_help`), `/` search, `b/g/a/i/E/[/` view toggles, `enter` drill-down, `q`/`esc` pop layers (quit-confirm at top list). `src/tui/keys.rs:34` `REGISTRY` is the authoritative binding doc. Footer is context-aware; status message `✓` replaces bar and clears on next keypress. Use `tui-design` skill before touching TUI (layout §1, responsive §2, interaction §3 inc. four keyboard layers + focus + three-tier help, color/visual-hierarchy §4, animation §6, anti-patterns (unnumbered), checklist §9).
 
 **Verify:** `cargo test --lib` (keys + theme), cargo-TTY manual: `cargo run` (bare) → `j/k`, `b` board, `?` help, `;` sidebar, `br` + `NO_COLOR=1` disables color.
 
