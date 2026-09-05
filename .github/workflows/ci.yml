@@ -35,7 +35,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -82,7 +82,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
 
       - name: Run all tests (all features)
         run: cargo test --all-features -- --nocapture
@@ -109,7 +109,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
 
       - name: Failure-corpus replay and doctor/recovery postconditions
         run: cargo test --test workspace_failure_replay -- --nocapture
@@ -165,7 +165,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
 
       - name: Install cargo-insta
         run: cargo install cargo-insta --locked --version 1.46.1
@@ -224,7 +224,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780  # v2.86.1
@@ -282,7 +282,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
         with:
           key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}
 
@@ -326,7 +326,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
 
       - name: Restore criterion baseline cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -460,7 +460,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
 
       - name: Run quick E2E tests
         run: scripts/e2e.sh

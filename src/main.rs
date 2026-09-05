@@ -23,6 +23,14 @@ fn maybe_rewrite_robot_args() -> Option<Vec<OsString>> {
     let pos = raw
         .iter()
         .position(|a| a.to_string_lossy().starts_with("--robot-"))?;
+    // ADR-0003 §3.4: only rewrite bare `br --robot-X` (bv compat).
+    // Leave `br <subcommand> --robot-X` alone (e.g. `doctor --robot-triage`).
+    if raw[1..pos]
+        .iter()
+        .any(|a| !a.to_string_lossy().starts_with('-'))
+    {
+        return None;
+    }
     let flag = raw[pos].to_string_lossy().to_string();
     let subcmd = match flag.as_str() {
         "--robot-triage" => "triage",

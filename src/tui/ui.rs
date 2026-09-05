@@ -344,7 +344,12 @@ fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
             theme::dim(),
         )));
         frame.render_widget(
-            Paragraph::new(r_lines).block(Block::default().borders(Borders::ALL).title(" Edges ").border_style(theme::border_unfocused())),
+            Paragraph::new(r_lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Edges ")
+                    .border_style(theme::border_unfocused()),
+            ),
             detail,
         );
     }
@@ -626,12 +631,7 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
                     // style heading bold cyan
                     let styled: Vec<Span> = cur_spans
                         .drain(..)
-                        .map(|s| {
-                            Span::styled(
-                                s.content.to_string(),
-                                theme::primary_fg(),
-                            )
-                        })
+                        .map(|s| Span::styled(s.content.to_string(), theme::primary_fg()))
                         .collect();
                     lines.push(Line::from(styled));
                 }
@@ -661,7 +661,7 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
                     _ => String::new(),
                 };
                 if !code_lang.is_empty() {
-                    lines.push(Line::from(                    Span::styled(
+                    lines.push(Line::from(Span::styled(
                         format!("  {} ─", code_lang),
                         theme::dim(),
                     )));
@@ -709,10 +709,7 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
             }
             Event::Code(text) => {
                 _code_inline = true;
-                cur_spans.push(                    Span::styled(
-                    format!("`{text}`"),
-                    theme::status_warning(),
-                ));
+                cur_spans.push(Span::styled(format!("`{text}`"), theme::status_warning()));
                 _code_inline = false;
             }
             Event::SoftBreak | Event::HardBreak => {
@@ -985,10 +982,7 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         lines.push(Line::from(Span::styled("Principles:", theme::dim())));
         for p in &issue.principles {
             lines.push(Line::from(vec![
-                Span::styled(
-                    format!("  • {} — ", p.name),
-                    theme::accent_lav(),
-                ),
+                Span::styled(format!("  • {} — ", p.name), theme::accent_lav()),
                 Span::styled(p.decision.clone(), theme::row()),
             ]));
         }
