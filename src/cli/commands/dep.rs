@@ -151,10 +151,11 @@ fn resolve_on_to_external(on: &str, _local_beads_dir: &Path) -> Result<String> {
         return Ok(format!("external:{}:{}", project, bead));
     }
     // Fallback: project:bead form like toron:bd-xxx
-    if let Some((proj, bead)) = on.split_once(':') {
-        if !proj.is_empty() && !bead.is_empty() {
-            return Ok(format!("external:{}:{}", proj.trim(), bead.trim()));
-        }
+    if let Some((proj, bead)) = on.split_once(':')
+        && !proj.is_empty()
+        && !bead.is_empty()
+    {
+        return Ok(format!("external:{}:{}", proj.trim(), bead.trim()));
     }
     Err(BeadsError::validation(
         "on",

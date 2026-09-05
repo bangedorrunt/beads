@@ -17,7 +17,7 @@ fn truecolor() -> bool {
     if no_color() {
         return false;
     }
-    std::env::var("COLORTERM").ok().is_some_and(|v| {
+    std::env::var("COLORTERM").is_ok_and(|v| {
         let l = v.to_ascii_lowercase();
         l == "truecolor" || l == "24bit"
     })
@@ -222,18 +222,21 @@ pub fn danger_border() -> Style {
 
 /// Expose raw palette for places that need Color values directly.
 pub mod palette {
-    use super::*;
+    use super::{CYAN, Color, FG, MUTED, SELECTION_BG, VOID, rgb_or_reset};
     pub const VOID_RGB: Color = VOID;
     pub const FG_RGB: Color = FG;
     pub const MUTED_RGB: Color = MUTED;
     pub const CYAN_RGB: Color = CYAN;
     pub const SELECTION_BG_RGB: Color = SELECTION_BG;
+    #[must_use]
     pub fn cyan() -> Color {
         rgb_or_reset(CYAN)
     }
+    #[must_use]
     pub fn fg() -> Color {
         rgb_or_reset(FG)
     }
+    #[must_use]
     pub fn muted() -> Color {
         rgb_or_reset(MUTED)
     }
