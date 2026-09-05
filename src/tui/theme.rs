@@ -17,12 +17,10 @@ fn truecolor() -> bool {
     if no_color() {
         return false;
     }
-    std::env::var("COLORTERM")
-        .ok()
-        .is_some_and(|v| {
-            let l = v.to_ascii_lowercase();
-            l == "truecolor" || l == "24bit"
-        })
+    std::env::var("COLORTERM").ok().is_some_and(|v| {
+        let l = v.to_ascii_lowercase();
+        l == "truecolor" || l == "24bit"
+    })
 }
 
 fn is_256() -> bool {
@@ -230,7 +228,13 @@ pub mod palette {
     pub const MUTED_RGB: Color = MUTED;
     pub const CYAN_RGB: Color = CYAN;
     pub const SELECTION_BG_RGB: Color = SELECTION_BG;
-    pub fn cyan() -> Color { rgb_or_reset(CYAN) }
-    pub fn fg() -> Color { rgb_or_reset(FG) }
-    pub fn muted() -> Color { rgb_or_reset(MUTED) }
+    pub fn cyan() -> Color {
+        rgb_or_reset(CYAN)
+    }
+    pub fn fg() -> Color {
+        rgb_or_reset(FG)
+    }
+    pub fn muted() -> Color {
+        rgb_or_reset(MUTED)
+    }
 }
