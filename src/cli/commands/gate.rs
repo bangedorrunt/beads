@@ -92,6 +92,26 @@ pub fn execute(
     }
 }
 
+/// Preview of the close-time legality check for a recorded gate name.
+///
+/// Returns a warning when `gate` is a known verdict kind that is not legal
+/// for closing a bead of this priority. Unknown (provider) names yield `None`.
+/// Uses the same conservative input as the close path, so the preview never
+/// accepts what `close` will reject.
+fn illegal_verdict_warning(gate: &str, priority: i32) -> Option<String> {
+    crate::verify::VerdictKind::from_gate_name(gate)?;
+    let input = close_policy::legal_close_input_for_issue_pub(priority);
+    let legal = close_policy::legal_close_gate_names(&input);
+    if legal.iter().any(|name| *name == gate) {
+        return None;
+    }
+    Some(format!(
+        "warning: gate '{}' is not legal for closing this bead (priority P{priority}); legal: {}. Row recorded but will not authorize the close.",
+        sanitize_terminal_inline(gate),
+        legal.join(", ")
+    ))
+}
+
 fn execute_report(
     args: &GateReportArgs,
     cli: &config::CliOverrides,
@@ -160,6 +180,13 @@ fn execute_report(
         note,
         &actor,
     )?;
+
+    // Legality preview: the close-time check derives legal names from the bead,
+    // so warn now when this name will not authorize the close. Warning only:
+    // external systems legitimately report gates proactively.
+    if let Some(warning) = illegal_verdict_warning(gate, issue.priority.0) {
+        eprintln!("{warning}");
+    }
 
     crate::util::set_last_touched_id(beads_dir, &issue_id);
 
@@ -761,4 +788,62 @@ mod tests {
         );
         assert!(transitions.is_empty());
     }
+    #[test]
+    fn illegal_verdict_warning_flags_p1_command_verified() {
+        let warning = illegal_verdict_warning("command-verified", 1)
+            .expect("command-verified is illegal at P1");
+        assert!(warning.contains("unit-test-verified"));
+        assert!(warning.contains("live-verified"));
+    }
+
+    #[test]
+    fn illegal_verdict_warning_accepts_legal_and_unknown_names() {
+        assert!(illegal_verdict_warning("unit-test-verified", 1).is_none());
+        assert!(illegal_verdict_warning("live-verified", 1).is_none());
+        assert!(illegal_verdict_warning("worker-receipt", 2).is_none());
+        assert!(illegal_verdict_warning("command-verified", 2).is_some());
+        assert!(illegal_verdict_warning("ci_green", 1).is_none());
+    }
+
+    #[test]
+    fn report_keeps_row_for_currently_illegal_verdict_kind() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        fs::create_dir_all(&beads_dir).unwrap();
+        fs::write(
+            beads_dir.join(close_policy::POLICY_FILE_NAME),
+            "workflow:\n  strict: true\n  gates:\n    \"open -> closed\":\n      require_legal_close: true\n",
+        )
+        .expect("write legal-close policy");
+        {
+            let mut ctx = open_storage(&beads_dir);
+            let mut issue = make_issue("bd-9", Status::Open);
+            issue.priority = Priority::HIGH;
+            ctx.storage.create_issue(&issue, "tester").unwrap();
+        }
+
+        // command-verified is illegal at P1: the row is still recorded, the
+        // warning goes to stderr and must not fail the report.
+        let report = GateReportArgs {
+            id: "bd-9".to_string(),
+            gate: "command-verified".to_string(),
+            provider: "tester".to_string(),
+            status: GateStatus::Pass,
+            to: Some("closed".to_string()),
+            note: None,
+            robot: true,
+        };
+        let ctx = OutputContext::from_flags(true, false, true);
+        execute_report(&report, &CliOverrides::default(), &ctx, &beads_dir).unwrap();
+
+        let storage_ctx = open_storage(&beads_dir);
+        let results = storage_ctx
+            .storage
+            .get_scoped_gate_results("bd-9", "open", "closed")
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].gate, "command-verified");
+        assert!(results[0].passed);
+    }
+
 }

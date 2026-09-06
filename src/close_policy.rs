@@ -858,7 +858,7 @@ pub fn detect_illegal_require_all(workflow: &Workflow) -> Vec<String> {
 
 /// The gate names that would legally authorize closing `input` — the
 /// kebab-case kinds for which [`crate::verify::legal_close`] returns true.
-fn legal_close_gate_names(input: &crate::verify::LegalCloseInput<'_>) -> Vec<&'static str> {
+pub fn legal_close_gate_names(input: &crate::verify::LegalCloseInput<'_>) -> Vec<&'static str> {
     crate::verify::VerdictKind::ALL
         .into_iter()
         .filter(|kind| crate::verify::legal_close(*kind, input))
