@@ -290,7 +290,10 @@ fn split_listed_ids(ids_csv: &str) -> (String, &str) {
         .collect::<Vec<_>>()
         .join(", ");
     if ids.len() > MAX_LISTED_FENCE_MISSING_IDS {
-        listed.push_str(&format!(" (+{} more)", ids.len() - MAX_LISTED_FENCE_MISSING_IDS));
+        listed.push_str(&format!(
+            " (+{} more)",
+            ids.len() - MAX_LISTED_FENCE_MISSING_IDS
+        ));
     }
     (listed, first)
 }
@@ -517,5 +520,4 @@ mod tests {
             "message names the principles-missing bead: {message}"
         );
     }
-
 }

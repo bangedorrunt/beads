@@ -14124,6 +14124,11 @@ mod tests {
     fn run_br(cwd: &Path, args: &[&str]) -> std::process::Output {
         // `CARGO_BIN_EXE_br` is only set for integration tests; unit tests need a
         // fallback that still finds the just-built `br` binary.
+        // Freshness trap: `cargo test --lib` does NOT rebuild this binary —
+        // only a full `cargo test` / `cargo build` refreshes target/debug/br.
+        // A stale binary asserts against wrong behavior (observed: the four
+        // pending_merge shell-out tests failing on an otherwise clean tree
+        // until the binary was rebuilt). Rebuild before blaming the tree.
         let br_bin = std::env::var("CARGO_BIN_EXE_br").unwrap_or_else(|_| {
             let manifest_dir = env!("CARGO_MANIFEST_DIR");
             format!("{manifest_dir}/target/debug/br")

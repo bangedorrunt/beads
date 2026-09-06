@@ -845,5 +845,4 @@ mod tests {
         assert_eq!(results[0].gate, "command-verified");
         assert!(results[0].passed);
     }
-
 }
