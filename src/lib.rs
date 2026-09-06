@@ -16,7 +16,6 @@
 //! - [`error`] - Error types and handling
 //! - [`format`] - Output formatting (text, JSON)
 //! - [`util`] - Utility functions (hashing, time, paths)
-//! - [`write_combining`] - Compatibility contracts for future write combining
 
 // Deny (not forbid) so the single sanctioned exemption in
 // `sync::db_inode_lock` — the SQLite-compatible database-inode range lock,
@@ -71,7 +70,6 @@ pub mod tui;
 pub mod util;
 pub mod validation;
 pub mod verify;
-pub mod write_combining;
 
 pub use error::{BeadsError, ErrorCode, Result, StructuredError};
 
