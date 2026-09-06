@@ -102,7 +102,7 @@ fn illegal_verdict_warning(gate: &str, priority: i32) -> Option<String> {
     crate::verify::VerdictKind::from_gate_name(gate)?;
     let input = close_policy::legal_close_input_for_issue_pub(priority);
     let legal = close_policy::legal_close_gate_names(&input);
-    if legal.iter().any(|name| *name == gate) {
+    if legal.contains(&gate) {
         return None;
     }
     Some(format!(
