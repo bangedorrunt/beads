@@ -440,6 +440,12 @@ A bead is NOT closed by `br close` alone — the loop watches both the ledger
 and the mail thread. Full ceremony, in order:
 
 ```bash
+# 0. first-run bootstrap (once per agent pin; the strict pre-commit guard
+#    blocks unattributed or unreserved commits, so do this before step 1)
+#    mint identity: use the toron create_agent_identity tool (name_hint=<pin>)
+#    reserve before edit: toron reserve acquire --paths <globs> --project <slug> --as <pin> --reason <bead-id> --exclusive
+#    attribute every commit: AGENT_NAME=<pin> git commit ... (.beads/ commits need attribution only, source commits need the lease too)
+#    release when done: toron reserve release --project <slug> --as <pin>
 # 1. commit BEFORE close; the bead id IN the commit message
 git add .beads/ && git commit -m "feat: X (bd-123)"
 
