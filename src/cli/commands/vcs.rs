@@ -908,6 +908,8 @@ fn parse_object_id(bytes: &[u8], object_format: GitObjectFormat) -> Option<Strin
     std::str::from_utf8(bytes).ok().map(str::to_ascii_lowercase)
 }
 
+// Both arms are load-bearing: the hash must match the repo's own object
+// format for git-blob parity, so sha1 stays while sha1 repos exist.
 fn hash_snapshot_as_git_blob(
     source: &JsonlSourceSnapshot,
     object_format: GitObjectFormat,
