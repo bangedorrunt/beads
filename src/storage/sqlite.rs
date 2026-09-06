@@ -1543,9 +1543,9 @@ struct ReadyReadinessProbe {
 #[allow(clippy::struct_field_names)]
 pub(crate) struct ReadyNondispatchable {
     pub(crate) missing_verify: usize,
-    pub(crate) missing_verify_example: String,
+    pub(crate) missing_verify_ids: String,
     pub(crate) missing_principles: usize,
-    pub(crate) missing_principles_example: String,
+    pub(crate) missing_principles_ids: String,
 }
 
 fn resolved_ready_status_list(filters: &ReadyFilters) -> Vec<String> {
@@ -2117,7 +2117,7 @@ impl SqliteStorage {
             COALESCE(SUM(CASE WHEN issues.verify IS NULL OR trim(issues.verify) = '' \
                 OR instr(issues.verify, char(10)) > 0 OR instr(issues.verify, char(13)) > 0 \
                 THEN 1 ELSE 0 END), 0), \
-            COALESCE(MIN(CASE WHEN issues.verify IS NULL OR trim(issues.verify) = '' \
+            COALESCE(GROUP_CONCAT(CASE WHEN issues.verify IS NULL OR trim(issues.verify) = '' \
                 OR instr(issues.verify, char(10)) > 0 OR instr(issues.verify, char(13)) > 0 \
                 THEN issues.id END), ''), \
             COALESCE(SUM(CASE WHEN issues.priority <= 2 AND NOT (\
@@ -2127,7 +2127,7 @@ impl SqliteStorage {
                     WHERE je.value ->> '$.name' IS NULL OR je.value ->> '$.decision' IS NULL \
                     OR trim(je.value ->> '$.name') = '' OR trim(je.value ->> '$.decision') = '')) \
                 THEN 1 ELSE 0 END), 0), \
-            COALESCE(MIN(CASE WHEN issues.priority <= 2 AND NOT (\
+            COALESCE(GROUP_CONCAT(CASE WHEN issues.priority <= 2 AND NOT (\
                 issues.principles IS NOT NULL AND json_valid(issues.principles) \
                 AND json_array_length(issues.principles) >= 1 \
                 AND NOT EXISTS (SELECT 1 FROM json_each(issues.principles) je \
@@ -2150,12 +2150,12 @@ impl SqliteStorage {
         let row = self.conn.query_row_with_params(&sql, &[])?;
         Ok(ReadyNondispatchable {
             missing_verify: row.get(0).and_then(SqliteValue::as_integer).unwrap_or(0) as usize,
-            missing_verify_example: row
+            missing_verify_ids: row
                 .get(1)
                 .and_then(|v| v.as_text().map(|s| s.to_string()))
                 .unwrap_or_default(),
             missing_principles: row.get(2).and_then(SqliteValue::as_integer).unwrap_or(0) as usize,
-            missing_principles_example: row
+            missing_principles_ids: row
                 .get(3)
                 .and_then(|v| v.as_text().map(|s| s.to_string()))
                 .unwrap_or_default(),

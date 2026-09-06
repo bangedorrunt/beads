@@ -272,6 +272,29 @@ fn execute_inner(
     Ok(())
 }
 
+/// Cap for fence-missing IDs named inline in the empty-ready message.
+const MAX_LISTED_FENCE_MISSING_IDS: usize = 10;
+
+/// Split a comma-joined ID list into display text plus the first ID for the repair hint.
+fn split_listed_ids(ids_csv: &str) -> (String, &str) {
+    let ids: Vec<&str> = ids_csv
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let first = ids.first().copied().unwrap_or("bd-1");
+    let mut listed = ids
+        .iter()
+        .take(MAX_LISTED_FENCE_MISSING_IDS)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if ids.len() > MAX_LISTED_FENCE_MISSING_IDS {
+        listed.push_str(&format!(" (+{} more)", ids.len() - MAX_LISTED_FENCE_MISSING_IDS));
+    }
+    (listed, first)
+}
+
 fn empty_ready_message(storage: &SqliteStorage, filters: &ReadyFilters) -> Result<String> {
     let has_non_closed_issues = storage.has_active_issues()?;
     if !has_non_closed_issues {
@@ -281,17 +304,17 @@ fn empty_ready_message(storage: &SqliteStorage, filters: &ReadyFilters) -> Resul
     if diag.missing_verify > 0 || diag.missing_principles > 0 {
         let mut parts: Vec<String> = Vec::new();
         if diag.missing_verify > 0 {
+            let (listed, first) = split_listed_ids(&diag.missing_verify_ids);
             parts.push(format!(
-                "{} bead(s) lack a VERIFY command (e.g. {} — br update {} --verify '<cmd>')",
-                diag.missing_verify, diag.missing_verify_example, diag.missing_verify_example
+                "{} bead(s) lack a VERIFY command ({listed}) — repair e.g. br update {first} --verify '<cmd>'",
+                diag.missing_verify,
             ));
         }
         if diag.missing_principles > 0 {
+            let (listed, first) = split_listed_ids(&diag.missing_principles_ids);
             parts.push(format!(
-                "{} P≤2 bead(s) lack a principles citation (e.g. {} — br update {} --principle 'name — decision')",
+                "{} P≤2 bead(s) lack a principles citation ({listed}) — repair e.g. br update {first} --principle 'name — decision'",
                 diag.missing_principles,
-                diag.missing_principles_example,
-                diag.missing_principles_example
             ));
         }
         return Ok(format!("✨ No dispatchable issues — {}", parts.join("; ")));
@@ -467,4 +490,32 @@ mod tests {
         .unwrap();
         assert!(text_issues.iter().all(|issue| issue.labels.is_empty()));
     }
+    #[test]
+    fn empty_ready_message_names_fence_missing_ids() {
+        init_logging();
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        for (id, priority) in [
+            ("bd-no-verify", crate::model::Priority::LOW),
+            ("bd-no-principles", crate::model::Priority::HIGH),
+        ] {
+            let issue = crate::model::Issue {
+                id: id.to_string(),
+                title: id.to_string(),
+                status: crate::model::Status::Open,
+                priority,
+                ..crate::model::Issue::default()
+            };
+            storage.create_issue(&issue, "tester").unwrap();
+        }
+        let message = empty_ready_message(&storage, &ReadyFilters::default()).unwrap();
+        assert!(
+            message.contains("bd-no-verify"),
+            "message names the verify-missing bead: {message}"
+        );
+        assert!(
+            message.contains("bd-no-principles"),
+            "message names the principles-missing bead: {message}"
+        );
+    }
+
 }
