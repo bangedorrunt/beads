@@ -60,7 +60,7 @@ When **fork sync** is requested, do this and nothing else:
 5. **SKIP** (always): MCP/FastMCP, GitHub/Claude/Codex plugin install, `br agents --add` / AGENTS.md writer, `bd` migration, capacity exemptions, changelog-as-product, CLI growth, worktree-as-a-feature, generic tracker UX, anything on ADR-0001 Forbidden. Mixed commits (needed fix + skipped feature) are **SKIP**; note the SHA so a later split can be considered.
 6. If `TAKE` is empty: stop. Report that. Do not merge.
 7. If `TAKE` is non-empty: cherry-pick those SHAs onto `main`, one commit at a time, in parent order. Resolve conflicts toward **our** close/ready/gate/schema-18 semantics. Never `git merge upstream/main`. Never rebase this fork onto upstream.
-8. After the cherry-picks: run the smallest relevant proof (`cargo test` on the touched modules, or `br doctor` in a scratch dir). Report TAKE/SKIP lists, new HEAD, and leftover parent bugs we still do not want.
+8. After the cherry-picks: run the smallest relevant proof (`mbx +nightly-aarch64-apple-darwin test` on the touched modules, or `br doctor` in a scratch dir). Report TAKE/SKIP lists, new HEAD, and leftover parent bugs we still do not want.
 
 Baseline: founding fast-forward `9c45f79a` (2026-08-21); fork-sync TAKEs absorbed through upstream `34ca862b` (2026-09-01 era, comment-ID reject). Update the banner SHA only when a fork-sync TAKE actually lands.
 
@@ -106,8 +106,8 @@ Important boundaries:
 - `br` never performs workflow git operations, releases, pull requests, network
   dispatches, or upstream lookups automatically.
   verifier scripts are operator shortcuts and may call Cargo internally.
-- Whole-crate `cargo check --all-targets` and
-  `cargo clippy --all-targets -- -D warnings` are required when Rust code
+- Whole-crate `mbx +nightly-aarch64-apple-darwin check --all-targets` and
+  `mbx +nightly-aarch64-apple-darwin clippy --all-targets -- -D warnings` are required when Rust code
   changes 
 - Run `git diff --check`, `actionlint` when available, the relevant workflow
   harnesses, and `ubs` on changed workflow-related files before committing.
@@ -117,6 +117,7 @@ Important boundaries:
 ## Toolchain: Rust & Cargo
 
 We only use **Cargo** in this project, NEVER any other package manager.
+- **Runner:** mbx is the cargo cache: prefix every cargo invocation with `mbx +nightly-aarch64-apple-darwin` (bare `cargo` misparses under the mbx shim).
 
 - **Edition:** Rust 2024 (nightly required — see `rust-toolchain.toml`)
 - **Dependency versions:** Explicit versions for stability
@@ -196,13 +197,13 @@ We do not care about backwards compatibility—we're in early development with n
 
 ```bash
 # Check for compiler errors and warnings
-cargo check --all-targets
+mbx +nightly-aarch64-apple-darwin check --all-targets
 
 # Check for clippy lints (pedantic + nursery are enabled)
-cargo clippy --all-targets -- -D warnings
+mbx +nightly-aarch64-apple-darwin clippy --all-targets -- -D warnings
 
 # Verify formatting
-cargo fmt --check
+mbx +nightly-aarch64-apple-darwin fmt --check
 ```
 
 If you see errors, **carefully understand and resolve each issue**. Read sufficient context to fix them the RIGHT way.
@@ -224,21 +225,21 @@ Integration and end-to-end tests live in the `tests/` directory.
 
 ```bash
 # Run all tests
-cargo test
+mbx +nightly-aarch64-apple-darwin test
 
 # Run with output
-cargo test -- --nocapture
+mbx +nightly-aarch64-apple-darwin test -- --nocapture
 
 # Run tests for a specific module
-cargo test storage
-cargo test cli
-cargo test sync
-cargo test format
-cargo test model
-cargo test validation
+mbx +nightly-aarch64-apple-darwin test storage
+mbx +nightly-aarch64-apple-darwin test cli
+mbx +nightly-aarch64-apple-darwin test sync
+mbx +nightly-aarch64-apple-darwin test format
+mbx +nightly-aarch64-apple-darwin test model
+mbx +nightly-aarch64-apple-darwin test validation
 
 # Run tests with all features enabled
-cargo test --all-features
+mbx +nightly-aarch64-apple-darwin test --all-features
 ```
 
 ### Test Categories
@@ -480,7 +481,7 @@ When modifying sync-related code (`src/sync/`, `src/cli/commands/sync.rs`), you 
 Quick summary:
 1. **No git operations** — Static check: `grep -rn 'Command::new.*git' src/sync/`
 2. **Path allowlist** — Verify only `.beads/` files are touched
-3. **Run safety tests** — `cargo test e2e_sync --release`
+3. **Run safety tests** — `mbx +nightly-aarch64-apple-darwin test e2e_sync --release`
 4. **Review logs** — Check for unexpected safety events
 5. **Update docs** — If behavior changed
 
@@ -552,5 +553,5 @@ Bare `br` in a TTY opens the interactive dashboard (`src/tui/*`, ratatui 0.30 + 
 
 **Interaction:** vim `j/k, g/G, ctrl+d/u`, `?` help overlay (restores `focus_before_help`), `/` search, `b/g/a/i/E/[/` view toggles, `enter` drill-down, `q`/`esc` pop layers (quit-confirm at top list). `src/tui/keys.rs:34` `REGISTRY` is the authoritative binding doc. Footer is context-aware; status message `✓` replaces bar and clears on next keypress. Use `tui-design` skill before touching TUI (layout §1, responsive §2, interaction §3 inc. four keyboard layers + focus + three-tier help, color/visual-hierarchy §4, animation §6, anti-patterns (unnumbered), checklist §9).
 
-**Verify:** `cargo test --lib` (keys + theme), cargo-TTY manual: `cargo run` (bare) → `j/k`, `b` board, `?` help, `;` sidebar, `br` + `NO_COLOR=1` disables color.
+**Verify:** `mbx +nightly-aarch64-apple-darwin test --lib` (keys + theme), cargo-TTY manual: `mbx +nightly-aarch64-apple-darwin run` (bare) → `j/k`, `b` board, `?` help, `;` sidebar, `br` + `NO_COLOR=1` disables color.
 
