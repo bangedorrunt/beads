@@ -205,6 +205,7 @@ fn robot_triage_quick_ref_shape_and_issue_165_semantics() {
         "in_progress_count",
         "not_closed_count",
         "not_actionable_count",
+        "needs_fence_count",
         "top_picks",
     ] {
         assert!(

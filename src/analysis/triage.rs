@@ -252,6 +252,10 @@ pub struct QuickRef {
     pub in_progress_count: usize,
     pub not_closed_count: usize,
     pub not_actionable_count: usize,
+    /// Open, unblocked beads held out of loop dispatch by missing
+    /// VERIFY/principles fences. Split out of `actionable_count` so the loop
+    /// sees dispatchable work distinctly (br-only addition, bv parity amended).
+    pub needs_fence_count: usize,
     pub top_picks: Vec<TopPick>,
 }
 
@@ -1195,6 +1199,22 @@ pub fn metric_claim_unsafe(status: &MetricStatus) -> bool {
             .is_none_or(MetricEntry::claim_unsafe)
 }
 
+/// True when an open, unblocked bead is held out of dispatch by missing
+/// VERIFY/principles fences. Mirrors the ready-SQL dispatchability notion
+/// (single-line VERIFY; P≤2 needs one valid principles citation).
+fn fence_missing(issue: &Issue) -> bool {
+    let verify_missing = issue.verify.as_deref().is_none_or(|verify| {
+        let trimmed = verify.trim();
+        trimmed.is_empty() || trimmed.contains('\n') || trimmed.contains('\r')
+    });
+    let principles_missing = issue.priority.0 <= 2
+        && (issue.principles.is_empty()
+            || issue.principles.iter().any(|citation| {
+                citation.name.trim().is_empty() || citation.decision.trim().is_empty()
+            }));
+    verify_missing || principles_missing
+}
+
 /// Full triage payload over an owned issue set at a pinned instant.
 #[allow(clippy::too_many_lines)]
 #[must_use]
@@ -1345,6 +1365,14 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
         .collect();
 
     let counts = compute_counts(issues, &graph);
+    let needs_fence_count = issues
+        .iter()
+        .filter(|issue| {
+            issue.status == Status::Open
+                && graph.open_blockers_of(&issue.id).is_empty()
+                && fence_missing(issue)
+        })
+        .count();
     let top_id = top_picks
         .first()
         .map_or(String::new(), |pick| pick.id.clone());
@@ -1371,6 +1399,7 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
                 .unwrap_or(0),
             not_closed_count: counts.not_closed,
             not_actionable_count: counts.dependency_blocked,
+            needs_fence_count,
             top_picks,
         },
         recommendations: visible_recommendations,
@@ -1450,4 +1479,47 @@ fn build_commands(top_id: &str) -> CommandHelpers {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero(value: &usize) -> bool {
     *value == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Priority;
+
+    fn fenced_issue(id: &str, priority: Priority) -> Issue {
+        Issue {
+            id: id.to_string(),
+            title: id.to_string(),
+            status: Status::Open,
+            priority,
+            verify: Some("cargo test --offline fenced".to_string()),
+            principles: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".to_string(),
+                decision: "fenced".to_string(),
+            }],
+            ..Issue::default()
+        }
+    }
+
+    #[test]
+    fn fence_missing_flags_verify_and_principles_gaps() {
+        assert!(!fence_missing(&fenced_issue("a", Priority::LOW)));
+        assert!(!fence_missing(&fenced_issue("b", Priority::HIGH)));
+        assert!(fence_missing(&Issue {
+            verify: None,
+            ..fenced_issue("c", Priority::LOW)
+        }));
+        assert!(fence_missing(&Issue {
+            verify: Some("one\ntwo".to_string()),
+            ..fenced_issue("d", Priority::LOW)
+        }));
+        assert!(fence_missing(&Issue {
+            principles: Vec::new(),
+            ..fenced_issue("e", Priority::HIGH)
+        }));
+        assert!(!fence_missing(&Issue {
+            principles: Vec::new(),
+            ..fenced_issue("f", Priority::LOW)
+        }));
+    }
 }
