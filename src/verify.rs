@@ -33,6 +33,12 @@ pub enum VerdictKind {
     ReviewerSigned,
     /// Worker self-report; legal only where the loop cannot run VERIFY.
     WorkerReceipt,
+    /// Human operator ordered the close; provider names the ordering human.
+    /// Legal at P0/P1, where no command can verify.
+    OperatorDirected,
+    /// Record-level evidence reviewed, no command applies (dupe/stale triage).
+    /// Legal in the P2+ non-runnable band, alongside WorkerReceipt.
+    TriageVerified,
     /// Loop state, not a pass.
     VerifierBlocked,
     /// Loop state, not a pass.
@@ -41,12 +47,14 @@ pub enum VerdictKind {
 
 impl VerdictKind {
     /// Every kind; the exhaustive-match surface for [`legal_close`].
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::CommandVerified,
         Self::UnitTestVerified,
         Self::LiveVerified,
         Self::ReviewerSigned,
         Self::WorkerReceipt,
+        Self::OperatorDirected,
+        Self::TriageVerified,
         Self::VerifierBlocked,
         Self::VerifierFailed,
     ];
@@ -60,6 +68,8 @@ impl VerdictKind {
             Self::LiveVerified => "live-verified",
             Self::ReviewerSigned => "reviewer-signed",
             Self::WorkerReceipt => "worker-receipt",
+            Self::OperatorDirected => "operator-directed",
+            Self::TriageVerified => "triage-verified",
             Self::VerifierBlocked => "verifier-blocked",
             Self::VerifierFailed => "verifier-failed",
         }
@@ -75,6 +85,8 @@ impl VerdictKind {
             "live-verified" => Self::LiveVerified,
             "reviewer-signed" => Self::ReviewerSigned,
             "worker-receipt" => Self::WorkerReceipt,
+            "operator-directed" => Self::OperatorDirected,
+            "triage-verified" => Self::TriageVerified,
             "verifier-blocked" => Self::VerifierBlocked,
             "verifier-failed" => Self::VerifierFailed,
             _ => return None,
@@ -182,8 +194,9 @@ pub struct LegalCloseInput<'a> {
 /// | Condition | Legal gate names |
 /// |---|---|
 /// | priority >= 2, blast Normal, VERIFY loop-runnable | `command-verified` ONLY |
-/// | priority >= 2, blast Normal, VERIFY not loop-runnable | `worker-receipt`, or `unit-test-verified` / `live-verified` |
+/// | priority >= 2, blast Normal, VERIFY not loop-runnable | `worker-receipt`, `triage-verified`, or `unit-test-verified` / `live-verified` |
 /// | priority <= 1 or blast High | `unit-test-verified` / `live-verified` only |
+/// | priority <= 1, blast Normal, ordered by a human | `operator-directed` (provider names the human) |
 /// | AC is judgment | `reviewer-signed` only |
 /// | any | never a FAIL row, never missing |
 ///
@@ -203,6 +216,19 @@ pub fn legal_close(kind: VerdictKind, bead: &LegalCloseInput<'_>) -> bool {
         // Row 2 — non-runnable band: WorkerReceipt (+ two-tick grace) or an
         // independent unit/live verification.
         VerdictKind::WorkerReceipt => {
+            bead.ac == AcShape::Checkable
+                && bead.priority >= 2
+                && bead.blast == Blast::Normal
+                && !runnable
+        }
+        // Row 2b — ordered close: a human attester (recorded as provider)
+        // is the independent verifier at P0/P1, where no command can verify.
+        VerdictKind::OperatorDirected => {
+            bead.ac == AcShape::Checkable && bead.priority <= 1 && bead.blast == Blast::Normal
+        }
+        // Row 2c — triage close: reviewed record evidence with no applicable
+        // command. Same band as WorkerReceipt, distinct audit meaning.
+        VerdictKind::TriageVerified => {
             bead.ac == AcShape::Checkable
                 && bead.priority >= 2
                 && bead.blast == Blast::Normal
@@ -386,6 +412,8 @@ mod tests {
             VerifierBlocked | VerifierFailed => false,
             CommandVerified => ac == Checkable && priority >= 2 && blast == Normal && runnable,
             WorkerReceipt => ac == Checkable && priority >= 2 && blast == Normal && !runnable,
+            OperatorDirected => ac == Checkable && priority <= 1 && blast == Normal,
+            TriageVerified => ac == Checkable && priority >= 2 && blast == Normal && !runnable,
             // Rows 2+3: independent verification is legal for the
             // non-runnable band AND the P0/P1 / High band; illegal only in
             // the cheap band (CommandVerified-exclusive).
@@ -396,7 +424,7 @@ mod tests {
     }
 
     /// Every kind x priority(0..=4) x blast x AC-shape x runnability cell
-    /// (7 * 5 * 2 * 2 * 2 = 280 cells).
+    /// (9 * 5 * 2 * 2 * 2 = 360 cells).
     #[test]
     fn legal_close_matches_table_over_every_cell() {
         for kind in VerdictKind::ALL {

@@ -815,16 +815,18 @@ pub struct GateRule {
     pub require_legal_close: bool,
 }
 
-/// The five ADR-0019 verdict gate names. A policy file whose `require_all`
+/// The seven ADR-0019 verdict gate names. A policy file whose `require_all`
 /// lists exactly these for a `-> closed` transition is ILLEGAL in this fork:
-/// the legal-close table chooses the gate per bead; demanding all five at
+/// the legal-close table chooses the gate per bead; demanding all seven at
 /// once demands mutually exclusive proofs (ADR-0001 §5.3).
-pub const ADR0019_VERDICT_GATE_NAMES: [&str; 5] = [
+pub const ADR0019_VERDICT_GATE_NAMES: [&str; 7] = [
     "command-verified",
     "unit-test-verified",
     "live-verified",
     "reviewer-signed",
     "worker-receipt",
+    "operator-directed",
+    "triage-verified",
 ];
 
 /// Detect the illegal `require_all`-of-the-five-verdict-names configuration
