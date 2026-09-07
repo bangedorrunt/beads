@@ -27,6 +27,8 @@ pub fn issue(title: &str) -> Issue {
         close_verdict: None,
         ac_shape: beads::model::AcShape::Checkable,
         blast: beads::model::Blast::Normal,
+        deliverable: beads::model::Deliverable::Diff,
+        promotes: None,
         revision: 1,
         id: format!("test-{}", hash_title(title)),
         title: title.to_string(),

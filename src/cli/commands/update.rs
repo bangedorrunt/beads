@@ -489,6 +489,30 @@ fn prepare_single_route(
 
     let resolved_parent =
         resolve_parent_update(args.parent.as_deref(), &resolver, &storage_ctx.storage)?;
+    // ADR-0005 §2: deliverable is immutable after creation. The flag
+    // exists only for idempotent restatement: same value passes, any
+    // retype is refused before any mutation.
+    if let Some(requested) = args.deliverable.as_deref() {
+        let wanted: crate::model::Deliverable = requested
+            .parse()
+            .map_err(|e: String| BeadsError::validation("deliverable", e))?;
+        for id in &resolved_ids {
+            let current = storage_ctx
+                .storage
+                .get_issue(id)?
+                .ok_or_else(|| BeadsError::IssueNotFound { id: id.clone() })?;
+            if current.deliverable != wanted {
+                return Err(BeadsError::validation(
+                    "deliverable",
+                    format!(
+                        "deliverable is immutable after creation (bead {} is '{}'; close it and open a successor to change what it owes)",
+                        id,
+                        current.deliverable.as_str()
+                    ),
+                ));
+            }
+        }
+    }
     validate_parent_updates(&storage_ctx.storage, &resolved_ids, &resolved_parent)?;
 
     validate_transition_to_in_progress(&storage_ctx.storage, &resolved_ids, args)?;

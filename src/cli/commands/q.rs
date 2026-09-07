@@ -141,6 +141,8 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
         close_verdict: None,
         ac_shape: crate::model::AcShape::Checkable,
         blast: crate::model::Blast::Normal,
+        deliverable: crate::model::Deliverable::Diff,
+        promotes: None,
         revision: 1,
         id,
         title,

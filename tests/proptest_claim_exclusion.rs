@@ -56,6 +56,8 @@ fn make_open_issue(suffix: &str, title: &str, priority: Priority) -> Issue {
         close_verdict: None,
         ac_shape: beads::model::AcShape::Checkable,
         blast: beads::model::Blast::Normal,
+        deliverable: beads::model::Deliverable::Diff,
+        promotes: None,
         revision: 1,
         compaction_level: None,
         compacted_at: None,

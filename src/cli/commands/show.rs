@@ -1335,6 +1335,12 @@ fn format_issue_details(details: &IssueDetails, use_color: bool, wrap: bool) -> 
         issue.updated_at.format("%Y-%m-%d")
     );
 
+    // ADR-0005 §§2-3: typed deliverable + advisory promotes link.
+    let _ = writeln!(output, "Deliverable: {}", issue.deliverable.as_str());
+    if let Some(promotes) = &issue.promotes {
+        let _ = writeln!(output, "Promotes: {}", sanitize_terminal_inline(promotes));
+    }
+
     if let Some(assignee) = &issue.assignee {
         let _ = writeln!(output, "Assignee: {}", sanitize_terminal_inline(assignee));
     }
@@ -1520,6 +1526,8 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             revision: 1,
             id: id.to_string(),
             content_hash: None,

@@ -1165,6 +1165,16 @@ pub struct CreateArgs {
     #[arg(long = "ac", value_name = "checkable|judgment")]
     pub ac: Option<String>,
 
+    /// ADR-0005 §2: typed deliverable (default diff). Set at creation,
+    /// immutable afterwards.
+    #[arg(long = "deliverable", value_name = "diff|report")]
+    pub deliverable: Option<String>,
+
+    /// ADR-0005 §3: advisory follow-on link to the bead this work
+    /// promotes. Provenance only, never gates readiness.
+    #[arg(long = "promotes", value_name = "ID")]
+    pub promotes: Option<String>,
+
     /// Preview without creating
     #[arg(long)]
     pub dry_run: bool,
@@ -1384,6 +1394,12 @@ pub struct UpdateArgs {
     /// Set the acceptance-criteria shape (checkable|judgment).
     #[arg(long = "ac", value_name = "checkable|judgment")]
     pub ac: Option<String>,
+
+    /// ADR-0005 §2: deliverable is immutable after creation. Accepted
+    /// only when the value equals the bead's current deliverable
+    /// (idempotent restatement); any retype is refused.
+    #[arg(long = "deliverable", value_name = "diff|report")]
+    pub deliverable: Option<String>,
 
     /// Set `closed_by_session` when closing
     #[arg(long)]

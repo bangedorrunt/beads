@@ -264,6 +264,11 @@ pub const SCHEMA_SQL: &str = r"
         ac_shape TEXT NOT NULL DEFAULT 'checkable',
         blast TEXT NOT NULL DEFAULT 'normal',
         revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+        -- ADR-0005 §§2-3: typed deliverable + advisory promotes link.
+        -- Same append-at-end convention; deliverable defaults to 'diff'
+        -- so pre-ADR-0005 rows stay valid, promotes is nullable.
+        deliverable TEXT NOT NULL DEFAULT 'diff',
+        promotes TEXT,
         CHECK (
             (status = 'closed' AND closed_at IS NOT NULL) OR
             (status = 'tombstone') OR
@@ -920,6 +925,11 @@ fn add_missing_typed_work_ledger_columns(conn: &Connection) -> Result<()> {
             "revision",
             "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)",
         ),
+        // ADR-0005 §§2-3: additive like the v18 columns; runs for every
+        // reviewed source so migrated DBs gain the columns in place.
+        // Appended after revision (ALTER TABLE appends physically).
+        ("deliverable", "deliverable TEXT NOT NULL DEFAULT 'diff'"),
+        ("promotes", "promotes TEXT"),
     ] {
         if !existing.contains(name) {
             conn.execute(&format!("ALTER TABLE issues ADD COLUMN {decl}"))?;
@@ -1253,6 +1263,12 @@ const ISSUE_COLUMNS: &[(&str, &str)] = &[
         "revision",
         "INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)",
     ),
+    // ADR-0005 §§2-3: typed deliverable + advisory promotes link.
+    // Appended at the end like the v18 columns (ALTER TABLE ADD COLUMN
+    // appends physically); deliverable defaults to 'diff' so
+    // pre-ADR-0005 rows stay valid, promotes is nullable.
+    ("deliverable", "TEXT NOT NULL DEFAULT 'diff'"),
+    ("promotes", "TEXT"),
 ];
 
 const DEPENDENCY_COLUMNS: &[(&str, &str)] = &[
@@ -1425,6 +1441,10 @@ const EXPECTED_ISSUE_COLUMN_ORDER: &[&str] = &[
     "ac_shape",
     "blast",
     "revision",
+    // ADR-0005 §§2-3: appended at the end to match ALTER TABLE ADD COLUMN
+    // positions on migrated DBs.
+    "deliverable",
+    "promotes",
 ];
 
 /// Check whether the issues table has columns in the expected order.

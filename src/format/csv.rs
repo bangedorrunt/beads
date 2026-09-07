@@ -168,6 +168,8 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             revision: 1,
             id: id.to_string(),
             content_hash: None,

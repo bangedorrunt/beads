@@ -462,6 +462,14 @@ pub fn create_issue_impl(
     // identical forms.
     let principles = super::update::parse_principle_args(&args.principle)?;
     let blast = super::update::parse_blast_arg(args.blast.as_deref())?.unwrap_or_default();
+    // ADR-0005 §2: typed deliverable, default diff. Parsed BEFORE any
+    // mutation so an invalid value leaves no row behind.
+    let deliverable: crate::model::Deliverable = match args.deliverable.as_deref() {
+        None => crate::model::Deliverable::Diff,
+        Some(raw) => raw
+            .parse()
+            .map_err(|e: String| BeadsError::validation("deliverable", e))?,
+    };
     let ac_shape = super::update::resolve_ac_shape(
         args.verify.as_deref().is_some_and(|v| !v.trim().is_empty()),
         super::update::parse_ac_arg(args.ac.as_deref())?,
@@ -478,6 +486,24 @@ pub fn create_issue_impl(
         .parent
         .as_deref()
         .map(|parent| resolve_issue_id(storage, &id_resolver, parent))
+        .transpose()?;
+    // ADR-0005 §3: advisory promotes link. Resolve the cited bead and
+    // refuse unknown ids at creation (provenance, not readiness gating:
+    // the link never affects ready).
+    let promotes = args
+        .promotes
+        .as_deref()
+        .map(|promoted| resolve_issue_id(storage, &id_resolver, promoted))
+        .transpose()?
+        .map(|promoted| {
+            if storage.get_issue(&promoted)?.is_none() {
+                return Err(BeadsError::validation(
+                    "promotes",
+                    format!("unknown bead id '{promoted}'"),
+                ));
+            }
+            Ok(promoted)
+        })
         .transpose()?;
 
     // Parse status (default to Open if not provided)
@@ -532,6 +558,8 @@ pub fn create_issue_impl(
             close_verdict: None,
             ac_shape,
             blast,
+            deliverable,
+            promotes: promotes.clone(),
             revision: 1,
             id: id.clone(),
             title: title.clone(),
@@ -1061,6 +1089,8 @@ fn execute_import(
                 close_verdict: None,
                 ac_shape: crate::model::AcShape::Checkable,
                 blast: crate::model::Blast::Normal,
+                deliverable: crate::model::Deliverable::Diff,
+                promotes: None,
                 revision: 1,
                 id: id.clone(),
                 title: title.clone(),
@@ -1588,6 +1618,8 @@ mod tests {
             pin: None,
             commit_sha: None,
             blast: None,
+            deliverable: None,
+            promotes: None,
             ac: None,
             dry_run: false,
             silent: false,

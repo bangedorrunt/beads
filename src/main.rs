@@ -2239,6 +2239,8 @@ mod tests {
             pin: None,
             commit_sha: None,
             blast: None,
+            deliverable: None,
+            promotes: None,
             ac: None,
             dry_run: false,
             silent: false,

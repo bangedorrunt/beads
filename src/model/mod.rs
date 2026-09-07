@@ -492,6 +492,45 @@ pub enum AcShape {
     Judgment,
 }
 
+/// ADR-0005 §2: typed deliverable. Set at creation, immutable after.
+/// `diff` ships a code change (close gate: verdict row + sha);
+/// `report` ships knowledge (close gate: artifact evidence). Defaults to
+/// `diff` so pre-ADR-0005 rows stay valid without backfill.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Deliverable {
+    /// The bead ships a code change. Default.
+    #[default]
+    Diff,
+    /// The bead ships knowledge (ADR, survey, diagnosis, decision).
+    Report,
+}
+
+impl Deliverable {
+    /// Canonical storage string.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Diff => "diff",
+            Self::Report => "report",
+        }
+    }
+}
+
+impl std::str::FromStr for Deliverable {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "diff" => Ok(Self::Diff),
+            "report" => Ok(Self::Report),
+            other => Err(format!(
+                "invalid deliverable '{other}': expected diff|report"
+            )),
+        }
+    }
+}
+
 fn default_issue_revision() -> u64 {
     1
 }
@@ -535,6 +574,15 @@ pub struct Issue {
     /// ADR-0001 §5.2: blast-radius band (defaults to normal).
     #[serde(default)]
     pub blast: Blast,
+    /// ADR-0005 §2: typed deliverable (defaults to diff). Set at creation,
+    /// immutable afterwards: changing what a bead owes means closing it
+    /// and opening a successor, not retyping mid-flight.
+    #[serde(default)]
+    pub deliverable: Deliverable,
+    /// ADR-0005 §3: advisory follow-on link (`br create --promotes <id>`).
+    /// Provenance only, never gates readiness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promotes: Option<String>,
     /// ADR-0004: monotonic durable CAS token for issue mutations. It is not
     /// part of content identity and defaults to one for legacy JSONL records.
     #[serde(default = "default_issue_revision")]
@@ -717,6 +765,8 @@ impl Default for Issue {
             close_verdict: None,
             ac_shape: AcShape::Checkable,
             blast: Blast::Normal,
+            deliverable: Deliverable::Diff,
+            promotes: None,
             revision: 1,
             id: String::new(),
             content_hash: None,
@@ -1088,6 +1138,8 @@ mod tests {
             close_verdict: None,
             ac_shape: AcShape::Checkable,
             blast: Blast::Normal,
+            deliverable: Deliverable::Diff,
+            promotes: None,
             revision: 1,
             id: "bd-123".to_string(),
             content_hash: Some("abc".to_string()),
@@ -1566,6 +1618,8 @@ mod tests {
             close_verdict: None,
             ac_shape: AcShape::Checkable,
             blast: Blast::Normal,
+            deliverable: Deliverable::Diff,
+            promotes: None,
             revision: 1,
             id: "bd-test".to_string(),
             content_hash: None,

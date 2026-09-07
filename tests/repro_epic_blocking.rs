@@ -42,6 +42,8 @@ fn create_issue(id: &str, title: &str, issue_type: IssueType) -> Issue {
         close_verdict: None,
         ac_shape: beads::model::AcShape::Checkable,
         blast: beads::model::Blast::Normal,
+        deliverable: beads::model::Deliverable::Diff,
+        promotes: None,
         revision: 1,
         compaction_level: None,
         compacted_at: None,

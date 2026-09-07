@@ -1616,7 +1616,7 @@ impl ReadyIssueProjection {
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
                          sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
-                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision"
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision, deliverable, promotes"
             }
             Self::Command => {
                 r"SELECT id, title, description, acceptance_criteria, notes, status, priority,
@@ -1658,7 +1658,7 @@ impl SearchIssueProjection {
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
                          sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
-                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision, deliverable, promotes
                   FROM issues
                   WHERE 1=1"
             }
@@ -1691,7 +1691,7 @@ impl BlockedIssueProjection {
                      i.compacted_at, i.compacted_at_commit, i.original_size, i.sender, i.ephemeral,
                      i.pinned, i.is_template, i.source_repo_path, i.agent_context,
                      i.verify, i.principles, i.wave, i.pin, i.commit_sha,
-                     i.close_verdict, i.ac_shape, i.blast, i.revision,
+                     i.close_verdict, i.ac_shape, i.blast, i.revision, i.deliverable, i.promotes,
                      bc.blocked_by"
             }
             Self::Command => {
@@ -1711,7 +1711,7 @@ impl BlockedIssueProjection {
                      deleted_at, deleted_by, delete_reason, original_type, compaction_level,
                      compacted_at, compacted_at_commit, original_size, sender, ephemeral,
                      pinned, is_template, source_repo_path, agent_context,
-                     verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision"
+                     verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision, deliverable, promotes"
             }
             Self::Command => {
                 r"SELECT id, title, description, status, priority, issue_type,
@@ -1722,9 +1722,9 @@ impl BlockedIssueProjection {
 
     const fn cached_blocked_by_index(self) -> usize {
         match self {
-            // Full cached projection has issue columns 0..46, followed by
-            // `bc.blocked_by` at position 47.
-            Self::Full => 47,
+            // Full cached projection has issue columns 0..48, followed by
+            // `bc.blocked_by` at position 49.
+            Self::Full => 49,
             Self::Command => 10,
         }
     }
@@ -6419,9 +6419,9 @@ impl SqliteStorage {
                     compaction_level, compacted_at, compacted_at_commit, original_size,
                     sender, ephemeral, pinned, is_template, agent_context,
                     verify, principles, wave, pin, commit_sha, close_verdict,
-                    ac_shape, blast, revision
+                    ac_shape, blast, revision, deliverable, promotes
                  ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 &[
                     SqliteValue::from(issue.id.as_str()),
                     SqliteValue::from(content_hash.as_str()),
@@ -6479,6 +6479,9 @@ impl SqliteStorage {
                         crate::model::Blast::High => "high",
                     }),
                     SqliteValue::from(i64::try_from(issue.revision).unwrap_or(i64::MAX)),
+                    // ADR-0005 §§2-3: deliverable as canonical string, promotes nullable.
+                    SqliteValue::from(issue.deliverable.as_str()),
+                    issue.promotes.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
                 ],
             )?;
 
@@ -7927,7 +7930,7 @@ impl SqliteStorage {
                    deleted_at, deleted_by, delete_reason, original_type,
                    compaction_level, compacted_at, compacted_at_commit, original_size,
                    sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
-                   verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision
+                   verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision, deliverable, promotes
             FROM issues
             WHERE id = ?
         ";
@@ -7968,7 +7971,7 @@ impl SqliteStorage {
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
                          sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
-                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision, deliverable, promotes
                   FROM issues WHERE id IN ({})",
                 placeholders.join(",")
             );
@@ -8294,7 +8297,7 @@ impl SqliteStorage {
                          deleted_at, deleted_by, delete_reason, original_type,
                          compaction_level, compacted_at, compacted_at_commit, original_size,
                          sender, ephemeral, pinned, is_template, source_repo_path, agent_context,
-                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision
+                         verify, principles, wave, pin, commit_sha, close_verdict, ac_shape, blast, revision, deliverable, promotes
                   FROM issues
                   WHERE {status_filter}
                     AND (is_template = 0 OR is_template IS NULL)
@@ -14682,7 +14685,7 @@ impl SqliteStorage {
                            compacted_at, compacted_at_commit, original_size, sender, ephemeral,
                            pinned, is_template, source_repo_path, agent_context,
                            verify, principles, wave, pin, commit_sha,
-                           close_verdict, ac_shape, blast, revision
+                           close_verdict, ac_shape, blast, revision, deliverable, promotes
                     FROM issues
                     WHERE (ephemeral = 0 OR ephemeral IS NULL)
                       AND id NOT LIKE '%-wisp-%'
@@ -15638,6 +15641,10 @@ impl SqliteStorage {
                 .and_then(SqliteValue::as_integer)
                 .and_then(|value| u64::try_from(value).ok())
                 .unwrap_or(1),
+            // ADR-0005 §§2-3: positions 47-48 in the Full SELECT.
+            // deliverable defaults to diff for pre-ADR-0005 rows.
+            deliverable: parse_deliverable(row.get(47).and_then(SqliteValue::as_text)),
+            promotes: get_non_empty_str(48),
             labels: vec![],
             dependencies: vec![],
             comments: vec![],
@@ -15719,6 +15726,8 @@ impl SqliteStorage {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -15816,6 +15825,8 @@ impl SqliteStorage {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -15894,6 +15905,8 @@ impl SqliteStorage {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -15972,6 +15985,8 @@ impl SqliteStorage {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -16050,6 +16065,8 @@ impl SqliteStorage {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -16122,6 +16139,8 @@ impl SqliteStorage {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -16784,6 +16803,14 @@ fn parse_blast(raw: Option<&str>) -> crate::model::Blast {
     match raw {
         Some("high") => crate::model::Blast::High,
         _ => crate::model::Blast::Normal,
+    }
+}
+
+/// Parse the ADR-0005 deliverable TEXT enum (NULL/pre-ADR-0005 => diff).
+fn parse_deliverable(raw: Option<&str>) -> crate::model::Deliverable {
+    match raw {
+        Some("report") => crate::model::Deliverable::Report,
+        _ => crate::model::Deliverable::Diff,
     }
 }
 
@@ -17849,7 +17876,7 @@ impl SqliteStorage {
                      compacted_at, compacted_at_commit, original_size, sender, ephemeral,
                      pinned, is_template, source_repo_path, agent_context,
                      verify, principles, wave, pin, commit_sha,
-                     close_verdict, ac_shape, blast, revision
+                     close_verdict, ac_shape, blast, revision, deliverable, promotes
                FROM issues WHERE external_ref = ?",
             &[SqliteValue::from(external_ref)],
         ) {
@@ -17874,7 +17901,7 @@ impl SqliteStorage {
                      compacted_at, compacted_at_commit, original_size, sender, ephemeral,
                      pinned, is_template, source_repo_path, agent_context,
                      verify, principles, wave, pin, commit_sha,
-                     close_verdict, ac_shape, blast, revision
+                     close_verdict, ac_shape, blast, revision, deliverable, promotes
                FROM issues WHERE content_hash = ?",
             &[SqliteValue::from(content_hash)],
         ) {
@@ -18007,6 +18034,14 @@ impl SqliteStorage {
                 crate::model::Blast::High => "high",
             }),
             SqliteValue::from(i64::try_from(issue.revision).unwrap_or(i64::MAX)),
+            // ADR-0005 §§2-3: deliverable as canonical string, promotes as
+            // nullable cited bead id. Trailing so the revision pop below can
+            // skip over them explicitly.
+            SqliteValue::from(issue.deliverable.as_str()),
+            issue
+                .promotes
+                .as_deref()
+                .map_or(SqliteValue::Null, SqliteValue::from),
         ]
     }
 
@@ -18016,9 +18051,9 @@ impl SqliteStorage {
     pub(crate) fn import_issue_raw_row_for_witness(issue: &Issue) -> Result<Vec<SqliteValue>> {
         let timestamps = ImportIssueTimestampStrings::from_issue(issue);
         let mut fields = Self::import_issue_field_values(issue, &timestamps);
-        if fields.len() != 46 {
+        if fields.len() != 48 {
             return Err(BeadsError::Config(format!(
-                "Import issue raw witness expected 46 fields, found {}",
+                "Import issue raw witness expected 48 fields, found {}",
                 fields.len()
             )));
         }
@@ -18034,15 +18069,15 @@ impl SqliteStorage {
         let agent_context = fields.pop().ok_or_else(|| {
             BeadsError::Config("Import issue raw witness lost the agent_context field".to_string())
         })?;
-        let mut row = Vec::with_capacity(47);
+        let mut row = Vec::with_capacity(49);
         row.push(SqliteValue::from(issue.id.as_str()));
         row.extend(fields);
         row.push(source_repo_path);
         row.push(agent_context);
         row.extend(v18_tail);
-        if row.len() != 47 {
+        if row.len() != 49 {
             return Err(BeadsError::Config(format!(
-                "Import issue raw witness expected 47 columns, found {}",
+                "Import issue raw witness expected 49 columns, found {}",
                 row.len()
             )));
         }
@@ -18068,11 +18103,11 @@ impl SqliteStorage {
                 compacted_at, compacted_at_commit, original_size, sender, ephemeral,
                 pinned, is_template, agent_context,
                 verify, principles, wave, pin, commit_sha, close_verdict,
-                ac_shape, blast, revision
+                ac_shape, blast, revision, deliverable, promotes
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )",
             &insert_params,
         )?;
@@ -18088,9 +18123,19 @@ impl SqliteStorage {
         let mut params = Self::import_issue_field_values(issue, timestamps);
         // An import is a durable local mutation. Preserve the local CAS
         // sequence instead of replacing it with a source repository's token.
+        // ADR-0005: deliverable/promotes trail the revision token; pop them
+        // first, drop the source revision, then re-push in SET order.
+        let promotes_value = params.pop().ok_or_else(|| {
+            BeadsError::Config("Import issue update lost the promotes field".to_string())
+        })?;
+        let deliverable_value = params.pop().ok_or_else(|| {
+            BeadsError::Config("Import issue update lost the deliverable field".to_string())
+        })?;
         let _source_revision = params.pop().ok_or_else(|| {
             BeadsError::Config("Import issue update lost the source revision field".to_string())
         })?;
+        params.push(deliverable_value);
+        params.push(promotes_value);
         params.push(SqliteValue::from(issue.id.as_str()));
         let rows = self.conn.execute_with_params(
             r"UPDATE issues SET
@@ -18105,6 +18150,7 @@ impl SqliteStorage {
                 ephemeral = ?, pinned = ?, is_template = ?, agent_context = ?,
                 verify = ?, principles = ?, wave = ?, pin = ?,
                 commit_sha = ?, close_verdict = ?, ac_shape = ?, blast = ?,
+                deliverable = ?, promotes = ?,
                 revision = revision + 1
               WHERE id = ?",
             &params,
@@ -19890,6 +19936,8 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -23032,6 +23080,8 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -26625,6 +26675,8 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -26715,6 +26767,8 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -26799,6 +26853,8 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -26940,6 +26996,8 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
@@ -27562,6 +27620,8 @@ mod tests {
             close_verdict: None,
             ac_shape: crate::model::AcShape::Checkable,
             blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
             compaction_level: None,
             compacted_at: None,
             compacted_at_commit: None,
