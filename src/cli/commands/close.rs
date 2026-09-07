@@ -3250,15 +3250,7 @@ mod tests {
         let storage = SqliteStorage::open(db_path).expect("storage");
         storage
             .record_scoped_gate_result(
-                "t-rpt",
-                "open",
-                0,
-                "closed",
-                gate,
-                "verifier",
-                true,
-                None,
-                "verifier",
+                "t-rpt", "open", 0, "closed", gate, "verifier", true, None, "verifier",
             )
             .expect("record gate");
     }

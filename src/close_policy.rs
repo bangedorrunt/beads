@@ -5415,13 +5415,8 @@ workflow:
         // beads — any recorded row for the closing transition is refused.
         // (The wiring reports presence regardless of pass/fail; a FAIL row
         // is equally a verdict about code under test.)
-        let violations = report_close_violations(
-            "t-1",
-            "open",
-            &["docs/adr.md".to_string()],
-            &|_| true,
-            true,
-        );
+        let violations =
+            report_close_violations("t-1", "open", &["docs/adr.md".to_string()], &|_| true, true);
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("unit-test-verified"));
         // No row recorded, artifact present: clean.

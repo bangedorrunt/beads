@@ -181,7 +181,10 @@ mod storage_tests {
             .bind_captain_hold("holdcase-1", "corr-b", None, "tester")
             .expect("second row");
         assert_eq!(
-            storage.open_captain_holds("holdcase-1").expect("list").len(),
+            storage
+                .open_captain_holds("holdcase-1")
+                .expect("list")
+                .len(),
             2
         );
         let resolved = storage
@@ -189,7 +192,10 @@ mod storage_tests {
             .expect("resolve");
         assert_eq!(resolved, vec!["corr-a".to_string()]);
         assert_eq!(
-            storage.open_captain_holds("holdcase-1").expect("list").len(),
+            storage
+                .open_captain_holds("holdcase-1")
+                .expect("list")
+                .len(),
             1
         );
         assert!(
