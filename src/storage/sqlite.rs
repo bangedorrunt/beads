@@ -3687,6 +3687,241 @@ impl SqliteStorage {
         }))
     }
 
+    // governed-by: ADR-0005
+    /// Bind a captain hold row: one open corr per row. A second corr on the
+    /// same bead is a second row, never an overwrite; re-binding the same
+    /// open corr is refused. Revision bump + event + dirty mark commit
+    /// atomically with the row (ADR-0004). Expired rows re-surface first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the issue is missing, the corr is already bound,
+    /// or the database write fails.
+    pub fn bind_captain_hold(
+        &mut self,
+        issue_id: &str,
+        corr: &str,
+        expires_at: Option<&str>,
+        actor: &str,
+    ) -> Result<crate::hold::CaptainHold> {
+        if corr.trim().is_empty() {
+            return Err(BeadsError::validation(
+                "corr",
+                "--corr <id> is required to bind a captain hold",
+            ));
+        }
+        Self::ensure_captain_holds_table(&self.conn)?;
+        if Self::get_issue_from_conn(&self.conn, issue_id)?.is_none() {
+            return Err(BeadsError::IssueNotFound {
+                id: issue_id.to_string(),
+            });
+        }
+        let expires_owned = expires_at.map(String::from);
+        self.mutate("bind_captain_hold", actor, |conn, ctx| {
+            Self::resurface_expired_holds_in_tx(conn, ctx)?;
+            let dup = conn.query_with_params(
+                "SELECT 1 FROM captain_holds WHERE issue_id = ? AND corr = ? AND open = 1",
+                &[SqliteValue::from(issue_id), SqliteValue::from(corr)],
+            )?;
+            if !dup.is_empty() {
+                return Err(BeadsError::validation(
+                    "corr",
+                    format!("captain hold already open for {corr}: bind a second corr as a second row, never overwrite"),
+                ));
+            }
+            conn.execute_with_params(
+                "INSERT INTO captain_holds (issue_id, corr, kind, open, expires_at) VALUES (?, ?, 'captain', 1, datetime(?))",
+                &[
+                    SqliteValue::from(issue_id),
+                    SqliteValue::from(corr),
+                    expires_owned.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
+                ],
+            )?;
+            conn.execute_with_params(
+                "UPDATE issues SET updated_at = CURRENT_TIMESTAMP, revision = revision + 1 WHERE id = ?",
+                &[SqliteValue::from(issue_id)],
+            )?;
+            ctx.record_field_change(
+                EventType::Custom("captain_hold_bound".to_string()),
+                issue_id,
+                None,
+                Some(corr.to_string()),
+                Some(format!("captain hold bound for corr {corr}")),
+            );
+            ctx.mark_dirty(issue_id);
+            let mut hold = crate::hold::CaptainHold::new(issue_id, corr);
+            hold.expires_at = expires_owned.as_deref().and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+            });
+            Ok(hold)
+        })
+    }
+
+    /// Open captain hold rows for an issue (read-only).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub fn open_captain_holds(&self, issue_id: &str) -> Result<Vec<crate::hold::CaptainHold>> {
+        if !crate::storage::schema::table_exists(&self.conn, "captain_holds") {
+            return Ok(Vec::new());
+        }
+        Self::captain_holds_from_conn(&self.conn, issue_id)
+    }
+
+    /// Clear open rows whose bound corr resolves via answer/`--verdict`.
+    /// The resolving corr is recorded on each cleared row + event log.
+    /// A non-matching corr clears nothing. Expiry re-surfaces first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database write fails.
+    pub fn resolve_captain_hold(
+        &mut self,
+        issue_id: &str,
+        resolving_corr: &str,
+        actor: &str,
+    ) -> Result<Vec<String>> {
+        Self::ensure_captain_holds_table(&self.conn)?;
+        self.mutate("resolve_captain_hold", actor, |conn, ctx| {
+            Self::resurface_expired_holds_in_tx(conn, ctx)?;
+            let rows = conn.query_with_params(
+                "UPDATE captain_holds SET open = 0, resolving_corr = ?, resolved_at = CURRENT_TIMESTAMP \
+                 WHERE issue_id = ? AND corr = ? AND open = 1 RETURNING corr",
+                &[
+                    SqliteValue::from(resolving_corr),
+                    SqliteValue::from(issue_id),
+                    SqliteValue::from(resolving_corr),
+                ],
+            )?;
+            let resolved: Vec<String> = rows
+                .iter()
+                .filter_map(|r| r.get(0).and_then(SqliteValue::as_text).map(String::from))
+                .collect();
+            if !resolved.is_empty() {
+                conn.execute_with_params(
+                    "UPDATE issues SET updated_at = CURRENT_TIMESTAMP, revision = revision + 1 WHERE id = ?",
+                    &[SqliteValue::from(issue_id)],
+                )?;
+                for corr in &resolved {
+                    ctx.record_field_change(
+                        EventType::Custom("captain_hold_resolved".to_string()),
+                        issue_id,
+                        Some(corr.clone()),
+                        Some(resolving_corr.to_string()),
+                        Some(format!("captain hold cleared by corr {resolving_corr}")),
+                    );
+                }
+                ctx.mark_dirty(issue_id);
+            }
+            Ok(resolved)
+        })
+    }
+
+    /// Expiry re-surfaces open rows past their `expires_at`: flags them +
+    /// logs an event, never deletes. Returns the count re-surfaced.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database write fails.
+    pub fn resurface_expired_captain_holds(&mut self, actor: &str) -> Result<usize> {
+        Self::ensure_captain_holds_table(&self.conn)?;
+        self.mutate("resurface_captain_holds", actor, |conn, ctx| {
+            Self::resurface_expired_holds_in_tx(conn, ctx)
+        })
+    }
+
+    fn ensure_captain_holds_table(conn: &Connection) -> Result<()> {
+        conn.execute_with_params(
+            "CREATE TABLE IF NOT EXISTS captain_holds (issue_id TEXT NOT NULL, corr TEXT NOT NULL, \
+             kind TEXT NOT NULL DEFAULT 'captain', open INTEGER NOT NULL DEFAULT 1, expires_at DATETIME, \
+             resolving_corr TEXT, resurfaced INTEGER NOT NULL DEFAULT 0, \
+             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, resolved_at DATETIME, \
+             PRIMARY KEY (issue_id, corr), FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE)",
+            &[],
+        )?;
+        Ok(())
+    }
+
+    fn resurface_expired_holds_in_tx(
+        conn: &Connection,
+        ctx: &mut MutationContext,
+    ) -> Result<usize> {
+        let rows = conn.query_with_params(
+            "UPDATE captain_holds SET resurfaced = 1 \
+             WHERE open = 1 AND expires_at IS NOT NULL AND datetime(expires_at) <= CURRENT_TIMESTAMP AND resurfaced = 0 \
+             RETURNING issue_id, corr",
+            &[],
+        )?;
+        for row in &rows {
+            let issue = row.get(0).and_then(SqliteValue::as_text).unwrap_or("?");
+            let corr = row.get(1).and_then(SqliteValue::as_text).unwrap_or("?");
+            ctx.record_event(
+                EventType::Custom("captain_hold_resurfaced".to_string()),
+                issue,
+                Some(format!(
+                    "captain hold for corr {corr} expired and re-surfaced; hold stays open"
+                )),
+            );
+            ctx.mark_dirty(issue);
+        }
+        Ok(rows.len())
+    }
+
+    fn captain_holds_from_conn(
+        conn: &Connection,
+        issue_id: &str,
+    ) -> Result<Vec<crate::hold::CaptainHold>> {
+        use chrono::DateTime;
+        let rows = conn.query_with_params(
+            "SELECT corr, kind, open, expires_at, resolving_corr, resurfaced FROM captain_holds \
+             WHERE issue_id = ? AND open = 1 ORDER BY created_at",
+            &[SqliteValue::from(issue_id)],
+        )?;
+        let mut holds = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let mut hold = crate::hold::CaptainHold::new(
+                issue_id,
+                row.get(0).and_then(SqliteValue::as_text).unwrap_or(""),
+            );
+            hold.kind = row
+                .get(1)
+                .and_then(SqliteValue::as_text)
+                .unwrap_or("captain")
+                .to_string();
+            hold.open = row.get(2).and_then(SqliteValue::as_integer).unwrap_or(0) != 0;
+            hold.expires_at = row.get(3).and_then(SqliteValue::as_text).and_then(|s| {
+                DateTime::parse_from_rfc3339(s)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .or_else(|| {
+                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                            .ok()
+                            .map(|naive| naive.and_utc())
+                    })
+            });
+            hold.resolving_corr = row.get(4).and_then(SqliteValue::as_text).map(String::from);
+            hold.resurfaced = row.get(5).and_then(SqliteValue::as_integer).unwrap_or(0) != 0;
+            holds.push(hold);
+        }
+        Ok(holds)
+    }
+
+    /// True while any captain hold row is open: the bead refuses close on
+    /// every path (verdict, force, bypass, teardown, kill, TTL).
+    fn captain_hold_blocks_close_in_tx(conn: &Connection, issue_id: &str) -> Result<bool> {
+        if !crate::storage::schema::table_exists(conn, "captain_holds") {
+            return Ok(false);
+        }
+        let rows = conn.query_with_params(
+            "SELECT 1 FROM captain_holds WHERE issue_id = ? AND kind = 'captain' AND open = 1 LIMIT 1",
+            &[SqliteValue::from(issue_id)],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
     /// Append a workflow-gate verdict for the issue's current status revision
     /// and one explicit target transition (GitHub #388).
     ///
@@ -6929,6 +7164,19 @@ impl SqliteStorage {
                         return Err(BeadsError::Validation {
                             field: "issue_id".to_string(),
                             reason: format!("cannot update tombstone issue: {id}"),
+                        });
+                    }
+                    // governed-by: ADR-0005 — a captain-held bead refuses
+                    // close on every path (verdict, force, bypass,
+                    // teardown, kill, TTL). Clears only on answer/`--verdict`.
+                    if update.status.as_ref().is_some_and(|s| matches!(s, Status::Closed))
+                        && Self::captain_hold_blocks_close_in_tx(conn, id)?
+                    {
+                        return Err(BeadsError::Validation {
+                            field: "captain-hold".to_string(),
+                            reason: format!(
+                                "issue {id} is captain-held: close refused on every path; resolve with `br hold --resolve --corr <corr> {id}`"
+                            ),
                         });
                     }
                     if let Some(status) = &update.status

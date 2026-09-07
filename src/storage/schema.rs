@@ -581,6 +581,27 @@ pub const SCHEMA_SQL: &str = r"
         ON capacity_occupancy(harness) WHERE harness IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_capacity_occupancy_session
         ON capacity_occupancy(session) WHERE session IS NOT NULL;
+
+    -- Captain holds (beads ADR-0005 §4). One row per (issue, corr): a
+    -- second corr on the same bead is a second row, never an overwrite.
+    -- While any row is open the bead refuses close on every path.
+    -- Expiry re-surfaces (resurfaced=1 + event), never deletes the row.
+    -- Project-local like gate_results — never synced to JSONL.
+    CREATE TABLE IF NOT EXISTS captain_holds (
+        issue_id TEXT NOT NULL,
+        corr TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'captain',
+        open INTEGER NOT NULL DEFAULT 1,
+        expires_at DATETIME,
+        resolving_corr TEXT,
+        resurfaced INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        resolved_at DATETIME,
+        PRIMARY KEY (issue_id, corr),
+        FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_captain_holds_issue
+        ON captain_holds(issue_id) WHERE open = 1;
 ";
 
 /// Split a SQL script into individual statements, respecting string literals,

@@ -30,6 +30,7 @@ pub mod epic;
 pub mod gate;
 pub mod graph;
 pub mod history;
+pub mod hold;
 pub mod info;
 pub mod init;
 pub mod label;

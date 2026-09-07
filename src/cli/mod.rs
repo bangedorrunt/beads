@@ -791,6 +791,9 @@ pub enum Commands {
     /// Defer issues (schedule for later)
     Defer(DeferArgs),
 
+    /// Captain hold lifecycle (beads ADR-0005 §4)
+    Hold(HoldArgs),
+
     /// Delete an issue (creates tombstone)
     Delete(DeleteArgs),
 
@@ -1746,6 +1749,7 @@ pub const fn command_requests_robot_json(cmd: &Commands) -> bool {
         Commands::Blocked(args) => args.robot,
         Commands::Stats(args) | Commands::Status(args) => args.robot,
         Commands::Defer(args) => args.robot,
+        Commands::Hold(args) => args.robot,
         Commands::Undefer(args) => args.robot,
         Commands::Orphans(args) => args.robot,
         Commands::Plan(args) => args.robot,
@@ -2550,6 +2554,42 @@ pub struct DeferArgs {
     /// Tier 1 attribution: model identifier (env: BR_MODEL). Recorded only.
     #[arg(long, value_name = "MODEL", env = "BR_MODEL")]
     pub model: Option<String>,
+}
+
+/// Arguments for the hold command (beads ADR-0005 §4).
+#[derive(Args, Debug, Clone, Default)]
+pub struct HoldArgs {
+    /// Issue IDs to hold
+    #[arg(add = ArgValueCompleter::new(open_issue_id_completer))]
+    pub ids: Vec<String>,
+
+    /// Hold kind (only `captain` is supported)
+    #[arg(long, default_value = "captain")]
+    pub kind: String,
+
+    /// Correlation id bound to the hold row (one corr, one row)
+    #[arg(long, value_name = "CORR")]
+    pub corr: Option<String>,
+
+    /// Resolve open rows for --corr via answer/`--verdict`
+    #[arg(long)]
+    pub resolve: bool,
+
+    /// List open hold rows
+    #[arg(long)]
+    pub list: bool,
+
+    /// Re-surface expired holds (they stay open, never drop)
+    #[arg(long)]
+    pub sweep: bool,
+
+    /// Hold expiry (RFC3339); expiry re-surfaces, never drops
+    #[arg(long, value_name = "RFC3339")]
+    pub expires_at: Option<String>,
+
+    /// Machine-readable output (alias for --json)
+    #[arg(long)]
+    pub robot: bool,
 }
 
 /// Arguments for the undefer command.

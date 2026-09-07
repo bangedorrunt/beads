@@ -58,6 +58,8 @@ pub mod format;
 )]
 pub mod graph;
 pub mod health;
+// governed-by: ADR-0005
+pub mod hold;
 pub mod inheritance;
 pub mod logging;
 pub mod model;

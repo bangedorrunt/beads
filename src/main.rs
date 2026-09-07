@@ -841,6 +841,9 @@ fn main() {
             commands::config::execute(&command, cli.json, &overrides, &output_ctx)
         }
         Commands::History(args) => commands::history::execute(args, &overrides, &output_ctx),
+        Commands::Hold(args) => {
+            commands::hold::execute(&args, cli.json || args.robot, &overrides, &output_ctx)
+        }
         Commands::Defer(args) => {
             commands::defer::execute_defer(&args, cli.json || args.robot, &overrides, &output_ctx)
         }
@@ -1210,6 +1213,7 @@ const fn is_mutating_command(cmd: &Commands) -> bool {
         | Commands::Reopen(_)
         | Commands::Q(_)
         | Commands::Defer(_)
+        | Commands::Hold(_)
         | Commands::Undefer(_) => true,
         Commands::Dep { command } => matches!(
             command,
@@ -1532,6 +1536,7 @@ const fn needs_write_lock(cmd: &Commands) -> bool {
         | Commands::Epic { .. }
         | Commands::Query { .. }
         | Commands::Orphans(_)
+        | Commands::Hold(_)
         | Commands::Audit { .. }
         | Commands::Info(_)
         | Commands::Where
@@ -1575,6 +1580,7 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::Reopen(_)
         | Commands::Q(_)
         | Commands::Defer(_)
+        | Commands::Hold(_)
         | Commands::Undefer(_)
         | Commands::Comments(_)
         | Commands::Dep { .. }
