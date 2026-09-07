@@ -1,8 +1,8 @@
 <!-- governed-by: ADR-0004 -->
 ---
-status: proposed
+status: accepted
 date: 2026-09-06
-decision-makers: Captain (bangedorrunt) — acceptance pending
+decision-makers: Captain (bangedorrunt) — accepted 2026-09-07, implementation authorized
 consulted: flywheel ADR-0010 D11 (delivery semantics); flywheel D6 OPEN DECISIONS consumer design
 informed: flywheel maintainers; toron maintainers
 ---
