@@ -345,3 +345,107 @@ fn init_writes_require_legal_close_policy() {
         list.stderr
     );
 }
+
+/// bd-2qu9: `close_sha_cites_bead_foreign_sha_fails_loud` — closing with a
+/// real commit that cites a DIFFERENT bead fails naming the expected id.
+#[test]
+fn close_sha_cites_bead_foreign_sha_fails_loud() {
+    let _log = common::test_log("close_sha_cites_bead_foreign_sha_fails_loud");
+    let (workspace, id) = setup_workspace_with_issue();
+    record_unit_test_pass(&workspace, &id);
+
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&workspace.root)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?} failed: {out:?}");
+        out
+    };
+    git(&["init"]);
+    git(&["config", "user.email", "test@example.com"]);
+    git(&["config", "user.name", "test"]);
+    std::fs::write(workspace.root.join("work.txt"), "work\n").expect("write work");
+    git(&["add", "."]);
+    git(&["commit", "-m", "fix bd-someone-else done"]);
+    let sha_out = git(&["rev-parse", "HEAD"]);
+    let sha = String::from_utf8_lossy(&sha_out.stdout).trim().to_string();
+
+    let closed = run_br(
+        &workspace,
+        [
+            "close",
+            &id,
+            "--commit-sha",
+            &sha,
+            "--reason",
+            "done",
+            "--json",
+        ],
+        "close_foreign_sha",
+    );
+    assert!(
+        !closed.status.success(),
+        "close with a foreign sha must be non-zero: {}",
+        closed.stdout
+    );
+    let transcript = format!("{}{}", closed.stdout, closed.stderr);
+    assert!(
+        transcript.contains(&id),
+        "refusal must name the expected bead id {id}: {transcript}"
+    );
+
+    let show = run_br(&workspace, ["show", &id, "--json"], "show_still_open");
+    assert!(show.status.success(), "{}", show.stderr);
+    let payload = extract_json_payload(&show.stdout);
+    let issues: serde_json::Value = serde_json::from_str(&payload).expect("valid json");
+    assert_eq!(issues[0]["status"], "open", "{issues}");
+}
+
+/// bd-2qu9: `close_sha_cites_bead_citing_sha_closes` — a real commit citing
+/// the bead closes legally (gate row + citing sha).
+#[test]
+fn close_sha_cites_bead_citing_sha_closes() {
+    let _log = common::test_log("close_sha_cites_bead_citing_sha_closes");
+    let (workspace, id) = setup_workspace_with_issue();
+    record_unit_test_pass(&workspace, &id);
+
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&workspace.root)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?} failed: {out:?}");
+        out
+    };
+    git(&["init"]);
+    git(&["config", "user.email", "test@example.com"]);
+    git(&["config", "user.name", "test"]);
+    std::fs::write(workspace.root.join("work.txt"), "work\n").expect("write work");
+    git(&["add", "."]);
+    git(&["commit", "-m", &format!("feat: done ({id})")]);
+    let sha_out = git(&["rev-parse", "HEAD"]);
+    let sha = String::from_utf8_lossy(&sha_out.stdout).trim().to_string();
+
+    let closed = run_br(
+        &workspace,
+        [
+            "close",
+            &id,
+            "--commit-sha",
+            &sha,
+            "--reason",
+            "done",
+            "--json",
+        ],
+        "close_citing_sha",
+    );
+    assert!(
+        closed.status.success(),
+        "close with a citing sha must succeed: {} {}",
+        closed.stdout,
+        closed.stderr
+    );
+}

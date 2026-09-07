@@ -20,7 +20,7 @@ use crate::util::id::{IdResolver, ResolverConfig};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Internal arguments for the close command.
 #[derive(Debug, Clone, Default)]
@@ -50,6 +50,9 @@ pub struct CloseArgs {
     /// ADR-0001 §5.3: SHA of the commit whose message cites the bead id.
     /// Required on close unless policy is bypassed by an operator.
     pub commit_sha: Option<String>,
+    /// Explicit repo to verify `--commit-sha` in (bd-2qu9). Defaults to
+    /// cwd repo, then the beads parent, then `external_projects` roots.
+    pub repo: Option<String>,
     /// Expected issue revision for optimistic-concurrency protection.
     pub expected_revision: Option<u64>,
 }
@@ -69,6 +72,7 @@ impl From<&CliCloseArgs> for CloseArgs {
             bypass_policy: cli.bypass_policy,
             bypass_reason: cli.bypass_reason.clone(),
             commit_sha: cli.commit_sha.clone(),
+            repo: cli.repo.clone(),
             expected_revision: cli.expected_revision,
         }
     }
@@ -114,6 +118,138 @@ fn validate_bypass_args(args: &CloseArgs) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Outcome of `--commit-sha` verification (bd-2qu9: a beads-only or sibling
+/// sha must never silently close a bead).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ShaVerdict {
+    /// The sha resolved in `repo` and its message cites the bead.
+    Cited { repo: PathBuf },
+    /// The sha resolved nowhere searched: warn, never fail (a caller may
+    /// legitimately close from a machine without the work repo checked out).
+    Unresolvable,
+}
+
+/// Chars that keep a bead id glued to surrounding text: `bd-2qu9` inside
+/// `bd-2qu99` is a different bead, not a citation.
+fn is_bead_boundary_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_'
+}
+
+/// Pure citation check: does `message` cite `bead_id` (case-insensitive,
+/// word-boundary)? `BD-2QU9` cites `bd-2qu9`; `bd-2qu99` does not.
+fn sha_message_cites_bead(message: &str, bead_id: &str) -> bool {
+    let needle = bead_id.to_lowercase();
+    if needle.is_empty() {
+        return false;
+    }
+    let msg = message.to_lowercase();
+    for (start, _) in msg.match_indices(&needle) {
+        let before_ok = msg[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_bead_boundary_char(c));
+        let after_ok = msg[start + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !is_bead_boundary_char(c));
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
+
+/// Read-only sha lookup: full commit message, or `None` when the repo does
+/// not contain the sha.
+fn lookup_commit_message(repo_dir: &Path, sha: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%B", sha])
+        .current_dir(repo_dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let message = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!message.is_empty()).then_some(message)
+}
+
+/// Enclosing git toplevel for `start`, or `None` outside a repo.
+fn git_toplevel(start: &Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(start)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if root.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(root))
+    }
+}
+
+/// Repos to verify a close sha in, first hit wins: explicit `--repo`, then
+/// the cwd repo, then the beads-dir parent, then `external_projects` roots.
+fn sha_search_dirs(
+    explicit_repo: Option<&Path>,
+    beads_dir: &Path,
+    layer: &crate::config::ConfigLayer,
+) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut push = |dir: PathBuf| {
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    };
+    if let Some(repo) = explicit_repo {
+        push(repo.to_path_buf());
+    }
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(top) = git_toplevel(&cwd)
+    {
+        push(top);
+    }
+    if let Some(project_root) = beads_dir.parent() {
+        match git_toplevel(project_root) {
+            Some(top) => push(top),
+            None => push(project_root.to_path_buf()),
+        }
+    }
+    for beads_path in crate::config::external_project_beads_dirs(layer, beads_dir).values() {
+        if let Some(project_root) = beads_path.parent() {
+            match git_toplevel(project_root) {
+                Some(top) => push(top),
+                None => push(project_root.to_path_buf()),
+            }
+        }
+    }
+    dirs
+}
+
+/// Verify `sha` cites `bead_id`: first repo that resolves the sha decides.
+/// A resolved sha whose message lacks the bead fails loud naming the
+/// expected id; an sha no searched repo contains is `Unresolvable` (warn).
+fn validate_close_sha(sha: &str, bead_id: &str, search_dirs: &[PathBuf]) -> Result<ShaVerdict> {
+    for dir in search_dirs {
+        if let Some(message) = lookup_commit_message(dir, sha) {
+            if sha_message_cites_bead(&message, bead_id) {
+                return Ok(ShaVerdict::Cited { repo: dir.clone() });
+            }
+            return Err(BeadsError::validation(
+                "commit-sha",
+                format!(
+                    "commit {sha} does not cite {bead_id} (its message names no such bead; the close sha must cite the bead being closed)"
+                ),
+            ));
+        }
+    }
+    Ok(ShaVerdict::Unresolvable)
 }
 
 /// Resolve attribution values for the close. CLI flags take precedence over
@@ -1012,6 +1148,38 @@ fn run_close_core(
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
     let resolved_ids = resolve_issue_ids(&storage_ctx.storage, &resolver, &args.ids)?;
 
+    // bd-2qu9: the close sha must cite the bead being closed. Bypassed
+    // closes skip this like every other gate. An sha no searched repo
+    // contains warns (naming --repo) instead of failing: the work repo may
+    // simply not be checked out on this machine.
+    if !args.bypass_policy
+        && let Some(sha) = args
+            .commit_sha
+            .as_deref()
+            .map(str::trim)
+            .filter(|sha| !sha.is_empty())
+    {
+        let search_dirs = sha_search_dirs(
+            args.repo.as_deref().map(Path::new),
+            beads_dir,
+            &config_layer,
+        );
+        let mut warned_unresolvable = false;
+        for id in &resolved_ids {
+            match validate_close_sha(sha, id, &search_dirs)? {
+                ShaVerdict::Cited { .. } => {}
+                ShaVerdict::Unresolvable => {
+                    if !warned_unresolvable {
+                        warned_unresolvable = true;
+                        ctx.warning(&format!(
+                            "commit {sha} found in no searched repo; cannot verify it cites the bead (pass --repo <path> to verify elsewhere)"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     // Closure-time policy gates (issue #274 Phase 1). Loading happens once per
     // route; if the file is absent the doc is the all-off default.
     let policy_doc = close_policy::load_for_beads_dir(beads_dir)?;
@@ -1600,6 +1768,7 @@ mod tests {
             bypass_policy: true,
             bypass_reason: Some("Manual override approved".to_string()),
             commit_sha: None,
+            repo: Some("/tmp/repo".to_string()),
             expected_revision: None,
         };
         assert_eq!(args.ids.len(), 2);
@@ -2037,6 +2206,7 @@ mod tests {
             bypass_policy: true,
             bypass_reason: Some("Clone bypass reason".to_string()),
             commit_sha: None,
+            repo: None,
             expected_revision: None,
         };
         let cloned = args.clone();
@@ -3332,5 +3502,69 @@ mod tests {
             err.to_string().contains("unit-test-verified"),
             "expected verdict refusal, got: {err:?}"
         );
+    }
+
+    // =========================================================================
+    // bd-2qu9: close validates commit-sha cites the bead (RED first)
+    // =========================================================================
+
+    fn git_repo_with_commit(dir: &std::path::Path, message: &str) -> String {
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("git runs");
+            assert!(out.status.success(), "git {args:?} failed: {out:?}");
+            out
+        };
+        run(&["init"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(dir.join("f.txt"), "x\n").expect("write file");
+        run(&["add", "."]);
+        run(&["commit", "-m", message]);
+        let out = run(&["rev-parse", "HEAD"]);
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn close_sha_cites_bead_case_insensitive_word_boundary() {
+        assert!(sha_message_cites_bead("fix (BD-2QU9) done", "bd-2qu9"));
+        assert!(sha_message_cites_bead("fix bd-2qu9 done", "bd-2qu9"));
+        assert!(!sha_message_cites_bead("fix bd-other done", "bd-2qu9"));
+        // bd-2qu99 must not count as citing bd-2qu9.
+        assert!(!sha_message_cites_bead("fix bd-2qu99 done", "bd-2qu9"));
+    }
+
+    #[test]
+    fn close_sha_cites_bead_wrong_bead_sha_fails_naming_expected_id() {
+        let _lock = crate::util::test_helpers::TEST_DIR_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = TempDir::new().expect("tempdir");
+        let sha = git_repo_with_commit(temp.path(), "fix bd-other done");
+        let verdict = validate_close_sha(&sha, "bd-2qu9", &[temp.path().to_path_buf()])
+            .expect_err("wrong-bead sha must fail");
+        assert!(
+            verdict.to_string().contains("bd-2qu9"),
+            "error must name the expected bead id, got: {verdict:?}"
+        );
+    }
+
+    #[test]
+    fn close_sha_cites_bead_unknown_sha_is_unresolvable() {
+        let _lock = crate::util::test_helpers::TEST_DIR_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = TempDir::new().expect("tempdir");
+        git_repo_with_commit(temp.path(), "fix bd-2qu9 done");
+        let verdict = validate_close_sha(
+            "0123456789abcdef0123456789abcdef01234567",
+            "bd-2qu9",
+            &[temp.path().to_path_buf()],
+        )
+        .expect("unknown sha warns, never fails");
+        assert!(matches!(verdict, ShaVerdict::Unresolvable));
     }
 }

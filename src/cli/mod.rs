@@ -2836,9 +2836,15 @@ pub struct CloseArgs {
 
     /// ADR-0001 §5.3: SHA of the commit whose message cites the bead id.
     /// Required to close unless policy is bypassed by an operator
-    /// (BR_OPERATOR=1). `br` never runs git; the caller supplies the SHA.
+    /// (BR_OPERATOR=1). The caller supplies the SHA; br verifies it cites
+    /// the bead read-only via `git log` (bd-2qu9).
     #[arg(long, value_name = "SHA")]
     pub commit_sha: Option<String>,
+
+    /// Repo to verify `--commit-sha` in (bd-2qu9). Defaults to the cwd repo,
+    /// then the beads parent, then `external_projects` roots.
+    #[arg(long, value_name = "PATH")]
+    pub repo: Option<String>,
 }
 
 /// Arguments for the reopen command.
