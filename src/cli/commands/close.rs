@@ -81,6 +81,9 @@ struct EvaluatedGates {
     /// authorized this close (`require_legal_close` path). `None` when no
     /// legal row exists or the close bypassed policy.
     close_verdict: Option<String>,
+    /// ADR-0005 §2: artifact paths the close witness cited. Non-empty marks
+    /// a report close: artifact evidence replaces the verdict row.
+    report_artifacts: Vec<String>,
 }
 
 /// Validate the `--bypass-policy` / `--bypass-reason` flag pair before
@@ -137,6 +140,42 @@ struct CloseGateInputs<'a> {
     policy: &'a ClosePolicy,
     workflow: &'a crate::close_policy::Workflow,
     fail_closed_default: bool,
+}
+
+/// ADR-0005 §2 report-gate probe: returns the witness-cited artifacts when
+/// this close is a report close (`deliverable == Report`, set at creation
+/// and immutable), else `None`. Split out of [`evaluate_close_policy`] to
+/// keep it under the line-count lint.
+fn report_close_artifacts(issue: &Issue, args: &CloseArgs, to: &str) -> Option<Vec<String>> {
+    if args.bypass_policy
+        || to != "closed"
+        || issue.deliverable != crate::model::Deliverable::Report
+    {
+        return None;
+    }
+    Some(close_policy::cited_report_artifacts(args.reason.as_deref()))
+}
+
+/// Run the ADR-0005 §2 report gate: every cited artifact must exist and a
+/// `unit-test-verified` row for the closing transition is refused.
+fn report_close_gate_violations(
+    storage: &SqliteStorage,
+    issue_id: &str,
+    from: &str,
+    to: &str,
+    cited: &[String],
+) -> Result<Vec<PolicyViolation>> {
+    let results = storage.get_scoped_gate_results(issue_id, from, to)?;
+    let unit_test_verdict_recorded = results
+        .iter()
+        .any(|result| result.gate == crate::verify::VerdictKind::UnitTestVerified.gate_name());
+    Ok(close_policy::report_close_violations(
+        issue_id,
+        from,
+        cited,
+        &|path| std::path::Path::new(path).exists(),
+        unit_test_verdict_recorded,
+    ))
 }
 
 /// Run every enabled gate against `issue` and produce the (possibly empty)
@@ -228,8 +267,19 @@ fn evaluate_close_policy(
     let from = issue.status.as_str();
     let to = Status::Closed.as_str();
     let mut close_verdict: Option<String> = None;
+    // ADR-0005 §2: deliverable is set at creation and immutable — it (not
+    // the reason text) decides the gate. The witness still cites the
+    // artifact paths; the schema carries no artifact-path column.
+    let report_cited = report_close_artifacts(issue, args, to);
+    let is_report_close = report_cited.is_some();
+    if let Some(cited) = &report_cited {
+        violations.extend(report_close_gate_violations(
+            storage, issue_id, from, to, cited,
+        )?);
+    }
     if !args.bypass_policy
         && to == "closed"
+        && !is_report_close
         && (fail_closed_default
             || workflow
                 .gate_rule_for(from, to)
@@ -255,6 +305,7 @@ fn evaluate_close_policy(
     Ok(EvaluatedGates {
         violations,
         close_verdict,
+        report_artifacts: report_cited.unwrap_or_default(),
     })
 }
 
@@ -1260,10 +1311,14 @@ fn run_close_core(
         // ADR-0001 §5.3 audit trail: the authorizing verdict kind and the
         // commit SHA ride in close_metadata's gates JSON until the schema-v18
         // columns land (uyb3 wires issue.commit_sha / issue.close_verdict).
-        if let Some(evaluated_gates) = policy_evaluations_by_id.get(id)
-            && let Some(verdict) = &evaluated_gates.close_verdict
-        {
-            gates_fired.push(format!("close_verdict={verdict}"));
+        // ADR-0005 §2: report closes ride the cited artifacts instead.
+        if let Some(evaluated_gates) = policy_evaluations_by_id.get(id) {
+            for artifact in &evaluated_gates.report_artifacts {
+                gates_fired.push(format!("report_artifact={artifact}"));
+            }
+            if let Some(verdict) = &evaluated_gates.close_verdict {
+                gates_fired.push(format!("close_verdict={verdict}"));
+            }
         }
         if let Some(sha) = args
             .commit_sha
@@ -1467,7 +1522,7 @@ mod tests {
     use crate::cli::commands;
     use crate::config::CliOverrides;
     use crate::error::StructuredError;
-    use crate::model::{DependencyType, Issue, IssueType, Priority, Status};
+    use crate::model::{Deliverable, DependencyType, Issue, IssueType, Priority, Status};
     use crate::output::OutputContext;
     use crate::storage::SqliteStorage;
     use chrono::Utc;
@@ -3168,6 +3223,122 @@ mod tests {
         assert_eq!(
             storage.get_issue("bd-1").unwrap().unwrap().status,
             Status::Closed
+        );
+    }
+
+    fn setup_report_repo(temp: &TempDir) -> std::path::PathBuf {
+        // Fail-closed default stays ACTIVE (no opt-out): report closes must
+        // prove themselves under the same default as diff closes.
+        let ctx = OutputContext::from_flags(false, false, true);
+        commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
+        let beads_dir = temp.path().join(".beads");
+        let db_path = beads_dir.join("beads.db");
+        let mut storage = SqliteStorage::open(&db_path).expect("storage");
+        storage
+            .create_issue(
+                &Issue {
+                    deliverable: Deliverable::Report,
+                    ..make_issue("t-rpt", "Survey the field")
+                },
+                "tester",
+            )
+            .expect("create report issue");
+        db_path
+    }
+
+    fn record_report_gate(db_path: &std::path::Path, gate: &str) {
+        let storage = SqliteStorage::open(db_path).expect("storage");
+        storage
+            .record_scoped_gate_result(
+                "t-rpt",
+                "open",
+                0,
+                "closed",
+                gate,
+                "verifier",
+                true,
+                None,
+                "verifier",
+            )
+            .expect("record gate");
+    }
+
+    #[test]
+    fn report_close_gate_missing_artifact_fails_close() {
+        let _lock = crate::util::test_helpers::TEST_DIR_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = TempDir::new().expect("tempdir");
+        let db_path = setup_report_repo(&temp);
+        // Otherwise-legal verdict row: the failure must come from the
+        // missing artifact, not from a missing gate.
+        record_report_gate(&db_path, "worker-receipt");
+        let _guard = DirGuard::new(temp.path());
+        let ctx = OutputContext::from_flags(false, false, true);
+        let args = CloseArgs {
+            ids: vec!["t-rpt".to_string()],
+            reason: Some("survey done. artifact:missing.md".to_string()),
+            commit_sha: Some(test_sha()),
+            ..CloseArgs::default()
+        };
+        let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
+            .expect_err("report close without the artifact must fail loudly");
+        assert!(
+            err.to_string().contains("missing.md"),
+            "expected artifact refusal, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn report_close_gate_existing_artifact_closes() {
+        let _lock = crate::util::test_helpers::TEST_DIR_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = TempDir::new().expect("tempdir");
+        let db_path = setup_report_repo(&temp);
+        std::fs::write(temp.path().join("survey.md"), "# survey\n").expect("write artifact");
+        // No gate row at all: artifact evidence replaces the verdict row.
+        let _guard = DirGuard::new(temp.path());
+        let ctx = OutputContext::from_flags(false, false, true);
+        let args = CloseArgs {
+            ids: vec!["t-rpt".to_string()],
+            reason: Some("survey done. artifact:survey.md".to_string()),
+            commit_sha: Some(test_sha()),
+            ..CloseArgs::default()
+        };
+        execute_with_args(&args, false, &CliOverrides::default(), &ctx)
+            .expect("report close with the artifact closes");
+        let storage = SqliteStorage::open(&db_path).expect("reopen");
+        assert_eq!(
+            storage.get_issue("t-rpt").unwrap().unwrap().status,
+            Status::Closed
+        );
+    }
+
+    #[test]
+    fn report_close_gate_unit_test_verified_only_fails() {
+        let _lock = crate::util::test_helpers::TEST_DIR_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = TempDir::new().expect("tempdir");
+        let db_path = setup_report_repo(&temp);
+        std::fs::write(temp.path().join("survey.md"), "# survey\n").expect("write artifact");
+        // unit-test-verified is a false witness for report beads: refused
+        // even though the artifact exists.
+        record_report_gate(&db_path, "unit-test-verified");
+        let _guard = DirGuard::new(temp.path());
+        let ctx = OutputContext::from_flags(false, false, true);
+        let args = CloseArgs {
+            ids: vec!["t-rpt".to_string()],
+            reason: Some("survey done. artifact:survey.md".to_string()),
+            commit_sha: Some(test_sha()),
+            ..CloseArgs::default()
+        };
+        let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
+            .expect_err("unit-test-verified-only report close must fail");
+        assert!(
+            err.to_string().contains("unit-test-verified"),
+            "expected verdict refusal, got: {err:?}"
         );
     }
 }

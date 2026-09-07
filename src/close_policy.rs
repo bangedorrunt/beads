@@ -879,6 +879,114 @@ pub fn legal_close_input_for_issue_pub(priority: i32) -> crate::verify::LegalClo
     legal_close_input_for_issue(priority)
 }
 
+/// ADR-0005 §2 report-close witness kinds. The close `--reason` cites the
+/// artifact with one of these `kind:value` references; the citation is what
+/// marks the close as a report close (no schema column — the witness carries
+/// the type). `path:` prose without a path-like value is not a citation.
+const REPORT_ARTIFACT_KINDS: [&str; 3] = ["artifact", "path", "result_path"];
+
+/// Extract the artifact paths a close reason cites as report evidence.
+/// Accepts `kind:value` and `kind: value` (kind matched case-insensitively);
+/// trailing `.,;:)]}"'` punctuation is stripped. A value with no
+/// path-like character (`/` or `.`) is prose, not a citation.
+#[must_use]
+pub fn cited_report_artifacts(reason: Option<&str>) -> Vec<String> {
+    let Some(reason) = reason else {
+        return Vec::new();
+    };
+    let tokens: Vec<&str> = reason.split_whitespace().collect();
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = tokens[index];
+        let Some((kind, mut value)) = token.split_once(':') else {
+            index += 1;
+            continue;
+        };
+        if !REPORT_ARTIFACT_KINDS
+            .iter()
+            .any(|known| kind.eq_ignore_ascii_case(known))
+        {
+            index += 1;
+            continue;
+        }
+        value = value.trim();
+        if value.is_empty() {
+            // Spaced `kind: value` form — the value is the next token.
+            if index + 1 < tokens.len() {
+                index += 1;
+                value = tokens[index].trim();
+            } else {
+                index += 1;
+                continue;
+            }
+        }
+        let cleaned = value.trim_matches(|c: char| ".,;:)]}'\"".contains(c));
+        if !cleaned.is_empty() && (cleaned.contains('/') || cleaned.contains('.')) {
+            out.push(cleaned.to_string());
+        }
+        index += 1;
+    }
+    out
+}
+
+/// ADR-0005 §2 report close gate: every cited artifact must exist, and a
+/// `unit-test-verified` row for the closing transition is refused (there is
+/// no code under test, so the verdict would be a false witness). The caller
+/// supplies existence (cwd-relative on the close path) and whether any such
+/// row is recorded, keeping this helper pure.
+#[must_use]
+pub fn report_close_violations(
+    issue_id: &str,
+    from: &str,
+    cited: &[String],
+    artifact_exists: &dyn Fn(&str) -> bool,
+    unit_test_verdict_recorded: bool,
+) -> Vec<PolicyViolation> {
+    let mut violations = Vec::new();
+    if cited.is_empty() {
+        violations.push(PolicyViolation {
+            gate: "gate_report_artifact".to_string(),
+            message: format!(
+                "transition '{from}' -> 'closed' is a report close for {issue_id}: the close witness cites no artifact. Cite it as artifact:<path> (or path:/result_path:) and ship the file first (ADR-0005 §2)."
+            ),
+            detail: Some(serde_json::json!({
+                "issue_id": issue_id,
+                "from": from,
+            })),
+        });
+    }
+    for path in cited {
+        if !artifact_exists(path) {
+            violations.push(PolicyViolation {
+                gate: "gate_report_artifact".to_string(),
+                message: format!(
+                    "transition '{from}' -> 'closed' is a report close for {issue_id}: cited artifact '{path}' does not exist. Ship the artifact first, then close with the witness citing it (ADR-0005 §2)."
+                ),
+                detail: Some(serde_json::json!({
+                    "issue_id": issue_id,
+                    "from": from,
+                    "missing_artifact": path,
+                })),
+            });
+        }
+    }
+    if unit_test_verdict_recorded {
+        violations.push(PolicyViolation {
+            gate: "gate_unit_test_verified_refused".to_string(),
+            message: format!(
+                "transition '{from}' -> 'closed' is a report close for {issue_id}: a 'unit-test-verified' row is recorded and unit-test-verified is refused for report beads — there is no code under test, so the verdict would be a false witness (ADR-0005 §2)."
+            ),
+            detail: Some(serde_json::json!({
+                "issue_id": issue_id,
+                "from": from,
+                "refused_verdict": "unit-test-verified",
+            })),
+        });
+    }
+    violations
+}
+
 fn legal_close_input_for_issue(priority: i32) -> crate::verify::LegalCloseInput<'static> {
     crate::verify::LegalCloseInput {
         priority: u8::try_from(priority).unwrap_or(0),
@@ -5247,5 +5355,87 @@ workflow:
 "#;
         let raw: serde_yml::Value = serde_yml::from_str(yaml).unwrap();
         assert!(detect_unknown_policy_fields(&raw).is_empty());
+    }
+
+    #[test]
+    fn report_close_gate_extracts_cited_artifacts() {
+        // ADR-0005 §2: the close witness cites the artifact via a typed
+        // kind:value reference. All three kinds count; prose does not.
+        let cited = cited_report_artifacts(Some(
+            "survey done. artifact:docs/survey.md result_path: out/report.md",
+        ));
+        assert_eq!(cited, vec!["docs/survey.md", "out/report.md"]);
+        let cited = cited_report_artifacts(Some("path: notes/plan.md."));
+        assert_eq!(cited, vec!["notes/plan.md"]);
+        let spaced = cited_report_artifacts(Some("RESULT_PATH: out/r.md,"));
+        assert_eq!(spaced, vec!["out/r.md"]);
+        assert!(cited_report_artifacts(None).is_empty());
+        assert!(cited_report_artifacts(Some("fixed the bug, no witness")).is_empty());
+        // A bare prose "path:" with no path-like value is not a citation.
+        assert!(cited_report_artifacts(Some("the path: forward is unclear")).is_empty());
+    }
+
+    #[test]
+    fn report_close_gate_uncited_report_close_is_violation() {
+        // ADR-0005 §2: a report close whose witness cites nothing has no
+        // evidence — fails even with no verdict rows recorded.
+        let violations = report_close_violations("t-1", "open", &[], &|_| true, false);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("cites no artifact"));
+    }
+
+    #[test]
+    fn report_close_gate_missing_artifact_is_violation() {
+        let violations = report_close_violations(
+            "t-1",
+            "open",
+            &["missing.md".to_string()],
+            &|_| false,
+            false,
+        );
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("missing.md"));
+    }
+
+    #[test]
+    fn report_close_gate_existing_artifact_no_violation() {
+        let violations = report_close_violations(
+            "t-1",
+            "open",
+            &["docs/adr.md".to_string()],
+            &|_| true,
+            false,
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn report_close_gate_refuses_unit_test_verified() {
+        // ADR-0005 §2: unit-test-verified is a false witness for report
+        // beads — any recorded row for the closing transition is refused.
+        // (The wiring reports presence regardless of pass/fail; a FAIL row
+        // is equally a verdict about code under test.)
+        let violations = report_close_violations(
+            "t-1",
+            "open",
+            &["docs/adr.md".to_string()],
+            &|_| true,
+            true,
+        );
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("unit-test-verified"));
+        // No row recorded, artifact present: clean.
+        let violations = report_close_violations(
+            "t-1",
+            "open",
+            &["docs/adr.md".to_string()],
+            &|_| true,
+            false,
+        );
+        assert!(violations.is_empty());
+        // Missing artifact plus refused verdict: both fire.
+        let violations =
+            report_close_violations("t-1", "open", &["gone.md".to_string()], &|_| false, true);
+        assert_eq!(violations.len(), 2);
     }
 }
