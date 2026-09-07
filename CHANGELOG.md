@@ -17,6 +17,10 @@ This changelog is organized by capability rather than diff order. Each version s
 
 ## [Unreleased]
 
+### Added
+
+- **Scout/ship deliverable types + captain hold (ADR-0005, accepted):** typed `deliverable` (`diff` report) set at creation and immutable; `br create --promotes` advisory links; report beads close on artifact existence and refuse `unit-test-verified`; `br hold --kind captain --corr` parks behind a captain decision that teardown, kill, and TTL cannot close (expiry re-surfaces).
+
 ### Changed
 
 - **Storage engine swapped to rusqlite** (`bundled`): the 15-crate fsqlite
