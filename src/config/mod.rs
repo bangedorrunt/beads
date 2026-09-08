@@ -5657,16 +5657,16 @@ pub fn display_color_from_layer(layer: &ConfigLayer) -> Option<bool> {
 /// Determine whether human-readable output should use ANSI color.
 ///
 /// Precedence:
-/// 1) Config `display.color` (if set)
-/// 3) `NO_COLOR` environment variable (standard)
+/// 1) Nonempty `NO_COLOR` disables ANSI output, including configured color
+/// 2) Config `display.color` (including the `--no-color` override, if set)
 /// 3) stdout is a terminal
 #[must_use]
 pub fn should_use_color(layer: &ConfigLayer) -> bool {
+    if env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()) {
+        return false;
+    }
     if let Some(value) = display_color_from_layer(layer) {
         return value;
-    }
-    if env::var_os("NO_COLOR").is_some() {
-        return false;
     }
     std::io::stdout().is_terminal()
 }
@@ -7133,6 +7133,51 @@ labels:
 
         let resolved = resolve_jsonl_path(&beads_dir, &Metadata::default(), Some(&db_override));
         assert_eq!(resolved, beads_dir.join("beads.jsonl"));
+    }
+
+    /// GitHub #498: `--no-color` maps to `CliOverrides::display_color =
+    /// Some(false)`, which `as_layer` files under the STARTUP map because
+    /// `display.` is a startup prefix. The colour resolver must read it from
+    /// there, otherwise the flag (and `display.color` in config.yaml) is a
+    /// silent no-op and coloured text output cannot be turned off.
+    #[test]
+    fn display_color_is_read_from_the_startup_layer_where_cli_overrides_put_it() {
+        let off = CliOverrides {
+            display_color: Some(false),
+            ..CliOverrides::default()
+        }
+        .as_layer();
+        assert!(is_startup_key("display.color"));
+        assert_eq!(
+            off.startup.get("display.color").map(String::as_str),
+            Some("false")
+        );
+        assert!(!off.runtime.contains_key("display.color"));
+        assert_eq!(display_color_from_layer(&off), Some(false));
+        assert!(
+            !should_use_color(&off),
+            "--no-color must win over TTY detection"
+        );
+
+        let on = CliOverrides {
+            display_color: Some(true),
+            ..CliOverrides::default()
+        }
+        .as_layer();
+        assert_eq!(display_color_from_layer(&on), Some(true));
+        // Actual color emission and NO_COLOR precedence are exercised in
+        // e2e_list_comprehensive with isolated child-process environments.
+
+        let mut runtime_only = ConfigLayer::default();
+        runtime_only
+            .runtime
+            .insert("display_color".to_string(), "false".to_string());
+        assert_eq!(
+            display_color_from_layer(&runtime_only),
+            Some(false),
+            "a value stored under the runtime map is still honoured"
+        );
+        assert_eq!(display_color_from_layer(&ConfigLayer::default()), None);
     }
 
     #[test]

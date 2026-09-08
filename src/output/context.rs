@@ -1088,6 +1088,18 @@ fn ascii_toon_string_is_clean(value: &str) -> Option<bool> {
     (!saw_non_ascii).then_some(true)
 }
 
+/// Whether the environment rules out Rich output regardless of flags:
+/// `NO_COLOR` is nonempty, the terminal is `TERM=dumb` (basic consoles, editor
+/// embeds, screen readers cannot render ANSI styling or box drawing), or
+/// stdout is not a terminal. Every constructor consults this so the answer
+/// cannot differ between `br list`, `br show`, and subcommands that build
+/// their context from an explicit format.
+fn plain_output_forced_by_environment() -> bool {
+    std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
+        || std::env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb"))
+        || !std::io::stdout().is_terminal()
+}
+
 impl OutputContext {
     /// Detect output mode from environment and terminal state without CLI args.
     #[must_use]
