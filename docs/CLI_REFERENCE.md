@@ -482,6 +482,7 @@ br delete [OPTIONS] <IDS>...
 | `--from-file <PATH>` | Read IDs from file (one per line, `#` comments ignored) |
 | `--cascade` | Delete dependents recursively |
 | `--force` | Bypass dependent checks, orphaning dependents |
+| `--detach` | Drop every edge touching the listed issues, then delete; dependents outside the list are orphaned, never deleted (safe alternative to `--cascade`) |
 | `--hard` | Prune tombstones from JSONL immediately |
 | `--dry-run` | Preview only, no changes |
 

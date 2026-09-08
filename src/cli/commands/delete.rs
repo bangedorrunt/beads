@@ -65,12 +65,41 @@ struct PreparedDeleteRoute {
     blocked_dependents: Vec<String>,
     cascade_delete: Vec<String>,
     final_delete_ids: Vec<String>,
+    detached_edges: Vec<String>,
     auto_flush_external: bool,
     _routed_write_lock: RoutedWorkspaceWriteLock,
 }
 
 fn delete_display_text(value: &str) -> String {
     sanitize_terminal_inline(value).into_owned()
+}
+
+/// A dependency edge touching an issue, rendered for `--detach` reporting.
+fn describe_touching_edges(storage: &SqliteStorage, ids: &[String]) -> Result<Vec<String>> {
+    let mut edges = Vec::new();
+    for id in ids {
+        // Outgoing edges live in the dependencies table, not on the issue
+        // row — `get_issue` leaves them empty.
+        for dep in storage.get_dependencies_full(id)? {
+            edges.push(format!(
+                "{} -> {} ({})",
+                delete_display_text(&dep.issue_id),
+                delete_display_text(&dep.depends_on_id),
+                dep.dep_type.as_str()
+            ));
+        }
+        for dependent in storage.get_dependents_with_metadata(id)? {
+            edges.push(format!(
+                "{} -> {} ({})",
+                delete_display_text(&dependent.id),
+                delete_display_text(id),
+                dependent.dep_type
+            ));
+        }
+    }
+    edges.sort();
+    edges.dedup();
+    Ok(edges)
 }
 
 /// Execute the delete command.
@@ -128,8 +157,8 @@ pub fn execute(
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
     let ids = sorted_unique_strings(resolve_issue_ids(&storage_ctx.storage, &resolver, &ids)?);
-    let result = {
-        // 3. Check for dependents (if not --force and not --cascade)
+    let (result, detached_edges) = {
+        // 3. Check for dependents (if not --force/--cascade/--detach)
         let delete_set: HashSet<String> = ids.iter().cloned().collect();
         let blocked_dependents = collect_direct_dependents(&storage_ctx.storage, &ids)?;
         let cascade_dependents = if args.cascade {
@@ -141,7 +170,7 @@ pub fn execute(
             None
         };
 
-        if !blocked_dependents.is_empty() && !args.force && !args.cascade {
+        if !blocked_dependents.is_empty() && !args.force && !args.cascade && !args.detach {
             // Preview mode: show what would happen.
             // Compute the full transitive closure so the user sees the true blast
             // radius of --cascade (not just first-level dependents).
@@ -191,7 +220,7 @@ pub fn execute(
                 }
                 println!();
                 println!(
-                    "Use --force to orphan these dependents, or --cascade to delete them recursively."
+                    "Use --detach to drop the dependency edges and delete only these issues, --force to orphan these dependents, or --cascade to delete them recursively."
                 );
                 if !full_cascade.is_empty() {
                     println!(
@@ -208,7 +237,7 @@ pub fn execute(
         if args.dry_run {
             let cascade_ids = cascade_dependents.clone().unwrap_or_default();
             if ctx.is_json() || ctx.is_toon() {
-                let orphaned_issues = if args.force && !args.cascade {
+                let orphaned_issues = if (args.force || args.detach) && !args.cascade {
                     blocked_dependents
                 } else {
                     Vec::new()
@@ -231,7 +260,7 @@ pub fn execute(
                 return Ok(());
             }
             if ctx.is_rich() {
-                let orphan_ids: Vec<String> = if args.force && !args.cascade {
+                let orphan_ids: Vec<String> = if (args.force || args.detach) && !args.cascade {
                     blocked_dependents
                 } else {
                     vec![]
@@ -260,10 +289,19 @@ pub fn execute(
                     println!("  - {}", delete_display_text(dep));
                 }
             }
-            if args.force && !blocked_dependents.is_empty() {
+            if (args.force || args.detach) && !blocked_dependents.is_empty() {
                 println!("Would orphan {} dependent(s):", blocked_dependents.len());
                 for dep in &blocked_dependents {
                     println!("  - {}", delete_display_text(dep));
+                }
+            }
+            if args.detach {
+                let edges = describe_touching_edges(&storage_ctx.storage, &ids)?;
+                if !edges.is_empty() {
+                    println!("Would detach {} edge(s):", edges.len());
+                    for edge in &edges {
+                        println!("  - {edge}");
+                    }
                 }
             }
             return Ok(());
@@ -281,6 +319,14 @@ pub fn execute(
         // 7. Perform deletion
         let mut result = DeleteResult::new();
 
+        // --detach: snapshot every touching edge first so each removal is
+        // reported; blast radius stays the explicit id list (no cascade).
+        let detached_edges = if args.detach {
+            describe_touching_edges(&storage_ctx.storage, &ids)?
+        } else {
+            Vec::new()
+        };
+
         // First, remove all dependency links for issues being deleted
         let mut batch_has_mutated = false;
         for id in &final_delete_set {
@@ -297,8 +343,8 @@ pub fn execute(
             }
         }
 
-        // Track orphaned issues (only relevant for --force mode)
-        if args.force && !args.cascade {
+        // Track orphaned issues (only relevant for --force/--detach mode)
+        if (args.force || args.detach) && !args.cascade {
             result.orphaned_issues.clone_from(&blocked_dependents);
         }
 
@@ -338,7 +384,7 @@ pub fn execute(
             result.deleted.push(id.clone());
         }
         result.deleted_count = result.deleted.len();
-        result
+        (result, detached_edges)
     };
 
     let deleted_ids: HashSet<String> = result.deleted.iter().cloned().collect();
@@ -365,11 +411,18 @@ pub fn execute(
     }
 
     if ctx.is_rich() {
-        render_delete_result_rich(&result, &storage_ctx.storage, ctx);
+        render_delete_result_rich(&result, &storage_ctx.storage, ctx, &detached_edges);
     } else {
         println!("Deleted {} issue(s):", result.deleted_count);
         for id in &result.deleted {
             println!("  - {}", delete_display_text(id));
+        }
+
+        if !detached_edges.is_empty() {
+            println!("Detached {} edge(s):", detached_edges.len());
+            for edge in &detached_edges {
+                println!("  - {edge}");
+            }
         }
 
         if result.dependencies_removed > 0 {
@@ -536,7 +589,7 @@ fn execute_routed(
             .collect(),
     );
 
-    if !blocked_dependents.is_empty() && !args.force && !args.cascade {
+    if !blocked_dependents.is_empty() && !args.force && !args.cascade && !args.detach {
         render_routed_delete_preview(
             ctx,
             &DeletePreviewResult {
@@ -551,7 +604,7 @@ fn execute_routed(
     }
 
     if args.dry_run {
-        let orphaned_issues = if args.force && !args.cascade {
+        let orphaned_issues = if (args.force || args.detach) && !args.cascade {
             blocked_dependents
         } else {
             Vec::new()
@@ -598,6 +651,19 @@ fn execute_routed(
     ctx.success(&format!("Deleted {} issue(s)", result.deleted_count));
     for id in &result.deleted {
         ctx.print_line(&format!("  - {}", delete_display_text(id)));
+    }
+
+    let mut all_detached: Vec<String> = prepared_routes
+        .iter()
+        .flat_map(|route| route.detached_edges.iter().cloned())
+        .collect();
+    all_detached.sort();
+    all_detached.dedup();
+    if !all_detached.is_empty() {
+        ctx.info(&format!("Detached {} edge(s):", all_detached.len()));
+        for edge in &all_detached {
+            ctx.print_line(&format!("  - {edge}"));
+        }
     }
 
     if result.dependencies_removed > 0 {
@@ -661,6 +727,18 @@ fn prepare_delete_route(
         resolved_ids.clone()
     };
 
+    // --detach snapshots touching edges pre-mutation so each removal is
+    // reported; prepares run before any route applies, so this is exact.
+    // --detach conflicts with --cascade at the clap layer, so final ids
+    // here are always the explicit list (never a transitive closure).
+    // Reuses this route's already-open storage handle: a second open under
+    // the routed write lock would self-deadlock (#409).
+    let detached_edges = if args.detach {
+        describe_touching_edges(&storage_ctx.storage, &final_delete_ids)?
+    } else {
+        Vec::new()
+    };
+
     Ok(PreparedDeleteRoute {
         beads_dir: beads_dir.to_path_buf(),
         route_cli: cli.clone(),
@@ -668,6 +746,7 @@ fn prepare_delete_route(
         blocked_dependents,
         cascade_delete,
         final_delete_ids,
+        detached_edges,
         auto_flush_external,
         _routed_write_lock: routed_write_lock,
     })
@@ -699,7 +778,7 @@ fn apply_delete_route(
         }
     }
 
-    if args.force && !args.cascade {
+    if (args.force || args.detach) && !args.cascade {
         result.orphaned_issues.clone_from(&route.blocked_dependents);
     }
 
@@ -792,7 +871,7 @@ fn render_routed_delete_preview(ctx: &OutputContext, preview: &DeletePreviewResu
         }
         ctx.newline();
         ctx.info(
-            "Use --force to orphan these dependents, or --cascade to delete them recursively.",
+            "Use --detach to drop the dependency edges and delete only these issues, --force to orphan these dependents, or --cascade to delete them recursively.",
         );
         if !preview.cascade_delete.is_empty() {
             ctx.info(&format!(
@@ -1015,7 +1094,7 @@ fn render_dependents_warning_rich(
 
     content.append("\n");
     content.append_styled(
-        "Use --force to orphan these dependents, or --cascade to delete them recursively.\n",
+        "Use --detach to drop the dependency edges and delete only these issues, --force to orphan these dependents, or --cascade to delete them recursively.\n",
         theme.dimmed.clone(),
     );
     if !full_cascade.is_empty() {
@@ -1129,7 +1208,12 @@ fn render_dry_run_rich(
 }
 
 /// Render the delete result in rich format.
-fn render_delete_result_rich(result: &DeleteResult, storage: &SqliteStorage, ctx: &OutputContext) {
+fn render_delete_result_rich(
+    result: &DeleteResult,
+    storage: &SqliteStorage,
+    ctx: &OutputContext,
+    detached_edges: &[String],
+) {
     let console = Console::default();
     let theme = ctx.theme();
     let width = ctx.width();
@@ -1171,6 +1255,19 @@ fn render_delete_result_rich(result: &DeleteResult, storage: &SqliteStorage, ctx
             theme.emphasis.clone(),
         );
         content.append_styled(" dependency link(s)", theme.dimmed.clone());
+    }
+
+    // Detached edges (--detach reports each one)
+    if !detached_edges.is_empty() {
+        content.append("\n");
+        content.append_styled("Detached ", theme.dimmed.clone());
+        content.append_styled(&format!("{}", detached_edges.len()), theme.emphasis.clone());
+        content.append_styled(" edge(s):\n\n", theme.dimmed.clone());
+        for edge in detached_edges {
+            content.append_styled("  \u{2717} ", theme.error.clone());
+            content.append(edge.as_str());
+            content.append("\n");
+        }
     }
 
     // Orphaned issues

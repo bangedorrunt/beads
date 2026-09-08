@@ -1455,6 +1455,13 @@ pub struct DeleteArgs {
     #[arg(long, conflicts_with = "cascade")]
     pub force: bool,
 
+    /// Detach first: drop every dependency edge touching the listed issues
+    /// (both directions), then tombstone them. Dependents outside the list
+    /// are orphaned, never deleted — the safe alternative to --cascade when
+    /// the doomed set is chained to unrelated work.
+    #[arg(long, conflicts_with_all = ["cascade", "force"])]
+    pub detach: bool,
+
     /// Prune tombstones from JSONL immediately
     #[arg(long)]
     pub hard: bool,
