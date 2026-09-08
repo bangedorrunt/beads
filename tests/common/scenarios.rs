@@ -4419,7 +4419,10 @@ mod tests {
 
         let ready_json: Value =
             serde_json::from_str(&extract_json_payload(&ready.stdout)).expect("ready json");
-        let ready_items = ready_json.as_array().expect("ready array");
+        let ready_items = ready_json
+            .get("issues")
+            .and_then(Value::as_array)
+            .expect("ready pagination object with issues array");
         // ADR-0001 §5.5: `captured_create_step` beads carry no typed VERIFY
         // (the create-time flag is the lint-cli-flags bead's landing), so the
         // unblocked child is NOT dispatchable until a fence import stamps it.

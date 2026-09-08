@@ -1,2 +1,16 @@
-[1]{id,ac_shape,blast,revision,title,status,priority,issue_type,created_at,created_by,updated_at,source_repo,source_repo_path,compaction_level,original_size}:
-  <ISSUE_ID>,checkable,normal,1,Two,open,0,bug,<TIMESTAMP>,<ACTOR>,<TIMESTAMP>,<SOURCE_REPO>,<SOURCE_REPO>,0,0
+id: <ISSUE_ID>
+ac_shape: checkable
+blast: normal
+deliverable: diff
+revision: 1
+title: Two
+status: open
+priority: 0
+issue_type: bug
+created_at: <TIMESTAMP>
+created_by: <ACTOR>
+updated_at: <TIMESTAMP>
+source_repo: <SOURCE_REPO>
+source_repo_path: <SOURCE_REPO>
+compaction_level: 0
+original_size: 0

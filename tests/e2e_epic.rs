@@ -267,8 +267,8 @@ fn e2e_epic_close_eligible_closes_epics() {
     let show_before = run_br(&workspace, ["show", &epic_id, "--json"], "show_before");
     assert!(show_before.status.success());
     let payload_before = extract_json_payload(&show_before.stdout);
-    let show_json_before: Vec<Value> = serde_json::from_str(&payload_before).unwrap();
-    assert_eq!(show_json_before[0]["status"], "open");
+    let show_json_before: Value = serde_json::from_str(&payload_before).unwrap();
+    assert_eq!(show_json_before["status"], "open");
 
     // Run close-eligible
     let close_eligible = run_br(
@@ -296,10 +296,10 @@ fn e2e_epic_close_eligible_closes_epics() {
     let show_after = run_br(&workspace, ["show", &epic_id, "--json"], "show_after");
     assert!(show_after.status.success());
     let payload_after = extract_json_payload(&show_after.stdout);
-    let show_json_after: Vec<Value> = serde_json::from_str(&payload_after).unwrap();
-    assert_eq!(show_json_after[0]["status"], "closed");
+    let show_json_after: Value = serde_json::from_str(&payload_after).unwrap();
+    assert_eq!(show_json_after["status"], "closed");
     assert!(
-        show_json_after[0]["close_reason"]
+        show_json_after["close_reason"]
             .as_str()
             .unwrap_or("")
             .contains("children completed"),
@@ -389,9 +389,9 @@ fn e2e_epic_close_eligible_dry_run() {
     );
     assert!(show.status.success());
     let payload = extract_json_payload(&show.stdout);
-    let show_json: Vec<Value> = serde_json::from_str(&payload).unwrap();
+    let show_json: Value = serde_json::from_str(&payload).unwrap();
     assert_eq!(
-        show_json[0]["status"], "open",
+        show_json["status"], "open",
         "epic should remain open after dry-run"
     );
 }

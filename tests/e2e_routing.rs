@@ -59,7 +59,7 @@ fn create_issue_and_get_id(workspace: &BrWorkspace, title: &str, label: &str) ->
     issue["id"].as_str().expect("issue id").to_string()
 }
 
-fn show_issue_json(workspace: &BrWorkspace, issue_id: &str, label: &str) -> Vec<Value> {
+fn show_issue_json(workspace: &BrWorkspace, issue_id: &str, label: &str) -> Value {
     let show = run_br(workspace, ["show", issue_id, "--json"], label);
     assert!(show.status.success(), "show failed: {}", show.stderr);
     serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json")
@@ -288,10 +288,9 @@ fn e2e_routing_routes_jsonl_external_route() {
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let show_payload = extract_json_payload(&show.stdout);
-    let shown: Vec<Value> = serde_json::from_str(&show_payload).expect("show json");
-    assert_eq!(shown.len(), 1);
-    assert_eq!(shown[0]["id"].as_str(), Some(external_id.as_str()));
-    assert_eq!(shown[0]["title"].as_str(), Some("External issue"));
+    let shown: Value = serde_json::from_str(&show_payload).expect("show json");
+    assert_eq!(shown["id"].as_str(), Some(external_id.as_str()));
+    assert_eq!(shown["title"].as_str(), Some("External issue"));
 }
 
 #[test]
@@ -374,14 +373,10 @@ fn e2e_routing_show_format_json_routes_external_issue() {
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
-    let shown: Vec<Value> =
+    let shown: Value =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json");
-    assert_eq!(shown.len(), 1);
-    assert_eq!(shown[0]["id"].as_str(), Some(external_id.as_str()));
-    assert_eq!(
-        shown[0]["title"].as_str(),
-        Some("External format json issue")
-    );
+    assert_eq!(shown["id"].as_str(), Some(external_id.as_str()));
+    assert_eq!(shown["title"].as_str(), Some("External format json issue"));
 }
 
 #[test]
@@ -409,13 +404,8 @@ fn e2e_routing_show_format_toon_routes_external_issue() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let shown = Value::from(decode_toon(show.stdout.trim(), None).expect("valid show TOON"));
-    let items = shown.as_array().expect("show TOON array");
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["id"].as_str(), Some(external_id.as_str()));
-    assert_eq!(
-        items[0]["title"].as_str(),
-        Some("External format toon issue")
-    );
+    assert_eq!(shown["id"].as_str(), Some(external_id.as_str()));
+    assert_eq!(shown["title"].as_str(), Some("External format toon issue"));
 }
 
 #[test]
@@ -682,10 +672,8 @@ fn e2e_routing_update_external_issue_via_main_workspace() {
     assert!(update.status.success(), "update failed: {}", update.stderr);
     let update_payload = extract_json_payload(&update.stdout);
     let updated: Value = serde_json::from_str(&update_payload).expect("update json");
-    let updated_array = updated.as_array().expect("update array");
-    assert_eq!(updated_array.len(), 1);
-    assert_eq!(updated_array[0]["id"].as_str(), Some(external_id.as_str()));
-    assert_eq!(updated_array[0]["status"].as_str(), Some("in_progress"));
+    assert_eq!(updated["id"].as_str(), Some(external_id.as_str()));
+    assert_eq!(updated["status"].as_str(), Some("in_progress"));
 
     let show_external = run_br(
         &external_workspace,
@@ -698,9 +686,8 @@ fn e2e_routing_update_external_issue_via_main_workspace() {
         show_external.stderr
     );
     let show_payload = extract_json_payload(&show_external.stdout);
-    let shown: Vec<Value> = serde_json::from_str(&show_payload).expect("show json");
-    assert_eq!(shown.len(), 1);
-    assert_eq!(shown[0]["status"].as_str(), Some("in_progress"));
+    let shown: Value = serde_json::from_str(&show_payload).expect("show json");
+    assert_eq!(shown["status"].as_str(), Some("in_progress"));
 
     let jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
     assert_eq!(jsonl_issue["status"].as_str(), Some("in_progress"));
@@ -771,12 +758,9 @@ fn e2e_routing_update_description_stdin_is_consumed_once_before_route_fanout() {
         &external_id,
         "show_external_after_description_stdin",
     );
+    assert_eq!(local_after["description"].as_str(), Some(exact_description));
     assert_eq!(
-        local_after[0]["description"].as_str(),
-        Some(exact_description)
-    );
-    assert_eq!(
-        external_after[0]["description"].as_str(),
+        external_after["description"].as_str(),
         Some(exact_description)
     );
 }
@@ -868,9 +852,9 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
         "external show failed: {}",
         show_external.stderr
     );
-    let shown: Vec<Value> =
+    let shown: Value =
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
-    assert_eq!(shown[0]["status"].as_str(), Some("closed"));
+    assert_eq!(shown["status"].as_str(), Some("closed"));
 
     let jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
     assert_eq!(jsonl_issue["status"].as_str(), Some("closed"));
@@ -955,9 +939,9 @@ fn e2e_routing_close_external_issue_via_main_workspace() {
         "external show failed: {}",
         show_external.stderr
     );
-    let shown: Vec<Value> =
+    let shown: Value =
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
-    assert_eq!(shown[0]["status"].as_str(), Some("closed"));
+    assert_eq!(shown["status"].as_str(), Some("closed"));
 }
 
 #[test]
@@ -1047,9 +1031,9 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
         "external show failed: {}",
         show_external.stderr
     );
-    let shown: Vec<Value> =
+    let shown: Value =
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
-    assert_eq!(shown[0]["status"].as_str(), Some("open"));
+    assert_eq!(shown["status"].as_str(), Some("open"));
 
     let jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
     assert_eq!(jsonl_issue["status"].as_str(), Some("open"));
@@ -1141,9 +1125,9 @@ fn e2e_routing_reopen_external_issue_via_main_workspace() {
         "external show failed: {}",
         show_external.stderr
     );
-    let shown: Vec<Value> =
+    let shown: Value =
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
-    assert_eq!(shown[0]["status"].as_str(), Some("open"));
+    assert_eq!(shown["status"].as_str(), Some("open"));
 }
 
 #[test]
@@ -1207,9 +1191,9 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
         "external show failed: {}",
         show_deferred.stderr
     );
-    let deferred_issue: Vec<Value> =
+    let deferred_issue: Value =
         serde_json::from_str(&extract_json_payload(&show_deferred.stdout)).expect("show json");
-    assert_eq!(deferred_issue[0]["status"].as_str(), Some("deferred"));
+    assert_eq!(deferred_issue["status"].as_str(), Some("deferred"));
 
     let deferred_jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
     assert_eq!(deferred_jsonl_issue["status"].as_str(), Some("deferred"));
@@ -1246,9 +1230,9 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
         "external show failed: {}",
         show_undeferred.stderr
     );
-    let undeferred_issue: Vec<Value> =
+    let undeferred_issue: Value =
         serde_json::from_str(&extract_json_payload(&show_undeferred.stdout)).expect("show json");
-    assert_eq!(undeferred_issue[0]["status"].as_str(), Some("open"));
+    assert_eq!(undeferred_issue["status"].as_str(), Some("open"));
 
     let undeferred_jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
     assert_eq!(undeferred_jsonl_issue["status"].as_str(), Some("open"));
@@ -1423,9 +1407,9 @@ fn e2e_routing_label_add_and_list_external_issue_via_main_workspace() {
         "external show failed: {}",
         show_external.stderr
     );
-    let shown: Vec<Value> =
+    let shown: Value =
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
-    assert_eq!(shown[0]["labels"][0].as_str(), Some("triage"));
+    assert_eq!(shown["labels"][0].as_str(), Some("triage"));
 
     let jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
     let jsonl_labels = jsonl_issue["labels"].as_array().expect("labels array");
@@ -1496,9 +1480,7 @@ fn e2e_routing_label_add_sets_invoking_workspace_last_touched_for_follow_up_upda
     assert!(update.status.success(), "update failed: {}", update.stderr);
     let updated: Value =
         serde_json::from_str(&extract_json_payload(&update.stdout)).expect("update json");
-    let updated_array = updated.as_array().expect("update array");
-    assert_eq!(updated_array.len(), 1);
-    assert_eq!(updated_array[0]["id"].as_str(), Some(external_id.as_str()));
+    assert_eq!(updated["id"].as_str(), Some(external_id.as_str()));
 
     let show_external = run_br(
         &external_workspace,
@@ -1510,9 +1492,9 @@ fn e2e_routing_label_add_sets_invoking_workspace_last_touched_for_follow_up_upda
         "external show failed: {}",
         show_external.stderr
     );
-    let shown: Vec<Value> =
+    let shown: Value =
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
-    assert_eq!(shown[0]["status"].as_str(), Some("in_progress"));
+    assert_eq!(shown["status"].as_str(), Some("in_progress"));
 }
 
 #[test]
@@ -1595,10 +1577,10 @@ fn e2e_routing_comments_add_and_list_external_issue_via_main_workspace() {
         "external show failed: {}",
         show_external.stderr
     );
-    let shown: Vec<Value> =
+    let shown: Value =
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
     assert_eq!(
-        shown[0]["comments"][0]["text"].as_str(),
+        shown["comments"][0]["text"].as_str(),
         Some("Routed comment")
     );
 
@@ -1665,7 +1647,7 @@ fn e2e_routing_comments_list_imports_stale_external_jsonl() {
         "show_external_after_stale_comments_list",
     );
     assert_eq!(
-        shown[0]["comments"][0]["text"].as_str(),
+        shown["comments"][0]["text"].as_str(),
         Some("External comment from stale JSONL")
     );
 }
@@ -1735,9 +1717,7 @@ fn e2e_routing_comments_add_sets_invoking_workspace_last_touched_for_follow_up_u
     assert!(update.status.success(), "update failed: {}", update.stderr);
     let updated: Value =
         serde_json::from_str(&extract_json_payload(&update.stdout)).expect("update json");
-    let updated_array = updated.as_array().expect("update array");
-    assert_eq!(updated_array.len(), 1);
-    assert_eq!(updated_array[0]["id"].as_str(), Some(external_id.as_str()));
+    assert_eq!(updated["id"].as_str(), Some(external_id.as_str()));
 
     let show_external = run_br(
         &external_workspace,
@@ -1749,9 +1729,9 @@ fn e2e_routing_comments_add_sets_invoking_workspace_last_touched_for_follow_up_u
         "external show failed: {}",
         show_external.stderr
     );
-    let shown: Vec<Value> =
+    let shown: Value =
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
-    assert_eq!(shown[0]["status"].as_str(), Some("in_progress"));
+    assert_eq!(shown["status"].as_str(), Some("in_progress"));
 }
 
 #[test]
@@ -1910,16 +1890,14 @@ fn e2e_routing_dep_add_sets_invoking_workspace_last_touched_for_follow_up_update
     assert!(update.status.success(), "update failed: {}", update.stderr);
     let updated: Value =
         serde_json::from_str(&extract_json_payload(&update.stdout)).expect("update json");
-    let updated_array = updated.as_array().expect("update array");
-    assert_eq!(updated_array.len(), 1);
-    assert_eq!(updated_array[0]["id"].as_str(), Some(child_id.as_str()));
+    assert_eq!(updated["id"].as_str(), Some(child_id.as_str()));
 
     let shown = show_issue_json(
         &external_workspace,
         &child_id,
         "show_external_after_dep_context_update",
     );
-    assert_eq!(shown[0]["title"].as_str(), Some("Updated after routed dep"));
+    assert_eq!(shown["title"].as_str(), Some("Updated after routed dep"));
 }
 
 #[test]
@@ -2438,13 +2416,9 @@ fn e2e_routing_show_external_issue_uses_metadata_database_path() {
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let show_payload = extract_json_payload(&show.stdout);
-    let shown: Vec<Value> = serde_json::from_str(&show_payload).expect("show json");
-    assert_eq!(shown.len(), 1);
-    assert_eq!(shown[0]["id"].as_str(), Some(external_id.as_str()));
-    assert_eq!(
-        shown[0]["title"].as_str(),
-        Some("External issue on custom db")
-    );
+    let shown: Value = serde_json::from_str(&show_payload).expect("show json");
+    assert_eq!(shown["id"].as_str(), Some(external_id.as_str()));
+    assert_eq!(shown["title"].as_str(), Some("External issue on custom db"));
 }
 
 #[test]
@@ -2497,10 +2471,8 @@ fn e2e_routing_update_external_issue_uses_metadata_database_path() {
     assert!(update.status.success(), "update failed: {}", update.stderr);
     let update_payload = extract_json_payload(&update.stdout);
     let updated: Value = serde_json::from_str(&update_payload).expect("update json");
-    let updated_array = updated.as_array().expect("update array");
-    assert_eq!(updated_array.len(), 1);
-    assert_eq!(updated_array[0]["id"].as_str(), Some(external_id.as_str()));
-    assert_eq!(updated_array[0]["status"].as_str(), Some("in_progress"));
+    assert_eq!(updated["id"].as_str(), Some(external_id.as_str()));
+    assert_eq!(updated["status"].as_str(), Some("in_progress"));
 
     let show_external = run_br(
         &external_workspace,
@@ -2513,9 +2485,8 @@ fn e2e_routing_update_external_issue_uses_metadata_database_path() {
         show_external.stderr
     );
     let show_payload = extract_json_payload(&show_external.stdout);
-    let shown: Vec<Value> = serde_json::from_str(&show_payload).expect("show json");
-    assert_eq!(shown.len(), 1);
-    assert_eq!(shown[0]["status"].as_str(), Some("in_progress"));
+    let shown: Value = serde_json::from_str(&show_payload).expect("show json");
+    assert_eq!(shown["status"].as_str(), Some("in_progress"));
 }
 
 #[test]
@@ -2660,12 +2631,9 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
         "local show failed: {}",
         show_local.stderr
     );
-    let local_issue_details: Vec<Value> =
+    let local_issue_details: Value =
         serde_json::from_str(&extract_json_payload(&show_local.stdout)).expect("local show json");
-    assert_eq!(
-        local_issue_details[0]["status"].as_str(),
-        Some("in_progress")
-    );
+    assert_eq!(local_issue_details["status"].as_str(), Some("in_progress"));
 
     let show_local_last = run_br(
         &main_workspace,
@@ -2683,11 +2651,11 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
         "local last show failed: {}",
         show_local_last.stderr
     );
-    let local_last_issue_details: Vec<Value> =
+    let local_last_issue_details: Value =
         serde_json::from_str(&extract_json_payload(&show_local_last.stdout))
             .expect("local last show json");
     assert_eq!(
-        local_last_issue_details[0]["status"].as_str(),
+        local_last_issue_details["status"].as_str(),
         Some("in_progress")
     );
 
@@ -2701,11 +2669,11 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
         "external show failed: {}",
         show_external.stderr
     );
-    let external_issue_details: Vec<Value> =
+    let external_issue_details: Value =
         serde_json::from_str(&extract_json_payload(&show_external.stdout))
             .expect("external show json");
     assert_eq!(
-        external_issue_details[0]["status"].as_str(),
+        external_issue_details["status"].as_str(),
         Some("in_progress")
     );
 }
@@ -2792,9 +2760,9 @@ fn e2e_routing_update_failure_does_not_print_partial_success() {
         "show local after failed routed update failed: {}",
         show_local.stderr
     );
-    let local_after: Vec<Value> =
+    let local_after: Value =
         serde_json::from_str(&extract_json_payload(&show_local.stdout)).expect("show local json");
-    assert_eq!(local_after[0]["status"].as_str(), Some("open"));
+    assert_eq!(local_after["status"].as_str(), Some("open"));
 
     let last_touched_after = fs::read_to_string(&last_touched_path).ok();
     assert_eq!(last_touched_after, last_touched_before);
@@ -2863,8 +2831,8 @@ fn e2e_routing_update_claim_failure_does_not_mutate_earlier_routes() {
         &local_id,
         "show_local_after_failed_routed_claim",
     );
-    assert_eq!(local_after[0]["status"].as_str(), Some("open"));
-    assert!(local_after[0]["assignee"].is_null());
+    assert_eq!(local_after["status"].as_str(), Some("open"));
+    assert!(local_after["assignee"].is_null());
 }
 
 #[test]

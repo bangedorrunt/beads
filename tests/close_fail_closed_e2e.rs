@@ -86,7 +86,7 @@ fn close_without_pass_gate_is_nonzero() {
     assert!(show.status.success(), "{}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
     let issues: serde_json::Value = serde_json::from_str(&payload).expect("valid json");
-    assert_eq!(issues[0]["status"], "open", "{issues}");
+    assert_eq!(issues["status"], "open", "{issues}");
 }
 
 /// §8.4: `close_without_commit_sha_is_nonzero` — a legal PASS row alone does
@@ -133,7 +133,7 @@ fn close_with_legal_gate_and_sha_sets_close_verdict() {
     let show = run_br(&workspace, ["show", &id, "--json"], "show_closed");
     let payload = extract_json_payload(&show.stdout);
     let issues: serde_json::Value = serde_json::from_str(&payload).expect("valid json");
-    assert_eq!(issues[0]["status"], "closed", "{issues}");
+    assert_eq!(issues["status"], "closed", "{issues}");
 
     // The verdict kind whose PASS row authorized the close is recorded in
     // close_metadata's gates JSON (`close_verdict=<name>` audit entry) until
@@ -265,7 +265,7 @@ fn gate_report_default_records_row_when_policy_absent() {
     assert!(show.status.success(), "{}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
     let issues: serde_json::Value = serde_json::from_str(&payload).expect("valid json");
-    assert_eq!(issues[0]["status"], "closed", "{issues}");
+    assert_eq!(issues["status"], "closed", "{issues}");
 }
 
 /// uro91: policy.yaml present but `workflow.strict` unset with no gates —
@@ -400,7 +400,7 @@ fn close_sha_cites_bead_foreign_sha_fails_loud() {
     assert!(show.status.success(), "{}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
     let issues: serde_json::Value = serde_json::from_str(&payload).expect("valid json");
-    assert_eq!(issues[0]["status"], "open", "{issues}");
+    assert_eq!(issues["status"], "open", "{issues}");
 }
 
 /// bd-2qu9: `close_sha_cites_bead_citing_sha_closes` — a real commit citing

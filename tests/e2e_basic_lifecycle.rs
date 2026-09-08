@@ -140,10 +140,6 @@ fn assert_br_success(run: &BrRun, context: &str) {
     assert!(run.status.success(), "{context}: {}", run.stderr);
 }
 
-fn parse_json_array(stdout: &str, context: &str) -> Vec<Value> {
-    serde_json::from_str(&extract_json_payload(stdout)).expect(context)
-}
-
 fn read_jsonl_values(path: &Path) -> Vec<Value> {
     fs::read_to_string(path)
         .expect("read jsonl")
@@ -210,8 +206,8 @@ fn assert_issue_description(workspace: &BrWorkspace, issue_id: &str, expected: &
     let show = run_br(workspace, ["show", issue_id, "--json"], "show_merge_result");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("parse show json");
-    assert_eq!(issues[0]["description"].as_str(), Some(expected));
+    let issue: Value = serde_json::from_str(&payload).expect("parse show json");
+    assert_eq!(issue["description"].as_str(), Some(expected));
 }
 
 #[cfg(target_os = "linux")]
@@ -560,8 +556,8 @@ fn e2e_basic_lifecycle() {
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let show_payload = extract_json_payload(&show.stdout);
-    let show_json: Vec<Value> = serde_json::from_str(&show_payload).expect("show json");
-    assert_eq!(show_json[0]["id"], id);
+    let show_json: Value = serde_json::from_str(&show_payload).expect("show json");
+    assert_eq!(show_json["id"], id);
 
     let show_text = run_br(&workspace, ["show", &id], "show_text");
     assert!(
@@ -651,9 +647,9 @@ fn e2e_update_description_file_preserves_exact_content() {
         "description-file must be treated as an update: {}",
         update.stdout
     );
-    let updated = parse_json_array(&update.stdout, "parse description-file update json");
-    assert_eq!(updated.len(), 1);
-    assert_eq!(updated[0]["id"].as_str(), Some(issue_id.as_str()));
+    let updated: Value = serde_json::from_str(&extract_json_payload(&update.stdout))
+        .expect("parse description-file update json");
+    assert_eq!(updated["id"].as_str(), Some(issue_id.as_str()));
 
     assert_issue_description(&workspace, &issue_id, exact_description);
 
@@ -687,11 +683,11 @@ fn e2e_update_description_file_preserves_exact_content() {
     let show = run_br(&workspace, ["show", &issue_id, "--json"], "show_cleared");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("parse show json");
+    let issue: Value = serde_json::from_str(&payload).expect("parse show json");
     assert!(
-        issues[0]["description"].is_null(),
+        issue["description"].is_null(),
         "description must be cleared to null, got: {}",
-        issues[0]["description"]
+        issue["description"]
     );
 }
 
@@ -1040,10 +1036,10 @@ fn e2e_update_claim_multiple_ids_is_all_or_nothing() {
         "show first failed: {}",
         show_first.stderr
     );
-    let first_after: Vec<Value> =
+    let first_after: Value =
         serde_json::from_str(&extract_json_payload(&show_first.stdout)).expect("show first json");
-    assert_eq!(first_after[0]["status"].as_str(), Some("open"));
-    assert!(first_after[0]["assignee"].is_null());
+    assert_eq!(first_after["status"].as_str(), Some("open"));
+    assert!(first_after["assignee"].is_null());
 
     let show_second = run_br(
         &workspace,
@@ -1055,10 +1051,10 @@ fn e2e_update_claim_multiple_ids_is_all_or_nothing() {
         "show second failed: {}",
         show_second.stderr
     );
-    let second_after: Vec<Value> =
+    let second_after: Value =
         serde_json::from_str(&extract_json_payload(&show_second.stdout)).expect("show second json");
-    assert_eq!(second_after[0]["status"].as_str(), Some("in_progress"));
-    assert_eq!(second_after[0]["assignee"].as_str(), Some("bob"));
+    assert_eq!(second_after["status"].as_str(), Some("in_progress"));
+    assert_eq!(second_after["assignee"].as_str(), Some("bob"));
 }
 
 /// GitHub issue #393: the `--claim --json` echo must carry the resulting
@@ -1090,13 +1086,12 @@ fn e2e_update_claim_json_echo_reports_assignee() {
     );
     assert!(claim.status.success(), "claim failed: {}", claim.stderr);
 
-    let claimed: Vec<Value> =
+    let claimed: Value =
         serde_json::from_str(&extract_json_payload(&claim.stdout)).expect("claim echo json");
-    assert_eq!(claimed.len(), 1, "expected one updated issue in the echo");
-    assert_eq!(claimed[0]["id"].as_str(), Some(id.as_str()));
-    assert_eq!(claimed[0]["status"].as_str(), Some("in_progress"));
+    assert_eq!(claimed["id"].as_str(), Some(id.as_str()));
+    assert_eq!(claimed["status"].as_str(), Some("in_progress"));
     assert_eq!(
-        claimed[0]["assignee"].as_str(),
+        claimed["assignee"].as_str(),
         Some("testagent"),
         "claim echo must report the resulting assignee: {}",
         claim.stdout
@@ -1124,14 +1119,14 @@ fn e2e_update_claim_json_echo_reports_assignee() {
         "update_unassigned_priority",
     );
     assert!(bump.status.success(), "update failed: {}", bump.stderr);
-    let bumped: Vec<Value> =
+    let bumped: Value =
         serde_json::from_str(&extract_json_payload(&bump.stdout)).expect("update echo json");
     assert!(
-        bumped[0].get("assignee").is_some(),
+        bumped.get("assignee").is_some(),
         "assignee key must be present even when unassigned: {}",
         bump.stdout
     );
-    assert!(bumped[0]["assignee"].is_null());
+    assert!(bumped["assignee"].is_null());
 }
 
 #[test]
@@ -1165,8 +1160,8 @@ fn e2e_create_updates_last_touched_context() {
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("show json");
-    assert_eq!(json[0]["status"], "in_progress");
+    let json: Value = serde_json::from_str(&payload).expect("show json");
+    assert_eq!(json["status"], "in_progress");
 }
 
 #[test]
@@ -1215,8 +1210,8 @@ fn e2e_create_dry_run_does_not_update_last_touched_context() {
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("show json");
-    assert_eq!(json[0]["status"], "in_progress");
+    let json: Value = serde_json::from_str(&payload).expect("show json");
+    assert_eq!(json["status"], "in_progress");
 }
 
 #[test]
@@ -1268,8 +1263,8 @@ fn e2e_no_db_create_updates_last_touched_after_flush() {
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("show json");
-    assert_eq!(json[0]["status"], "in_progress");
+    let json: Value = serde_json::from_str(&payload).expect("show json");
+    assert_eq!(json["status"], "in_progress");
 }
 
 #[test]
@@ -1349,8 +1344,8 @@ fn e2e_sync_roundtrip() {
     let show = run_br(&workspace, ["show", &id, "--json"], "show_after_import");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
-    let show_json: Vec<Value> = serde_json::from_str(&payload).expect("show json");
-    assert_eq!(show_json[0]["title"], "Modified title");
+    let show_json: Value = serde_json::from_str(&payload).expect("show json");
+    assert_eq!(show_json["title"], "Modified title");
 }
 
 #[test]
@@ -1529,9 +1524,9 @@ fn e2e_sync_force_jsonl_merge_does_not_resurrect_local_tombstone() {
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("parse show json");
+    let issues: Value = serde_json::from_str(&payload).expect("parse show json");
     assert_eq!(
-        issues[0]["status"].as_str(),
+        issues["status"].as_str(),
         Some("tombstone"),
         "force-jsonl merge must not resurrect a local tombstone"
     );
@@ -2561,8 +2556,9 @@ fn e2e_dotted_ids_survive_no_db_import_update_dep_and_flush() {
         "dotted_no_db_show",
     );
     assert_br_success(&no_db_show, "no-db show failed for dotted id");
-    let shown = parse_json_array(&no_db_show.stdout, "show json");
-    assert_eq!(shown[0]["id"].as_str(), Some("bd-rchk0.5.6"));
+    let shown: Value =
+        serde_json::from_str(&extract_json_payload(&no_db_show.stdout)).expect("show json");
+    assert_eq!(shown["id"].as_str(), Some("bd-rchk0.5.6"));
 
     let no_db_update = run_br(
         &workspace,
@@ -2577,9 +2573,10 @@ fn e2e_dotted_ids_survive_no_db_import_update_dep_and_flush() {
         "dotted_no_db_update",
     );
     assert_br_success(&no_db_update, "no-db update failed for dotted id");
-    let updated = parse_json_array(&no_db_update.stdout, "update json");
-    assert_eq!(updated[0]["id"].as_str(), Some("bd-rchk0.5.6"));
-    assert_eq!(updated[0]["priority"].as_i64(), Some(1));
+    let updated: Value =
+        serde_json::from_str(&extract_json_payload(&no_db_update.stdout)).expect("update json");
+    assert_eq!(updated["id"].as_str(), Some("bd-rchk0.5.6"));
+    assert_eq!(updated["priority"].as_i64(), Some(1));
 
     let imported = run_br(
         &workspace,
@@ -2596,10 +2593,11 @@ fn e2e_dotted_ids_survive_no_db_import_update_dep_and_flush() {
         "dotted_db_show",
     );
     assert_br_success(&db_show, "db show failed for dotted id");
-    let db_show_json = parse_json_array(&db_show.stdout, "db show json");
-    assert_eq!(db_show_json[0]["id"].as_str(), Some("bd-rchk0.5.6"));
+    let db_show_json: Value =
+        serde_json::from_str(&extract_json_payload(&db_show.stdout)).expect("db show json");
+    assert_eq!(db_show_json["id"].as_str(), Some("bd-rchk0.5.6"));
     assert!(
-        db_show_json[0]["dependents"]
+        db_show_json["dependents"]
             .as_array()
             .is_some_and(|items| items
                 .iter()
@@ -2620,9 +2618,10 @@ fn e2e_dotted_ids_survive_no_db_import_update_dep_and_flush() {
         "dotted_db_update",
     );
     assert_br_success(&db_update, "db update failed for dotted id");
-    let db_update_json = parse_json_array(&db_update.stdout, "db update json");
-    assert_eq!(db_update_json[0]["id"].as_str(), Some("bd-rchk0.5.6"));
-    assert_eq!(db_update_json[0]["priority"].as_i64(), Some(0));
+    let db_update_json: Value =
+        serde_json::from_str(&extract_json_payload(&db_update.stdout)).expect("db update json");
+    assert_eq!(db_update_json["id"].as_str(), Some("bd-rchk0.5.6"));
+    assert_eq!(db_update_json["priority"].as_i64(), Some(0));
 
     let dep_add = run_br(
         &workspace,
@@ -3687,9 +3686,9 @@ fn e2e_sync_tombstone_preservation() {
         show.stderr
     );
     let payload = extract_json_payload(&show.stdout);
-    let show_json: Vec<Value> = serde_json::from_str(&payload).expect("show json");
+    let show_json: Value = serde_json::from_str(&payload).expect("show json");
     assert_eq!(
-        show_json[0]["status"], "tombstone",
+        show_json["status"], "tombstone",
         "issue should be tombstone"
     );
 
@@ -3734,9 +3733,9 @@ fn e2e_sync_tombstone_preservation() {
         show2.stderr
     );
     let payload2 = extract_json_payload(&show2.stdout);
-    let show_json2: Vec<Value> = serde_json::from_str(&payload2).expect("show json after import");
+    let show_json2: Value = serde_json::from_str(&payload2).expect("show json after import");
     assert_eq!(
-        show_json2[0]["status"], "tombstone",
+        show_json2["status"], "tombstone",
         "tombstone should be preserved after import"
     );
 }
@@ -3804,9 +3803,9 @@ fn e2e_sync_tombstone_protection() {
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
-    let show_json: Vec<Value> = serde_json::from_str(&payload).expect("show json");
+    let show_json: Value = serde_json::from_str(&payload).expect("show json");
     assert_eq!(
-        show_json[0]["status"], "tombstone",
+        show_json["status"], "tombstone",
         "tombstone protection should prevent resurrection"
     );
 }
@@ -3938,9 +3937,9 @@ fn e2e_jsonl_discovery_prefers_issues() {
     let show_fake = run_br(&workspace, ["show", "fake-id", "--json"], "show_fake");
     // Should fail or return empty since fake-id shouldn't exist
     let fake_payload = extract_json_payload(&show_fake.stdout);
-    let fake_json: Vec<Value> = serde_json::from_str(&fake_payload).unwrap_or_default();
+    let fake_json: Value = serde_json::from_str(&fake_payload).unwrap_or_default();
     assert!(
-        fake_json.is_empty() || show_fake.stderr.contains("not found"),
+        fake_json.get("error").is_some() || show_fake.stderr.contains("not found"),
         "fake issue from beads.jsonl should not be imported when issues.jsonl exists"
     );
 }
@@ -3978,9 +3977,9 @@ fn e2e_jsonl_discovery_uses_legacy_when_no_issues() {
     let show = run_br(&workspace, ["show", "bd-legacy1", "--json"], "show_legacy");
     assert!(show.status.success(), "show legacy failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
-    let show_json: Vec<Value> = serde_json::from_str(&payload).expect("show json");
+    let show_json: Value = serde_json::from_str(&payload).expect("show json");
     assert_eq!(
-        show_json[0]["title"], "Legacy issue",
+        show_json["title"], "Legacy issue",
         "legacy issue should be imported from beads.jsonl"
     );
 }

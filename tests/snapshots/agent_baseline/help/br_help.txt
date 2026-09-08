@@ -14,6 +14,7 @@ Commands:
   count         Count issues with optional grouping
   create        Create a new issue
   defer         Defer issues (schedule for later)
+  hold          Captain hold lifecycle (beads ADR-0005 §4)
   delete        Delete an issue (creates tombstone)
   dep           Manage dependencies
   doctor        Run diagnostics and optionally repair issues

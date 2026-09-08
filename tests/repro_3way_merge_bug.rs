@@ -95,9 +95,8 @@ fn repro_3way_merge_data_loss() {
         "show_after_conflict",
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
-    let final_issue_list: serde_json::Value =
-        serde_json::from_str(&show.stdout).expect("parse final issue list");
-    let final_issue = &final_issue_list[0];
+    let final_issue: serde_json::Value =
+        serde_json::from_str(&show.stdout).expect("parse final issue");
 
     let labels = final_issue["labels"]
         .as_array()
@@ -233,9 +232,8 @@ fn repro_merge_tolerates_base_only_deleted_issue_absent_from_db() {
     let show = run_br(&workspace, ["show", &issue_id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
-    let final_issue_list: serde_json::Value =
-        serde_json::from_str(&show.stdout).expect("parse final issue list");
-    let final_issue = &final_issue_list[0];
+    let final_issue: serde_json::Value =
+        serde_json::from_str(&show.stdout).expect("parse final issue");
     assert_eq!(final_issue["id"].as_str(), Some(issue_id.as_str()));
 
     let merged_jsonl = fs::read_to_string(&jsonl_path).expect("read merged jsonl");

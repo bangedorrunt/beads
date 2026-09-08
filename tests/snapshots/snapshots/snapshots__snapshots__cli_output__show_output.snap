@@ -1,7 +1,9 @@
 ---
 source: tests/snapshots/cli_output.rs
+assertion_line: 79
 expression: normalize_output(&output.stdout)
 ---
 ○ ID-REDACTED · Test issue with description   [● P2 · OPEN]
 Owner: USERNAME · Type: task
 Created: YYYY-MM-DD · Updated: YYYY-MM-DD
+Deliverable: diff

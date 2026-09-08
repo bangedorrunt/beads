@@ -671,9 +671,9 @@ fn e2e_actor_flag_overrides_env() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let show_json: Vec<Value> = serde_json::from_str(&payload).expect("show json");
+    let show_json: Value = serde_json::from_str(&payload).expect("show json");
 
-    if let Some(comments) = show_json[0]["comments"].as_array()
+    if let Some(comments) = show_json["comments"].as_array()
         && let Some(comment) = comments.first()
     {
         assert_eq!(
@@ -1315,10 +1315,8 @@ fn e2e_update_honors_toon_env_mode() {
 
     let decoded = try_decode(update.stdout.trim(), None).expect("valid update TOON");
     let json = Value::from(decoded);
-    let results = toon_array_items(&json);
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0]["id"].as_str(), Some(issue_id.as_str()));
-    assert_eq!(results[0]["status"].as_str(), Some("in_progress"));
+    assert_eq!(json["id"].as_str(), Some(issue_id.as_str()));
+    assert_eq!(json["status"].as_str(), Some("in_progress"));
 }
 
 #[test]

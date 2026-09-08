@@ -30,7 +30,7 @@ use std::path::Path;
 /// that disappears when unset would leave "not claimed" and "not reported"
 /// indistinguishable and force a verification `br show` round trip (GitHub
 /// issue #393).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct UpdatedIssueOutput {
     id: String,
     title: String,
@@ -144,6 +144,12 @@ struct UpdateRouteOutput {
 struct UpdateWithCapacityWarnings {
     updated: Vec<UpdatedIssueOutput>,
     warnings: Vec<crate::close_policy::WorkflowCapacityWarning>,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdateSingleWithCapacityWarnings<'a> {
+    updated: &'a UpdatedIssueOutput,
+    warnings: &'a [crate::close_policy::WorkflowCapacityWarning],
 }
 
 enum ParentUpdatePlan {
@@ -328,21 +334,15 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
 
     if ctx.is_toon() {
         if capacity_warnings.is_empty() {
-            ctx.toon(&updated_issues);
+            emit_update_toon(ctx, &updated_issues);
         } else {
-            ctx.toon(&UpdateWithCapacityWarnings {
-                updated: updated_issues,
-                warnings: capacity_warnings,
-            });
+            emit_update_toon_with_warnings(ctx, &updated_issues, &capacity_warnings);
         }
     } else if ctx.is_json() {
         if capacity_warnings.is_empty() {
-            ctx.json_pretty(&updated_issues);
+            emit_update_json(ctx, &updated_issues);
         } else {
-            ctx.json_pretty(&UpdateWithCapacityWarnings {
-                updated: updated_issues,
-                warnings: capacity_warnings,
-            });
+            emit_update_json_with_warnings(ctx, &updated_issues, &capacity_warnings);
         }
     } else if !ctx.is_quiet() {
         print_render_items(&render_items);
@@ -358,6 +358,59 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
     }
 
     Ok(())
+}
+
+/// Single-entity envelope for update: one id -> bare object, several -> array.
+fn emit_update_json(ctx: &OutputContext, updated_issues: &Vec<UpdatedIssueOutput>) {
+    if let [single] = updated_issues.as_slice() {
+        ctx.json_pretty(single);
+    } else {
+        ctx.json_pretty(updated_issues);
+    }
+}
+
+fn emit_update_toon(ctx: &OutputContext, updated_issues: &Vec<UpdatedIssueOutput>) {
+    if let [single] = updated_issues.as_slice() {
+        ctx.toon(single);
+    } else {
+        ctx.toon(updated_issues);
+    }
+}
+
+fn emit_update_json_with_warnings(
+    ctx: &OutputContext,
+    updated_issues: &Vec<UpdatedIssueOutput>,
+    warnings: &[crate::close_policy::WorkflowCapacityWarning],
+) {
+    if let [single] = updated_issues.as_slice() {
+        ctx.json_pretty(&UpdateSingleWithCapacityWarnings {
+            updated: single,
+            warnings,
+        });
+    } else {
+        ctx.json_pretty(&UpdateWithCapacityWarnings {
+            updated: updated_issues.clone(),
+            warnings: warnings.to_vec(),
+        });
+    }
+}
+
+fn emit_update_toon_with_warnings(
+    ctx: &OutputContext,
+    updated_issues: &Vec<UpdatedIssueOutput>,
+    warnings: &[crate::close_policy::WorkflowCapacityWarning],
+) {
+    if let [single] = updated_issues.as_slice() {
+        ctx.toon(&UpdateSingleWithCapacityWarnings {
+            updated: single,
+            warnings,
+        });
+    } else {
+        ctx.toon(&UpdateWithCapacityWarnings {
+            updated: updated_issues.clone(),
+            warnings: warnings.to_vec(),
+        });
+    }
 }
 
 fn emit_inherited_context_for_in_progress_transitions(

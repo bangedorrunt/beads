@@ -1,5 +1,10 @@
 ---
 source: tests/snapshots/toon_output.rs
+assertion_line: 113
 expression: normalized
 ---
-[0]:
+issues[0]:
+total: 0
+limit: 0
+offset: 0
+has_more: false

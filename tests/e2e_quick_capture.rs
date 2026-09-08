@@ -71,8 +71,8 @@ fn q_with_type_flag() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
-    assert_eq!(json[0]["issue_type"], "bug", "issue type should be 'bug'");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
+    assert_eq!(json["issue_type"], "bug", "issue type should be 'bug'");
 }
 
 #[test]
@@ -98,8 +98,8 @@ fn q_with_priority_flag() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
-    assert_eq!(json[0]["priority"], 1, "priority should be 1");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
+    assert_eq!(json["priority"], 1, "priority should be 1");
 }
 
 #[test]
@@ -140,13 +140,11 @@ fn q_with_all_flags() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
-    assert_eq!(json[0]["issue_type"], "bug");
-    assert_eq!(json[0]["priority"], 0);
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
+    assert_eq!(json["issue_type"], "bug");
+    assert_eq!(json["priority"], 0);
 
-    let labels = json[0]["labels"]
-        .as_array()
-        .expect("labels should be array");
+    let labels = json["labels"].as_array().expect("labels should be array");
     let label_names: Vec<&str> = labels.iter().filter_map(|l| l.as_str()).collect();
     assert!(
         label_names.contains(&"urgent"),
@@ -185,11 +183,9 @@ fn q_with_labels() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    let labels = json[0]["labels"]
-        .as_array()
-        .expect("labels should be array");
+    let labels = json["labels"].as_array().expect("labels should be array");
     assert_eq!(labels.len(), 3, "should have 3 labels");
 
     let label_names: Vec<&str> = labels.iter().filter_map(|l| l.as_str()).collect();
@@ -230,8 +226,8 @@ fn q_updates_last_touched_context() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
-    assert_eq!(json[0]["status"], "in_progress");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
+    assert_eq!(json["status"], "in_progress");
 }
 
 #[test]
@@ -260,11 +256,11 @@ fn q_multiple_words_title() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
     // Words should be joined with spaces
     assert_eq!(
-        json[0]["title"], "This is a multi word title",
+        json["title"], "This is a multi word title",
         "title should be joined words"
     );
 }
@@ -359,8 +355,8 @@ fn q_parent_accepts_short_parent_id() {
     let show = run_br(&workspace, ["show", child_id, "--json"], "show_child");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
-    let dependencies = json[0]["dependencies"]
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
+    let dependencies = json["dependencies"]
         .as_array()
         .expect("dependencies should be an array");
     assert!(
@@ -655,8 +651,8 @@ fn q_with_p_prefix_priority() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
-    assert_eq!(json[0]["priority"], 0, "P0 should map to priority 0");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
+    assert_eq!(json["priority"], 0, "P0 should map to priority 0");
 }
 
 #[test]
@@ -682,9 +678,9 @@ fn q_special_characters_in_title() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
     assert_eq!(
-        json[0]["title"], title,
+        json["title"], title,
         "special characters should be preserved"
     );
 }
@@ -707,14 +703,14 @@ fn q_default_values() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
     // Default type is task
-    assert_eq!(json[0]["issue_type"], "task", "default type should be task");
+    assert_eq!(json["issue_type"], "task", "default type should be task");
     // Default priority is 2 (medium)
-    assert_eq!(json[0]["priority"], 2, "default priority should be 2");
+    assert_eq!(json["priority"], 2, "default priority should be 2");
     // Status should be open
-    assert_eq!(json[0]["status"], "open", "status should be open");
+    assert_eq!(json["status"], "open", "status should be open");
 }
 
 #[test]
@@ -749,10 +745,7 @@ fn q_status_is_always_open() {
         assert!(show.status.success(), "show failed: {}", show.stderr);
 
         let payload = extract_json_payload(&show.stdout);
-        let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
-        assert_eq!(
-            json[0]["status"], "open",
-            "issue {id} status should be open"
-        );
+        let json: Value = serde_json::from_str(&payload).expect("parse json");
+        assert_eq!(json["status"], "open", "issue {id} status should be open");
     }
 }

@@ -475,9 +475,9 @@ fn e2e_label_add_updates_last_touched_context() {
         "show target failed: {}",
         show_target.stderr
     );
-    let shown_target: Vec<Value> =
+    let shown_target: Value =
         serde_json::from_str(&extract_json_payload(&show_target.stdout)).expect("target json");
-    assert_eq!(shown_target[0]["title"], "Label-touched target");
+    assert_eq!(shown_target["title"], "Label-touched target");
 
     let show_other = run_br(
         &workspace,
@@ -489,9 +489,9 @@ fn e2e_label_add_updates_last_touched_context() {
         "show other failed: {}",
         show_other.stderr
     );
-    let shown_other: Vec<Value> =
+    let shown_other: Value =
         serde_json::from_str(&extract_json_payload(&show_other.stdout)).expect("other json");
-    assert_eq!(shown_other[0]["title"], "Other issue");
+    assert_eq!(shown_other["title"], "Other issue");
     info!("e2e_label_add_updates_last_touched_context: assertions passed");
 }
 
@@ -552,9 +552,9 @@ fn e2e_comments_add_updates_last_touched_context() {
         "show target failed: {}",
         show_target.stderr
     );
-    let shown_target: Vec<Value> =
+    let shown_target: Value =
         serde_json::from_str(&extract_json_payload(&show_target.stdout)).expect("target json");
-    assert_eq!(shown_target[0]["title"], "Comment-touched target");
+    assert_eq!(shown_target["title"], "Comment-touched target");
 
     let show_other = run_br(
         &workspace,
@@ -566,9 +566,9 @@ fn e2e_comments_add_updates_last_touched_context() {
         "show other failed: {}",
         show_other.stderr
     );
-    let shown_other: Vec<Value> =
+    let shown_other: Value =
         serde_json::from_str(&extract_json_payload(&show_other.stdout)).expect("other json");
-    assert_eq!(shown_other[0]["title"], "Other comments issue");
+    assert_eq!(shown_other["title"], "Other comments issue");
     info!("e2e_comments_add_updates_last_touched_context: assertions passed");
 }
 
@@ -630,9 +630,12 @@ fn e2e_dep_add_list_blocked_remove() {
         blocked_view.stderr
     );
     let blocked_payload = extract_json_payload(&blocked_view.stdout);
-    let blocked_json: Vec<Value> = serde_json::from_str(&blocked_payload).expect("blocked json");
+    let blocked_page: Value = serde_json::from_str(&blocked_payload).expect("blocked json");
+    let blocked_issues = blocked_page["issues"]
+        .as_array()
+        .expect("blocked issues array");
     assert!(
-        blocked_json.iter().any(|item| item["id"] == blocked_id),
+        blocked_issues.iter().any(|item| item["id"] == blocked_id),
         "blocked issue missing from blocked list"
     );
 
@@ -654,9 +657,12 @@ fn e2e_dep_add_list_blocked_remove() {
         blocked_view.stderr
     );
     let blocked_payload = extract_json_payload(&blocked_view.stdout);
-    let blocked_json: Vec<Value> = serde_json::from_str(&blocked_payload).expect("blocked json");
+    let blocked_page: Value = serde_json::from_str(&blocked_payload).expect("blocked json");
+    let blocked_issues = blocked_page["issues"]
+        .as_array()
+        .expect("blocked issues array");
     assert!(
-        !blocked_json.iter().any(|item| item["id"] == blocked_id),
+        !blocked_issues.iter().any(|item| item["id"] == blocked_id),
         "blocked issue still present after dep remove"
     );
     info!("e2e_dep_add_list_blocked_remove: assertions passed");
@@ -722,7 +728,7 @@ fn e2e_dep_add_updates_last_touched_context() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
     let json: Value = serde_json::from_str(&payload).expect("show json");
-    assert_eq!(json[0]["title"], "Blocked renamed via last touched");
+    assert_eq!(json["title"], "Blocked renamed via last touched");
     info!("e2e_dep_add_updates_last_touched_context: assertions passed");
 }
 
@@ -818,7 +824,7 @@ fn e2e_dep_remove_updates_last_touched_context() {
     );
     let blocked_payload = extract_json_payload(&show.stdout);
     let blocked_json: Value = serde_json::from_str(&blocked_payload).expect("show blocked json");
-    assert_eq!(blocked_json[0]["title"], "Blocked renamed after dep remove");
+    assert_eq!(blocked_json["title"], "Blocked renamed after dep remove");
 
     let show_blocker = run_br(
         &workspace,
@@ -832,7 +838,7 @@ fn e2e_dep_remove_updates_last_touched_context() {
     );
     let blocker_payload = extract_json_payload(&show_blocker.stdout);
     let blocker_json: Value = serde_json::from_str(&blocker_payload).expect("show blocker json");
-    assert_eq!(blocker_json[0]["title"], "Blocker renamed first");
+    assert_eq!(blocker_json["title"], "Blocker renamed first");
     info!("e2e_dep_remove_updates_last_touched_context: assertions passed");
 }
 
@@ -1302,7 +1308,7 @@ fn e2e_close_blocked_requires_force() {
     );
     let payload = extract_json_payload(&show.stdout);
     let issues: Value = serde_json::from_str(&payload).expect("show json");
-    assert_eq!(issues[0]["status"].as_str().unwrap(), "open");
+    assert_eq!(issues["status"].as_str().unwrap(), "open");
 
     // Issue #380: the terminal error for an all-skipped close must carry the
     // real skip reason (dependency block + --force remediation) instead of

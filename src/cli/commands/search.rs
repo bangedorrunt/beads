@@ -13,13 +13,25 @@ use crate::format::{
     IssueWithCounts, TextFormatOptions, csv, format_issue_line_with, terminal_width,
 };
 use crate::model::{Issue, IssueType, Priority, Status};
-use crate::output::{IssueTable, IssueTableColumns, OutputContext, OutputMode};
+use crate::output::{IssueTable, IssueTableColumns, JsonArrayPageMeta, OutputContext, OutputMode};
 use crate::storage::{ListFilters, SqliteStorage};
 use chrono::Utc;
 use regex::{Regex, RegexBuilder};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::str::FromStr;
+
+/// Pagination envelope for `br search --json` / `--format toon`, matching
+/// `br list --json` (`{issues, total, limit, offset, has_more}`).
+#[derive(Debug, Serialize)]
+struct SearchPage {
+    issues: Vec<IssueWithCounts>,
+    total: usize,
+    limit: usize,
+    offset: usize,
+    has_more: bool,
+}
 
 /// Execute the search command.
 ///
@@ -66,7 +78,16 @@ pub fn execute_with_storage_ctx(
         outer_ctx.inherited_output_mode(),
         false,
     );
-    let issues = collect_search_results_for_output(storage, query, &args.filters, output_format)?;
+    // Structured output paginates in Rust (exact total) like `br ready`:
+    // fetch the full match set, then apply offset/limit in render.
+    let issues = if matches!(output_format, OutputFormat::Json | OutputFormat::Toon) {
+        let mut effective_filters = args.filters.clone();
+        effective_filters.limit = Some(0);
+        effective_filters.offset = Some(0);
+        collect_search_results_for_output(storage, query, &effective_filters, output_format)?
+    } else {
+        collect_search_results_for_output(storage, query, &args.filters, output_format)?
+    };
     render_search_results(
         storage,
         issues,
@@ -164,6 +185,29 @@ fn collect_search_results_with_projection(
     Ok(issues)
 }
 
+/// Apply offset/limit in Rust for structured search output so `total` is the
+/// exact pre-truncation match count (mirrors `br ready`).
+fn paginate_search_issues(
+    issues: Vec<Issue>,
+    limit: usize,
+    offset: usize,
+) -> (Vec<Issue>, usize, bool) {
+    let total = issues.len();
+    let mut page_issues = issues;
+    if offset > 0 {
+        if offset >= page_issues.len() {
+            page_issues.clear();
+        } else {
+            page_issues = page_issues.split_off(offset);
+        }
+    }
+    let has_more = limit > 0 && page_issues.len() > limit;
+    if has_more {
+        page_issues.truncate(limit);
+    }
+    (page_issues, total, has_more)
+}
+
 #[allow(clippy::too_many_lines)]
 fn render_search_results(
     storage: &SqliteStorage,
@@ -182,20 +226,40 @@ fn render_search_results(
 
     match output_format {
         OutputFormat::Json => {
-            let mut relation_metadata = load_search_relation_metadata(storage, &issues)?;
-            early_ctx.json_array(
-                issues
+            let user_limit = list_args.limit.unwrap_or(DEFAULT_SEARCH_LIMIT);
+            let user_offset = list_args.offset.unwrap_or(DEFAULT_LIST_OFFSET);
+            let (page_issues, total, has_more) =
+                paginate_search_issues(issues, user_limit, user_offset);
+            let mut relation_metadata = load_search_relation_metadata(storage, &page_issues)?;
+            let meta = JsonArrayPageMeta {
+                total,
+                limit: user_limit,
+                offset: user_offset,
+                has_more,
+            };
+            early_ctx.json_array_page(
+                "issues",
+                page_issues
                     .into_iter()
                     .map(|issue| issue_with_counts(issue, &mut relation_metadata)),
+                meta,
             );
             return Ok(());
         }
         OutputFormat::Toon => {
-            let issues_with_counts = attach_counts(storage, issues)?;
-            if early_ctx.toon_issue_counts_array_with_stats(&issues_with_counts, list_args.stats) {
-                return Ok(());
-            }
-            early_ctx.toon_with_stats(&issues_with_counts, list_args.stats);
+            let user_limit = list_args.limit.unwrap_or(DEFAULT_SEARCH_LIMIT);
+            let user_offset = list_args.offset.unwrap_or(DEFAULT_LIST_OFFSET);
+            let (page_issues, total, has_more) =
+                paginate_search_issues(issues, user_limit, user_offset);
+            let issues_with_counts = attach_counts(storage, page_issues)?;
+            let page = SearchPage {
+                issues: issues_with_counts,
+                total,
+                limit: user_limit,
+                offset: user_offset,
+                has_more,
+            };
+            early_ctx.toon_with_stats(&page, list_args.stats);
             return Ok(());
         }
         OutputFormat::Csv => {

@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots/cli_output.rs
+assertion_line: 18
 expression: normalize_output(&output.stdout)
 ---
 ID-REDACTED issue tracker (SQLite + JSONL)
@@ -18,6 +19,7 @@ Commands:
   count         Count issues with optional grouping
   create        Create a new issue
   defer         Defer issues (schedule for later)
+  hold          Captain hold lifecycle (beads ID-REDACTED §4)
   delete        Delete an issue (creates tombstone)
   dep           Manage dependencies
   doctor        Run diagnostics and optionally repair issues

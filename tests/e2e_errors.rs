@@ -322,7 +322,7 @@ fn e2e_update_tombstone_rejected() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let show_json: Value =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json");
-    assert_eq!(show_json[0]["status"], "tombstone");
+    assert_eq!(show_json["status"], "tombstone");
 }
 
 #[test]
@@ -364,8 +364,8 @@ fn e2e_update_invalid_parent_does_not_partially_apply_other_changes() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let shown: Value =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json");
-    assert_eq!(shown[0]["title"].as_str(), Some("Original title"));
-    assert!(shown[0]["parent"].is_null());
+    assert_eq!(shown["title"].as_str(), Some("Original title"));
+    assert!(shown["parent"].is_null());
 }
 
 #[test]
@@ -401,8 +401,8 @@ fn e2e_update_self_parent_does_not_partially_apply_other_changes() {
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let shown: Value =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json");
-    assert_eq!(shown[0]["status"].as_str(), Some("open"));
-    assert!(shown[0]["parent"].is_null());
+    assert_eq!(shown["status"].as_str(), Some("open"));
+    assert!(shown["parent"].is_null());
 }
 
 #[test]
@@ -2508,8 +2508,8 @@ workflow:
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let shown: Value =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json");
-    assert_eq!(shown[0]["status"], "open");
-    assert_eq!(shown[0]["title"], "Candidate");
+    assert_eq!(shown["status"], "open");
+    assert_eq!(shown["title"], "Candidate");
 }
 
 #[test]
@@ -2595,8 +2595,8 @@ workflow:
         assert!(show.status.success(), "show failed: {}", show.stderr);
         let shown: Value =
             serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json");
-        assert_eq!(shown[0]["status"], "open");
-        assert_eq!(shown[0]["title"], expected_title);
+        assert_eq!(shown["status"], "open");
+        assert_eq!(shown["title"], expected_title);
     }
 }
 
@@ -2846,7 +2846,7 @@ workflow:
     );
     let fresh: Value =
         serde_json::from_str(&extract_json_payload(&show_fresh.stdout)).expect("show fresh json");
-    assert_eq!(fresh[0]["status"], "open");
+    assert_eq!(fresh["status"], "open");
 
     // The parent keeps its own status and gains a derived rollup.
     let show_parent = run_br(
@@ -2856,9 +2856,9 @@ workflow:
     );
     let parent: Value =
         serde_json::from_str(&extract_json_payload(&show_parent.stdout)).expect("show parent json");
-    assert_eq!(parent[0]["status"], "in_progress");
-    assert_eq!(parent[0]["rollup"]["status"], "in_progress");
-    assert_eq!(parent[0]["rollup"]["descendants"]["in_progress"], 1);
+    assert_eq!(parent["status"], "in_progress");
+    assert_eq!(parent["rollup"]["status"], "in_progress");
+    assert_eq!(parent["rollup"]["descendants"]["in_progress"], 1);
 
     // A childless leaf has no rollup key at all.
     let show_child = run_br(
@@ -2868,7 +2868,7 @@ workflow:
     );
     let child: Value =
         serde_json::from_str(&extract_json_payload(&show_child.stdout)).expect("show child json");
-    assert!(child[0].get("rollup").is_none());
+    assert!(child.get("rollup").is_none());
 }
 
 #[test]

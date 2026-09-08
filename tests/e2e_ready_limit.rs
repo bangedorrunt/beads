@@ -55,7 +55,8 @@ fn test_ready_limit_with_external_blockers() {
     // Run ready with limit 5
     // We expect it to skip the 5 blocked ones and return the next 5.
     let ready = run_br(&workspace, ["ready", "--limit", "5", "--json"], "ready");
-    let ready_issues: Vec<serde_json::Value> = serde_json::from_str(&ready.stdout).unwrap();
+    let ready_page: serde_json::Value = serde_json::from_str(&ready.stdout).unwrap();
+    let ready_issues = ready_page["issues"].as_array().cloned().unwrap_or_default();
 
     // If bug exists, this will likely be 0 (or < 5).
     // If fixed, should be 5.

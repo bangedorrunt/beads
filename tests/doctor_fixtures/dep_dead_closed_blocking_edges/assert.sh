@@ -60,7 +60,7 @@ case "$stage" in
       echo "ASSERT FAIL[$stage]: blocked issue $blocked_id vanished across --repair" >&2
       exit 1
     }
-    status=$("$tool_bin" show "$blocker_id" --json 2>/dev/null | jq -r '.[0].status')
+    status=$("$tool_bin" show "$blocker_id" --json 2>/dev/null | jq -r '.status')
     if [ "$status" != "closed" ]; then
       echo "ASSERT FAIL[$stage]: blocker status drifted to '$status' across --repair" >&2
       exit 1

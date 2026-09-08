@@ -169,9 +169,12 @@ fn e2e_show_json_carries_inherited_context_as_structured_field() {
 
     let parsed: serde_json::Value =
         serde_json::from_str(show.stdout.trim()).expect("show --format json emits valid JSON");
-    let records = parsed.as_array().expect("json array");
-    assert_eq!(records.len(), 1, "one record expected:\n{}", show.stdout);
-    let blocks = records[0]
+    assert!(
+        parsed.is_object(),
+        "single-id show is a bare object:\n{}",
+        show.stdout
+    );
+    let blocks = parsed
         .get("inherited_context")
         .and_then(serde_json::Value::as_array)
         .unwrap_or_else(|| {
@@ -242,10 +245,7 @@ fn e2e_show_json_without_opt_in_omits_inherited_context() {
     let parsed: serde_json::Value =
         serde_json::from_str(show.stdout.trim()).expect("show --format json emits valid JSON");
     assert!(
-        parsed
-            .as_array()
-            .and_then(|records| records.first())
-            .is_some_and(|record| record.get("inherited_context").is_none()),
+        parsed.is_object() && parsed.get("inherited_context").is_none(),
         "inherited_context must be absent without opt-in:\n{}",
         show.stdout
     );

@@ -55,11 +55,7 @@ fn human_output_escapes_terminal_controls_but_json_preserves_values() {
 
     let json = run_br(&workspace, ["show", &id, "--json"], "show_json");
     assert!(json.status.success(), "json show failed: {}", json.stderr);
-    let payload = parse_json_value(&json.stdout);
-    let issue = payload
-        .as_array()
-        .and_then(|issues| issues.first())
-        .expect("show --json should return one issue");
+    let issue = parse_json_value(&json.stdout);
     assert_eq!(issue["title"].as_str(), Some(title));
     let comments = issue["comments"].as_array().expect("comments array");
     assert_eq!(comments[0]["author"].as_str(), Some(author));

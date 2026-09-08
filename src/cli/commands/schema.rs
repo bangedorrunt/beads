@@ -5,8 +5,8 @@
 //! 1. **Per-row JSON Schemas** for the data types that show up inside
 //!    command outputs (`Issue`, `IssueWithCounts`, `IssueDetails`, …).
 //! 2. **Per-command output-envelope shapes** that tell an agent how to
-//!    reach those rows from a command's `--json` payload (`.[0]` for
-//!    `show`, `.issues[]` for `list`, `.[]` for the array commands, …).
+//!    reach those rows from a command's `--json` payload (`.` for `show`,
+//!    `.issues[]` for the paginated collection commands, …).
 //!
 //! Intended for AI agents and tooling that want stable schemas without
 //! reading source code. The CLI surface marks `br schema` as
@@ -335,15 +335,15 @@ fn insert_issue_command_shapes(commands: &mut BTreeMap<&'static str, CommandShap
     commands.insert(
         "show",
         CommandShape {
-            shape: "array",
-            jq_filter: ".[0]",
-            items_at: Some("."),
+            shape: "object",
+            jq_filter: ".",
+            items_at: None,
             item_schema: Some("IssueDetails"),
             error_envelope_on_stderr: true,
             notes: Some(
-                "Always a single-element array on success (wrapped for shape consistency \
-                 with list-style commands). On a missing id, an ErrorEnvelope is written \
-                 to stderr and exit code is non-zero.",
+                "Single issue object on success (one envelope per arity). \
+                 Pass several ids to get an array instead. On a missing id, \
+                 an ErrorEnvelope is written to stderr and exit code is non-zero.",
             ),
         },
     );
@@ -364,23 +364,29 @@ fn insert_issue_command_shapes(commands: &mut BTreeMap<&'static str, CommandShap
     commands.insert(
         "ready",
         CommandShape {
-            shape: "array",
-            jq_filter: ".[]",
-            items_at: Some("."),
+            shape: "object",
+            jq_filter: ".issues[]",
+            items_at: Some(".issues"),
             item_schema: Some("ReadyIssue"),
             error_envelope_on_stderr: false,
-            notes: None,
+            notes: Some(
+                "Wrapper object with pagination metadata; iterate with `.issues[]`. \
+                 Same envelope as `list`.",
+            ),
         },
     );
     commands.insert(
         "blocked",
         CommandShape {
-            shape: "array",
-            jq_filter: ".[]",
-            items_at: Some("."),
+            shape: "object",
+            jq_filter: ".issues[]",
+            items_at: Some(".issues"),
             item_schema: Some("BlockedIssue"),
             error_envelope_on_stderr: false,
-            notes: None,
+            notes: Some(
+                "Wrapper object with pagination metadata; iterate with `.issues[]`. \
+                 Same envelope as `list`.",
+            ),
         },
     );
     commands.insert(
@@ -397,12 +403,15 @@ fn insert_issue_command_shapes(commands: &mut BTreeMap<&'static str, CommandShap
     commands.insert(
         "search",
         CommandShape {
-            shape: "array",
-            jq_filter: ".[]",
-            items_at: Some("."),
+            shape: "object",
+            jq_filter: ".issues[]",
+            items_at: Some(".issues"),
             item_schema: Some("IssueWithCounts"),
             error_envelope_on_stderr: false,
-            notes: None,
+            notes: Some(
+                "Wrapper object with pagination metadata; iterate with `.issues[]`. \
+                 Same envelope as `list`.",
+            ),
         },
     );
 }

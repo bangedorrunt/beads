@@ -1,15 +1,14 @@
 ---
 source: tests/snapshots/json_output.rs
-expression: normalize_json(&json)
+assertion_line: 265
+expression: SnapshotJson(&normalize_json(&json))
 ---
-[
-  {
-    "id": "ISSUE_ID",
-    "title": "Issue to update",
-    "status": "in_progress",
-    "priority": 2,
-    "assignee": null,
-    "owner": null,
-    "updated_at": "TIMESTAMP"
-  }
-]
+{
+  "id": "ISSUE_ID",
+  "title": "Issue to update",
+  "status": "in_progress",
+  "priority": 2,
+  "assignee": null,
+  "owner": null,
+  "updated_at": "TIMESTAMP"
+}

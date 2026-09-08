@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots/cli_output.rs
+assertion_line: 49
 expression: normalize_output(&output.stdout)
 ---
 Create a new issue
@@ -96,6 +97,12 @@ Options:
 
       --ac <checkable|judgment>
           ID-REDACTED shape (default checkable when --verify is given; judgment only without a VERIFY command)
+
+      --deliverable <diff|report>
+          ID-REDACTED §2: typed deliverable (default diff). Set at creation, immutable afterwards
+
+      --promotes <ID>
+          ID-REDACTED §3: advisory follow-on link to the bead this work promotes. Provenance only, never gates readiness
 
       --ID-REDACTED
           Preview without creating

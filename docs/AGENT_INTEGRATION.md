@@ -119,8 +119,10 @@ br list --json --limit 5   # JSON always wins
 ### JSON Output Characteristics
 
 - **Always valid JSON** - parseable even on errors
-- **Arrays for lists** - `br list`, `br ready`, `br search`
-- **Objects for single items** - `br show`, `br create`
+- **Pagination objects for collections** - `br list`, `br ready`, `br search`,
+  `br blocked` all emit `{issues, total, limit, offset, has_more}`;
+  iterate rows with `.issues[]`
+- **Objects for single items** - `br show`, `br create`, `br update` (one id)
 - **Structured errors** - error object with code and hints
 
 ### Example Output
@@ -129,28 +131,34 @@ br list --json --limit 5   # JSON always wins
 $ br ready --json --limit 2
 ```
 ```json
-[
-  {
-    "id": "br-abc123",
-    "title": "Implement user auth",
-    "status": "open",
-    "priority": 1,
-    "issue_type": "feature",
-    "assignee": "",
-    "dependency_count": 0,
-    "dependent_count": 2
-  },
-  {
-    "id": "br-def456",
-    "title": "Fix login bug",
-    "status": "open",
-    "priority": 0,
-    "issue_type": "bug",
-    "assignee": "alice",
-    "dependency_count": 1,
-    "dependent_count": 0
-  }
-]
+{
+  "issues": [
+    {
+      "id": "br-abc123",
+      "title": "Implement user auth",
+      "status": "open",
+      "priority": 1,
+      "issue_type": "feature",
+      "assignee": "",
+      "dependency_count": 0,
+      "dependent_count": 2
+    },
+    {
+      "id": "br-def456",
+      "title": "Fix login bug",
+      "status": "open",
+      "priority": 0,
+      "issue_type": "bug",
+      "assignee": "alice",
+      "dependency_count": 1,
+      "dependent_count": 0
+    }
+  ],
+  "total": 2,
+  "limit": 2,
+  "offset": 0,
+  "has_more": false
+}
 ```
 
 ---
@@ -624,7 +632,7 @@ if (ready.length > 0) {
 
 ```bash
 # Get IDs of all ready issues
-br ready --json | jq -r '.[].id'
+br ready --json | jq -r '.issues[].id'
 
 # Get high-priority bugs
 br list --json -t bug -p 0 -p 1 | jq '.issues[] | "\(.id): \(.title)"'

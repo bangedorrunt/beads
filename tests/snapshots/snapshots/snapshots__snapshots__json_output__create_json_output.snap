@@ -1,11 +1,13 @@
 ---
 source: tests/snapshots/json_output.rs
+assertion_line: 245
 expression: SnapshotJson(&normalize_json(&json))
 ---
 {
   "id": "ISSUE_ID",
   "ac_shape": "checkable",
   "blast": "normal",
+  "deliverable": "diff",
   "revision": 1,
   "title": "New feature request",
   "status": "open",

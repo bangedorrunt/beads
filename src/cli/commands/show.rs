@@ -160,9 +160,9 @@ fn execute_routed(
         let structured_ctx = OutputContext::from_output_format(output_format, quiet, true);
 
         match output_format {
-            crate::cli::OutputFormat::Json => structured_ctx.json_array(details_list.iter()),
+            crate::cli::OutputFormat::Json => emit_show_json(&structured_ctx, &details_list),
             crate::cli::OutputFormat::Toon => {
-                structured_ctx.toon_with_stats(&details_list, args.stats);
+                emit_show_toon(&structured_ctx, &details_list, args.stats);
             }
             other => {
                 return Err(crate::error::BeadsError::internal(format!(
@@ -249,6 +249,25 @@ fn requested_target_ids(args: &ShowArgs, beads_dir: &Path) -> Result<Vec<String>
         target_ids.push(last_touched);
     }
     Ok(target_ids)
+}
+
+/// Single-entity envelope: one id -> bare object, several ids -> array.
+/// Collection commands use the pagination object; `show` with several ids
+/// is the multi-entity case and keeps the array.
+fn emit_show_json(ctx: &OutputContext, details_list: &Vec<IssueDetails>) {
+    if let [single] = details_list.as_slice() {
+        ctx.json(single);
+    } else {
+        ctx.json_array(details_list.iter());
+    }
+}
+
+fn emit_show_toon(ctx: &OutputContext, details_list: &Vec<IssueDetails>, stats: bool) {
+    if let [single] = details_list.as_slice() {
+        ctx.toon_with_stats(single, stats);
+    } else {
+        ctx.toon_with_stats(details_list, stats);
+    }
 }
 
 /// ADR-0001 Wave 3 / Layer 3: attach the READ-ONLY toron reservation block
@@ -442,10 +461,10 @@ fn execute_inner(
     attach_reservation_blocks(&mut details_list, args);
     match output_format {
         crate::cli::OutputFormat::Json => {
-            ctx.json_array(details_list.iter());
+            emit_show_json(&ctx, &details_list);
         }
         crate::cli::OutputFormat::Toon => {
-            ctx.toon_with_stats(&details_list, args.stats);
+            emit_show_toon(&ctx, &details_list, args.stats);
         }
         crate::cli::OutputFormat::Text | crate::cli::OutputFormat::Csv => {
             // beads#297: emit inherited governing context for each

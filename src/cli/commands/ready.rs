@@ -13,14 +13,26 @@ use crate::format::{
     ReadyIssue, format_priority_badge, format_type_badge, terminal_width, truncate_title,
 };
 use crate::model::{IssueType, Priority};
-use crate::output::{IssueTable, IssueTableColumns, OutputContext, OutputMode};
+use crate::output::{IssueTable, IssueTableColumns, JsonArrayPageMeta, OutputContext, OutputMode};
 use crate::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 use crate::util::id::{IdResolver, ResolverConfig};
+use serde::Serialize;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::str::FromStr;
 use tracing::{debug, info, trace};
 use unicode_width::UnicodeWidthStr;
+
+/// Pagination envelope for `br ready --json` / `--format toon`, matching
+/// `br list --json` (`{issues, total, limit, offset, has_more}`).
+#[derive(Debug, Serialize)]
+struct ReadyPage {
+    issues: Vec<ReadyIssue>,
+    total: usize,
+    limit: usize,
+    offset: usize,
+    has_more: bool,
+}
 
 /// Execute the ready command.
 ///
@@ -203,12 +215,29 @@ fn execute_inner(
     }
     match output_format {
         OutputFormat::Json => {
-            early_ctx.json_array(ready_issues.into_iter().map(ReadyIssue::from));
+            let meta = JsonArrayPageMeta {
+                total: total_before_truncation,
+                limit: args.limit,
+                offset: 0,
+                has_more: truncated,
+            };
+            early_ctx.json_array_page(
+                "issues",
+                ready_issues.into_iter().map(ReadyIssue::from),
+                meta,
+            );
         }
         OutputFormat::Toon => {
             let ready_output: Vec<ReadyIssue> =
                 ready_issues.into_iter().map(ReadyIssue::from).collect();
-            early_ctx.toon_with_stats(&ready_output, args.stats);
+            let page = ReadyPage {
+                issues: ready_output,
+                total: total_before_truncation,
+                limit: args.limit,
+                offset: 0,
+                has_more: truncated,
+            };
+            early_ctx.toon_with_stats(&page, args.stats);
         }
         OutputFormat::Text | OutputFormat::Csv => {
             let config_layer = load_config_layer()?;

@@ -1,5 +1,12 @@
 ---
 source: tests/snapshots/json_output.rs
-expression: normalize_json(&json)
+assertion_line: 626
+expression: SnapshotJson(&normalize_json(&json))
 ---
-[]
+{
+  "issues": [],
+  "total": 0,
+  "limit": 50,
+  "offset": 0,
+  "has_more": false
+}

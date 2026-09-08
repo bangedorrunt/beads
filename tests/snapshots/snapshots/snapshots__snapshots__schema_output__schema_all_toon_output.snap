@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots/schema_output.rs
+assertion_line: 879
 expression: normalized_toon
 ---
 tool: br
@@ -1259,6 +1260,13 @@ schemas:
         description: "ADR-0001 §5.2: blast-radius band (defaults to normal)."
         "$ref": #/$defs/Blast
         default: normal
+      deliverable:
+        description: "ADR-0005 §2: typed deliverable (defaults to diff). Set at creation,\nimmutable afterwards: changing what a bead owes means closing it\nand opening a successor, not retyping mid-flight."
+        "$ref": #/$defs/Deliverable
+        default: diff
+      promotes:
+        description: "ADR-0005 §3: advisory follow-on link (`br create --promotes <id>`).\nProvenance only, never gates readiness."
+        type[2]: string,"null"
       revision:
         description: "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records."
         type: integer
@@ -1378,7 +1386,7 @@ schemas:
         type: array
         items:
           "$ref": #/$defs/Comment
-    required[11]: id,ac_shape,blast,revision,title,status,priority,issue_type,created_at,updated_at,compaction_level
+    required[12]: id,ac_shape,blast,deliverable,revision,title,status,priority,issue_type,created_at,updated_at,compaction_level
     "$defs":
       PrincipleCitation:
         description: "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip."
@@ -1401,6 +1409,11 @@ schemas:
         oneOf[2]{description,type,const}:
           Ordinary bead; default.,string,normal
           Touches fail-closed invariants or shared storage semantics.,string,high
+      Deliverable:
+        description: "ADR-0005 §2: typed deliverable. Set at creation, immutable after.\n`diff` ships a code change (close gate: verdict row + sha);\n`report` ships knowledge (close gate: artifact evidence). Defaults to\n`diff` so pre-ADR-0005 rows stay valid without backfill."
+        oneOf[2]{description,type,const}:
+          The bead ships a code change. Default.,string,diff
+          "The bead ships knowledge (ADR, survey, diagnosis, decision).",string,report
       Status:
         description: Issue lifecycle status.
         anyOf[2]:
@@ -1503,6 +1516,13 @@ schemas:
         description: "ADR-0001 §5.2: blast-radius band (defaults to normal)."
         "$ref": #/$defs/Blast
         default: normal
+      deliverable:
+        description: "ADR-0005 §2: typed deliverable (defaults to diff). Set at creation,\nimmutable afterwards: changing what a bead owes means closing it\nand opening a successor, not retyping mid-flight."
+        "$ref": #/$defs/Deliverable
+        default: diff
+      promotes:
+        description: "ADR-0005 §3: advisory follow-on link (`br create --promotes <id>`).\nProvenance only, never gates readiness."
+        type[2]: string,"null"
       revision:
         description: "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records."
         type: integer
@@ -1646,7 +1666,7 @@ schemas:
         anyOf[2]:
           - "$ref": #/$defs/ShowReservationBlock
           - type: "null"
-    required[11]: id,ac_shape,blast,revision,title,status,priority,issue_type,created_at,updated_at,compaction_level
+    required[12]: id,ac_shape,blast,deliverable,revision,title,status,priority,issue_type,created_at,updated_at,compaction_level
     "$defs":
       PrincipleCitation:
         description: "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip."
@@ -1669,6 +1689,11 @@ schemas:
         oneOf[2]{description,type,const}:
           Ordinary bead; default.,string,normal
           Touches fail-closed invariants or shared storage semantics.,string,high
+      Deliverable:
+        description: "ADR-0005 §2: typed deliverable. Set at creation, immutable after.\n`diff` ships a code change (close gate: verdict row + sha);\n`report` ships knowledge (close gate: artifact evidence). Defaults to\n`diff` so pre-ADR-0005 rows stay valid without backfill."
+        oneOf[2]{description,type,const}:
+          The bead ships a code change. Default.,string,diff
+          "The bead ships knowledge (ADR, survey, diagnosis, decision).",string,report
       Status:
         description: Issue lifecycle status.
         anyOf[2]:
@@ -1872,6 +1897,13 @@ schemas:
         description: "ADR-0001 §5.2: blast-radius band (defaults to normal)."
         "$ref": #/$defs/Blast
         default: normal
+      deliverable:
+        description: "ADR-0005 §2: typed deliverable (defaults to diff). Set at creation,\nimmutable afterwards: changing what a bead owes means closing it\nand opening a successor, not retyping mid-flight."
+        "$ref": #/$defs/Deliverable
+        default: diff
+      promotes:
+        description: "ADR-0005 §3: advisory follow-on link (`br create --promotes <id>`).\nProvenance only, never gates readiness."
+        type[2]: string,"null"
       revision:
         description: "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records."
         type: integer
@@ -1999,7 +2031,7 @@ schemas:
         type: integer
         format: uint
         minimum: 0
-    required[13]: id,ac_shape,blast,revision,title,status,priority,issue_type,created_at,updated_at,compaction_level,dependency_count,dependent_count
+    required[14]: id,ac_shape,blast,deliverable,revision,title,status,priority,issue_type,created_at,updated_at,compaction_level,dependency_count,dependent_count
     "$defs":
       PrincipleCitation:
         description: "ADR-0001 §5.2: one cited engineering principle paired with the concrete\ndecision it changed on this bead. A name without a decision is a skip."
@@ -2022,6 +2054,11 @@ schemas:
         oneOf[2]{description,type,const}:
           Ordinary bead; default.,string,normal
           Touches fail-closed invariants or shared storage semantics.,string,high
+      Deliverable:
+        description: "ADR-0005 §2: typed deliverable. Set at creation, immutable after.\n`diff` ships a code change (close gate: verdict row + sha);\n`report` ships knowledge (close gate: artifact evidence). Defaults to\n`diff` so pre-ADR-0005 rows stay valid without backfill."
+        oneOf[2]{description,type,const}:
+          The bead ships a code change. Default.,string,diff
+          "The bead ships knowledge (ADR, survey, diagnosis, decision).",string,report
       Status:
         description: Issue lifecycle status.
         anyOf[2]:
@@ -2702,11 +2739,12 @@ schemas:
         enum[8]: clean,modified,deleted,untracked,ignored,unmerged,comparison_unavailable,absent
 commands:
   blocked:
-    shape: array
-    jq_filter: ".[]"
-    items_at: .
+    shape: object
+    jq_filter: ".issues[]"
+    items_at: .issues
     item_schema: BlockedIssue
     error_envelope_on_stderr: false
+    notes: "Wrapper object with pagination metadata; iterate with `.issues[]`. Same envelope as `list`."
   capabilities:
     shape: object
     jq_filter: .
@@ -2767,29 +2805,30 @@ commands:
     error_envelope_on_stderr: false
     notes: "Wrapper object with pagination metadata; iterate with `.issues[]`. The wrapper exists so totals/cursors can ride alongside the rows."
   ready:
-    shape: array
-    jq_filter: ".[]"
-    items_at: .
+    shape: object
+    jq_filter: ".issues[]"
+    items_at: .issues
     item_schema: ReadyIssue
     error_envelope_on_stderr: false
+    notes: "Wrapper object with pagination metadata; iterate with `.issues[]`. Same envelope as `list`."
   "robot-docs guide":
     shape: object
     jq_filter: .
     error_envelope_on_stderr: false
     notes: JSON/TOON modes wrap the concise agent guide; text mode prints the guide directly.
   search:
-    shape: array
-    jq_filter: ".[]"
-    items_at: .
+    shape: object
+    jq_filter: ".issues[]"
+    items_at: .issues
     item_schema: IssueWithCounts
     error_envelope_on_stderr: false
+    notes: "Wrapper object with pagination metadata; iterate with `.issues[]`. Same envelope as `list`."
   show:
-    shape: array
-    jq_filter: ".[0]"
-    items_at: .
+    shape: object
+    jq_filter: .
     item_schema: IssueDetails
     error_envelope_on_stderr: true
-    notes: "Always a single-element array on success (wrapped for shape consistency with list-style commands). On a missing id, an ErrorEnvelope is written to stderr and exit code is non-zero."
+    notes: "Single issue object on success (one envelope per arity). Pass several ids to get an array instead. On a missing id, an ErrorEnvelope is written to stderr and exit code is non-zero."
   stale:
     shape: array
     jq_filter: ".[]"

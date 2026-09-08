@@ -66,6 +66,18 @@
           "$ref": "#/$defs/Blast",
           "default": "normal"
         },
+        "deliverable": {
+          "description": "ADR-0005 §2: typed deliverable (defaults to diff). Set at creation,\nimmutable afterwards: changing what a bead owes means closing it\nand opening a successor, not retyping mid-flight.",
+          "$ref": "#/$defs/Deliverable",
+          "default": "diff"
+        },
+        "promotes": {
+          "description": "ADR-0005 §3: advisory follow-on link (`br create --promotes <id>`).\nProvenance only, never gates readiness.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "revision": {
           "description": "ADR-0004: monotonic durable CAS token for issue mutations. It is not\npart of content identity and defaults to one for legacy JSONL records.",
           "type": "integer",
@@ -370,6 +382,7 @@
         "id",
         "ac_shape",
         "blast",
+        "deliverable",
         "revision",
         "title",
         "status",
@@ -425,6 +438,21 @@
               "description": "Touches fail-closed invariants or shared storage semantics.",
               "type": "string",
               "const": "high"
+            }
+          ]
+        },
+        "Deliverable": {
+          "description": "ADR-0005 §2: typed deliverable. Set at creation, immutable after.\n`diff` ships a code change (close gate: verdict row + sha);\n`report` ships knowledge (close gate: artifact evidence). Defaults to\n`diff` so pre-ADR-0005 rows stay valid without backfill.",
+          "oneOf": [
+            {
+              "description": "The bead ships a code change. Default.",
+              "type": "string",
+              "const": "diff"
+            },
+            {
+              "description": "The bead ships knowledge (ADR, survey, diagnosis, decision).",
+              "type": "string",
+              "const": "report"
             }
           ]
         },

@@ -1421,14 +1421,13 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
         let show_payload = common::cli::extract_json_payload(&show.stdout);
         let show_json: serde_json::Value =
             serde_json::from_str(&show_payload).expect("show json payload");
-        let show_items = show_json.as_array().expect("show payload array");
-        assert_eq!(
-            show_items.len(),
-            1,
-            "show should return exactly one issue for {fresh_id} on loop {i}: {show_payload}"
+        let show_items = &show_json;
+        assert!(
+            show_items.is_object(),
+            "show should return one issue object for {fresh_id} on loop {i}: {show_payload}"
         );
         assert_eq!(
-            show_items[0]["id"].as_str(),
+            show_items["id"].as_str(),
             Some(fresh_id.as_str()),
             "show returned the wrong issue for {fresh_id} on loop {i}: {show_payload}"
         );

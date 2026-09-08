@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots/robot_output.rs
+assertion_line: 303
 expression: output.stdout.trim_end()
 ---
-[]
+{"issues":[],"total":0,"limit":0,"offset":0,"has_more":false}

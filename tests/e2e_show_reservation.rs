@@ -78,9 +78,9 @@ fn show_reservation_block_reports_holder_and_paths_from_snapshot() {
     assert!(result.status.success(), "show failed: {}", result.stderr);
     let payload: Value =
         serde_json::from_str(&extract_json_payload(&result.stdout)).expect("show json");
-    assert_eq!(payload.as_array().map(Vec::len), Some(1));
+    assert!(payload.is_object(), "single-id show is a bare object");
 
-    let reservation = &payload[0]["reservation"];
+    let reservation = &payload["reservation"];
     let reservation = reservation
         .as_object()
         .expect("reservation block present in --json output");
@@ -120,7 +120,7 @@ fn show_without_reservation_flag_omits_the_block() {
     let payload: Value =
         serde_json::from_str(&extract_json_payload(&result.stdout)).expect("show json");
     assert!(
-        payload[0].get("reservation").is_none(),
+        payload.get("reservation").is_none(),
         "no snapshot supplied → no reservation key"
     );
 }
@@ -155,7 +155,7 @@ fn show_reservation_missing_or_expired_states_are_explicit() {
     assert!(result.status.success());
     let payload: Value =
         serde_json::from_str(&extract_json_payload(&result.stdout)).expect("show json");
-    let state = payload[0]["reservation"]["state"].as_str().expect("state");
+    let state = payload["reservation"]["state"].as_str().expect("state");
     assert_eq!(
         state, "no_reservation",
         "explicit state, never silent absence"
@@ -186,7 +186,7 @@ fn show_reservation_missing_or_expired_states_are_explicit() {
     assert!(result.status.success());
     let payload: Value =
         serde_json::from_str(&extract_json_payload(&result.stdout)).expect("show json");
-    let reservation = &payload[0]["reservation"];
+    let reservation = &payload["reservation"];
     assert_eq!(
         reservation["state"].as_str(),
         Some("expired"),

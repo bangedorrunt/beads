@@ -15,11 +15,10 @@ fn show_issue(workspace: &BrWorkspace, id: &str) -> Value {
         "show_issue",
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
-    // `br show --json` emits an array of issues.
-    let mut issues: Vec<Value> =
+    // `br show <single-id> --json` emits a bare object.
+    let issue: Value =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show JSON");
-    assert_eq!(issues.len(), 1, "expected exactly one issue for {id}");
-    issues.remove(0)
+    issue
 }
 
 fn jsonl_record_for(workspace: &BrWorkspace, id: &str) -> Value {

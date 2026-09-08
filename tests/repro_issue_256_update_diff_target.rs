@@ -159,12 +159,12 @@ fn br_update_prints_target_beads_title_not_unrelated_bead_title() {
     let show = run_br(&workspace, ["show", &target_id, "--json"], "show_after");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = common::cli::extract_json_payload(&show.stdout);
-    let show_json: Vec<serde_json::Value> = serde_json::from_str(&payload).expect("show json");
-    assert_eq!(show_json[0]["id"], target_id);
-    assert_eq!(show_json[0]["title"], target_title);
-    assert_eq!(show_json[0]["status"], "open");
-    assert_eq!(show_json[0]["priority"], 1);
-    assert_eq!(show_json[0]["issue_type"], "bug");
+    let show_json: serde_json::Value = serde_json::from_str(&payload).expect("show json");
+    assert_eq!(show_json["id"], target_id);
+    assert_eq!(show_json["title"], target_title);
+    assert_eq!(show_json["status"], "open");
+    assert_eq!(show_json["priority"], 1);
+    assert_eq!(show_json["issue_type"], "bug");
 }
 
 /// A real (non-noop) update must produce a correctly-attributed diff block:

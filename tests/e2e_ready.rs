@@ -250,7 +250,8 @@ fn ready_cli_excludes_in_progress_issues() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     assert!(
         issues
@@ -322,7 +323,8 @@ fn ready_cli_filters_by_assignee() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should have alice's issues: issue 1 and issue 5
     assert_eq!(issues.len(), 2);
@@ -353,7 +355,8 @@ fn ready_cli_assignee_flag_without_value_uses_actor() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     assert_eq!(issues.len(), 2);
     assert!(
@@ -418,7 +421,8 @@ fn ready_respects_external_dependencies() {
         ready_before.stderr
     );
     let ready_payload = extract_json_payload(&ready_before.stdout);
-    let ready_json: Vec<Value> = serde_json::from_str(&ready_payload).expect("ready json");
+    let ready_page: Value = serde_json::from_str(&ready_payload).expect("ready json");
+    let ready_json = ready_page["issues"].as_array().cloned().unwrap_or_default();
     assert!(
         !ready_json.iter().any(|item| item["id"] == issue_id),
         "issue should be blocked by external dependency"
@@ -431,7 +435,11 @@ fn ready_respects_external_dependencies() {
         blocked_before.stderr
     );
     let blocked_payload = extract_json_payload(&blocked_before.stdout);
-    let blocked_json: Vec<Value> = serde_json::from_str(&blocked_payload).expect("blocked json");
+    let blocked_page: Value = serde_json::from_str(&blocked_payload).expect("blocked json");
+    let blocked_json = blocked_page["issues"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
         blocked_json.iter().any(|item| item["id"] == issue_id),
         "blocked list should include external-blocked issue"
@@ -500,7 +508,8 @@ fn ready_respects_external_dependencies() {
         ready_after.stderr
     );
     let ready_payload = extract_json_payload(&ready_after.stdout);
-    let ready_json: Vec<Value> = serde_json::from_str(&ready_payload).expect("ready json");
+    let ready_page: Value = serde_json::from_str(&ready_payload).expect("ready json");
+    let ready_json = ready_page["issues"].as_array().cloned().unwrap_or_default();
     assert!(
         ready_json.iter().any(|item| item["id"] == issue_id),
         "issue should be ready once external dependency is satisfied"
@@ -513,7 +522,11 @@ fn ready_respects_external_dependencies() {
         blocked_after.stderr
     );
     let blocked_payload = extract_json_payload(&blocked_after.stdout);
-    let blocked_json: Vec<Value> = serde_json::from_str(&blocked_payload).expect("blocked json");
+    let blocked_page: Value = serde_json::from_str(&blocked_payload).expect("blocked json");
+    let blocked_json = blocked_page["issues"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
         !blocked_json.iter().any(|item| item["id"] == issue_id),
         "blocked list should clear after external dependency is satisfied"
@@ -590,7 +603,8 @@ fn ready_imports_stale_external_jsonl_before_status_probe() {
         ready_before.stderr
     );
     let ready_payload = extract_json_payload(&ready_before.stdout);
-    let ready_json: Vec<Value> = serde_json::from_str(&ready_payload).expect("ready json");
+    let ready_page: Value = serde_json::from_str(&ready_payload).expect("ready json");
+    let ready_json = ready_page["issues"].as_array().cloned().unwrap_or_default();
     assert!(
         !issue_list_contains_id(&ready_json, &issue_id),
         "issue should be blocked while external provider is open in the DB"
@@ -614,7 +628,8 @@ fn ready_imports_stale_external_jsonl_before_status_probe() {
         ready_after.stderr
     );
     let ready_payload = extract_json_payload(&ready_after.stdout);
-    let ready_json: Vec<Value> = serde_json::from_str(&ready_payload).expect("ready json");
+    let ready_page: Value = serde_json::from_str(&ready_payload).expect("ready json");
+    let ready_json = ready_page["issues"].as_array().cloned().unwrap_or_default();
     assert!(
         issue_list_contains_id(&ready_json, &issue_id),
         "ready should import the external JSONL closure before probing dependency status"
@@ -630,9 +645,9 @@ fn ready_imports_stale_external_jsonl_before_status_probe() {
         "external show failed: {}",
         show_external.stderr
     );
-    let shown: Vec<Value> =
+    let shown: Value =
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
-    assert_eq!(shown[0]["status"].as_str(), Some("closed"));
+    assert_eq!(shown["status"].as_str(), Some("closed"));
 }
 
 #[test]
@@ -648,7 +663,8 @@ fn ready_cli_filters_unassigned_only() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should have unassigned issues: issue 3 and issue 4
     assert_eq!(issues.len(), 2);
@@ -680,7 +696,8 @@ fn ready_cli_filters_by_type() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should have tasks: issue 1, 4, and 5
     assert_eq!(issues.len(), 3);
@@ -703,7 +720,8 @@ fn ready_cli_filters_by_multiple_types() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should have tasks and bugs: issue 1, 2, 4, and 5
     assert_eq!(issues.len(), 4);
@@ -727,7 +745,8 @@ fn ready_cli_filters_by_priority() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should have only issue 4
     assert_eq!(issues.len(), 1);
@@ -748,7 +767,8 @@ fn ready_cli_filters_by_multiple_priorities() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should have issue 1 (P1) and issue 4 (P0)
     assert_eq!(issues.len(), 2);
@@ -772,7 +792,8 @@ fn ready_cli_filters_by_label_and() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should have issue 1 and issue 3
     assert_eq!(issues.len(), 2);
@@ -804,7 +825,8 @@ fn ready_cli_filters_by_multiple_labels_and() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should only have issue 3 (both labels)
     assert_eq!(issues.len(), 1);
@@ -832,7 +854,8 @@ fn ready_cli_filters_by_label_or() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should have issues 1, 2, and 3
     assert_eq!(issues.len(), 3);
@@ -851,7 +874,8 @@ fn ready_cli_respects_limit() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     assert_eq!(issues.len(), 2);
 }
@@ -869,7 +893,8 @@ fn ready_cli_limit_zero_returns_all() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // All 5 issues
     assert_eq!(issues.len(), 5);
@@ -888,7 +913,8 @@ fn ready_cli_sort_priority() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // First should be P0 (Critical Fix - ids[3])
     assert_eq!(issues[0]["id"].as_str().unwrap(), ids[3]);
@@ -910,7 +936,8 @@ fn ready_cli_combined_filters() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should have issue 1 and issue 5 (both alice's tasks)
     assert_eq!(issues.len(), 2);
@@ -946,7 +973,8 @@ fn ready_cli_excludes_blocked_issues() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     // Should have 4 issues (issue 3 is blocked)
     assert_eq!(issues.len(), 4);
@@ -987,7 +1015,8 @@ fn ready_cli_excludes_deferred_by_default() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     assert_eq!(issues.len(), 4);
     assert!(
@@ -1027,7 +1056,8 @@ fn ready_cli_includes_deferred_with_flag() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     assert_eq!(issues.len(), 5);
     assert!(
@@ -1087,7 +1117,8 @@ fn ready_cli_priority_p_format() {
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["priority"].as_u64().unwrap(), 0);
@@ -1134,8 +1165,8 @@ fn e2e_ready_with_mixed_priority_high_tier_first() {
 
     let out = run_br(&workspace, ["ready", "--json"], "ready");
     assert!(out.status.success(), "br ready failed: {}", out.stderr);
-    let issues: Vec<Value> =
-        serde_json::from_str(out.stdout.trim()).expect("ready json must parse");
+    let ready_page: Value = serde_json::from_str(out.stdout.trim()).expect("ready json must parse");
+    let issues = ready_page["issues"].as_array().cloned().unwrap_or_default();
 
     eprintln!(
         "  ready order: {:?}",
@@ -1200,7 +1231,8 @@ fn e2e_ready_returns_no_duplicate_ids() {
 
     let out = run_br(&workspace, ["ready", "--json"], "ready");
     assert!(out.status.success(), "br ready failed");
-    let issues: Vec<Value> = serde_json::from_str(out.stdout.trim()).expect("must parse");
+    let ready_page: Value = serde_json::from_str(out.stdout.trim()).expect("must parse");
+    let issues = ready_page["issues"].as_array().cloned().unwrap_or_default();
     assert_eq!(issues.len(), 6, "all 6 should be ready");
 
     let mut seen = std::collections::HashSet::new();
@@ -1263,7 +1295,8 @@ fn ready_default_group_is_open_only_e2e() {
     let result = run_br(&workspace, ["ready", "--json"], "ready_default");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
     assert!(
         issue_list_contains_id(&issues, &open_id),
         "open issue must be ready by default"
@@ -1307,7 +1340,8 @@ fn ready_configured_group_surfaces_rework_e2e() {
     let result = run_br(&workspace, ["ready", "--json"], "ready_configured");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
     let payload = extract_json_payload(&result.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let page: Value = serde_json::from_str(&payload).expect("valid json");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
     assert!(
         issue_list_contains_id(&issues, &open_id),
         "open issue must still be ready"
@@ -1469,8 +1503,9 @@ fn e2e_ready_json_carries_s55_fields_and_enforces_predicate() {
 
     let ready = run_br(&workspace, ["ready", "--json"], "ready_p1_uncited");
     assert!(ready.status.success(), "ready failed: {}", ready.stderr);
-    let issues: Vec<Value> =
+    let page: Value =
         serde_json::from_str(&extract_json_payload(&ready.stdout)).expect("ready JSON");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
     assert!(
         !issue_list_contains_id(&issues, &p1_id),
         "P1 without principles citation must not be dispatchable"
@@ -1489,8 +1524,9 @@ fn e2e_ready_json_carries_s55_fields_and_enforces_predicate() {
 
     let ready = run_br(&workspace, ["ready", "--json"], "ready_p1_cited");
     assert!(ready.status.success(), "ready failed: {}", ready.stderr);
-    let issues: Vec<Value> =
+    let page: Value =
         serde_json::from_str(&extract_json_payload(&ready.stdout)).expect("ready JSON");
+    let issues = page["issues"].as_array().cloned().unwrap_or_default();
     assert!(
         issue_list_contains_id(&issues, &p1_id),
         "fully-cited P1 must be dispatchable"

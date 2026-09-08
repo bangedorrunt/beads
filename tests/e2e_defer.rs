@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br};
+use common::cli::{BrWorkspace, extract_issues_array, extract_json_payload, run_br};
 use serde_json::Value;
 use tracing::info;
 fn parse_created_id(stdout: &str) -> String {
@@ -97,11 +97,11 @@ fn defer_sets_status_deferred() {
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     assert!(show.status.success());
     let payload = extract_json_payload(&show.stdout);
-    let issues: Value = serde_json::from_str(&payload).expect("valid json");
+    let issue: Value = serde_json::from_str(&payload).expect("valid json");
 
-    // show returns flattened array
+    // show single returns bare object
     assert_eq!(
-        issues[0]["status"].as_str().unwrap(),
+        issue["status"].as_str().unwrap(),
         "deferred",
         "status should be deferred"
     );
@@ -127,8 +127,7 @@ fn defer_indefinitely_no_until() {
 
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
-    let show_issues: Value = serde_json::from_str(&show_payload).expect("valid json");
-    let issue = &show_issues[0];
+    let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
 
     assert!(
         issue.get("defer_until").is_none() || issue["defer_until"].is_null(),
@@ -153,8 +152,7 @@ fn defer_with_until_timestamp() {
     // Verify via show
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
-    let show_issues: Value = serde_json::from_str(&show_payload).expect("valid json");
-    let issue = &show_issues[0];
+    let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
 
     assert!(
         issue["defer_until"].as_str().is_some(),
@@ -185,8 +183,8 @@ fn defer_multiple_issues() {
     for id in &ids {
         let show = run_br(&workspace, ["show", id, "--json"], &format!("show_{id}"));
         let show_payload = extract_json_payload(&show.stdout);
-        let issues: Value = serde_json::from_str(&show_payload).expect("valid json");
-        assert_eq!(issues[0]["status"].as_str().unwrap(), "deferred");
+        let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
+        assert_eq!(issue["status"].as_str().unwrap(), "deferred");
     }
     info!("defer_multiple_issues: assertions passed");
 }
@@ -248,8 +246,7 @@ fn defer_until_tomorrow() {
 
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
-    let show_issues: Value = serde_json::from_str(&show_payload).expect("valid json");
-    let issue = &show_issues[0];
+    let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
 
     let defer_until = issue["defer_until"].as_str().unwrap();
     assert!(
@@ -274,8 +271,7 @@ fn defer_until_relative() {
 
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
-    let show_issues: Value = serde_json::from_str(&show_payload).expect("valid json");
-    let issue = &show_issues[0];
+    let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
 
     let defer_until = issue["defer_until"].as_str().unwrap();
     assert!(!defer_until.is_empty(), "defer_until should be set for +2h");
@@ -297,8 +293,7 @@ fn defer_until_specific_date() {
 
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
-    let show_issues: Value = serde_json::from_str(&show_payload).expect("valid json");
-    let issue = &show_issues[0];
+    let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
 
     let defer_until = issue["defer_until"].as_str().unwrap();
     // Contract: a bare --until date means 09:00 LOCAL on that calendar
@@ -329,8 +324,7 @@ fn defer_until_datetime() {
 
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
-    let show_issues: Value = serde_json::from_str(&show_payload).expect("valid json");
-    let issue = &show_issues[0];
+    let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
 
     let defer_until = issue["defer_until"].as_str().unwrap();
     assert!(
@@ -363,8 +357,7 @@ fn defer_until_past_allows() {
 
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
-    let show_issues: Value = serde_json::from_str(&show_payload).expect("valid json");
-    let issue = &show_issues[0];
+    let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
 
     assert_eq!(issue["status"], "deferred");
     info!("defer_until_past_allows: assertions passed");
@@ -416,10 +409,10 @@ fn undefer_sets_status_open() {
 
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let payload = extract_json_payload(&show.stdout);
-    let issues: Value = serde_json::from_str(&payload).expect("valid json");
+    let issue: Value = serde_json::from_str(&payload).expect("valid json");
 
     assert_eq!(
-        issues[0]["status"].as_str().unwrap(),
+        issue["status"].as_str().unwrap(),
         "open",
         "status should be open after undefer"
     );
@@ -440,8 +433,7 @@ fn undefer_clears_defer_until() {
 
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let payload = extract_json_payload(&show.stdout);
-    let issues: Value = serde_json::from_str(&payload).expect("valid json");
-    let issue = &issues[0];
+    let issue: Value = serde_json::from_str(&payload).expect("valid json");
 
     assert!(
         issue.get("defer_until").is_none() || issue["defer_until"].is_null(),
@@ -479,8 +471,8 @@ fn undefer_multiple_issues() {
     for id in &ids {
         let show = run_br(&workspace, ["show", id, "--json"], &format!("show_{id}"));
         let show_payload = extract_json_payload(&show.stdout);
-        let issues: Value = serde_json::from_str(&show_payload).expect("valid json");
-        assert_eq!(issues[0]["status"].as_str().unwrap(), "open");
+        let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
+        assert_eq!(issue["status"].as_str().unwrap(), "open");
     }
     info!("undefer_multiple_issues: assertions passed");
 }
@@ -545,9 +537,9 @@ fn defer_already_deferred_updates_time() {
     // Check time updated via show
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
-    let show_issues: Value = serde_json::from_str(&show_payload).expect("valid json");
+    let show_issue: Value = serde_json::from_str(&show_payload).expect("valid json");
     // Verify defer_until is > 1d from now
-    assert!(show_issues[0]["defer_until"].as_str().is_some());
+    assert!(show_issue["defer_until"].as_str().is_some());
     info!("defer_already_deferred_updates_time: assertions passed");
 }
 
@@ -584,8 +576,8 @@ fn undefer_already_open_skips() {
 
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
-    let issues: Value = serde_json::from_str(&show_payload).expect("valid json");
-    assert_eq!(issues[0]["status"], "open");
+    let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
+    assert_eq!(issue["status"], "open");
     info!("undefer_already_open_skips: assertions passed");
 }
 
@@ -685,8 +677,7 @@ fn deferred_not_in_ready() {
     let ready = run_br(&workspace, ["ready", "--json"], "ready");
     assert!(ready.status.success());
 
-    let payload = extract_json_payload(&ready.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
+    let issues: Vec<Value> = extract_issues_array(&ready.stdout);
 
     // Deferred issue should NOT appear in ready list
     let ready_ids: Vec<&str> = issues.iter().filter_map(|i| i["id"].as_str()).collect();
@@ -716,8 +707,7 @@ fn deferred_not_blocked() {
     let blocked = run_br(&workspace, ["blocked", "--json"], "blocked");
     assert!(blocked.status.success());
 
-    let payload = extract_json_payload(&blocked.stdout);
-    let issues: Vec<Value> = serde_json::from_str(&payload).unwrap_or_else(|_| vec![]);
+    let issues: Vec<Value> = extract_issues_array(&blocked.stdout);
 
     // Deferred issue should NOT appear in blocked list (deferred != blocked)
     assert!(
@@ -741,9 +731,7 @@ fn undefer_appears_in_ready() {
     assert!(defer.status.success());
 
     let ready_before = run_br(&workspace, ["ready", "--json"], "ready_before");
-    let payload_before = extract_json_payload(&ready_before.stdout);
-    let issues_before: Vec<Value> =
-        serde_json::from_str(&payload_before).unwrap_or_else(|_| vec![]);
+    let issues_before: Vec<Value> = extract_issues_array(&ready_before.stdout);
     assert!(
         !issues_before
             .iter()
@@ -758,8 +746,7 @@ fn undefer_appears_in_ready() {
     let ready_after = run_br(&workspace, ["ready", "--json"], "ready_after");
     assert!(ready_after.status.success());
 
-    let payload_after = extract_json_payload(&ready_after.stdout);
-    let issues_after: Vec<Value> = serde_json::from_str(&payload_after).expect("valid json");
+    let issues_after: Vec<Value> = extract_issues_array(&ready_after.stdout);
 
     assert!(
         issues_after

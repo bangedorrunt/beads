@@ -110,8 +110,8 @@ fn e2e_json_flag_show() {
     assert!(show.status.success(), "show --json failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("valid JSON");
-    assert_eq!(json[0]["title"], "Show JSON test");
+    let json: Value = serde_json::from_str(&payload).expect("valid JSON");
+    assert_eq!(json["title"], "Show JSON test");
 }
 
 #[test]
@@ -134,8 +134,9 @@ fn e2e_json_flag_ready() {
     );
 
     let payload = extract_json_payload(&ready.stdout);
-    // Should be valid JSON array (may be empty if issue not ready)
-    let _json: Vec<Value> = serde_json::from_str(&payload).expect("valid JSON array");
+    // Pagination object with issues array.
+    let json: Value = serde_json::from_str(&payload).expect("valid JSON object");
+    assert!(json.get("issues").and_then(Value::as_array).is_some());
 }
 
 #[test]
@@ -156,8 +157,8 @@ fn e2e_json_flag_blocked() {
 
     let payload = extract_json_payload(&blocked.stdout);
     let json: Value = serde_json::from_str(&payload).expect("valid JSON");
-    // Should be valid JSON (empty array when no blocked issues)
-    assert!(json.is_array());
+    // Pagination object with issues array (empty when no blocked issues)
+    assert!(json.get("issues").and_then(Value::as_array).is_some());
 }
 
 #[test]
@@ -469,8 +470,8 @@ fn e2e_no_db_flag_show() {
     );
 
     let payload = extract_json_payload(&show.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("valid JSON");
-    assert_eq!(json[0]["title"], "No-DB show test");
+    let json: Value = serde_json::from_str(&payload).expect("valid JSON");
+    assert_eq!(json["title"], "No-DB show test");
 }
 
 #[test]
@@ -549,8 +550,8 @@ fn e2e_no_db_show_bypasses_corrupt_db_and_preserves_relations() {
         show_child.stderr
     );
     let child_payload = extract_json_payload(&show_child.stdout);
-    let child_json: Vec<Value> = serde_json::from_str(&child_payload).expect("valid child JSON");
-    assert_eq!(child_json[0]["parent"], parent_id);
+    let child_json: Value = serde_json::from_str(&child_payload).expect("valid child JSON");
+    assert_eq!(child_json["parent"], parent_id);
 
     let show_parent = run_br(
         &workspace,
@@ -563,10 +564,10 @@ fn e2e_no_db_show_bypasses_corrupt_db_and_preserves_relations() {
         show_parent.stderr
     );
     let parent_payload = extract_json_payload(&show_parent.stdout);
-    let parent_json: Vec<Value> = serde_json::from_str(&parent_payload).expect("valid parent JSON");
-    assert_eq!(parent_json[0]["dependents"][0]["id"], child_id);
+    let parent_json: Value = serde_json::from_str(&parent_payload).expect("valid parent JSON");
+    assert_eq!(parent_json["dependents"][0]["id"], child_id);
     assert_eq!(
-        parent_json[0]["dependents"][0]["dependency_type"],
+        parent_json["dependents"][0]["dependency_type"],
         "parent-child"
     );
 }
@@ -593,9 +594,10 @@ fn e2e_no_db_flag_ready() {
         ready.stderr
     );
 
-    // Should output valid JSON
+    // Should output valid pagination JSON
     let payload = extract_json_payload(&ready.stdout);
-    let _json: Vec<Value> = serde_json::from_str(&payload).expect("valid JSON");
+    let json: Value = serde_json::from_str(&payload).expect("valid JSON");
+    assert!(json.get("issues").and_then(Value::as_array).is_some());
 }
 
 #[test]

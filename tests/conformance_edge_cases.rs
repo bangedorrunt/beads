@@ -703,7 +703,18 @@ fn conformance_large_dep_graph_100() {
     let bd_json: Value = serde_json::from_str(&extract_json_payload(&bd_ready.stdout))
         .unwrap_or(Value::Array(vec![]));
 
-    let br_count = br_json.as_array().map(|a| a.len()).unwrap_or(0);
+    // `br ready --json` is the pagination object `{issues, total, ...}`;
+    // legacy `bd` emits a bare array.
+    let br_count = br_json
+        .as_array()
+        .map(|a| a.len())
+        .or_else(|| {
+            br_json
+                .get("issues")
+                .and_then(Value::as_array)
+                .map(|a| a.len())
+        })
+        .unwrap_or(0);
     let bd_count = bd_json.as_array().map(|a| a.len()).unwrap_or(0);
 
     assert_eq!(

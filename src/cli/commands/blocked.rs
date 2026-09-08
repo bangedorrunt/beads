@@ -11,10 +11,22 @@ use crate::config::{
 use crate::error::Result;
 use crate::format::{BlockedIssue, BlockedIssueOutput, sanitize_terminal_inline};
 use crate::model::{IssueType, Priority};
-use crate::output::{OutputContext, OutputMode};
+use crate::output::{JsonArrayPageMeta, OutputContext, OutputMode};
 use crate::storage::SqliteStorage;
+use serde::Serialize;
 use std::path::Path;
 use std::str::FromStr;
+
+/// Pagination envelope for `br blocked --json` / `--format toon`, matching
+/// `br list --json` (`{issues, total, limit, offset, has_more}`).
+#[derive(Debug, Serialize)]
+struct BlockedPage {
+    issues: Vec<BlockedIssueOutput>,
+    total: usize,
+    limit: usize,
+    offset: usize,
+    has_more: bool,
+}
 
 /// Execute the blocked command.
 ///
@@ -103,7 +115,7 @@ fn execute_inner(
         && !storage.may_have_blocked_command_results()?
     {
         let blocked_issues = Vec::new();
-        output_structured_blocked(args, output_format, &fast_ctx, &blocked_issues);
+        output_structured_blocked(args, output_format, &fast_ctx, &blocked_issues, 0, false);
         return Ok(());
     }
 
@@ -208,8 +220,10 @@ fn execute_inner(
     // Sort by priority (ascending), then by blocker count (descending)
     sort_blocked_issues(&mut blocked_issues);
 
-    // Apply limit
-    if args.limit > 0 && blocked_issues.len() > args.limit {
+    // Apply limit (offset is always 0: BlockedArgs has no --offset)
+    let total_before_truncation = blocked_issues.len();
+    let truncated = args.limit > 0 && blocked_issues.len() > args.limit;
+    if truncated {
         blocked_issues.truncate(args.limit);
     }
 
@@ -230,7 +244,14 @@ fn execute_inner(
 
     match output_format {
         OutputFormat::Json | OutputFormat::Toon => {
-            output_structured_blocked(args, output_format, &ctx, &blocked_issues);
+            output_structured_blocked(
+                args,
+                output_format,
+                &ctx,
+                &blocked_issues,
+                total_before_truncation,
+                truncated,
+            );
         }
         OutputFormat::Text | OutputFormat::Csv => {
             let max_width = if args.wrap { ctx.width() } else { 0 };
@@ -258,12 +279,32 @@ fn output_structured_blocked(
     output_format: OutputFormat,
     ctx: &OutputContext,
     blocked_issues: &[BlockedIssue],
+    total: usize,
+    has_more: bool,
 ) {
     match output_format {
-        OutputFormat::Json => ctx.json_array(blocked_issues.iter().map(blocked_issue_output)),
+        OutputFormat::Json => {
+            let meta = JsonArrayPageMeta {
+                total,
+                limit: args.limit,
+                offset: 0,
+                has_more,
+            };
+            ctx.json_array_page(
+                "issues",
+                blocked_issues.iter().map(blocked_issue_output),
+                meta,
+            );
+        }
         OutputFormat::Toon => {
-            let output = blocked_issue_outputs(blocked_issues);
-            ctx.toon_with_stats(&output, args.stats);
+            let page = BlockedPage {
+                issues: blocked_issue_outputs(blocked_issues),
+                total,
+                limit: args.limit,
+                offset: 0,
+                has_more,
+            };
+            ctx.toon_with_stats(&page, args.stats);
         }
         OutputFormat::Text | OutputFormat::Csv => {}
     }

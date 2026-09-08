@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots/json_output.rs
+assertion_line: 814
 expression: SnapshotJson(&normalized)
 ---
 [
@@ -7,6 +8,7 @@ expression: SnapshotJson(&normalized)
     "id": "ISSUE_ID",
     "ac_shape": "checkable",
     "blast": "normal",
+    "deliverable": "diff",
     "revision": 1,
     "title": "First detailed issue",
     "status": "open",
@@ -24,6 +26,7 @@ expression: SnapshotJson(&normalized)
     "id": "ISSUE_ID",
     "ac_shape": "checkable",
     "blast": "normal",
+    "deliverable": "diff",
     "revision": 1,
     "title": "Second detailed issue",
     "status": "open",

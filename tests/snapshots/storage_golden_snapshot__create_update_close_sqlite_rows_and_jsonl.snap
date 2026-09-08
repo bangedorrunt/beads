@@ -1,5 +1,6 @@
 ---
 source: tests/storage_golden_snapshot.rs
+assertion_line: 198
 expression: snapshot
 ---
 issue:
@@ -27,6 +28,8 @@ jsonl:
   "id": "storage-golden-1",
   "ac_shape": "checkable",
   "blast": "normal",
+  "deliverable": "diff",
+  "revision": 3,
   "title": "Golden storage lifecycle updated",
   "description": "Updated description",
   "status": "closed",

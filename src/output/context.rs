@@ -250,6 +250,7 @@ fn toon_lines_len(lines: &[String]) -> usize {
     lines.iter().map(String::len).sum::<usize>() + lines.len().saturating_sub(1)
 }
 
+#[cfg(test)]
 fn write_toon_issue_counts_array_to_writer<W: Write>(
     writer: &mut W,
     rows: &[IssueWithCounts],
@@ -389,6 +390,18 @@ fn write_toon_issue_counts_object_to_writer<W: Write>(
     }
     {
         let mut l = String::new();
+        l.push_str("    deliverable: ");
+        l.push_str(issue.deliverable.as_str());
+        write_toon_newline_and_line(writer, &l)?;
+    }
+    if let Some(promotes) = issue.promotes.as_ref() {
+        let mut l = String::new();
+        l.push_str("    promotes: ");
+        push_toon_string_value(&mut l, promotes);
+        write_toon_newline_and_line(writer, &l)?;
+    }
+    {
+        let mut l = String::new();
         l.push_str("    revision: ");
         l.push_str(&issue.revision.to_string());
         write_toon_newline_and_line(writer, &l)?;
@@ -506,6 +519,7 @@ fn write_toon_issue_source_fields<W: Write>(
     write_toon_labels_field(writer, line, &issue.labels)
 }
 
+#[cfg(test)]
 fn issue_counts_toon_fields(row: &IssueWithCounts) -> Option<Vec<&'static str>> {
     let issue = &row.issue;
     if !issue.labels.is_empty() || !issue.dependencies.is_empty() || !issue.comments.is_empty() {
@@ -593,6 +607,7 @@ fn issue_counts_toon_fields(row: &IssueWithCounts) -> Option<Vec<&'static str>> 
     Some(fields)
 }
 
+#[cfg(test)]
 fn push_optional_toon_field<T>(
     fields: &mut Vec<&'static str>,
     value: Option<&T>,
@@ -603,6 +618,7 @@ fn push_optional_toon_field<T>(
     }
 }
 
+#[cfg(test)]
 fn uniform_issue_counts_toon_fields(rows: &[IssueWithCounts]) -> Option<Vec<&'static str>> {
     let first = rows.first()?;
     let fields = issue_counts_toon_fields(first)?;
@@ -617,6 +633,7 @@ fn uniform_issue_counts_toon_fields(rows: &[IssueWithCounts]) -> Option<Vec<&'st
     }
 }
 
+#[cfg(test)]
 fn push_toon_issue_counts_field(out: &mut String, row: &IssueWithCounts, field: &str) {
     let issue = &row.issue;
     match field {
@@ -868,6 +885,7 @@ fn push_toon_datetime_value(out: &mut String, value: &DateTime<Utc>) {
     push_toon_string_value(out, &value.to_rfc3339_opts(SecondsFormat::AutoSi, true));
 }
 
+#[cfg(test)]
 fn push_optional_toon_datetime_value(out: &mut String, value: Option<&DateTime<Utc>>) {
     if let Some(value) = value {
         push_toon_datetime_value(out, value);
@@ -1366,37 +1384,6 @@ impl OutputContext {
                 self.report_serialization_error("JSON", &err);
             }
         }
-    }
-
-    pub(crate) fn toon_issue_counts_array_with_stats(
-        &self,
-        values: &[IssueWithCounts],
-        show_stats: bool,
-    ) -> bool {
-        if !self.is_toon() {
-            return false;
-        }
-        if Self::should_emit_toon_stats(show_stats, std::env::var("TOON_STATS").is_ok()) {
-            return false;
-        }
-        let fields = if values.is_empty() {
-            Vec::new()
-        } else if let Some(fields) = uniform_issue_counts_toon_fields(values) {
-            fields
-        } else {
-            return false;
-        };
-
-        let stdout = io::stdout();
-        let mut out = io::BufWriter::with_capacity(JSON_OUTPUT_BUFFER_CAPACITY, stdout.lock());
-        if let Err(err) = write_toon_issue_counts_array_to_writer(&mut out, values, &fields) {
-            self.report_serialization_error("TOON", &err);
-            return true;
-        }
-        if let Err(err) = write_json_trailer_to_writer(&mut out) {
-            self.report_serialization_error("TOON", &err);
-        }
-        true
     }
 
     pub(crate) fn toon_list_page_with_stats(&self, page: &ListPage, show_stats: bool) -> bool {

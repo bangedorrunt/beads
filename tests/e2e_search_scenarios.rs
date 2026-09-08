@@ -188,15 +188,16 @@ fn search_basic_single_word() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
+    let issues = json["issues"].as_array().expect("issues array");
 
     // Should find issues with "authentication" in title or description
     assert!(
-        json.len() >= 2,
+        issues.len() >= 2,
         "Expected at least 2 authentication-related issues"
     );
 
-    for issue in &json {
+    for issue in issues {
         let title = issue["title"].as_str().unwrap_or("").to_lowercase();
         let desc = issue["description"].as_str().unwrap_or("").to_lowercase();
         assert!(
@@ -220,13 +221,13 @@ fn search_case_insensitive() {
     let upper_payload = extract_json_payload(&search_upper.stdout);
     let lower_payload = extract_json_payload(&search_lower.stdout);
 
-    let upper_json: Vec<Value> = serde_json::from_str(&upper_payload).expect("parse upper");
-    let lower_json: Vec<Value> = serde_json::from_str(&lower_payload).expect("parse lower");
+    let upper_json: Value = serde_json::from_str(&upper_payload).expect("parse upper");
+    let lower_json: Value = serde_json::from_str(&lower_payload).expect("parse lower");
 
     // Both should find the same results (case-insensitive)
     assert_eq!(
-        upper_json.len(),
-        lower_json.len(),
+        upper_json["issues"].as_array().expect("issues array").len(),
+        lower_json["issues"].as_array().expect("issues array").len(),
         "Case-insensitive search should return same results"
     );
 }
@@ -244,11 +245,11 @@ fn search_multiple_words() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
     // Should find issues containing "Authentication"
     assert!(
-        json.len() >= 2,
+        json["issues"].as_array().expect("issues array").len() >= 2,
         "Should find at least 2 issues with 'Authentication'"
     );
 }
@@ -262,9 +263,12 @@ fn search_partial_word() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    assert!(json.len() >= 2, "Partial word search should find matches");
+    assert!(
+        json["issues"].as_array().expect("issues array").len() >= 2,
+        "Partial word search should find matches"
+    );
 }
 
 // =============================================================================
@@ -284,9 +288,9 @@ fn search_with_status_filter() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    for issue in &json {
+    for issue in json["issues"].as_array().expect("issues array") {
         assert_eq!(
             issue["status"], "open",
             "All results should have status 'open'"
@@ -306,15 +310,20 @@ fn search_with_type_filter() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
     assert_eq!(
-        json.len(),
+        json["issues"].as_array().expect("issues array").len(),
         1,
         "Should find exactly 1 authentication feature"
     );
-    assert_eq!(json[0]["issue_type"], "feature");
-    assert!(json[0]["title"].as_str().unwrap().contains("two-factor"));
+    assert_eq!(json["issues"][0]["issue_type"], "feature");
+    assert!(
+        json["issues"][0]["title"]
+            .as_str()
+            .unwrap()
+            .contains("two-factor")
+    );
 }
 
 #[test]
@@ -329,10 +338,14 @@ fn search_with_priority_filter() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    assert_eq!(json.len(), 1, "Should find exactly 1 P0 API issue");
-    assert_eq!(json[0]["priority"], 0);
+    assert_eq!(
+        json["issues"].as_array().expect("issues array").len(),
+        1,
+        "Should find exactly 1 P0 API issue"
+    );
+    assert_eq!(json["issues"][0]["priority"], 0);
 }
 
 #[test]
@@ -347,11 +360,15 @@ fn search_with_label_filter() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    assert_eq!(json.len(), 1, "Should find 1 bug with auth label");
+    assert_eq!(
+        json["issues"].as_array().expect("issues array").len(),
+        1,
+        "Should find 1 bug with auth label"
+    );
     assert!(
-        json[0]["title"]
+        json["issues"][0]["title"]
             .as_str()
             .unwrap()
             .contains("Authentication bug")
@@ -371,7 +388,7 @@ fn search_include_closed() {
     assert!(search_no_closed.status.success());
 
     let payload_no_closed = extract_json_payload(&search_no_closed.stdout);
-    let json_no_closed: Vec<Value> = serde_json::from_str(&payload_no_closed).expect("parse");
+    let json_no_closed: Value = serde_json::from_str(&payload_no_closed).expect("parse");
 
     // With --all to include closed issues
     let search_with_closed = run_br(
@@ -386,11 +403,18 @@ fn search_include_closed() {
     );
 
     let payload_with_closed = extract_json_payload(&search_with_closed.stdout);
-    let json_with_closed: Vec<Value> = serde_json::from_str(&payload_with_closed).expect("parse");
+    let json_with_closed: Value = serde_json::from_str(&payload_with_closed).expect("parse");
 
     // Should find more results with --include-closed
     assert!(
-        json_with_closed.len() >= json_no_closed.len(),
+        json_with_closed["issues"]
+            .as_array()
+            .expect("issues array")
+            .len()
+            >= json_no_closed["issues"]
+                .as_array()
+                .expect("issues array")
+                .len(),
         "Including closed should find at least as many results"
     );
 }
@@ -427,10 +451,10 @@ fn search_json_output_structure() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    if !json.is_empty() {
-        let first = &json[0];
+    if !json["issues"].as_array().expect("issues array").is_empty() {
+        let first = &json["issues"][0];
         assert!(first.get("id").is_some(), "Missing 'id' field");
         assert!(first.get("title").is_some(), "Missing 'title' field");
         assert!(first.get("status").is_some(), "Missing 'status' field");
@@ -456,9 +480,13 @@ fn search_no_results() {
     );
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    assert_eq!(json.len(), 0, "Should find no results");
+    assert_eq!(
+        json["issues"].as_array().expect("issues array").len(),
+        0,
+        "Should find no results"
+    );
 }
 
 #[test]
@@ -471,7 +499,7 @@ fn search_empty_query() {
     // Either succeeds with all results or fails with error
     if search.status.success() {
         let payload = extract_json_payload(&search.stdout);
-        let _json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+        let _json: Value = serde_json::from_str(&payload).expect("parse json");
     }
     // If it fails, that's also acceptable behavior
 }
@@ -501,9 +529,13 @@ fn search_special_characters() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    assert_eq!(json.len(), 1, "Should find the C++ issue");
+    assert_eq!(
+        json["issues"].as_array().expect("issues array").len(),
+        1,
+        "Should find the C++ issue"
+    );
 }
 
 #[test]
@@ -514,10 +546,13 @@ fn search_with_numbers() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    assert!(!json.is_empty(), "Should find version 2.0 issue");
-    assert!(json[0]["title"].as_str().unwrap().contains("2.0"));
+    assert!(
+        !json["issues"].as_array().expect("issues array").is_empty(),
+        "Should find version 2.0 issue"
+    );
+    assert!(json["issues"][0]["title"].as_str().unwrap().contains("2.0"));
 }
 
 #[test]
@@ -541,10 +576,19 @@ fn search_finds_content_in_description() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    assert_eq!(json.len(), 1, "Should find issue with TOTP in description");
-    assert!(json[0]["title"].as_str().unwrap().contains("two-factor"));
+    assert_eq!(
+        json["issues"].as_array().expect("issues array").len(),
+        1,
+        "Should find issue with TOTP in description"
+    );
+    assert!(
+        json["issues"][0]["title"]
+            .as_str()
+            .unwrap()
+            .contains("two-factor")
+    );
 }
 
 #[test]
@@ -560,7 +604,8 @@ fn search_finds_content_in_title_only() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let page: Value = serde_json::from_str(&payload).expect("parse json");
+    let json = page["issues"].as_array().cloned().unwrap_or_default();
 
     assert_eq!(json.len(), 1, "Should find issue with Dashboard in title");
     assert!(json[0]["title"].as_str().unwrap().contains("Dashboard"));
@@ -582,7 +627,8 @@ fn search_combined_multiple_filters() {
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
-    let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
+    let page: Value = serde_json::from_str(&payload).expect("parse json");
+    let json = page["issues"].as_array().cloned().unwrap_or_default();
 
     for issue in &json {
         assert_eq!(issue["status"], "open");

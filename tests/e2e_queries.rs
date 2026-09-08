@@ -206,7 +206,8 @@ fn e2e_queries_ready_stale_count_search() {
     let ready = run_br(&workspace, ["ready", "--json"], "ready");
     assert!(ready.status.success(), "ready failed: {}", ready.stderr);
     let ready_payload = extract_json_payload(&ready.stdout);
-    let ready_json: Vec<Value> = serde_json::from_str(&ready_payload).expect("ready json");
+    let ready_page: Value = serde_json::from_str(&ready_payload).expect("ready json");
+    let ready_json = ready_page["issues"].as_array().cloned().unwrap_or_default();
     assert!(ready_json.iter().any(|item| item["id"] == blocker_id));
     assert!(!ready_json.iter().any(|item| item["id"] == blocked_id));
     assert!(!ready_json.iter().any(|item| item["id"] == deferred_id));
@@ -233,8 +234,12 @@ fn e2e_queries_ready_stale_count_search() {
         ready_core.stderr
     );
     let ready_core_payload = extract_json_payload(&ready_core.stdout);
-    let ready_core_json: Vec<Value> =
+    let ready_core_page: Value =
         serde_json::from_str(&ready_core_payload).expect("ready label json");
+    let ready_core_json = ready_core_page["issues"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(ready_core_json.len(), 1);
     assert_eq!(ready_core_json[0]["id"], blocker_id);
 
@@ -245,7 +250,11 @@ fn e2e_queries_ready_stale_count_search() {
         blocked.stderr
     );
     let blocked_payload = extract_json_payload(&blocked.stdout);
-    let blocked_json: Vec<Value> = serde_json::from_str(&blocked_payload).expect("blocked json");
+    let blocked_page: Value = serde_json::from_str(&blocked_payload).expect("blocked json");
+    let blocked_json = blocked_page["issues"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(blocked_json.iter().any(|item| item["id"] == blocked_id));
 
     let blocked_text = run_br(&workspace, ["blocked"], "blocked_text");
@@ -266,7 +275,11 @@ fn e2e_queries_ready_stale_count_search() {
     );
     assert!(search.status.success(), "search failed: {}", search.stderr);
     let search_payload = extract_json_payload(&search.stdout);
-    let search_json: Vec<Value> = serde_json::from_str(&search_payload).expect("search json");
+    let search_page: Value = serde_json::from_str(&search_payload).expect("search json");
+    let search_json = search_page["issues"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(search_json.iter().any(|item| item["id"] == blocker_id));
 
     let search_text = run_br(&workspace, ["search", "Blocker"], "search_text");

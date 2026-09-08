@@ -1828,8 +1828,8 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
         show_external.stderr
     );
     let payload = extract_json_payload(&show_external.stdout);
-    let issues: Vec<serde_json::Value> = serde_json::from_str(&payload).expect("parse show json");
-    let comments = issues[0]["comments"].as_array().expect("comments array");
+    let issue: serde_json::Value = serde_json::from_str(&payload).expect("parse show json");
+    let comments = issue["comments"].as_array().expect("comments array");
     assert!(
         comments.len() >= routed_comment_successes,
         "expected at least {} routed comments to persist, got {}",
@@ -2537,10 +2537,10 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
         "show claim target failed: {}",
         claim_show.stderr
     );
-    let claim_json: Vec<serde_json::Value> =
+    let claim_json: serde_json::Value =
         serde_json::from_str(&extract_json_payload(&claim_show.stdout)).expect("claim show json");
-    assert_eq!(claim_json[0]["status"].as_str(), Some("in_progress"));
-    assert_eq!(claim_json[0]["assignee"].as_str(), Some("alice"));
+    assert_eq!(claim_json["status"].as_str(), Some("in_progress"));
+    assert_eq!(claim_json["assignee"].as_str(), Some("alice"));
 
     // Use --no-auto-import for post-contention reads to avoid SYNC_CONFLICT.
     let defer_show = run_br_in_dir(&root, ["--no-auto-import", "show", &defer_id, "--json"]);
@@ -2549,10 +2549,10 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
         "show defer target failed: {}",
         defer_show.stderr
     );
-    let defer_json: Vec<serde_json::Value> =
+    let defer_json: serde_json::Value =
         serde_json::from_str(&extract_json_payload(&defer_show.stdout)).expect("defer show json");
-    assert_eq!(defer_json[0]["status"].as_str(), Some("deferred"));
-    let defer_until = defer_json[0]["defer_until"]
+    assert_eq!(defer_json["status"].as_str(), Some("deferred"));
+    let defer_until = defer_json["defer_until"]
         .as_str()
         .expect("defer_until should be present");
     assert!(
@@ -3206,10 +3206,10 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
         "show routed issue failed: {}",
         routed_show.stderr
     );
-    let routed_json: Vec<serde_json::Value> =
+    let routed_json: serde_json::Value =
         serde_json::from_str(&extract_json_payload(&routed_show.stdout))
             .expect("parse routed show json");
-    let routed_title = routed_json[0]["title"]
+    let routed_title = routed_json["title"]
         .as_str()
         .expect("routed title should be present");
     assert!(

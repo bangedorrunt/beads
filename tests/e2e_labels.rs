@@ -54,9 +54,8 @@ fn e2e_label_add_single_verify_show() {
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let show_payload = extract_json_payload(&show.stdout);
-    let show_json: Vec<Value> = serde_json::from_str(&show_payload).expect("show json");
-    assert_eq!(show_json.len(), 1);
-    let labels = &show_json[0]["labels"];
+    let show_json: Value = serde_json::from_str(&show_payload).expect("show json");
+    let labels = &show_json["labels"];
     assert!(labels.is_array(), "labels should be array");
     let label_arr: Vec<String> = serde_json::from_value(labels.clone()).unwrap();
     assert!(
@@ -941,8 +940,8 @@ fn e2e_harness_label_rename_fresh() {
     let show1 = ws.run_br(["show", &id1, "--json"], "show1");
     show1.assert_success();
     let show1_payload = harness_extract_json(&show1.stdout);
-    let issues1: Vec<Value> = serde_json::from_str(&show1_payload).expect("show1 json");
-    let labels1: Vec<String> = serde_json::from_value(issues1[0]["labels"].clone()).unwrap();
+    let issue1: Value = serde_json::from_str(&show1_payload).expect("show1 json");
+    let labels1: Vec<String> = serde_json::from_value(issue1["labels"].clone()).unwrap();
     assert!(
         labels1.contains(&"new-label".to_string()),
         "issue1 should have new-label"
