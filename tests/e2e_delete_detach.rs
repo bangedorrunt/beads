@@ -12,11 +12,7 @@ use serde_json::Value;
 
 fn create_id(workspace: &BrWorkspace, title: &str, label: &str) -> String {
     let create = run_br(workspace, ["create", title, "--json"], label);
-    assert!(
-        create.status.success(),
-        "create failed: {}",
-        create.stderr
-    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue: Value =
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     issue["id"].as_str().expect("issue id").to_string()
@@ -57,11 +53,7 @@ fn e2e_delete_detach_drops_edges_and_spares_unrelated_work() {
     );
 
     let delete = run_br(&workspace, ["delete", &mid, "--detach"], "delete_detach");
-    assert!(
-        delete.status.success(),
-        "detach failed: {}",
-        delete.stderr
-    );
+    assert!(delete.status.success(), "detach failed: {}", delete.stderr);
     assert!(
         delete.stdout.contains("Detached 2 edge(s)"),
         "must report both detached edges: {}",
@@ -74,7 +66,10 @@ fn e2e_delete_detach_drops_edges_and_spares_unrelated_work() {
         delete.stdout
     );
 
-    assert_eq!(show_status(&workspace, &mid, "show_mid")["status"], "tombstone");
+    assert_eq!(
+        show_status(&workspace, &mid, "show_mid")["status"],
+        "tombstone"
+    );
     assert_eq!(show_status(&workspace, &a, "show_a")["status"], "open");
     let survivor_c = show_status(&workspace, &c, "show_c");
     assert_eq!(survivor_c["status"], "open");
@@ -83,7 +78,10 @@ fn e2e_delete_detach_drops_edges_and_spares_unrelated_work() {
             .get("dependencies")
             .is_none_or(|d| d.as_array().is_some_and(|d| d.is_empty())),
         "survivor's edge to the deleted issue must be gone: {}",
-        survivor_c.get("dependencies").cloned().unwrap_or(Value::Null)
+        survivor_c
+            .get("dependencies")
+            .cloned()
+            .unwrap_or(Value::Null)
     );
 }
 
@@ -120,7 +118,8 @@ fn e2e_delete_detach_dry_run_changes_nothing() {
             .map(|d| d.len()),
         Some(1),
         "dry-run must not remove the edge"
-    );}
+    );
+}
 
 /// --detach conflicts with --cascade and --force at the clap layer.
 #[test]

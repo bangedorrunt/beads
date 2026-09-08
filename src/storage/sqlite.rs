@@ -33009,7 +33009,9 @@ mod tests {
                 close_verdict TEXT,
                 ac_shape TEXT NOT NULL DEFAULT 'checkable',
                 blast TEXT NOT NULL DEFAULT 'normal',
-                revision INTEGER NOT NULL DEFAULT 1
+                revision INTEGER NOT NULL DEFAULT 1,
+                deliverable TEXT NOT NULL DEFAULT 'diff',
+                promotes TEXT
             );
             CREATE TABLE dependencies (
                 issue_id TEXT NOT NULL,

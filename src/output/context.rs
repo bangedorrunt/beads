@@ -539,6 +539,8 @@ fn issue_counts_toon_fields(row: &IssueWithCounts) -> Option<Vec<&'static str>> 
     push_optional_toon_field(&mut fields, issue.close_verdict.as_ref(), "close_verdict");
     fields.push("ac_shape");
     fields.push("blast");
+    fields.push("deliverable");
+    push_optional_toon_field(&mut fields, issue.promotes.as_ref(), "promotes");
     fields.push("revision");
     fields.push("title");
     push_optional_toon_field(&mut fields, issue.description.as_ref(), "description");
@@ -660,6 +662,10 @@ fn push_toon_issue_counts_field(out: &mut String, row: &IssueWithCounts, field: 
             crate::model::Blast::Normal => "normal",
             crate::model::Blast::High => "high",
         }),
+        "deliverable" => out.push_str(issue.deliverable.as_str()),
+        "promotes" => {
+            push_toon_string_value(out, issue.promotes.as_deref().unwrap_or(""));
+        }
         "revision" => out.push_str(&issue.revision.to_string()),
         "title" => push_toon_string_value(out, &issue.title),
         "description" => push_toon_string_value(out, issue.description.as_deref().unwrap_or("")),
@@ -1954,7 +1960,7 @@ mod tests {
         assert!(
             String::from_utf8(streamed)
                 .expect("TOON output should be utf8")
-            .starts_with("[2]{id,ac_shape,blast,revision,title,description,design,acceptance_criteria,notes,status,priority,issue_type,created_at,created_by,updated_at,source_repo,compaction_level,dependency_count,dependent_count}:")
+            .starts_with("[2]{id,ac_shape,blast,deliverable,revision,title,description,design,acceptance_criteria,notes,status,priority,issue_type,created_at,created_by,updated_at,source_repo,compaction_level,dependency_count,dependent_count}:")
         );
     }
 

@@ -4857,6 +4857,18 @@ fn additive_explicit_scalar_resolution_conflict(
         "source_repo",
         "source_repo_path",
         "agent_context",
+        // Schema v18 (ADR-0001 §5.2) + ADR-0005: typed work-ledger fields
+        // resolvable under an explicit source resolution.
+        "verify",
+        "principles",
+        "wave",
+        "pin",
+        "commit_sha",
+        "close_verdict",
+        "ac_shape",
+        "blast",
+        "deliverable",
+        "promotes",
     ];
     if incoming.updated_at < existing.updated_at {
         return Some("database_newer_source_resolution_forbidden");
@@ -5040,6 +5052,8 @@ fn parse_strict_additive_issue(trimmed: &str, line_num: usize) -> Result<Issue> 
         "close_verdict",
         "ac_shape",
         "blast",
+        "deliverable",
+        "promotes",
         "revision",
         "deleted_at",
         "deleted_by",

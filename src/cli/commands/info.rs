@@ -943,6 +943,7 @@ mod tests {
             "capacity_exemption_history".to_string(),
             "capacity_exemptions".to_string(),
             "capacity_occupancy".to_string(),
+            "captain_holds".to_string(),
             "child_counters".to_string(),
             "close_metadata".to_string(),
             "comments".to_string(),

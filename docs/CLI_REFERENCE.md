@@ -1174,6 +1174,30 @@ br undefer <IDS>... [OPTIONS]
 
 ---
 
+### hold
+
+Captain hold lifecycle (ADR-0005 §4). Park an issue behind a decision; held rows refuse every close path until resolved.
+
+```bash
+br hold <IDS>... --corr <CORR> [OPTIONS]
+br hold <IDS>... --corr <CORR> --resolve
+br hold <IDS>... --list
+br hold <IDS>... --sweep
+```
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `--corr <CORR>` | Correlation id bound to the hold row (required to bind/resolve) |
+| `--kind <KIND>` | Hold kind (default: `captain`; only `captain` is supported) |
+| `--resolve` | Resolve open rows for `--corr` |
+| `--list` | List open hold rows |
+| `--sweep` | Re-surface expired holds (they stay open, never drop) |
+| `--expires-at <RFC3339>` | Hold expiry (expiry re-surfaces, never drops) |
+| `--robot` | Machine-readable output |
+
+---
+
 ### orphans
 
 List orphan issues (referenced in commits but still open).
