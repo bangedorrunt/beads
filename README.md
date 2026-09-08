@@ -1199,7 +1199,7 @@ Quick example:
 
 ```bash
 # Agent workflow
-br ready --json | jq '.[0]'           # Get top priority
+br ready --json | jq '.issues[0]'     # Get top priority
 br update br-abc --status in_progress # Claim work
 # ... do work ...
 br close br-abc --reason "Completed"  # Done; JSONL auto-flushes by default

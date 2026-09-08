@@ -610,7 +610,8 @@ workflow:
   `capacity_kind`, `capacity_name`, `scope`, optional `scope_key`,
   `counting_mode`, `current`, `prospective`, `soft_limit`, optional
   `hard_limit`, and `policy_path`.
-  `update` wraps its normal array as `{updated, warnings}` and `create` as
+  `update` wraps its normal payload as `{updated, warnings}` (a single object
+  for one id, an array for several) and `create` as
   `{created, warnings}`; commands that already return an object add `warnings`
   to that object. The wrapper is never introduced below the soft threshold.
 - Multi-target `update`/`--claim`, `close`, `reopen`, `defer`, and `undefer`
