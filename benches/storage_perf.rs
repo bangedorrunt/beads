@@ -100,7 +100,7 @@ fn create_test_issue(i: usize) -> Issue {
 fn init_bench_logging() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        let _ = beads::logging::init_logging(0, false, None);
+        let _ = beads::logging::init_logging(0, false, false, None);
     });
 }
 
