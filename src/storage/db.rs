@@ -35,7 +35,7 @@ use rusqlite::{Error as RError, OpenFlags as ROpenFlags, Statement, ToSql, param
 /// Replaces the deleted BusyRecovery bounded-retry budget; callers that need
 /// different contention behavior issue their own `PRAGMA busy_timeout`
 /// afterwards, which wins.
-const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
+const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 // ---------------------------------------------------------------------------
 // Errors

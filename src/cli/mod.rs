@@ -3863,9 +3863,8 @@ mod tests {
         "`--reservations <PATH>` | Offline Agent Mail reservation snapshot",
         "`--agents <PATH>` | Offline Agent Mail agent snapshot",
         "br coordination status --reservations reservations.json --agents agents.jsonl --json",
-        "beads://coordination/status",
-        "`issue-with-counts`, `issue-details`",
-    ];
+        "`issue-with-counts`, `issue-details`,",
+    ]; // NOTE: no `beads://` URI sentinel — the MCP surface was removed (ADR-0002 W1).
 
     fn assert_all_top_level_commands_are_documented() {
         let command = Cli::command();

@@ -185,7 +185,7 @@ mod tests {
         graph.add_node("a");
         let bc = betweenness(&graph);
         assert_eq!(bc.len(), 1);
-        assert_eq!(bc[0], 0.0); // No paths through a single node
+        assert!(bc[0].abs() < f64::EPSILON); // No paths through a single node
     }
 
     #[test]
@@ -198,8 +198,8 @@ mod tests {
         let bc = betweenness(&graph);
         assert_eq!(bc.len(), 2);
         // Neither node is on a path between other nodes
-        assert_eq!(bc[a], 0.0);
-        assert_eq!(bc[b], 0.0);
+        assert!(bc[a].abs() < f64::EPSILON);
+        assert!(bc[b].abs() < f64::EPSILON);
     }
 
     #[test]
@@ -217,8 +217,8 @@ mod tests {
         // b is on the path a->c, so betweenness(b) = 1
         assert!(bc[b] > bc[a], "b should have higher betweenness than a");
         assert!(bc[b] > bc[c], "b should have higher betweenness than c");
-        assert_eq!(bc[a], 0.0);
-        assert_eq!(bc[c], 0.0);
+        assert!(bc[a].abs() < f64::EPSILON);
+        assert!(bc[c].abs() < f64::EPSILON);
         assert!((bc[b] - 1.0).abs() < 0.001);
     }
 
@@ -324,7 +324,10 @@ mod tests {
         let bc2 = betweenness_approx(&graph, 5, Some(12345));
 
         for (a, b) in bc1.iter().zip(bc2.iter()) {
-            assert_eq!(a, b, "Same seed should give same results");
+            assert!(
+                (*a - *b).abs() < f64::EPSILON,
+                "Same seed should give same results"
+            );
         }
     }
 
@@ -350,8 +353,8 @@ mod tests {
         // d should be next (on paths a->e, b->e, c->e = 3 paths)
         assert!(bc[c] >= bc[b]);
         assert!(bc[c] >= bc[d]);
-        assert_eq!(bc[a], 0.0);
-        assert_eq!(bc[e], 0.0);
+        assert!(bc[a].abs() < f64::EPSILON);
+        assert!(bc[e].abs() < f64::EPSILON);
     }
 
     #[test]

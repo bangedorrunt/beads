@@ -213,9 +213,11 @@ pub fn legal_close(kind: VerdictKind, bead: &LegalCloseInput<'_>) -> bool {
                 && bead.blast == Blast::Normal
                 && runnable
         }
-        // Row 2 — non-runnable band: WorkerReceipt (+ two-tick grace) or an
-        // independent unit/live verification.
-        VerdictKind::WorkerReceipt => {
+        // Row 2 — non-runnable band: WorkerReceipt (+ two-tick grace),
+        // TriageVerified (reviewed record evidence; distinct audit meaning
+        // is carried by the kind itself), or an independent unit/live
+        // verification.
+        VerdictKind::WorkerReceipt | VerdictKind::TriageVerified => {
             bead.ac == AcShape::Checkable
                 && bead.priority >= 2
                 && bead.blast == Blast::Normal
@@ -225,14 +227,6 @@ pub fn legal_close(kind: VerdictKind, bead: &LegalCloseInput<'_>) -> bool {
         // is the independent verifier at P0/P1, where no command can verify.
         VerdictKind::OperatorDirected => {
             bead.ac == AcShape::Checkable && bead.priority <= 1 && bead.blast == Blast::Normal
-        }
-        // Row 2c — triage close: reviewed record evidence with no applicable
-        // command. Same band as WorkerReceipt, distinct audit meaning.
-        VerdictKind::TriageVerified => {
-            bead.ac == AcShape::Checkable
-                && bead.priority >= 2
-                && bead.blast == Blast::Normal
-                && !runnable
         }
         // Rows 2+3 — independent verification. Legal for the non-runnable
         // band (ADR row 2) and for the P0/P1 / High-blast band (row 3);
@@ -411,9 +405,10 @@ mod tests {
             ReviewerSigned => ac == Judgment,
             VerifierBlocked | VerifierFailed => false,
             CommandVerified => ac == Checkable && priority >= 2 && blast == Normal && runnable,
-            WorkerReceipt => ac == Checkable && priority >= 2 && blast == Normal && !runnable,
+            WorkerReceipt | TriageVerified => {
+                ac == Checkable && priority >= 2 && blast == Normal && !runnable
+            }
             OperatorDirected => ac == Checkable && priority <= 1 && blast == Normal,
-            TriageVerified => ac == Checkable && priority >= 2 && blast == Normal && !runnable,
             // Rows 2+3: independent verification is legal for the
             // non-runnable band AND the P0/P1 / High band; illegal only in
             // the cheap band (CommandVerified-exclusive).

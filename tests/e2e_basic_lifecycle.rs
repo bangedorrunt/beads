@@ -2546,6 +2546,7 @@ fn e2e_no_db_mixed_prefixes_are_supported() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_dotted_ids_survive_no_db_import_update_dep_and_flush() {
     let workspace = BrWorkspace::new();
     let jsonl_path = write_dotted_jsonl_fixture(&workspace);

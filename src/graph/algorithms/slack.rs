@@ -108,7 +108,7 @@ mod tests {
         graph.add_node("a");
         let s = slack(&graph);
         assert_eq!(s.len(), 1);
-        assert_eq!(s[0], 0.0); // Single node is on critical path
+        assert!(s[0].abs() < f64::EPSILON); // Single node is on critical path
     }
 
     #[test]
@@ -123,9 +123,9 @@ mod tests {
         graph.add_edge(b, c);
 
         let s = slack(&graph);
-        assert_eq!(s[a], 0.0);
-        assert_eq!(s[b], 0.0);
-        assert_eq!(s[c], 0.0);
+        assert!(s[a].abs() < f64::EPSILON);
+        assert!(s[b].abs() < f64::EPSILON);
+        assert!(s[c].abs() < f64::EPSILON);
     }
 
     #[test]
@@ -145,12 +145,12 @@ mod tests {
 
         let s = slack(&graph);
         // Critical path is a->b->c (length 3)
-        assert_eq!(s[a], 0.0);
-        assert_eq!(s[b], 0.0);
-        assert_eq!(s[c], 0.0);
+        assert!(s[a].abs() < f64::EPSILON);
+        assert!(s[b].abs() < f64::EPSILON);
+        assert!(s[c].abs() < f64::EPSILON);
         // Shorter chain has slack
-        assert_eq!(s[d], 1.0);
-        assert_eq!(s[e], 1.0);
+        assert!((s[d] - 1.0).abs() < f64::EPSILON);
+        assert!((s[e] - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -173,10 +173,10 @@ mod tests {
         let s = slack(&graph);
         // Both paths a->b->d and a->c->d have same length
         // All nodes on critical path
-        assert_eq!(s[a], 0.0);
-        assert_eq!(s[b], 0.0);
-        assert_eq!(s[c], 0.0);
-        assert_eq!(s[d], 0.0);
+        assert!(s[a].abs() < f64::EPSILON);
+        assert!(s[b].abs() < f64::EPSILON);
+        assert!(s[c].abs() < f64::EPSILON);
+        assert!(s[d].abs() < f64::EPSILON);
     }
 
     #[test]
@@ -198,9 +198,9 @@ mod tests {
 
         let s = slack(&graph);
         // Critical path is a->b->c (length 3)
-        assert_eq!(s[a], 0.0);
-        assert_eq!(s[b], 0.0);
-        assert_eq!(s[c], 0.0);
+        assert!(s[a].abs() < f64::EPSILON);
+        assert!(s[b].abs() < f64::EPSILON);
+        assert!(s[c].abs() < f64::EPSILON);
         // The direct edge a->c creates a shorter path, but slack is per-node
         // All nodes are still on critical path here
     }
@@ -229,13 +229,13 @@ mod tests {
 
         let s = slack(&graph);
         // Critical path: a->c->d->e (length 4)
-        assert_eq!(s[a], 0.0);
-        assert_eq!(s[c], 0.0);
-        assert_eq!(s[d], 0.0);
-        assert_eq!(s[e], 0.0);
+        assert!(s[a].abs() < f64::EPSILON);
+        assert!(s[c].abs() < f64::EPSILON);
+        assert!(s[d].abs() < f64::EPSILON);
+        assert!(s[e].abs() < f64::EPSILON);
         // Shorter path: a->b->f (length 3) has slack 1
-        assert_eq!(s[b], 1.0);
-        assert_eq!(s[f], 1.0);
+        assert!((s[b] - 1.0).abs() < f64::EPSILON);
+        assert!((s[f] - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -289,7 +289,7 @@ mod tests {
 
         let tf = total_float(&graph);
         // d has slack = 3-1 = 2
-        assert_eq!(tf, 2.0);
+        assert!((tf - 2.0).abs() < f64::EPSILON);
     }
 
     #[test]

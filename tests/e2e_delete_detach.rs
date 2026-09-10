@@ -76,7 +76,7 @@ fn e2e_delete_detach_drops_edges_and_spares_unrelated_work() {
     assert!(
         survivor_c
             .get("dependencies")
-            .is_none_or(|d| d.as_array().is_some_and(|d| d.is_empty())),
+            .is_none_or(|d| d.as_array().is_some_and(Vec::is_empty)),
         "survivor's edge to the deleted issue must be gone: {}",
         survivor_c
             .get("dependencies")
@@ -115,7 +115,7 @@ fn e2e_delete_detach_dry_run_changes_nothing() {
     assert_eq!(
         show_status(&workspace, &b, "show_b")["dependencies"]
             .as_array()
-            .map(|d| d.len()),
+            .map(Vec::len),
         Some(1),
         "dry-run must not remove the edge"
     );

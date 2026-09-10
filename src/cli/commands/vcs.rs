@@ -2208,12 +2208,8 @@ mod tests {
             source_capture_timed_out: false,
         };
         let started = Instant::now();
-        let status = collect_git_export_status(
-            &target,
-            2_000,
-            started,
-            started + Duration::from_millis(2_000),
-        );
+        let status =
+            collect_git_export_status(&target, 2_000, started, started + Duration::from_secs(2));
         assert!(status.available, "{status:?}");
         assert_eq!(status.tracked, Some(true));
         assert_eq!(status.worktree_clean, Some(true));

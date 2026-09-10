@@ -123,7 +123,7 @@ fn deliverable_promotes_link_visible_without_ready_gating() {
     // Advisory, not a dependency edge: no blocks/parent edge is created.
     let deps = issue_b.get("dependencies").and_then(Value::as_array);
     assert!(
-        deps.is_none_or(|d| d.is_empty()),
+        deps.is_none_or(Vec::is_empty),
         "promotes must not create a dependency edge: {:?}",
         issue_b.get("dependencies")
     );

@@ -257,44 +257,6 @@ fn run_contention_lab(profile: ContentionProfile) -> io::Result<ContentionRun> {
     Ok(ContentionRun { trace, trace_path })
 }
 
-fn synthetic_successful_contention_trace(
-    profile: ContentionProfile,
-) -> io::Result<ContentionTrace> {
-    let plan = build_plan(&profile);
-    let plan_hash = hash_json(&plan)?;
-    let lock_released_at_ms = profile.lock_hold_ms;
-    let events = plan
-        .into_iter()
-        .map(|planned| ContentionEvent {
-            worker_id: planned.worker_id,
-            event_index: planned.event_index,
-            command_kind: planned.command_kind,
-            command: planned.command,
-            scheduled_at_ms: planned.scheduled_at_ms,
-            started_at_ms: 0,
-            ended_at_ms: lock_released_at_ms.saturating_add(1),
-            lock_wait_ms: lock_released_at_ms,
-            auto_import_event: AutoImportEvent::NotApplicableForMutation,
-            auto_flush_event: AutoFlushEvent::AttemptedAfterSuccessfulMutation,
-            exit_code: 0,
-            stdout_hash: hash_bytes(b"synthetic-success"),
-            stderr_hash: hash_bytes(b""),
-            replay_seed: planned.replay_seed,
-        })
-        .collect::<Vec<_>>();
-    let summary = summarize_events(&events, true, true);
-
-    Ok(ContentionTrace {
-        schema_version: TRACE_SCHEMA_VERSION.to_string(),
-        profile,
-        replay_seed: events.first().map_or(0, |event| event.replay_seed),
-        plan_hash,
-        lock_released_at_ms,
-        events,
-        summary,
-    })
-}
-
 fn run_planned_command(
     root: &Path,
     planned: PlannedCommand,

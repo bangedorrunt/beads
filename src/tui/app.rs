@@ -490,10 +490,8 @@ impl TuiApp {
             return;
         }
         match key {
-            Key::Down | Key::Char('j') => {
-                if self.selected + 1 < count {
-                    self.selected += 1;
-                }
+            Key::Down | Key::Char('j') if self.selected + 1 < count => {
+                self.selected += 1;
             }
             Key::Up | Key::Char('k') => self.selected = self.selected.saturating_sub(1),
             Key::Home => self.selected = 0,
@@ -534,10 +532,8 @@ impl TuiApp {
                 self.search_buffer.pop();
                 self.selected = 0;
             }
-            Key::Down => {
-                if self.selected + 1 < self.visible_count() {
-                    self.selected += 1;
-                }
+            Key::Down if self.selected + 1 < self.visible_count() => {
+                self.selected += 1;
             }
             Key::Up => {
                 self.selected = self.selected.saturating_sub(1);

@@ -96,9 +96,9 @@ mod tests {
         g.add_edge(b, c);
 
         let heights = critical_path_heights(&g);
-        assert_eq!(heights[a], 1.0); // Root
-        assert_eq!(heights[b], 2.0); // Depth 2
-        assert_eq!(heights[c], 3.0); // Depth 3
+        assert!((heights[a] - 1.0).abs() < f64::EPSILON); // Root
+        assert!((heights[b] - 2.0).abs() < f64::EPSILON); // Depth 2
+        assert!((heights[c] - 3.0).abs() < f64::EPSILON); // Depth 3
     }
 
     #[test]
@@ -119,10 +119,10 @@ mod tests {
         g.add_edge(c, d);
 
         let heights = critical_path_heights(&g);
-        assert_eq!(heights[a], 1.0);
-        assert_eq!(heights[b], 2.0);
-        assert_eq!(heights[c], 2.0);
-        assert_eq!(heights[d], 3.0);
+        assert!((heights[a] - 1.0).abs() < f64::EPSILON);
+        assert!((heights[b] - 2.0).abs() < f64::EPSILON);
+        assert!((heights[c] - 2.0).abs() < f64::EPSILON);
+        assert!((heights[d] - 3.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -140,13 +140,13 @@ mod tests {
         g.add_edge(d, e);
 
         let heights = critical_path_heights(&g);
-        assert_eq!(heights[a], 1.0);
-        assert_eq!(heights[b], 2.0);
-        assert_eq!(heights[c], 3.0); // Max
-        assert_eq!(heights[d], 1.0);
-        assert_eq!(heights[e], 2.0);
+        assert!((heights[a] - 1.0).abs() < f64::EPSILON);
+        assert!((heights[b] - 2.0).abs() < f64::EPSILON);
+        assert!((heights[c] - 3.0).abs() < f64::EPSILON); // Max
+        assert!((heights[d] - 1.0).abs() < f64::EPSILON);
+        assert!((heights[e] - 2.0).abs() < f64::EPSILON);
 
-        assert_eq!(critical_path_length(&g), 3.0);
+        assert!((critical_path_length(&g) - 3.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -215,10 +215,10 @@ mod tests {
         g.add_edge(a, e);
 
         let heights = critical_path_heights(&g);
-        assert_eq!(heights[a], 1.0);
-        assert_eq!(heights[b], 2.0);
-        assert_eq!(heights[c], 2.0);
-        assert_eq!(heights[d], 2.0);
-        assert_eq!(heights[e], 2.0);
+        assert!((heights[a] - 1.0).abs() < f64::EPSILON);
+        assert!((heights[b] - 2.0).abs() < f64::EPSILON);
+        assert!((heights[c] - 2.0).abs() < f64::EPSILON);
+        assert!((heights[d] - 2.0).abs() < f64::EPSILON);
+        assert!((heights[e] - 2.0).abs() < f64::EPSILON);
     }
 }

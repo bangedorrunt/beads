@@ -161,7 +161,7 @@ mod tests {
         assert!(result.items.is_empty());
         assert_eq!(result.edges_covered, 0);
         assert_eq!(result.total_edges, 0);
-        assert_eq!(result.coverage_ratio, 1.0);
+        assert!((result.coverage_ratio - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(result.items.len(), 1);
         assert_eq!(result.edges_covered, 1);
         assert_eq!(result.total_edges, 1);
-        assert_eq!(result.coverage_ratio, 1.0);
+        assert!((result.coverage_ratio - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -187,7 +187,7 @@ mod tests {
         assert_eq!(result.items[0].node, 0);
         assert_eq!(result.items[0].edges_added, 3);
         assert_eq!(result.edges_covered, 3);
-        assert_eq!(result.coverage_ratio, 1.0);
+        assert!((result.coverage_ratio - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]

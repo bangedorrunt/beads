@@ -637,11 +637,9 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
                 }
                 heading_level = 0;
             }
-            Event::Start(Tag::Paragraph) => {
-                if !cur_spans.is_empty() {
-                    lines.push(Line::from(cur_spans.clone()));
-                    cur_spans.clear();
-                }
+            Event::Start(Tag::Paragraph) if !cur_spans.is_empty() => {
+                lines.push(Line::from(cur_spans.clone()));
+                cur_spans.clear();
             }
             Event::End(TagEnd::Paragraph) => {
                 if !cur_spans.is_empty() {
@@ -679,11 +677,9 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
             Event::End(TagEnd::Strikethrough) => {}
             Event::Start(Tag::List(_)) | Event::End(TagEnd::List(_)) => {}
             Event::Start(Tag::Item) => cur_spans.push(Span::styled("• ".to_string(), theme::dim())),
-            Event::End(TagEnd::Item) => {
-                if !cur_spans.is_empty() {
-                    lines.push(Line::from(cur_spans.clone()));
-                    cur_spans.clear();
-                }
+            Event::End(TagEnd::Item) if !cur_spans.is_empty() => {
+                lines.push(Line::from(cur_spans.clone()));
+                cur_spans.clear();
             }
             Event::Text(text) => {
                 let mut style = Style::new();
@@ -712,11 +708,9 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
                 cur_spans.push(Span::styled(format!("`{text}`"), theme::status_warning()));
                 _code_inline = false;
             }
-            Event::SoftBreak | Event::HardBreak => {
-                if !cur_spans.is_empty() {
-                    lines.push(Line::from(cur_spans.clone()));
-                    cur_spans.clear();
-                }
+            Event::SoftBreak | Event::HardBreak if !cur_spans.is_empty() => {
+                lines.push(Line::from(cur_spans.clone()));
+                cur_spans.clear();
             }
             Event::Html(_) | Event::FootnoteReference(_) => {}
             _ => {}
