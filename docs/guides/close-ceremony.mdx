@@ -61,3 +61,18 @@ Same REPORT fields in both: status, commit sha, verdict, command + result tail, 
 | Presence-gated closes | `br doctor` flags closes from pins with no live arrival (P5); fix is the door retroactively plus a note in the close reason |
 
 Anti-pattern, stated once: `br close <id> --reason "..."` with no gate row and no sha. Cold agents copy that shape from old transcripts and false-close. The legal path is always gate, work commit, close with that sha.
+
+## Which verdict is legal
+
+The gate engine enforces a verdict legality matrix (source: `src/verify.rs`), so the gate name is not free-form:
+
+| Bead shape | Legal closing verdicts |
+|---|---|
+| P >= 2, blast Normal, VERIFY loop-runnable | `command-verified` only |
+| P >= 2, blast Normal, VERIFY not loop-runnable | `worker-receipt`, `triage-verified`, `unit-test-verified`, or `live-verified` |
+| P <= 1, or blast High | `unit-test-verified` or `live-verified` only |
+| P <= 1, blast Normal, ordered by a human | `operator-directed` (the provider names the human) |
+| Acceptance is judgment | `reviewer-signed` only |
+| Any | never a FAIL row, never missing |
+
+Two refusal rules bite docs and report beads especially: a **report close** (ADR-0005 §2) refuses `unit-test-verified` outright (there is no code under test, so the verdict would be a false witness), and `command-verified` is illegal at P <= 1. `br close --force` still requires the gate row and the cited sha; force never waives evidence. `--suggest-next` attaches follow-up suggestions to the close.

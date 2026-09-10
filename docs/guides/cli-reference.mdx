@@ -43,3 +43,7 @@ description: The command surface, one line each. Always --json for agents; br ne
 | `version` / `upgrade` | Version; self-update |
 
 Formats: `--json` (agents), `--format toon` (token-tight), bare (human, colored). `ACTOR="${BR_ACTOR:-assistant}"` on every mutating command.
+
+Also: `status` (alias of `stats`), `undefer` (make deferred issues ready again), `delete` (tombstone, not a wipe), `query` (manage saved queries), and `vcs-status` (explicitly inspect git visibility of the JSONL export). `update --claim` is shorthand for claim-and-start.
+
+Global flags: `--db <path>` (or `BEADS_DB`), `--actor <name>`, `--lock-timeout <ms>`, `--no-db` (JSONL-only), `--allow-stale` (bypass the freshness warning), `--no-auto-flush` (skip auto-export after mutations), `--no-auto-import` (skip auto-import before reads), `-q/-v/-vv`, `--no-color`.
