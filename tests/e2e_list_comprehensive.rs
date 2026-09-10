@@ -232,7 +232,7 @@ fn e2e_plain_environment_suppresses_configured_color_in_all_text_layouts() {
     assert!(config.status.success(), "{config:?}");
 
     for (args, layout) in [
-        (vec!["list", "--tree"], "tree"),
+        (vec!["list"], "default"),
         (vec!["list", "--pretty"], "pretty"),
         (vec!["list", "--long"], "long"),
         (vec!["search", "NO_COLOR canary"], "search"),

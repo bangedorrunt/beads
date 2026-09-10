@@ -717,7 +717,9 @@ fn render_long_text_issues(
     format_options: TextFormatOptions,
 ) {
     for (index, issue) in issues.iter().enumerate() {
-        ctx.print_line(&format_issue_long_with(issue, format_options));
+        // The formatter sanitizes every untrusted field itself; the colour
+        // it adds afterwards is trusted and must not be re-escaped.
+        ctx.print_styled_line(&format_issue_long_with(issue, format_options));
         if index + 1 != issues.len() {
             ctx.print_line("");
         }
@@ -731,7 +733,8 @@ fn render_pretty_text_issues(
     include_extended: bool,
 ) {
     for (index, issue) in issues.iter().enumerate() {
-        ctx.print_line(&format_issue_pretty_with(
+        // Same trusted-styling contract as the long renderer above.
+        ctx.print_styled_line(&format_issue_pretty_with(
             issue,
             format_options,
             include_extended,

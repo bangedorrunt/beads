@@ -325,7 +325,9 @@ fn render_search_results(
     ));
     for issue in &issues {
         let line = format_issue_line_with(issue, format_options);
-        ctx.print_line(&line);
+        // Trusted styling (untrusted fields already sanitized by the
+        // formatter); `print_line` would escape the colour codes.
+        ctx.print_styled_line(&line);
     }
 
     Ok(())

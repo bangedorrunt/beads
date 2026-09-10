@@ -32,6 +32,16 @@ This changelog is organized by capability rather than diff order. Each version s
   leave the ready set until the corr resolves, matching the documented
   "parks behind one corr" semantics. The holds table is created lazily, so the
   filter is skipped when the table does not exist yet.
+- **Fork-sync from upstream through `5625cad6` (6 cherry-picks):** `br upgrade
+  --version` resolves the `v`-prefixed release tag; documented `BEADS_DB` works
+  as a database-path alias; nonempty `NO_COLOR` beats `display.color`, and
+  `TERM=dumb` selects plain output including diagnostics; `br update --claim`
+  refuses closed issues and deferred issues (with in-transaction recheck so a
+  saved claim cannot undo a later close/deferral); pretty/long/search text
+  layouts print trusted styling instead of literal `\u{1b}` noise while
+  untrusted titles stay escaped. The upstream waiter-queue, MCP, schema-19
+  typed-dependency, prerequisites, and workflow-class changes were deliberately
+  not taken (removed or never-adopted machinery in this fork).
 
 ### Added
 

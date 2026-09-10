@@ -1290,6 +1290,31 @@ impl OutputContext {
         }
     }
 
+    /// Print one line that already carries trusted ANSI styling.
+    ///
+    /// [`Self::print_line`] treats its input as untrusted and escapes every
+    /// control character, so a line assembled by a colouring formatter such
+    /// as `format_issue_line_with(.., use_color = true)` would reach the
+    /// terminal as literal `\u{1b}[38;5;10m` noise. This entry point keeps
+    /// the SGR sequences: in Rich mode they are decoded into styled spans,
+    /// in Plain mode the line is written verbatim.
+    ///
+    /// The caller is responsible for having sanitized every untrusted field
+    /// (`sanitize_terminal_inline` on IDs, titles, labels, ...) BEFORE the
+    /// styling was applied; the formatters in `crate::format::text` do so.
+    /// Never route raw user text through this method.
+    pub fn print_styled_line(&self, content: &str) {
+        match self.mode {
+            OutputMode::Rich => {
+                let mut text = Text::from_ansi(content);
+                text.append("\n");
+                self.console().print_renderable(&text);
+            }
+            OutputMode::Plain => println!("{content}"),
+            OutputMode::Quiet | OutputMode::Json | OutputMode::Toon => {}
+        }
+    }
+
     pub fn render<R: Renderable>(&self, renderable: &R) {
         if self.is_rich() {
             self.console().print_renderable(renderable);
