@@ -180,7 +180,7 @@ and schema/TOON decoding instead.
 | Coordination status evidence (`br.coordination.v1`) | `br coordination status`, coordination model code, and optional offline reservation/agent snapshots | Agents deciding whether an `in_progress` claim is fresh, stale, reclaimable, or blocked by missing Mail evidence | Read-only evidence envelope; no automatic reclaim, no Agent Mail calls, and no git operations | `docs/COORDINATION_EVIDENCE.md`, schema entries for `CoordinationStatusOutput` and `CoordinationClaimRow`, agent workflow examples in this guide | `beads_rust-p1g4` covers command-shape extraction; `beads_rust-q5jt` covers JSON/TOON parity for coordination output |
 | `agent_baseline/` examples and schemas | Curated baseline artifacts generated from representative `br` commands | Agents bootstrapping behavior from examples before running the binary | Checked-in JSON, TOON, schema, and journey artifacts that mirror current CLI contracts | `agent_baseline/README_first_80_lines.md`, `agent_baseline/AGENT_JOURNEY_NOTES.md`, `agent_baseline/examples/`, `agent_baseline/schemas/`, `agent_baseline/robot_mode_examples.jsonl` | `beads_rust-8bq8` defines the one-command verifier; later fixture work should prevent stale baseline artifacts |
 | Snapshot and golden tests for agent output | `tests/snapshots/*`, storage golden snapshots, and focused e2e fixtures | Release reviewers and agents checking whether a contract changed intentionally | Deterministic expected output for representative commands and storage states | `tests/snapshots/cli_output.rs`, `tests/snapshots/json_output.rs`, `tests/snapshots/robot_output.rs`, `tests/snapshots/schema_output.rs`, `tests/snapshots/toon_output.rs`, `tests/storage_golden_snapshot.rs` | `beads_rust-vqs1`, `beads_rust-p1g4`, and `beads_rust-q5jt` make the snapshots harder to update incompletely |
-| MCP resources, tools, and prompts | `src/mcp/resources.rs`, `src/mcp/tools.rs`, `src/mcp/prompts.rs`, and `src/mcp/mod.rs` behind the `mcp` feature | MCP-capable agents using `br serve` instead of shelling out | Stdio-only local server surface with stable resource URIs, tool names, prompt names, and JSON payloads | README and CLI reference MCP sections, this guide's MCP section, in-process MCP code paths | `beads_rust-hu4b` ties MCP metadata and representative payloads to CLI contract fixtures without live clients or network services |
+| MCP surface (removed) | Deleted per ADR-0002 W1; no `mcp` feature, no `br serve` | — | Agents use `br --json ...` shell commands | This guide's MCP section now records the removal; CLI reference MCP sections deleted | — |
 | README and docs command examples | `README.md`, `docs/CLI_REFERENCE.md`, this guide, `docs/SWARM_SCALE_TUNING.md`, `docs/COORDINATION_EVIDENCE.md` | Human operators and agents copying workflow commands | Examples use robot-safe flags, avoid hidden git automation, and state Mail/network boundaries accurately | Review plus `git diff --check`; relevant e2e/snapshot tests cover many listed commands indirectly | `beads_rust-8bq8` documents when to run the full drift verifier before changing docs or examples |
 | `bv` robot handoff expectations | External `bv` binary plus repo guidance in `AGENTS.md`, this guide, and `docs/SWARM_SCALE_TUNING.md` | Agents selecting work by graph priority before claiming with `br` and Agent Mail | Agents use only `--robot-*` or `--recipe ... --robot-*` flags; bare `bv` is interactive and outside `br`'s control | Documented workflow examples only; `bv` is outside the `br` binary and test harness | Keep this as an offline documentation contract; `br` tests should not shell out to live `bv` |
 
@@ -699,98 +699,11 @@ def safe_close(issue_id, reason):
 
 ## MCP Server
 
-`br serve` exposes the issue tracker as a Model Context Protocol server. It is
-an alternative to shelling out to `br --json ...` when an MCP-capable agent wants
-tool discovery, resource reads, guided prompts, and structured tool errors.
-
-### Build and Start
-
-The MCP server is feature-gated and is not included in default builds:
-
-```bash
-cargo build --release --features mcp
-RUST_LOG=error ./target/release/br serve --actor codex
-```
-
-Installed binary:
-
-```bash
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked --features mcp
-RUST_LOG=error br serve --actor codex
-```
-
-Transport is stdio. Configure your MCP client to launch `br` as a child process;
-do not point it at a port.
-
-```json
-{
-  "mcpServers": {
-    "br": {
-      "command": "br",
-      "args": ["serve", "--actor", "codex"],
-      "env": {
-        "RUST_LOG": "error"
-      }
-    }
-  }
-}
-```
-
-### Exposed Surface
-
-Tools:
-
-- `list_issues`
-- `show_issue`
-- `create_issue`
-- `update_issue`
-- `close_issue`
-- `manage_dependencies`
-- `project_overview`
-
-Resources:
-
-- `beads://project/info`
-- `beads://issues/{id}`
-- `beads://schema`
-- `beads://labels`
-- `beads://issues/ready`
-- `beads://issues/blocked`
-- `beads://issues/in_progress`
-- `beads://coordination/status`
-- `beads://issues/deferred`
-- `beads://issues/bottlenecks`
-- `beads://graph/health`
-- `beads://events/recent`
-
-Prompts:
-
-- `triage`
-- `status_report`
-- `plan_next_work`
-- `polish_backlog`
-
-### Safety and Locking
-
-MCP serve uses the same local storage contract as the CLI:
-
-- It opens the current workspace discovered from the process working directory
-  and CLI overrides.
-- It does not run git, push, pull, or talk to remote services.
-- It does not listen on a network socket; access is limited to the client that
-  starts the stdio process.
-- Mutating tools acquire the workspace `.write.lock`, write audit events with
-  the configured `--actor`, and attempt the normal JSONL auto-flush after a
-  successful mutation.
-- Handlers open fresh SQLite connections rather than sharing one long-lived
-  connection across MCP calls.
-
-### When to Prefer MCP
-
-Use MCP when an agent is already MCP-native, needs to discover available actions
-without memorizing CLI flags, or should receive structured recovery data such as
-`suggested_tool_calls`. Use shell commands with `--json` for short scripts,
-bulk pipelines, and workflows that need standard Unix composition with `jq`.
+Removed: the `mcp` feature and `br serve` subcommand were deleted per ADR-0002
+W1 (see CHANGELOG). Agents integrate by shelling out to `br --json ...` —
+short scripts, bulk pipelines, and `jq` composition all go through the CLI.
+Use `br coordination status --json` with the CLI snapshot flags when Agent
+Mail reservation or liveness evidence is required.
 
 ---
 

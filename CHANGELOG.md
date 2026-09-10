@@ -17,6 +17,22 @@ This changelog is organized by capability rather than diff order. Each version s
 
 ## [Unreleased]
 
+### Fixed
+
+- **`br create --deps` parses the documented `type:id` grammar:** `depends`,
+  `depends-on`, and `blocked-by` are accepted as aliases for `blocks`; unknown
+  type prefixes error naming the type and empty ids error naming the id, instead
+  of surfacing as a phantom `Issue not found: depends:<id>` lookup. Whole-token
+  titles containing a colon still resolve verbatim.
+- **`br dep add` refuses type conflicts loudly:** adding a second edge type over
+  an existing pair (e.g. `blocks` over `parent-child`) now errors naming both
+  types instead of silently returning success with no new edge. Same-type
+  duplicates stay idempotent (`already_exists`).
+- **`br ready` excludes captain-held rows:** issues with an open captain hold
+  leave the ready set until the corr resolves, matching the documented
+  "parks behind one corr" semantics. The holds table is created lazily, so the
+  filter is skipped when the table does not exist yet.
+
 ### Added
 
 - **Scout/ship deliverable types + captain hold (ADR-0005, accepted):** typed `deliverable` (`diff` report) set at creation and immutable; `br create --promotes` advisory links; report beads close on artifact existence and refuse `unit-test-verified`; `br hold --kind captain --corr` parks behind a captain decision that teardown, kill, and TTL cannot close (expiry re-surfaces).
@@ -37,6 +53,9 @@ This changelog is organized by capability rather than diff order. Each version s
   dev-dependency), per ADR-0002 W1.
 - Legacy fsqlite sidecar machinery: namespace-gate/WAL-certificate cleanup,
   gitignore rules, and doctor detector/fixer for sidecar modes.
+- Phantom CLI reference sections for `serve`, `agents`, and `changelog`, which
+  documented commands the binary never shipped; README, agent-integration, and
+  swarm-tuning guides now record the MCP removal instead of its setup.
 
 ---
 

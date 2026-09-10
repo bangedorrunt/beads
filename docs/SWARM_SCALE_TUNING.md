@@ -192,33 +192,9 @@ create reservations, release reservations, or auto-reclaim work.
 
 ## MCP Serve Topology
 
-`br serve` is optional and requires the `mcp` feature. It runs over stdio, not a
-TCP port, and it uses the same SQLite/JSONL workspace and lock model as the CLI.
-
-Validated feature discovery:
-
-```bash
-cargo metadata --format-version=1 --no-deps | jq '.packages[0].features | keys'
-```
-
-Manual build and client launch:
-
-```bash
-MCP_TARGET="/data/tmp/br-mcp-target-${AGENT_NAME:-mcp}"
-cargo build --release --features mcp --target-dir "$MCP_TARGET"
-RUST_LOG=error "$MCP_TARGET/release/br" serve --actor "${AGENT_NAME:-mcp}"
-```
-
-Topology guidance:
-
-- One MCP server process per active workspace is usually enough.
-- Use MCP for agents that benefit from discoverable tools/resources/prompts.
-- Use direct CLI calls for simple scripts and batch shell pipelines.
-- Agent Mail remains the reservation layer. MCP is an API surface, not a lock
-  manager.
-- `beads://coordination/status` mirrors `br coordination status --json` for
-  MCP-native agents, but it has no live Agent Mail access; use CLI snapshots for
-  reservation correlation.
+Removed: the `mcp` feature and `br serve` subcommand were deleted per ADR-0002
+W1 (see CHANGELOG). There is no MCP server topology to tune — one workspace,
+direct CLI calls, and Agent Mail remains the reservation layer.
 
 ## Evidence Workflow
 

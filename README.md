@@ -87,9 +87,6 @@ br sync --flush-only                 # Optional final export check before git co
 cd my-project
 br init
 
-# Add agent instructions to AGENTS.md (creates file if needed)
-br agents --add --force
-
 # Create issues with priority (0=critical, 4=backlog)
 br create "Implement user auth" --type feature --priority 1
 # Created: br-7f3a2c
@@ -128,11 +125,11 @@ git handoff to you. It never commits, pushes, pulls, installs hooks, or runs as 
 background service.
 
 Some explicit commands intentionally step outside that default storage boundary:
-`br agents` edits requested agent-instruction files, `br doctor --repair` can fix
+`br doctor --repair` can fix
 the project `.gitignore`, `br config edit/set` updates config files,
 `br completions -o` writes shell completion files, `br upgrade` updates the
-installed binary, and git-reporting commands such as `br changelog`, `br
-orphans`, commit-activity `br stats`, and the explicitly requested bounded
+installed binary, and git-reporting commands such as `br orphans`,
+commit-activity `br stats`, and the explicitly requested bounded
 `br vcs-status` diagnostic inspect git state/history.
 
 ```bash
@@ -238,7 +235,7 @@ Output mode is auto-detected:
 ### 6. Focused Local Scope
 
 br has grown into a full CLI surface for local issue tracking: routing, recovery,
-TOON/JSON schemas, MCP support, conformance checks, and sync safety tools are
+TOON/JSON schemas, conformance checks, and sync safety tools are
 all part of the current scope. The focus is still local-first operation, explicit
 git/VCS handoff, and no background services installed behind your back.
 
@@ -248,8 +245,8 @@ Agent-facing output contracts have a focused verifier:
 BR_AGENT_CONTRACT_USE_RCH=1 ./scripts/verify-agent-contracts.sh
 ```
 
-Run it before changing schema command metadata, CLI JSON/TOON output, MCP
-resources/tools/prompts, README/docs examples, or `agent_baseline/` artifacts.
+Run it before changing schema command metadata, CLI JSON/TOON output,
+README/docs examples, or `agent_baseline/` artifacts.
 With `BR_AGENT_CONTRACT_USE_RCH=1`, the script delegates each Cargo target to
 `rch exec --`. The contract tests do not run git, project network calls, live
 Agent Mail, MCP clients, or fixture update modes.
@@ -356,43 +353,12 @@ cargo build --release --no-default-features
 cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked --no-default-features
 ```
 
-### Enable MCP Server Support
+### MCP Server Support Removed
 
-`br serve` is optional and is not built by the default feature set. Build with
-the `mcp` feature when you want an AI agent to talk to `br` over the Model
-Context Protocol instead of shelling out to CLI commands.
-
-```bash
-cargo build --release --features mcp
-
-# Or install globally with MCP support
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked --features mcp
-```
-
-Run it from an initialized beads workspace:
-
-```bash
-RUST_LOG=error br serve --actor codex
-```
-
-The server uses MCP over stdio. It is launched by an MCP client, does not listen
-on a network port, and uses the same SQLite database, JSONL export path, write
-locks, audit events, and sync safety model as the normal CLI. It does not run
-git. Use shell/JSON
-commands for simple scripts; use MCP when an agent benefits from discoverable
-tools, resources, prompts, and structured recovery hints. MCP clients can read
-`beads://coordination/status` for the same `br.coordination.v1` stale-claim
-evidence shape as `br coordination status --json`; use the CLI snapshot flags
-when Agent Mail reservation or liveness evidence is required.
-
-The MCP tool surface is `list_issues`, `show_issue`, `create_issue`,
-`update_issue`, `close_issue`, `manage_dependencies`, and `project_overview`.
-The resource surface is `beads://project/info`, `beads://issues/{id}`,
-`beads://schema`, `beads://labels`, `beads://issues/ready`,
-`beads://issues/blocked`, `beads://issues/in_progress`,
-`beads://coordination/status`, `beads://issues/deferred`,
-`beads://issues/bottlenecks`, `beads://graph/health`, and
-`beads://events/recent`.
+The `mcp` feature and `br serve` subcommand were removed per ADR-0002 W1 (see
+CHANGELOG). Agents integrate through `br --json ...` shell commands; use
+`br coordination status --json` with the CLI snapshot flags when Agent Mail
+reservation or liveness evidence is required.
 
 ### Verify Installation
 
@@ -524,7 +490,6 @@ git commit -m "Fix: login timeout (br-a1b2c3)"
 | `graph --dependencies` | Show what is blocking an issue | `br graph br-abc123 --dependencies` |
 | `lint` | Check issues for missing template sections | `br lint --status all` |
 | `orphans` | List open issues referenced in commits | `br orphans` |
-| `changelog` | Generate changelog from closed issues | `br changelog --since-tag v0.1.44` |
 | `history` | Manage local history backups | `br history list` |
 | `status` | Alias for project statistics | `br status` |
 
@@ -532,7 +497,6 @@ git commit -m "Fix: login timeout (br-a1b2c3)"
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `agents` | Manage AGENTS.md workflow instructions | `br agents --add --force` |
 | `audit` | Record and label agent interactions | `br audit record --kind note` |
 | `capabilities` | Describe machine-readable contracts and safety guarantees | `br capabilities --format json` |
 | `completions` | Generate shell completions | `br completions zsh` |

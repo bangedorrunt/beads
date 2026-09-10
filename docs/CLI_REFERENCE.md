@@ -42,9 +42,7 @@ Comprehensive reference for all `br` (beads_rust) commands.
 - [Agent Integration](#agent-integration)
   - [capabilities](#capabilities)
   - [robot-docs](#robot-docs)
-  - [serve](#serve)
 - [Diagnostics & Info](#diagnostics--info)
-  - [agents](#agents)
   - [stats / status](#stats--status)
   - [doctor](#doctor)
   - [info](#info)
@@ -53,7 +51,6 @@ Comprehensive reference for all `br` (beads_rust) commands.
   - [version](#version)
   - [audit](#audit)
   - [history](#history)
-  - [changelog](#changelog)
   - [lint](#lint)
 - [Utilities](#utilities)
   - [upgrade](#upgrade)
@@ -188,7 +185,7 @@ br create [OPTIONS] [TITLE]
 | `--owner <EMAIL>` | Set owner email |
 | `-l, --labels <LABELS>` | Labels (comma-separated) |
 | `--parent <ID>` | Parent issue ID (creates parent-child dependency) |
-| `--deps <DEPS>` | Dependencies (format: `type:id,type:id`) |
+| `--deps <DEPS>` | Dependencies (format: `type:id,type:id`; `depends`, `depends-on`, and `blocked-by` are aliases for `blocks`) |
 | `-e, --estimate <MINUTES>` | Time estimate in minutes |
 | `--due <DATE>` | Due date (RFC3339 or relative like `+2d`, `tomorrow`) |
 | `--defer <DATE>` | Defer until date |
@@ -1708,91 +1705,7 @@ br robot-docs guide --format json
 
 ---
 
-### serve
-
-Start an MCP (Model Context Protocol) server on stdio.
-
-```bash
-br serve [OPTIONS]
-```
-
-`serve` is only available in binaries built with the optional `mcp` feature:
-
-```bash
-cargo build --release --features mcp
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked --features mcp
-```
-
-**Options:**
-
-| Option | Description |
-|--------|-------------|
-| `--actor <NAME>` | Actor name recorded for mutations (default: `mcp`) |
-
-**Transport:** stdio. An MCP client launches `br serve`; `br` does not open a
-network listener.
-
-**Tools:** `list_issues`, `show_issue`, `create_issue`, `update_issue`,
-`close_issue`, `manage_dependencies`, `project_overview`.
-
-**Resources:** `beads://project/info`, `beads://issues/{id}`,
-`beads://schema`, `beads://labels`, `beads://issues/ready`,
-`beads://issues/blocked`, `beads://issues/in_progress`,
-`beads://coordination/status`, `beads://issues/deferred`,
-`beads://issues/bottlenecks`, `beads://graph/health`,
-`beads://events/recent`.
-
-**Prompts:** `triage`, `status_report`, `plan_next_work`, `polish_backlog`.
-
-**Safety:** MCP mutations use the same local storage, audit trail, `.write.lock`,
-and JSONL auto-flush behavior as CLI mutations. The server never runs git and
-does not synchronize repositories. `beads://coordination/status` is read-only
-and does not call Agent Mail; use `br coordination status --reservations
-<PATH> --agents <PATH> --json` when reservation evidence is required.
-
-**Example MCP client entry:**
-
-```json
-{
-  "mcpServers": {
-    "br": {
-      "command": "br",
-      "args": ["serve", "--actor", "codex"],
-      "env": {
-        "RUST_LOG": "error"
-      }
-    }
-  }
-}
-```
-
-Use `serve` when an MCP-native agent benefits from tool/resource discovery and
-structured recovery hints. Use `br --json ...` when a shell pipeline or `jq`
-script is simpler.
-
----
-
 ## Diagnostics & Info
-
-### agents
-
-Manage the Beads workflow section in an `AGENTS.md` file.
-
-```bash
-br agents [OPTIONS]
-```
-
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--add` | Add beads workflow instructions to `AGENTS.md` |
-| `--remove` | Remove beads workflow instructions from `AGENTS.md` |
-| `--update` | Update beads workflow instructions to the latest version |
-| `--check` | Check status only (default behavior) |
-| `--dry-run` | Preview changes without modifying files |
-| `-f, --force` | Skip confirmation prompts |
-
----
 
 ### stats / status
 
@@ -2012,22 +1925,6 @@ br history <COMMAND>
 
 **Notes:**
 - Backups are created during `br sync --flush-only` when overwriting a JSONL file inside `.beads/`, including custom `BEADS_JSONL` paths that still target `.beads/`.
-
----
-
-### changelog
-
-Generate changelog from closed issues.
-
-```bash
-br changelog [OPTIONS]
-```
-
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--since <DATE>` | Include issues closed since date |
-| `--format <FMT>` | Output format: markdown, json |
 
 ---
 
