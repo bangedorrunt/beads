@@ -1,0 +1,50 @@
+---
+title: br quick start
+description: Init a workspace, create dispatchable beads, find and claim work.
+---
+
+## One-time
+
+```bash
+br init          # creates .beads/ in the workspace
+br where         # confirm the workspace
+```
+
+## Find work
+
+```bash
+br ready --json      # open, unblocked, not deferred, dispatchable
+br blocked --json    # what is waiting on dependencies
+br next --json       # the single top claimable pick, fail-closed
+br triage --json     # scored recommendations when the queue is messy
+```
+
+## Claim and work
+
+```bash
+ACTOR="${BR_ACTOR:-assistant}"
+br update --actor "$ACTOR" <id> --status in_progress --assignee "flywheel-toron-coder"
+```
+
+The assignee is the herdr slug, never a pin. Pins belong to mail. Announce the claim on the bead thread: `toron mail send --to captain --thread <id> --subject "[<id>] starting"`.
+
+## Create a bead that agents can dispatch
+
+Two fields make a bead dispatchable, and `ready` enforces both:
+
+```bash
+br create --actor "$ACTOR" "Add retry to uploader" -t task -p 1 --json
+br update --actor "$ACTOR" <id> --verify 'cargo test -p uploader retry'
+br update --actor "$ACTOR" <id> --principle 'prove-it-works — the VERIFY fence runs the real command'
+```
+
+Priority <= 2 requires a principles citation (`name — decision it changed`, names from `flywheel principles list`). The VERIFY fence holds exactly one command line.
+
+## Close it
+
+Work, then the ceremony: gate row, work commit citing the id, close with that sha, sync, mail. The full sequence lives in [close-ceremony](./close-ceremony).
+
+```bash
+br sync --flush-only
+git add .beads/ && git commit -m "chore(beads): close <id>"
+```

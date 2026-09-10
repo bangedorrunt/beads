@@ -1,0 +1,63 @@
+---
+title: The close ceremony
+description: Gate rows, sha citation, the one-report-two-channels rule, and every way a close refuses.
+---
+
+The close is where br earns "fail-closed". A close without a legal pass gate row and a `--commit-sha` is illegal. The sha is resolved and its commit message must cite the bead id; a sibling lane's commit, a beads-only commit, or an old HEAD fails loud. Verify before closing:
+
+```bash
+git show -s --format=%s <sha>     # must name your bead id
+```
+
+Commits are attributed: export `AGENT_NAME` (your pin); unattributed commits fail closed even under a shared lease. A VERIFY fence holding one runnable command closes only via `command-verified`: state the commands you actually ran. The pre-commit guard adds a second net: bead-tagged hunks in a staged diff must appear in the commit message, and commits are attributed to a pin.
+
+## The sequence
+
+```mermaid
+flowchart TD
+    W["work done"] --> G["br gate report <id> --gate <verdict> --provider <pin> --status pass --to closed"]
+    G -->|no pass row| R["close refused"]
+    G -->|pass row| C["git commit: feat: ... (bd-###)"]
+    C --> V{"subject cites the bead?"}
+    V -->|no| R
+    V -->|yes| CL["br close <id> --commit-sha <sha> --reason REPORT"]
+    CL --> S["br sync --flush-only"]
+    S --> GC["git add .beads/ + commit"]
+    GC --> M["mail '[bd-###] done' on --thread bd-###"]
+```
+
+```bash
+export AGENT_NAME="<your-pin>"
+br gate report <id> --gate unit-test-verified --provider "$AGENT_NAME" --status pass --to closed
+git commit -m "feat: add retry to uploader (bd-z2d0)"
+br close <id> --commit-sha "$(git rev-parse HEAD)" --reason "Implemented retry; commit ...; verdict unit-test-verified; ran <VERIFY cmd> => <tail>; deviations: none; PRINCIPLES: prove-it-works — ran the fence"
+br sync --flush-only
+git add .beads/ && git commit -m "chore(beads): close <id>"
+```
+
+The workflow per bead decides which gates the close transition requires; `br gate list <id> --json` shows the required-gate status (`gated_transitions`). Report only gates the workflow requires there; a gate name outside the list fails validation. When no gate is required, record the evidence row anyway (`br gate report --gate command-verified ... --status pass` without `--to closed`): the ledger keeps the receipt even when the transition is ungated.
+
+Gate wrapper details: `flywheel ledger check` exits 0 only on a legal verdict for the current sha; `flywheel ledger receipt` writes the receipt file. Workers never write verdicts directly.
+
+## One report, two channels
+
+The close is one report with two copies:
+
+- `--reason`: durable, ledger-gated, the canonical record.
+- `toron mail send --to captain --thread <id> --subject "[<id>] done"`: the captain's copy. The captain has no push channel; without this mail the close is invisible to whoever coordinates.
+
+Same REPORT fields in both: status, commit sha, verdict, command + result tail, deviations, principles cited.
+
+## Close-side gates elsewhere in the stack
+
+| Gate | Enforced by |
+|---|---|
+| Pass row for the gates the workflow requires | `br close` |
+| Sha must cite the bead | `br close` resolution |
+| Bead-tagged diff hunks must appear in the commit message | pre-commit strict guard |
+| Attributed commits | pre-commit strict guard (`AGENT_NAME`) |
+| Catalog freshness | CI test against `toron catalog` |
+| Reservation guard | pre-commit hook (`toron guard install`) |
+| Presence-gated closes | `br doctor` flags closes from pins with no live arrival (P5); fix is the door retroactively plus a note in the close reason |
+
+Anti-pattern, stated once: `br close <id> --reason "..."` with no gate row and no sha. Cold agents copy that shape from old transcripts and false-close. The legal path is always gate, work commit, close with that sha.

@@ -1,0 +1,43 @@
+---
+title: br troubleshooting
+description: Anti-patterns, named failures, and diagnostics.
+---
+
+## Anti-patterns
+
+| Anti-pattern | Why it fails | Do this |
+|---|---|---|
+| `br close --reason "..."` with no gate row, no sha | Fails closed; cold agents copying it false-close in other repos | gate, work commit, close with that sha |
+| Closing on a sibling lane's commit, a beads-only commit, or old HEAD | The sha must cite the bead; resolution fails loud | `git show -s --format=%s <sha>` first |
+| Reporting a gate the workflow does not require | `VALIDATION_FAILED: workflow does not require gate ...` | `br gate list <id> --json` shows required gates; record evidence rows without `--to closed` |
+| `br sync` with neither flag | Does nothing | `--flush-only` before commit, `--import-only` after pull |
+| Assuming auto-commit | br never runs git | Commit `.beads/` yourself, every time |
+| Cycles in the dep graph | `ready` becomes unreliable | `br dep cycles` must stay empty |
+| Inventing closure evidence | The ledger stops being trust | Unsure: comment, do not close |
+| Bare `br` in scripts | Human TTY output | `--json` (or `--format toon`) everywhere |
+| Binary `bd` | That is the old Go version | `br` |
+
+## Named failures
+
+| Symptom | Fix |
+|---|---|
+| `database locked` | Another br process holds the write lock: `pgrep -f "br "`, wait or stop it |
+| `'main' is already checked out` (worktree) | `git branch beads-sync main` then `br config set sync.branch beads-sync` |
+| `ready` empty but beads are open and unblocked | They are not dispatchable: the output names the count missing VERIFY; `br update <id> --verify '<cmd>'` |
+| `br next` degrades with a reason | Same gate; the reason names the failing bead |
+| Unattributed commit blocked | Export `AGENT_NAME` (your pin) in the committing shell; attribution comes from the env, not the lease |
+| `strict guard: unattributed bead-tagged hunks` | A staged diff contains a `bd-*` token absent from the commit message; cite the bead in the message (or fix the placeholder) |
+| `br doctor` lists unarrived closes | P5: closes without session entry; run the door retroactively, note the gap in the close reason |
+| Import after pull lost comments | You flushed over them; `br sync --status`, then re-import from the pulled JSONL |
+
+## Diagnostics
+
+```bash
+br doctor              # full diagnostics
+br lint --json         # missing template sections
+br orphans             # referenced in commits, still open
+br coordination        # swarm claims, no mutation
+which br && br version
+```
+
+Verbose: `br -v list`, `br -vv list`, `RUST_LOG=debug br list`.

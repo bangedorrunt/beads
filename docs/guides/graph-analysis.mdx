@@ -1,0 +1,45 @@
+---
+title: Graph analysis
+description: Dependencies, holds, and the native analysis surfaces: triage, next, plan, insights.
+---
+
+## Dependencies
+
+```bash
+br dep add <child> <parent>                     # child depends on parent
+br dep add <id> --on <sibling>/<bead> --type blocks   # cross-repo: external:<project>:<bead>
+br dep remove <child> <parent>
+br dep list <id> --json
+br dep tree <id> --json
+br dep cycles --json                            # MUST be empty
+```
+
+Circular dependencies break `ready` and are forbidden: keep `dep cycles` empty. Cross-repo `external:` deps are leaves for local cycle detection; the foreign tracker owns foreign cycles, and an unreadable sibling `.beads` stays blocked (fail-visible, not silent).
+
+Captain holds ring once when a foreign bead closes: `br hold --kind captain --corr external:<proj>:<bead> <your-bead>`. You still resolve the hold; the hold is the wake, not the resolution.
+
+## Native analysis (ADR-0003)
+
+```bash
+br triage --json     # scored recommendations, quick_ref, project health
+br next --json       # the single top claimable pick, fail-closed
+br plan --json       # parallel execution tracks over the actionable set
+br insights --json   # PageRank, betweenness, cycles, k-core, slack, velocity
+br graph <id>        # what this issue unblocks
+br scheduler         # ranked ready work with explainable evidence
+```
+
+Robot parity: `--robot-triage`, `--robot-next`, `--robot-plan`, `--robot-insights` are 1:1 aliases; `argv[0] == bv` maps the same way (busybox style). An unknown `--robot-*` fails closed with a JSON error and exit 2.
+
+## Triage discipline
+
+Classify each issue into exactly one action:
+
+| Classification | Action |
+|---|---|
+| `implemented` | Close with evidence (commit, PR, file, behavior) |
+| `out-of-scope` | Close with the explicit boundary |
+| `needs-clarification` | Comment with the specific unanswered questions |
+| `actionable` | Keep open; correct status, priority, labels, deps |
+
+During bulk triage, checkpoint every few updates: `br ready --json`, `br blocked --json`. Modify only the issues in scope; speculative dependencies are an anti-pattern, not a convenience.

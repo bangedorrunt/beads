@@ -1,0 +1,45 @@
+---
+title: br CLI reference
+description: The command surface, one line each. Always --json for agents; br never runs git.
+---
+
+| Command | Purpose |
+|---|---|
+| `init` | Create `.beads/` in the workspace |
+| `create` / `q` | New issue (full flags); quick capture printing the id only |
+| `show <id>` | Issue details with dependencies |
+| `update` | Status, priority, assignee, labels, parent, `--verify`, `--principle`; accepts multiple ids |
+| `close` | Fail-closed: required gates + `--commit-sha` + reason |
+| `reopen` | Back to open |
+| `ready` | Dispatchable work (VERIFY + principles gates applied) |
+| `blocked` | Open issues with named blockers |
+| `list` | All issues; filter by `--status`, `--priority`, `--assignee`, `--sort` |
+| `search` | Full-text over title, description, id, comments |
+| `count` | Counts with `--by status` grouping |
+| `stale` | No movement in N days |
+| `dep` | `add\|remove\|list\|tree\|cycles` |
+| `label` | `add\|remove\|list\|list-all` |
+| `comments` | `add\|list` |
+| `hold` | Captain hold lifecycle; cross-project wake via `--corr external:...` |
+| `defer` | Schedule for later |
+| `gate` | Workflow gate engine: `report` records results, `list` shows recorded rows and required-gate status per issue |
+| `triage` / `next` / `plan` / `insights` | Native graph analysis (bv parity; `--robot-*` aliases) |
+| `scheduler` | Ranked ready work with explainable evidence |
+| `graph` | Dependents graph: what an issue unblocks |
+| `epic` | Epic management |
+| `orphans` | Referenced in commits but still open |
+| `lint` | Issues missing template sections |
+| `doctor` | Diagnostics; lists unarrived closes (P5 audit) |
+| `stats` / `count` / `where` / `info` | Project statistics, grouped counts, workspace location, metadata |
+| `config` | `get\|set\|list` (for example `id.prefix`, `defaults.priority`, `sync.branch`) |
+| `sync` | `--flush-only` export, `--import-only` import, `--status` |
+| `history` | Local history backups |
+| `audit` | Append-only agent interaction log |
+| `coordination` | Swarm coordination diagnosis, no mutations |
+| `schema` | JSON schemas for every command envelope |
+| `capabilities` | Machine-readable contracts and safety guarantees |
+| `robot-docs` | Concise in-tool docs for automation agents |
+| `completions` | Shell completions |
+| `version` / `upgrade` | Version; self-update |
+
+Formats: `--json` (agents), `--format toon` (token-tight), bare (human, colored). `ACTOR="${BR_ACTOR:-assistant}"` on every mutating command.
