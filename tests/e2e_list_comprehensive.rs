@@ -15,7 +15,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, parse_list_issues, parse_list_page, run_br};
+use common::cli::{BrWorkspace, parse_list_issues, parse_list_page, run_br, run_br_with_env};
 
 fn parse_created_id(stdout: &str) -> String {
     let line = stdout.lines().next().unwrap_or("");
@@ -192,6 +192,26 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
 // =============================================================================
 // BASIC LISTING TESTS
 // =============================================================================
+
+/// Drop CSI sequences (`ESC [ ... final-byte`) so a coloured run can be
+/// compared against its plain twin.
+fn strip_csi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for param in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&param) {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
 
 #[test]
 fn e2e_plain_environment_suppresses_configured_color_in_all_text_layouts() {

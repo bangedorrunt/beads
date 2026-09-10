@@ -5650,7 +5650,9 @@ pub fn default_issue_type_from_layer(layer: &ConfigLayer) -> Result<IssueType> {
 /// Accepts keys: `display.color`, `display-color`, `display_color`.
 #[must_use]
 pub fn display_color_from_layer(layer: &ConfigLayer) -> Option<bool> {
-    get_value(layer, &["display.color", "display-color", "display_color"])
+    const KEYS: &[&str] = &["display.color", "display-color", "display_color"];
+    get_startup_value(layer, KEYS)
+        .or_else(|| get_value(layer, KEYS))
         .and_then(|value| parse_bool(value))
 }
 

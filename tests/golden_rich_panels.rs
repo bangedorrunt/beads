@@ -183,11 +183,26 @@ fn sh_quote(value: &OsStr) -> String {
 }
 
 fn run_rich_br(root: &Path, width: usize, args: &[&str]) -> String {
+    run_rich_br_with_env(root, width, &[], args)
+}
+
+/// Run br under a pseudo-terminal with extra `KEY=VALUE` assignments placed
+/// in front of the command (so they reach br, not `script`).
+fn run_rich_br_with_env(
+    root: &Path,
+    width: usize,
+    extra_env: &[(&str, &str)],
+    args: &[&str],
+) -> String {
     let br_bin = assert_cmd::cargo::cargo_bin!("br");
     let mut command_parts = vec![sh_quote(br_bin.as_os_str())];
     command_parts.extend(args.iter().map(|arg| sh_quote(OsStr::new(arg))));
+    let mut env_prefix = String::new();
+    for (key, value) in extra_env {
+        env_prefix.push_str(&format!("{key}={} ", sh_quote(OsStr::new(value))));
+    }
     let command_line = format!(
-        "stty cols {width} rows 40 && COLUMNS={width} {}",
+        "stty cols {width} rows 40 && COLUMNS={width} {env_prefix}{}",
         command_parts.join(" ")
     );
 
@@ -465,7 +480,7 @@ fn plain_terminal_controls_preserve_diagnostics_without_ansi() {
             &[
                 ("NO_COLOR", no_color),
                 ("TERM", term),
-                 ("RUST_LOG", "beads=debug"),
+                ("RUST_LOG", "beads=debug"),
             ],
             &args,
         );
@@ -495,7 +510,9 @@ fn human_errors_honor_terminal_color_controls() {
         );
         let mut cmd = Command::new("script");
         cmd.current_dir(&fixture.root);
-        cmd.args(["-q", "-e", "-c", &command_line, "/dev/null"]);
+        // Portable pseudo-terminal invocation (see run_rich_br_with_env):
+        // BSD script(1) (macOS) has no -c/-e flags.
+        cmd.args(["-q", "/dev/null", "sh", "-c", &command_line]);
         clear_inherited_br_env(&mut cmd);
         cmd.env("HOME", &fixture.root);
         cmd.env("TERM", term);

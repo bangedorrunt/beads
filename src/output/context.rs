@@ -1145,8 +1145,7 @@ impl OutputContext {
             OutputMode::Json
         } else if quiet {
             OutputMode::Quiet
-        } else if no_color || std::env::var("NO_COLOR").is_ok() || !std::io::stdout().is_terminal()
-        {
+        } else if no_color || plain_output_forced_by_environment() {
             OutputMode::Plain
         } else {
             OutputMode::Rich
@@ -1169,10 +1168,7 @@ impl OutputContext {
             OutputFormat::Text | OutputFormat::Csv => {
                 if quiet {
                     OutputMode::Quiet
-                } else if no_color
-                    || std::env::var("NO_COLOR").is_ok()
-                    || !std::io::stdout().is_terminal()
-                {
+                } else if no_color || plain_output_forced_by_environment() {
                     OutputMode::Plain
                 } else {
                     OutputMode::Rich
@@ -1206,10 +1202,7 @@ impl OutputContext {
                 OutputFormat::Text | OutputFormat::Csv => {}
             }
         }
-        if args.no_color || std::env::var("NO_COLOR").is_ok() {
-            return OutputMode::Plain;
-        }
-        if !std::io::stdout().is_terminal() {
+        if args.no_color || plain_output_forced_by_environment() {
             return OutputMode::Plain;
         }
         OutputMode::Rich
