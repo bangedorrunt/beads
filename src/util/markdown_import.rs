@@ -452,7 +452,10 @@ pub fn validate_dependency_type(dep_type: &str) -> Option<&str> {
     if let Ok(dt) = DependencyType::from_str(dep_type) {
         if let DependencyType::Custom(_) = dt {
             // Check for legacy/alias support not in standard enum
-            if dep_type.eq_ignore_ascii_case("blocked-by") {
+            if dep_type.eq_ignore_ascii_case("blocked-by")
+                || dep_type.eq_ignore_ascii_case("depends")
+                || dep_type.eq_ignore_ascii_case("depends-on")
+            {
                 return Some(dep_type);
             }
             return None;

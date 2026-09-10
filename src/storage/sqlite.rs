@@ -10068,11 +10068,12 @@ impl SqliteStorage {
         Ok(members)
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::fn_params_excessive_bools)]
     fn build_ready_issue_candidates_query(
         filters: &ReadyFilters,
         sort: ReadySortPolicy,
         exclude_blocked_in_sql: bool,
+        exclude_held_in_sql: bool,
         apply_limit: bool,
         projection: ReadyIssueProjection,
         apply_ordering: bool,
@@ -10125,6 +10126,16 @@ impl SqliteStorage {
         // recomputing the blocker graph from dependencies.
         if exclude_blocked_in_sql {
             sql.push_str(" AND issues.id NOT IN (SELECT issue_id FROM blocked_issues_cache)");
+        }
+
+        // Ready condition 2b: captain-held rows are parked behind their corr
+        // (ADR-0005) and never dispatchable while any hold is open. The table
+        // is created lazily on first bind, so callers pass false when it does
+        // not exist yet (nothing can be held then).
+        if exclude_held_in_sql {
+            sql.push_str(
+                " AND issues.id NOT IN (SELECT issue_id FROM captain_holds WHERE open = 1)",
+            );
         }
 
         // Ready condition 3: `defer_until` is NULL or <= now (unless `include_deferred`)
@@ -10292,10 +10303,14 @@ impl SqliteStorage {
         }
 
         let sort_hybrid_in_rust = sort == ReadySortPolicy::Hybrid && filters.limit.is_none();
+        // The holds table is created lazily on first bind; when it does not
+        // exist yet nothing can be held, so skip the subquery (it would fail).
+        let exclude_held_in_sql = crate::storage::schema::table_exists(&self.conn, "captain_holds");
         let (sql, params) = Self::build_ready_issue_candidates_query(
             filters,
             sort,
             exclude_blocked_in_sql,
+            exclude_held_in_sql,
             apply_limit,
             projection,
             !sort_hybrid_in_rust,
@@ -11013,10 +11028,12 @@ impl SqliteStorage {
         direct_blocked_ids: Option<&HashSet<String>>,
         exclude_blocked_in_sql: bool,
     ) -> Result<HashSet<String>> {
+        let exclude_held_in_sql = crate::storage::schema::table_exists(conn, "captain_holds");
         let (sql, params) = Self::build_ready_issue_candidates_query(
             &ReadyFilters::default(),
             ReadySortPolicy::Priority,
             exclude_blocked_in_sql,
+            exclude_held_in_sql,
             false,
             ReadyIssueProjection::Command,
             false,
@@ -12079,7 +12096,7 @@ impl SqliteStorage {
 
     fn canonical_standard_dependency_type(dep_type: &str) -> Option<&'static str> {
         match dep_type.to_ascii_lowercase().as_str() {
-            "blocks" => Some("blocks"),
+            "blocks" | "blocked-by" | "depends" | "depends-on" => Some("blocks"),
             "parent-child" => Some("parent-child"),
             "conditional-blocks" => Some("conditional-blocks"),
             "waits-for" => Some("waits-for"),
@@ -12373,6 +12390,7 @@ impl SqliteStorage {
     ///
     /// Returns an error if the dependency is invalid, the metadata is not valid JSON,
     /// or the database update fails.
+    #[allow(clippy::too_many_lines)]
     pub fn add_dependency_with_metadata(
         &mut self,
         issue_id: &str,
@@ -12434,14 +12452,32 @@ impl SqliteStorage {
             }
 
             let existing = conn.query_with_params(
-                "SELECT 1 FROM dependencies WHERE issue_id = ? AND depends_on_id = ? LIMIT 1",
+                "SELECT type FROM dependencies WHERE issue_id = ? AND depends_on_id = ? LIMIT 1",
                 &[
                     SqliteValue::from(issue_id),
                     SqliteValue::from(depends_on_id),
                 ],
             )?;
-            if !existing.is_empty() {
-                return Ok(false);
+            if let Some(row) = existing.first() {
+                let existing_type = row
+                    .get(0)
+                    .and_then(SqliteValue::as_text)
+                    .unwrap_or("unknown");
+                if existing_type.eq_ignore_ascii_case(dep_type) {
+                    return Ok(false);
+                }
+                // One pair carries one edge: a second type over the same
+                // pair is never silently swallowed. Name both types so the
+                // caller knows which edge already exists.
+                return Err(BeadsError::Validation {
+                    field: "type".to_string(),
+                    reason: format!(
+                        "dependency {issue_id} -> {depends_on_id} already exists as \
+                         '{existing_type}', not '{dep_type}' (parent-child is hierarchy, \
+                         blocks is ordering — one pair carries one edge). Remove the old \
+                         edge first if you meant to replace it"
+                    ),
+                });
             }
 
             // Cycle check runs INSIDE the transaction (BEGIN IMMEDIATE) to
@@ -25900,11 +25936,20 @@ mod tests {
             .add_dependency("bd-existing-b", "bd-existing-a", "blocks", "tester")
             .unwrap();
 
-        let added = storage
+        let err = storage
             .add_dependency("bd-existing-a", "bd-existing-b", "blocks", "tester")
-            .expect("existing pair should return unchanged instead of false cycle");
-
-        assert!(!added);
+            .expect_err(
+                "existing pair with a different type must refuse loudly, never silently coalesce",
+            );
+        let message = err.to_string();
+        assert!(
+            !matches!(err, BeadsError::DependencyCycle { .. }),
+            "type conflict must not surface as a false cycle: {message}"
+        );
+        assert!(
+            message.contains("related") && message.contains("blocks"),
+            "conflict must name both types, got: {message}"
+        );
         let dep_types: Vec<String> = storage
             .get_dependencies_full("bd-existing-a")
             .unwrap()
@@ -26577,6 +26622,83 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, BeadsError::IssueNotFound { id } if id == "bd-missing"));
+    }
+
+    #[test]
+    fn dep_add_conflict_loud() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 7, 2, 0, 0, 0).unwrap();
+
+        let issue_a = make_issue("bd-a1", "A", Status::Open, 2, None, t1, None);
+        let issue_b = make_issue("bd-b1", "B", Status::Open, 2, None, t1, None);
+        storage.create_issue(&issue_a, "tester").unwrap();
+        storage.create_issue(&issue_b, "tester").unwrap();
+
+        // Same-type duplicate stays idempotent.
+        assert!(
+            storage
+                .add_dependency("bd-a1", "bd-b1", "blocks", "tester")
+                .unwrap()
+        );
+        assert!(
+            !storage
+                .add_dependency("bd-a1", "bd-b1", "blocks", "tester")
+                .unwrap()
+        );
+
+        // A different type over the same pair must fail loudly, naming
+        // both the existing and the requested type — never silent success.
+        let err = storage
+            .add_dependency("bd-a1", "bd-b1", "parent-child", "tester")
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("blocks") && message.contains("parent-child"),
+            "conflict must name both types, got: {message}"
+        );
+
+        // The original edge is untouched.
+        let deps = storage.get_dependencies_full("bd-a1").unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].dep_type.as_str(), "blocks");
+    }
+
+    #[test]
+    fn ready_excludes_held() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 7, 2, 0, 0, 0).unwrap();
+
+        let issue = make_issue("bd-held-1", "Held", Status::Open, 2, None, t1, None);
+        storage.create_issue(&issue, "tester").unwrap();
+
+        let ready_ids = |storage: &SqliteStorage| {
+            storage
+                .get_ready_issues(&ReadyFilters::default(), ReadySortPolicy::Priority)
+                .unwrap()
+                .into_iter()
+                .map(|issue| issue.id)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            ready_ids(&storage).contains(&"bd-held-1".to_string()),
+            "unheld bead must be ready"
+        );
+
+        storage
+            .bind_captain_hold("bd-held-1", "corr-a", None, "tester")
+            .unwrap();
+        assert!(
+            !ready_ids(&storage).contains(&"bd-held-1".to_string()),
+            "captain-held bead must leave the ready set"
+        );
+
+        storage
+            .resolve_captain_hold("bd-held-1", "corr-a", "tester")
+            .unwrap();
+        assert!(
+            ready_ids(&storage).contains(&"bd-held-1".to_string()),
+            "resolved bead must return to ready"
+        );
     }
 
     #[test]

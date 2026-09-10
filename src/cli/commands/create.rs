@@ -777,9 +777,13 @@ fn validate_relations(args: &CreateArgs, issue_id: &str) -> Result<()> {
         ));
     }
 
-    // Validate Dependencies
+    // Validate Dependencies (strict entries only — entries whose prefix is
+    // not a known type are resolved against titles in `populate_relations`,
+    // which has storage access; unresolvable ones error there).
     for dep_str in &args.deps {
-        let (_, dep_id) = parse_create_dependency(dep_str)?;
+        let Ok((_, dep_id)) = parse_create_dependency(dep_str) else {
+            continue;
+        };
 
         if dep_id == issue_id {
             return Err(BeadsError::validation("deps", "cannot depend on itself"));
@@ -790,39 +794,57 @@ fn validate_relations(args: &CreateArgs, issue_id: &str) -> Result<()> {
 }
 
 fn parse_create_dependency(dep_str: &str) -> Result<(DependencyType, String)> {
-    // Match markdown import semantics: a colon only means `type:id` when the
-    // prefix is a known dependency type; otherwise it can be part of a title.
-    let (mut type_str, dep_id, valid) = parse_dependency(dep_str);
-    if !valid {
+    // Strict `type:id` grammar: split on the first colon and validate the
+    // type against the dependency vocabulary. `depends`, `depends-on`, and
+    // `blocked-by` are accepted as aliases for `blocks`. A bare id defaults
+    // to `blocks`; resolution errors then name the id.
+    const ALLOWED_TYPES: &str = "blocks, blocked-by, depends, depends-on, parent-child, \
+        conditional-blocks, waits-for, related, discovered-from, replies-to, \
+        relates-to, duplicates, supersedes, caused-by";
+    let trimmed = dep_str.trim();
+    if trimmed.is_empty() {
         return Err(BeadsError::Validation {
             field: "deps".to_string(),
-            reason: format!(
-                "Unknown dependency type: '{type_str}'. \
-                 Allowed types: blocks, blocked-by, parent-child, conditional-blocks, waits-for, \
-                 related, discovered-from, replies-to, relates-to, duplicates, \
-                 supersedes, caused-by"
-            ),
+            reason: "empty dependency entry — expected 'type:id' or a bare issue id".to_string(),
         });
     }
-
-    if type_str.eq_ignore_ascii_case("blocked-by") {
-        type_str = "blocks".to_string();
+    if trimmed.starts_with("external:") {
+        return Ok((DependencyType::Blocks, trimmed.to_string()));
     }
-
-    let dep_type = DependencyType::from_str(&type_str)?;
-    if let DependencyType::Custom(_) = dep_type {
-        return Err(BeadsError::Validation {
-            field: "deps".to_string(),
-            reason: format!(
-                "Unknown dependency type: '{type_str}'. \
-                 Allowed types: blocks, blocked-by, parent-child, conditional-blocks, waits-for, \
-                 related, discovered-from, replies-to, relates-to, duplicates, \
-                 supersedes, caused-by"
-            ),
-        });
+    if let Some((raw_type, raw_id)) = trimmed.split_once(':') {
+        let type_name = raw_type.trim();
+        let dep_id = raw_id.trim();
+        let Some(dep_type) = canonical_create_dep_type(type_name) else {
+            return Err(BeadsError::Validation {
+                field: "deps".to_string(),
+                reason: format!(
+                    "Unknown dependency type: '{type_name}'. Allowed types: {ALLOWED_TYPES}"
+                ),
+            });
+        };
+        if dep_id.is_empty() {
+            return Err(BeadsError::Validation {
+                field: "deps".to_string(),
+                reason: format!("empty dependency id in '{trimmed}' — expected 'type:id'"),
+            });
+        }
+        return Ok((dep_type, dep_id.to_string()));
     }
+    Ok((DependencyType::Blocks, trimmed.to_string()))
+}
 
-    Ok((dep_type, dep_id))
+/// Map a `--deps` type prefix to its canonical [`DependencyType`].
+/// Returns `None` for unknown types so the caller can name the bad type.
+fn canonical_create_dep_type(name: &str) -> Option<DependencyType> {
+    if name.eq_ignore_ascii_case("blocked-by")
+        || name.eq_ignore_ascii_case("depends")
+        || name.eq_ignore_ascii_case("depends-on")
+    {
+        return Some(DependencyType::Blocks);
+    }
+    DependencyType::from_str(name)
+        .ok()
+        .filter(|dep_type| !matches!(dep_type, DependencyType::Custom(_)))
 }
 
 struct RelationContext<'a> {
@@ -863,7 +885,20 @@ fn populate_relations(
 
     // Dependencies
     for dep_str in &args.deps {
-        let (dep_type, dep_id) = parse_create_dependency(dep_str)?;
+        let (dep_type, dep_id) = match parse_create_dependency(dep_str) {
+            Ok(parsed) => parsed,
+            Err(parse_err) => {
+                // The prefix is not a known type: the whole token may be a
+                // title containing a colon ("Step 1: Setup Database").
+                // Resolve it verbatim as a bare id; when that fails too,
+                // return the original type error so bad input names the
+                // type instead of surfacing as a phantom id lookup.
+                match resolve_dependency_id(&resolver, ctx.storage, dep_str.trim()) {
+                    Ok(resolved) => (DependencyType::Blocks, resolved),
+                    Err(_) => return Err(parse_err),
+                }
+            }
+        };
         let resolved_dep_id = resolve_dependency_id(&resolver, ctx.storage, &dep_id)?;
 
         issue.dependencies.push(Dependency {
@@ -1874,6 +1909,72 @@ mod tests {
         let deps = storage.get_dependencies(&issue.id).expect("get deps");
         assert_eq!(deps, vec![target.id]);
         info!("test_create_issue_dep_title_with_colon_resolves_as_title: assertions passed");
+    }
+
+    #[test]
+    fn create_deps_flag_parse() {
+        init_test_logging();
+        info!("create_deps_flag_parse: starting");
+        let mut storage = setup_memory_storage();
+        let config = default_config();
+
+        let target = create_issue_impl(
+            &mut storage,
+            &CreateArgs {
+                title: Some("Dep Target".to_string()),
+                ..default_args()
+            },
+            &config,
+            None,
+        )
+        .expect("create target");
+
+        // `depends:` is an alias for `blocks` and must roundtrip to an edge.
+        let mut args = default_args();
+        args.title = Some("Dep Dependent".to_string());
+        args.deps = vec![format!("depends:{}", target.id)];
+        let issue =
+            create_issue_impl(&mut storage, &args, &config, None).expect("depends: must parse");
+        let deps = storage.get_dependencies_full(&issue.id).expect("get deps");
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].depends_on_id, target.id);
+        assert_eq!(deps[0].dep_type, DependencyType::Blocks);
+
+        // `depends-on:` and `blocked-by:` are aliases too (parse-level).
+        assert!(matches!(
+            parse_create_dependency("depends-on:bd-1"),
+            Ok((DependencyType::Blocks, _))
+        ));
+        assert!(matches!(
+            parse_create_dependency("blocked-by:bd-1"),
+            Ok((DependencyType::Blocks, _))
+        ));
+        // Bare ids still default to `blocks`.
+        assert!(matches!(
+            parse_create_dependency(&target.id),
+            Ok((DependencyType::Blocks, _))
+        ));
+
+        // Unknown types name the type, not a phantom id.
+        let mut bad = default_args();
+        bad.title = Some("Bad Type".to_string());
+        bad.deps = vec!["frobnicate:bd-123".to_string()];
+        let err = create_issue_impl(&mut storage, &bad, &config, None).unwrap_err();
+        assert!(
+            err.to_string().contains("frobnicate"),
+            "type error must name the bad type, got: {err}"
+        );
+
+        // Empty ids name the id problem.
+        let mut empty = default_args();
+        empty.title = Some("Empty Id".to_string());
+        empty.deps = vec!["blocks:".to_string()];
+        let err = create_issue_impl(&mut storage, &empty, &config, None).unwrap_err();
+        assert!(
+            err.to_string().contains("empty dependency id"),
+            "empty id must be named, got: {err}"
+        );
+        info!("create_deps_flag_parse: assertions passed");
     }
 
     #[test]

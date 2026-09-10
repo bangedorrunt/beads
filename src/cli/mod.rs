@@ -1087,7 +1087,8 @@ pub struct CreateArgs {
     #[arg(long, add = ArgValueCompleter::new(issue_id_completer))]
     pub parent: Option<String>,
 
-    /// Dependencies (format: type:id,type:id)
+    /// Dependencies (format: type:id,type:id; `depends`, `depends-on`, and
+    /// `blocked-by` are aliases for `blocks`)
     #[arg(long, value_delimiter = ',', add = ArgValueCompleter::new(deps_completer))]
     pub deps: Vec<String>,
 

@@ -870,7 +870,17 @@ fn dep_display_text(value: &str) -> String {
 }
 
 fn parse_dependency_type(dep_type: &str) -> Result<DependencyType> {
-    let parsed: DependencyType = dep_type.parse().map_err(|_| BeadsError::Validation {
+    // `blocked-by`, `depends`, and `depends-on` are aliases for `blocks`
+    // (same vocabulary as `br create --deps`).
+    let normalized: &str = if dep_type.eq_ignore_ascii_case("blocked-by")
+        || dep_type.eq_ignore_ascii_case("depends")
+        || dep_type.eq_ignore_ascii_case("depends-on")
+    {
+        "blocks"
+    } else {
+        dep_type
+    };
+    let parsed: DependencyType = normalized.parse().map_err(|_| BeadsError::Validation {
         field: "type".to_string(),
         reason: format!("Invalid dependency type: {dep_type}"),
     })?;
