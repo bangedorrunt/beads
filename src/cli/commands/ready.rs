@@ -220,6 +220,7 @@ fn execute_inner(
                 limit: args.limit,
                 offset: 0,
                 has_more: truncated,
+                hidden_closed_count: None,
             };
             early_ctx.json_array_page(
                 "issues",

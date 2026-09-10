@@ -1529,6 +1529,18 @@ const SEARCH_NEEDLE_PREDICATE: &str = "(instr(lower(title), ?) > 0 \
                 WHERE comments.issue_id = issues.id \
                   AND instr(lower(comments.text), ?) > 0))";
 
+/// Equivalent search predicate for whole-corpus counts.
+///
+/// Unlike the result query, the hidden-closed count must inspect every eligible
+/// closed issue. Materializing the matching comment issue IDs once avoids
+/// rerunning the comment lookup for every outer issue while preserving the
+/// exact substring and deduplication semantics of `SEARCH_NEEDLE_PREDICATE`.
+const SEARCH_COUNT_NEEDLE_PREDICATE: &str = "(instr(lower(title), ?) > 0 \
+     OR instr(lower(description), ?) > 0 \
+     OR instr(lower(id), ?) > 0 \
+     OR issues.id IN (SELECT comments.issue_id FROM comments \
+                      WHERE instr(lower(comments.text), ?) > 0))";
+
 #[derive(Clone, Copy)]
 enum BlockedIssueProjection {
     Full,
@@ -9823,6 +9835,102 @@ impl SqliteStorage {
         }
 
         Ok(issues)
+    }
+
+    /// Count closed issues matching the search needle under the given filters.
+    ///
+    /// Used by `br search` to report how many closed matches the default
+    /// corpus exclusion hid (`hidden_closed_count`). Tombstones are never
+    /// counted. Bind order matches `SEARCH_COUNT_NEEDLE_PREDICATE`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub fn count_closed_search_matches(&self, query: &str, filters: &ListFilters) -> Result<usize> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(0);
+        }
+
+        let mut sql = String::from("SELECT COUNT(*) FROM issues WHERE status = 'closed'");
+        let mut params: Vec<SqliteValue> = Vec::new();
+
+        let labels_and = filters.labels.as_deref().unwrap_or(&[]);
+        let labels_or = filters.labels_or.as_deref().unwrap_or(&[]);
+        if !(labels_and.is_empty() && labels_or.is_empty()) {
+            match self.label_filter_candidate_ids(labels_and, labels_or)? {
+                Some(issue_ids) if issue_ids.is_empty() => return Ok(0),
+                Some(issue_ids) => {
+                    append_issue_id_membership_filter(&mut sql, &mut params, &issue_ids);
+                }
+                None => {}
+            }
+        }
+
+        if let Some(ref types) = filters.types
+            && !types.is_empty()
+        {
+            let placeholders: Vec<String> = types.iter().map(|_| "?".to_string()).collect();
+            let _ = write!(sql, " AND issue_type IN ({})", placeholders.join(","));
+            for t in types {
+                params.push(SqliteValue::from(t.as_str()));
+            }
+        }
+
+        if let Some(ref priorities) = filters.priorities
+            && !priorities.is_empty()
+        {
+            let placeholders: Vec<String> = priorities.iter().map(|_| "?".to_string()).collect();
+            let _ = write!(sql, " AND priority IN ({})", placeholders.join(","));
+            for p in priorities {
+                params.push(SqliteValue::from(i64::from(p.0)));
+            }
+        }
+
+        if let Some(ref assignee) = filters.assignee {
+            sql.push_str(" AND assignee = ?");
+            params.push(SqliteValue::from(assignee.as_str()));
+        }
+
+        if filters.unassigned {
+            sql.push_str(" AND (assignee IS NULL OR assignee = '')");
+        }
+
+        if !filters.include_templates {
+            sql.push_str(" AND (is_template = 0 OR is_template IS NULL)");
+        }
+
+        if let Some(ref title_contains) = filters.title_contains {
+            sql.push_str(" AND title LIKE ? ESCAPE '\\'");
+            let escaped = escape_like_pattern(title_contains);
+            params.push(SqliteValue::from(format!("%{escaped}%")));
+        }
+
+        if let Some(ts) = filters.updated_before {
+            sql.push_str(" AND updated_at <= ?");
+            params.push(SqliteValue::from(ts.to_rfc3339()));
+        }
+
+        if let Some(ts) = filters.updated_after {
+            sql.push_str(" AND updated_at >= ?");
+            params.push(SqliteValue::from(ts.to_rfc3339()));
+        }
+
+        sql.push_str(" AND ");
+        sql.push_str(SEARCH_COUNT_NEEDLE_PREDICATE);
+        let needle = trimmed.to_ascii_lowercase();
+        params.push(SqliteValue::from(needle.as_str()));
+        params.push(SqliteValue::from(needle.as_str()));
+        params.push(SqliteValue::from(needle.as_str()));
+        params.push(SqliteValue::from(needle));
+
+        let rows = self.conn.query_with_params(&sql, &params)?;
+        let count = rows
+            .first()
+            .and_then(|row| row.get(0))
+            .and_then(SqliteValue::as_integer)
+            .unwrap_or(0);
+        Ok(usize::try_from(count).unwrap_or(0))
     }
 
     fn search_default_visible_limited_page(

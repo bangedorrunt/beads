@@ -22,8 +22,13 @@ use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::str::FromStr;
 
-/// Pagination envelope for `br search --json` / `--format toon`, matching
-/// `br list --json` (`{issues, total, limit, offset, has_more}`).
+/// Pagination envelope for `br search --json` / `--format toon`.
+///
+/// Extends the `br list` page shape with `hidden_closed_count` (#445 / GS-001
+/// local port of upstream search envelope): robots always see
+/// `{issues, total, limit, offset, has_more, hidden_closed_count}` rather than
+/// a bare array. TOON keeps our schema-v18 streaming field order via serde on
+/// this struct (we do **not** delete `src/output/context.rs` TOON writers).
 #[derive(Debug, Serialize)]
 struct SearchPage {
     issues: Vec<IssueWithCounts>,
@@ -31,6 +36,7 @@ struct SearchPage {
     limit: usize,
     offset: usize,
     has_more: bool,
+    hidden_closed_count: usize,
 }
 
 /// Execute the search command.
@@ -224,6 +230,15 @@ fn render_search_results(
         return Ok(());
     }
 
+    // #445: default corpus excludes closed issues; always surface how many
+    // closed matches that exclusion hid (zero when --all / closed already in
+    // corpus). CSV keeps row-only shape.
+    let hidden_closed_count = if matches!(output_format, OutputFormat::Csv) {
+        0
+    } else {
+        count_hidden_closed_matches(storage, query, list_args)?
+    };
+
     match output_format {
         OutputFormat::Json => {
             let user_limit = list_args.limit.unwrap_or(DEFAULT_SEARCH_LIMIT);
@@ -236,6 +251,7 @@ fn render_search_results(
                 limit: user_limit,
                 offset: user_offset,
                 has_more,
+                hidden_closed_count: Some(hidden_closed_count),
             };
             early_ctx.json_array_page(
                 "issues",
@@ -258,6 +274,7 @@ fn render_search_results(
                 limit: user_limit,
                 offset: user_offset,
                 has_more,
+                hidden_closed_count,
             };
             early_ctx.toon_with_stats(&page, list_args.stats);
             return Ok(());
@@ -315,6 +332,7 @@ fn render_search_results(
             table = table.context_snippets(context_snippets);
         }
         ctx.render(&table.build());
+        emit_hidden_closed_note(&ctx, hidden_closed_count);
         return Ok(());
     }
 
@@ -329,6 +347,7 @@ fn render_search_results(
         // formatter); `print_line` would escape the colour codes.
         ctx.print_styled_line(&line);
     }
+    emit_hidden_closed_note(&ctx, hidden_closed_count);
 
     Ok(())
 }
@@ -338,6 +357,44 @@ struct SearchRelationMetadata {
     labels_by_id: HashMap<String, Vec<String>>,
     dependency_counts: HashMap<String, usize>,
     dependent_counts: HashMap<String, usize>,
+}
+
+
+/// Trailing stdout note for text modes when the default closed-issue
+/// exclusion hid matches (#445).
+fn emit_hidden_closed_note(ctx: &OutputContext, hidden_closed_count: usize) {
+    if hidden_closed_count > 0 {
+        ctx.info(&format!(
+            "note: {hidden_closed_count} closed match(es) hidden; rerun with --all to include them"
+        ));
+    }
+}
+
+/// Count the closed matches hidden by the default status exclusion (#445).
+///
+/// Returns 0 without querying when the search already includes closed
+/// issues, or under `--overdue` (closed issues are terminal and never
+/// overdue-visible). Tombstones are always hidden and never counted.
+fn count_hidden_closed_matches(
+    storage: &SqliteStorage,
+    query: &str,
+    list_args: &ListArgs,
+) -> Result<usize> {
+    let mut filters = build_filters(list_args)?;
+    if filters.include_closed || list_args.overdue {
+        return Ok(0);
+    }
+    filters.limit = None;
+    filters.offset = None;
+    filters.sort = None;
+    filters.reverse = false;
+    if needs_client_filters(list_args) {
+        filters.statuses = Some(vec![Status::Closed]);
+        filters.include_closed = true;
+        let issues = storage.search_issues(query, &filters)?;
+        return Ok(apply_client_filters(issues, list_args)?.len());
+    }
+    storage.count_closed_search_matches(query, &filters)
 }
 
 fn load_search_relation_metadata(
