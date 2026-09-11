@@ -16,8 +16,7 @@ use common::dataset_registry::{DatasetRegistry, IsolatedDataset, KnownDataset};
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -66,6 +65,58 @@ fn clear_inherited_br_env_std(cmd: &mut StdCommand) {
     }
 }
 
+/// Prefer a real `sqlite3` binary over a mise shim. Hermetic tests set
+/// `HOME` to the temp workspace, which makes mise shims report "not a valid
+/// shim" and trip `doctor`'s external integrity check even when rusqlite's
+/// own `sqlite.integrity_check` is clean.
+fn hermetic_br_path() -> std::ffi::OsString {
+    let base = common::cli::deduplicated_br_path();
+    let mut dirs = Vec::new();
+    if let Some(dir) = find_non_shim_sqlite3_dir() {
+        dirs.push(dir);
+    }
+    dirs.extend(std::env::split_paths(&base));
+    std::env::join_paths(dirs).unwrap_or(base)
+}
+
+fn find_non_shim_sqlite3_dir() -> Option<PathBuf> {
+    let ambient = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&ambient) {
+        let candidate = dir.join("sqlite3");
+        if !candidate.is_file() {
+            continue;
+        }
+        // mise shims are symlinks named `sqlite3` that point at the `mise`
+        // binary; they need a real HOME tool install and break under hermetic
+        // `$HOME`. Prefer a concrete install or system binary instead.
+        if let Ok(target) = fs::read_link(&candidate)
+            && target
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some("mise")
+        {
+            continue;
+        }
+        return Some(dir);
+    }
+
+    // Fall back to the ambient user's mise installs tree (not the hermetic
+    // temp HOME br children use).
+    let real_home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let installs = real_home.join(".local/share/mise/installs/sqlite");
+    if let Ok(entries) = fs::read_dir(&installs) {
+        let mut versions: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
+        versions.sort();
+        for version in versions.into_iter().rev() {
+            let bin = version.join("bin");
+            if bin.join("sqlite3").is_file() {
+                return Some(bin);
+            }
+        }
+    }
+    None
+}
+
 fn isolated_temp_dir(label: &str) -> TempDir {
     TempDir::new_in(common::cli::isolated_temp_root())
         .unwrap_or_else(|error| panic!("create {label}: {error}"))
@@ -86,7 +137,7 @@ where
     cmd.env("HOME", root);
     // Hermetic $PATH: dual `br` installs otherwise trip the br_path_dupes
     // doctor warning inside spawned doctor runs (beads-ozdh class).
-    cmd.env("PATH", common::cli::deduplicated_br_path());
+    cmd.env("PATH", hermetic_br_path());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.spawn().expect("spawn br child")
@@ -175,7 +226,7 @@ where
     clear_inherited_br_env(&mut cmd);
     // Hermetic defaults; explicit env_vars below may override RUST_LOG.
     cmd.env("RUST_LOG", "error");
-    cmd.env("PATH", common::cli::deduplicated_br_path());
+    cmd.env("PATH", hermetic_br_path());
     cmd.envs(env_vars);
     cmd.env("NO_COLOR", "1");
     cmd.env("RUST_BACKTRACE", "1");
@@ -362,47 +413,76 @@ fn assert_doctor_healthy(root: &PathBuf) {
 
 fn assert_doctor_has_no_page_anomalies(root: &PathBuf, label: &str) {
     let doctor = run_br_in_dir(root, ["doctor", "--json"]);
-    assert!(
-        doctor.success,
-        "{label}: doctor failed: stdout={} stderr={}",
-        doctor.stdout, doctor.stderr
-    );
-
     let payload = extract_json_payload(&doctor.stdout);
-    let report: serde_json::Value =
-        serde_json::from_str(&payload).expect("doctor output should be valid json");
+    let report: serde_json::Value = serde_json::from_str(&payload).unwrap_or_else(|err| {
+        panic!(
+            "{label}: doctor output should be valid json ({err}): stdout={} stderr={}",
+            doctor.stdout, doctor.stderr
+        )
+    });
     let checks = report
         .get("checks")
         .and_then(serde_json::Value::as_array)
-        .expect("doctor report should include checks array");
+        .unwrap_or_else(|| {
+            panic!(
+                "{label}: doctor report should include checks array: stdout={} stderr={}",
+                doctor.stdout, doctor.stderr
+            )
+        });
 
-    let page_anomalies: Vec<String> = checks
-        .iter()
-        .filter_map(|check| {
-            let name = check
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            if name != "sqlite.integrity_check" && name != "sqlite3.integrity_check" {
-                return None;
-            }
-
-            let message = check
-                .get("message")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            let lower = message.to_ascii_lowercase();
-            (lower.contains("never used")
-                || lower.contains("free space corruption")
-                || lower.contains("malformed")
-                || lower.contains("disk image"))
-            .then(|| format!("{name}: {message}"))
-        })
-        .collect();
+    let mut page_anomalies = Vec::new();
+    let mut rusqlite_integrity_ok = false;
+    let mut sqlite3_cli_misconfigured = false;
+    for check in checks {
+        let name = check
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if name != "sqlite.integrity_check" && name != "sqlite3.integrity_check" {
+            continue;
+        }
+        let status = check
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let message = check
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let lower = message.to_ascii_lowercase();
+        if name == "sqlite.integrity_check" && status == "ok" {
+            rusqlite_integrity_ok = true;
+        }
+        if name == "sqlite3.integrity_check"
+            && (lower.contains("mise error")
+                || lower.contains("not a valid shim")
+                || lower.contains("no such file")
+                || lower.contains("not found")
+                || lower.contains("configuration error"))
+        {
+            // Hermetic HOME + mise shim: external CLI unavailable. Match
+            // `assert_upstream_sqlite_integrity_ok`'s skip-if-unavailable.
+            sqlite3_cli_misconfigured = true;
+            continue;
+        }
+        if lower.contains("never used")
+            || lower.contains("free space corruption")
+            || lower.contains("malformed")
+            || lower.contains("disk image")
+        {
+            page_anomalies.push(format!("{name}: {message}"));
+        }
+    }
 
     assert!(
         page_anomalies.is_empty(),
         "{label}: doctor reported page anomalies: {page_anomalies:?}\nstdout={}\nstderr={}",
+        doctor.stdout,
+        doctor.stderr
+    );
+    assert!(
+        doctor.success || (rusqlite_integrity_ok && sqlite3_cli_misconfigured),
+        "{label}: doctor failed: stdout={} stderr={}",
         doctor.stdout,
         doctor.stderr
     );
@@ -3163,7 +3243,20 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
     );
     let shown: serde_json::Value =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show JSON");
-    assert_eq!(shown[0]["description"].as_str(), Some(description.as_str()));
+    // Single-id `br show --json` is a bare object on this fork (see
+    // `emit_show_json`); upstream ports may still emit a one-element array.
+    let shown_issue = match shown {
+        serde_json::Value::Array(items) => items
+            .into_iter()
+            .find(|issue| issue["id"].as_str() == Some(issue_id.as_str()))
+            .expect("show JSON array must include the large issue"),
+        obj @ serde_json::Value::Object(_) => obj,
+        other => panic!("unexpected show JSON shape: {other}"),
+    };
+    assert_eq!(
+        shown_issue["description"].as_str(),
+        Some(description.as_str())
+    );
 
     let jsonl = fs::read_to_string(root.join(".beads/issues.jsonl")).expect("read JSONL");
     let exported = jsonl

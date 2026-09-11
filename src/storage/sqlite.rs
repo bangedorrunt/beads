@@ -33263,13 +33263,15 @@ mod tests {
             storage
                 .conn
                 .execute_with_params(
-                    "INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at) \
-                     VALUES (?, ?, 'open', 2, 'task', ?, ?)",
+                    "INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at,                      verify, principles)                      VALUES (?, ?, 'open', 2, 'task', ?, ?, ?, ?)",
                     &[
                         SqliteValue::from(id.as_str()),
                         SqliteValue::from(id.as_str()),
                         SqliteValue::from(timestamp.as_str()),
                         SqliteValue::from(timestamp.as_str()),
+                        // ADR-0001 §5.5: raw bulk insert bypasses make_issue defaults.
+                        SqliteValue::from("cargo test --offline"),
+                        SqliteValue::from(r#"[{"name":"prove-it-works","decision":"default test fixture citation"}]"#),
                     ],
                 )
                 .unwrap();
