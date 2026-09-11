@@ -431,16 +431,12 @@ fn assert_doctor_has_no_page_anomalies(root: &PathBuf, label: &str) {
         });
 
     let mut page_anomalies = Vec::new();
-    let mut rusqlite_integrity_ok = false;
-    let mut sqlite3_cli_misconfigured = false;
+    let mut non_ok: Vec<(String, String)> = Vec::new();
     for check in checks {
         let name = check
             .get("name")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        if name != "sqlite.integrity_check" && name != "sqlite3.integrity_check" {
-            continue;
-        }
         let status = check
             .get("status")
             .and_then(serde_json::Value::as_str)
@@ -450,9 +446,16 @@ fn assert_doctor_has_no_page_anomalies(root: &PathBuf, label: &str) {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
         let lower = message.to_ascii_lowercase();
-        if name == "sqlite.integrity_check" && status == "ok" {
-            rusqlite_integrity_ok = true;
+
+        if status != "ok" {
+            non_ok.push((name.to_string(), message.to_string()));
         }
+
+        if name != "sqlite.integrity_check" && name != "sqlite3.integrity_check" {
+            continue;
+        }
+        // Hermetic HOME + mise shim: external CLI unavailable — skip anomaly
+        // scan for that check only (do not invent-green other doctor failures).
         if name == "sqlite3.integrity_check"
             && (lower.contains("mise error")
                 || lower.contains("not a valid shim")
@@ -460,9 +463,6 @@ fn assert_doctor_has_no_page_anomalies(root: &PathBuf, label: &str) {
                 || lower.contains("not found")
                 || lower.contains("configuration error"))
         {
-            // Hermetic HOME + mise shim: external CLI unavailable. Match
-            // `assert_upstream_sqlite_integrity_ok`'s skip-if-unavailable.
-            sqlite3_cli_misconfigured = true;
             continue;
         }
         if lower.contains("never used")
@@ -480,9 +480,27 @@ fn assert_doctor_has_no_page_anomalies(root: &PathBuf, label: &str) {
         doctor.stdout,
         doctor.stderr
     );
+
+    if doctor.success {
+        return;
+    }
+
+    // Allow failure only when the sole non-ok check is sqlite3.integrity_check
+    // with mise/shim/not-found misconfig. Any other doctor failure stays red.
+    let sole_sqlite3_cli_misconfig = matches!(
+        non_ok.as_slice(),
+        [(name, message)] if name == "sqlite3.integrity_check" && {
+            let lower = message.to_ascii_lowercase();
+            lower.contains("mise error")
+                || lower.contains("not a valid shim")
+                || lower.contains("no such file")
+                || lower.contains("not found")
+                || lower.contains("configuration error")
+        }
+    );
     assert!(
-        doctor.success || (rusqlite_integrity_ok && sqlite3_cli_misconfigured),
-        "{label}: doctor failed: stdout={} stderr={}",
+        sole_sqlite3_cli_misconfig,
+        "{label}: doctor failed: non_ok={non_ok:?} stdout={} stderr={}",
         doctor.stdout,
         doctor.stderr
     );

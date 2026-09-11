@@ -4705,7 +4705,7 @@ mod tests {
         );
     }
 
-#[test]
+    #[test]
     fn test_rebuild_issues_table_errors_when_canonical_columns_are_missing() {
         // Bind the temp file: dropping it here would unlink the database
         // before the connection ever writes to it, leaving `Connection::open`
