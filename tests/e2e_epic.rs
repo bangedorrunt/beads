@@ -1080,3 +1080,76 @@ fn e2e_epic_deleted_child_removes_dependency() {
         "childless epic should not be eligible"
     );
 }
+
+#[test]
+fn e2e_epic_create_rejects_closed_parent() {
+    let _log = common::test_log("e2e_epic_create_rejects_closed_parent");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    // Create and close an (childless) epic.
+    let create_epic = run_br(
+        &workspace,
+        ["create", "Finished Epic", "--type", "epic"],
+        "create_epic",
+    );
+    assert!(create_epic.status.success());
+    let epic_id = parse_created_id(&create_epic.stdout);
+
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &epic_id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_epic",
+    );
+    assert!(gate.status.success(), "gate epic failed: {}", gate.stderr);
+    let close_epic = run_br(
+        &workspace,
+        ["close", &epic_id, "--commit-sha", "e2e1234"],
+        "close_epic",
+    );
+    assert!(
+        close_epic.status.success(),
+        "close failed: {}",
+        close_epic.stderr
+    );
+
+    // F16 (bd-9ewu): filing new work under the finished grouping is refused at
+    // cut time, and the error names the remedy.
+    let create_child = run_br(
+        &workspace,
+        ["create", "Late Child", "--parent", &epic_id],
+        "create_child_under_closed_parent",
+    );
+    assert!(
+        !create_child.status.success(),
+        "create --parent under a closed epic must fail"
+    );
+    let err = format!("{}{}", create_child.stdout, create_child.stderr);
+    assert!(err.contains("reopen"), "error names the remedy: {err}");
+
+    // Dropping --parent cuts the same bead cleanly.
+    let create_ok = run_br(
+        &workspace,
+        ["create", "Late Child"],
+        "create_child_no_parent",
+    );
+    assert!(
+        create_ok.status.success(),
+        "create without --parent must succeed: {}",
+        create_ok.stderr
+    );
+}

@@ -487,6 +487,24 @@ pub fn create_issue_impl(
         .as_deref()
         .map(|parent| resolve_issue_id(storage, &id_resolver, parent))
         .transpose()?;
+    // F16 (bd-9ewu): validate --parent's state at CUT time. The edge created is
+    // child -> parent; a parent that is already closed/tombstone means new work
+    // is being filed under a finished grouping — it never rolls up, and the
+    // epic's numbers stay wrong. Refuse and name the remedy rather than write
+    // the inverted edge (verified BEFORE any mutation).
+    if let Some(parent_id) = resolved_parent.as_deref()
+        && let Some(parent_issue) = storage.get_issue(parent_id)?
+        && matches!(parent_issue.status, Status::Closed | Status::Tombstone)
+    {
+        return Err(BeadsError::validation(
+            "parent",
+            format!(
+                "parent {parent_id} is {} — filing new work under a finished grouping never rolls \
+                 up; run `br reopen {parent_id}` first, or drop --parent",
+                parent_issue.status
+            ),
+        ));
+    }
     // ADR-0005 §3: advisory promotes link. Resolve the cited bead and
     // refuse unknown ids at creation (provenance, not readiness gating:
     // the link never affects ready).
