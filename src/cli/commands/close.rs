@@ -422,7 +422,11 @@ fn evaluate_close_policy(
                 .is_some_and(|rule| rule.require_legal_close))
     {
         let results = storage.get_scoped_gate_results(issue_id, from, to)?;
-        let input = close_policy::legal_close_input_for_issue_pub(issue.priority.0);
+        // The bead's TYPED verify decides the band, so it must reach the table
+        // (bd-close-policy-empty-verify-1-zdz6): an empty VERIFY flips every
+        // loop-runnable bead into the non-runnable band.
+        let verify = issue.verify.as_deref().unwrap_or("");
+        let input = close_policy::legal_close_input_for_issue_pub(issue.priority.0, verify);
         close_verdict = results
             .iter()
             .filter(|result| result.passed)
@@ -434,6 +438,7 @@ fn evaluate_close_policy(
             issue_id,
             from,
             issue.priority.0,
+            verify,
             &results,
         ));
     }

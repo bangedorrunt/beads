@@ -870,13 +870,23 @@ pub fn legal_close_gate_names(input: &crate::verify::LegalCloseInput<'_>) -> Vec
 
 /// Assemble the schema-v18 legal-close inputs for an issue.
 ///
-/// Priority is live today; blast radius / AC shape / VERIFY arrive with the
-/// schema-v18 columns (beads_rust-schema-v18-uyb3) — until then every bead
-/// defaults to Normal blast, checkable AC, empty VERIFY (the non-runnable
-/// band), which is the conservative reading of the table.
+/// Priority and VERIFY are live; blast radius / AC shape still arrive with the
+/// schema-v18 columns (beads_rust-schema-v18-uyb3) and default to Normal blast
+/// / checkable AC.
+///
+/// `verify` is NOT optional in spirit: the table keys the cheap band
+/// (priority >= 2, Normal blast, loop-runnable VERIFY) on it, and that band
+/// admits `command-verified` alone. Feeding an empty VERIFY therefore flips
+/// every loop-runnable bead into the non-runnable band and names gates the
+/// ledger will refuse — the disagreement bd-close-policy-empty-verify-1-zdz6
+/// recorded. Callers pass the issue's typed verify (`""` when absent, which
+/// IS the non-runnable band: nothing could have been run).
 #[must_use]
-pub fn legal_close_input_for_issue_pub(priority: i32) -> crate::verify::LegalCloseInput<'static> {
-    legal_close_input_for_issue(priority)
+pub fn legal_close_input_for_issue_pub(
+    priority: i32,
+    verify: &str,
+) -> crate::verify::LegalCloseInput<'_> {
+    legal_close_input_for_issue(priority, verify)
 }
 
 /// ADR-0005 §2 report-close witness kinds. The close `--reason` cites the
@@ -987,12 +997,12 @@ pub fn report_close_violations(
     violations
 }
 
-fn legal_close_input_for_issue(priority: i32) -> crate::verify::LegalCloseInput<'static> {
+fn legal_close_input_for_issue(priority: i32, verify: &str) -> crate::verify::LegalCloseInput<'_> {
     crate::verify::LegalCloseInput {
         priority: u8::try_from(priority).unwrap_or(0),
         blast: crate::verify::Blast::Normal,
         ac: crate::verify::AcShape::Checkable,
-        verify: "",
+        verify,
     }
 }
 
@@ -1006,9 +1016,10 @@ pub fn evaluate_require_legal_close(
     issue_id: &str,
     from: &str,
     priority: i32,
+    verify: &str,
     results: &[GateResult],
 ) -> Vec<PolicyViolation> {
-    let input = legal_close_input_for_issue(priority);
+    let input = legal_close_input_for_issue(priority, verify);
     let legal_names = legal_close_gate_names(&input);
 
     let mut pass_kinds: Vec<&'static str> = Vec::new();

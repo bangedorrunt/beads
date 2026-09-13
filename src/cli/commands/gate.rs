@@ -96,11 +96,16 @@ pub fn execute(
 ///
 /// Returns a warning when `gate` is a known verdict kind that is not legal
 /// for closing a bead of this priority. Unknown (provider) names yield `None`.
-/// Uses the same conservative input as the close path, so the preview never
-/// accepts what `close` will reject.
-fn illegal_verdict_warning(gate: &str, priority: i32) -> Option<String> {
+///
+/// `verify` is the bead's TYPED verify, and it is load-bearing: the cheap band
+/// (priority >= 2, Normal blast, loop-runnable VERIFY) admits
+/// `command-verified` and nothing else, so a preview built from an empty VERIFY
+/// names the wrong gates for every loop-runnable bead
+/// (bd-close-policy-empty-verify-1-zdz6). The close path takes the same input,
+/// so the preview cannot accept what `close` will reject.
+fn illegal_verdict_warning(gate: &str, priority: i32, verify: &str) -> Option<String> {
     crate::verify::VerdictKind::from_gate_name(gate)?;
-    let input = close_policy::legal_close_input_for_issue_pub(priority);
+    let input = close_policy::legal_close_input_for_issue_pub(priority, verify);
     let legal = close_policy::legal_close_gate_names(&input);
     if legal.contains(&gate) {
         return None;
@@ -184,7 +189,11 @@ fn execute_report(
     // Legality preview: the close-time check derives legal names from the bead,
     // so warn now when this name will not authorize the close. Warning only:
     // external systems legitimately report gates proactively.
-    if let Some(warning) = illegal_verdict_warning(gate, issue.priority.0) {
+    if let Some(warning) = illegal_verdict_warning(
+        gate,
+        issue.priority.0,
+        issue.verify.as_deref().unwrap_or(""),
+    ) {
         eprintln!("{warning}");
     }
 
@@ -790,9 +799,31 @@ mod tests {
         );
         assert!(transitions.is_empty());
     }
+    /// bd-close-policy-empty-verify-1-zdz6: the preview must derive the legal
+    /// names from the bead's TYPED verify, not from an empty one. Live, a P2
+    /// bead with a loop-runnable verify was warned that `command-verified` is
+    /// illegal — and flywheel's ledger check then demanded exactly
+    /// `command-verified` and credited the close, so br's own warning pointed
+    /// away from the only gate that works.
+    #[test]
+    fn illegal_verdict_warning_uses_the_typed_verify() {
+        let runnable = "cargo test -p flywheel --quiet loop_";
+        assert!(
+            illegal_verdict_warning("command-verified", 2, runnable).is_none(),
+            "a loop-runnable VERIFY makes command-verified THE legal gate"
+        );
+        assert!(
+            illegal_verdict_warning("unit-test-verified", 2, runnable).is_some(),
+            "the cheap band admits command-verified only"
+        );
+        // Empty VERIFY (a triage bead) stays in the non-runnable band.
+        assert!(illegal_verdict_warning("command-verified", 2, "").is_some());
+        assert!(illegal_verdict_warning("triage-verified", 2, "").is_none());
+    }
+
     #[test]
     fn illegal_verdict_warning_flags_p1_command_verified() {
-        let warning = illegal_verdict_warning("command-verified", 1)
+        let warning = illegal_verdict_warning("command-verified", 1, "")
             .expect("command-verified is illegal at P1");
         assert!(warning.contains("unit-test-verified"));
         assert!(warning.contains("live-verified"));
@@ -800,11 +831,12 @@ mod tests {
 
     #[test]
     fn illegal_verdict_warning_accepts_legal_and_unknown_names() {
-        assert!(illegal_verdict_warning("unit-test-verified", 1).is_none());
-        assert!(illegal_verdict_warning("live-verified", 1).is_none());
-        assert!(illegal_verdict_warning("worker-receipt", 2).is_none());
-        assert!(illegal_verdict_warning("command-verified", 2).is_some());
-        assert!(illegal_verdict_warning("ci_green", 1).is_none());
+        // Empty VERIFY: the non-runnable band (nothing could have been run).
+        assert!(illegal_verdict_warning("unit-test-verified", 1, "").is_none());
+        assert!(illegal_verdict_warning("live-verified", 1, "").is_none());
+        assert!(illegal_verdict_warning("worker-receipt", 2, "").is_none());
+        assert!(illegal_verdict_warning("command-verified", 2, "").is_some());
+        assert!(illegal_verdict_warning("ci_green", 1, "").is_none());
     }
 
     #[test]
