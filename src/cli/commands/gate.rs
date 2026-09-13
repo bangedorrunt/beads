@@ -117,6 +117,44 @@ fn illegal_verdict_warning(gate: &str, priority: i32, verify: &str) -> Option<St
     ))
 }
 
+/// The revision-binding token a close verdict must carry in its `--note`
+/// (`sha=<full sha>`), as consumed by the ledger's legal-close check.
+///
+/// Why a preview exists at all: a row with no binding is not merely weaker
+/// evidence, it is *unrecordable* evidence. The consumer skips a note without
+/// this token, and br refuses a gate write on a closed bead
+/// (`closed -> closed` is not a legal transition), so the row can never be
+/// re-bound once the close lands. The close then reads clean-false forever
+/// and nothing in the flow ever said so (bd-u5yr observed it on bd-7dkb; it
+/// recurred twice in one session from rows whose notes named the revision in
+/// prose — "VERIFY on 587b7db" — which the exact-token match does not read).
+///
+/// Warning, not a refusal, for the same reason as the legality preview:
+/// external systems legitimately report gate results proactively, and a row
+/// that authorizes no close has nothing to bind.
+pub const REVISION_BINDING_TOKEN: &str = "sha=";
+
+fn unbound_close_verdict_warning(
+    gate: &str,
+    to_status: &str,
+    note: Option<&str>,
+) -> Option<String> {
+    if to_status != "closed" {
+        return None;
+    }
+    // A gate row we cannot even name is reported by the legality preview; a
+    // FAIL row authorizes nothing.
+    crate::verify::VerdictKind::from_gate_name(gate)?;
+    let note = note.unwrap_or("");
+    if note.contains(REVISION_BINDING_TOKEN) {
+        return None;
+    }
+    Some(format!(
+        "warning: gate '{gate}' is a close verdict with no revision binding — its --note has no `{}<full sha>` token, so the legal-close check reads it UNBOUND and the close reports clean-false forever. br refuses a gate write on a closed bead, so this cannot be repaired after the close: re-report now with --note \"{}<full sha> receipt=<path>\".",
+        REVISION_BINDING_TOKEN, REVISION_BINDING_TOKEN
+    ))
+}
+
 fn execute_report(
     args: &GateReportArgs,
     cli: &config::CliOverrides,
@@ -194,6 +232,12 @@ fn execute_report(
         issue.priority.0,
         issue.verify.as_deref().unwrap_or(""),
     ) {
+        eprintln!("{warning}");
+    }
+    // Second preview of the same shape: will this row actually BIND the close
+    // it authorizes? Checked here because here is the last moment the row can
+    // still be corrected.
+    if passed && let Some(warning) = unbound_close_verdict_warning(gate, &to_status, note) {
         eprintln!("{warning}");
     }
 
@@ -837,6 +881,44 @@ mod tests {
         assert!(illegal_verdict_warning("worker-receipt", 2, "").is_none());
         assert!(illegal_verdict_warning("command-verified", 2, "").is_some());
         assert!(illegal_verdict_warning("ci_green", 1, "").is_none());
+    }
+
+    /// bd-u5yr recurrence: a close verdict whose note names the revision in
+    /// PROSE ("VERIFY on 587b7db") reads unbound, because the binding is an
+    /// exact `sha=<full sha>` token match.
+    #[test]
+    fn unbound_close_verdict_warning_names_the_binding_token() {
+        let w = unbound_close_verdict_warning(
+            "live-verified",
+            "closed",
+            Some("VERIFY on 587b7db: ran it"),
+        )
+        .expect("prose is not a binding");
+        assert!(w.contains(REVISION_BINDING_TOKEN), "{w}");
+        assert!(w.contains("clean-false"), "{w}");
+        assert!(
+            w.contains("cannot be repaired after the close"),
+            "the warning must say WHY it matters now: {w}"
+        );
+        // A row carrying the token binds, in any position or length.
+        assert!(
+            unbound_close_verdict_warning(
+                "live-verified",
+                "closed",
+                Some(
+                    "sha=587b7dbc369a26713323a10810f7acd14c1ce995 receipt=.flywheel/receipts/x.txt"
+                )
+            )
+            .is_none()
+        );
+        // Nothing to bind: a non-close transition, a FAIL row, an unknown gate.
+        assert!(unbound_close_verdict_warning("live-verified", "in_progress", None).is_none());
+        assert!(unbound_close_verdict_warning("ci_green", "closed", None).is_none());
+        assert!(unbound_close_verdict_warning("live-verified", "closed", None).is_some());
+        assert!(
+            unbound_close_verdict_warning("live-verified", "closed", Some("   ")).is_some(),
+            "a blank note binds nothing"
+        );
     }
 
     #[test]
