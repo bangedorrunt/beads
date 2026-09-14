@@ -1133,6 +1133,7 @@ fn e2e_update_claim_json_echo_reports_assignee() {
 /// `in_progress` and erase `closed_at` / `close_reason`. It must refuse before
 /// any mutation, leave the close record intact, and point at `br reopen`.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
     let _log = common::test_log("e2e_update_claim_refuses_closed_issue_and_preserves_close_fields");
     let workspace = BrWorkspace::new();
@@ -1149,6 +1150,30 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let id = created["id"].as_str().expect("issue id").to_string();
 
+    // The generated close policy (bd-close-policy-empty-verify-1-zdz6) is
+    // fail-closed: a legal close needs a PASS gate row + --commit-sha whose
+    // message cites the bead. Close the policy-compliant way, like every
+    // sibling test, and diagnose --json failures with stdout (the structured
+    // error rides stdout; stderr is empty) so a refusal names its reason.
+    let gate = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "e2e",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+        ],
+        "gate_claim_target",
+    );
+    assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+
     let close = run_br(
         &workspace,
         [
@@ -1158,22 +1183,29 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
             &id,
             "--reason",
             "DONE: baseline close",
+            "--commit-sha",
+            "e2e1234",
             "--json",
         ],
         "close_claim_target",
     );
-    assert!(close.status.success(), "close failed: {}", close.stderr);
+    assert!(
+        close.status.success(),
+        "close failed: {} — stdout: {}",
+        close.stderr,
+        close.stdout
+    );
 
     let before = run_br(&workspace, ["show", &id, "--json"], "show_before_claim");
     assert!(before.status.success(), "show failed: {}", before.stderr);
     let before: Value =
         serde_json::from_str(&extract_json_payload(&before.stdout)).expect("show json");
-    assert_eq!(before[0]["status"].as_str(), Some("closed"));
+    assert_eq!(before["status"].as_str(), Some("closed"));
     assert_eq!(
-        before[0]["close_reason"].as_str(),
+        before["close_reason"].as_str(),
         Some("DONE: baseline close")
     );
-    let closed_at = before[0]["closed_at"].clone();
+    let closed_at = before["closed_at"].clone();
     assert!(closed_at.is_string(), "closed_at must be set: {before}");
 
     for (extra, label) in [
@@ -1210,13 +1242,13 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
     assert!(after.status.success(), "show failed: {}", after.stderr);
     let after: Value =
         serde_json::from_str(&extract_json_payload(&after.stdout)).expect("show json");
-    assert_eq!(after[0]["status"].as_str(), Some("closed"));
-    assert!(after[0]["assignee"].is_null(), "{after}");
+    assert_eq!(after["status"].as_str(), Some("closed"));
+    assert!(after["assignee"].is_null(), "{after}");
     assert_eq!(
-        after[0]["close_reason"].as_str(),
+        after["close_reason"].as_str(),
         Some("DONE: baseline close")
     );
-    assert_eq!(after[0]["closed_at"], closed_at, "{after}");
+    assert_eq!(after["closed_at"], closed_at, "{after}");
 
     // The sanctioned path still works: reopen, then claim.
     let reopen = run_br(&workspace, ["reopen", &id, "--json"], "reopen_claim_target");
@@ -1227,10 +1259,10 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
         "claim_reopened",
     );
     assert!(claim.status.success(), "claim failed: {}", claim.stderr);
-    let claimed: Vec<Value> =
+    let claimed: Value =
         serde_json::from_str(&extract_json_payload(&claim.stdout)).expect("claim json");
-    assert_eq!(claimed[0]["status"].as_str(), Some("in_progress"));
-    assert_eq!(claimed[0]["assignee"].as_str(), Some("repro-agent"));
+    assert_eq!(claimed["status"].as_str(), Some("in_progress"));
+    assert_eq!(claimed["assignee"].as_str(), Some("repro-agent"));
 }
 
 #[test]

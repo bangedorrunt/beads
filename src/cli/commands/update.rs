@@ -493,7 +493,13 @@ fn prepare_single_route(
         let policy = crate::close_policy::load_for_beads_dir(beads_dir)?;
         policy.workflow.validate_status(new_status.as_str())?;
         let transitions_enforced = policy.workflow.transitions_enforced();
-        if transitions_enforced {
+        // A `--claim` on a closed issue is #497's dedicated guard
+        // (`validate_transition_to_in_progress` below, which points at
+        // `br reopen`), not a generic workflow.transitions error — let it
+        // speak. Skipping the policy check here never admits a forbidden
+        // claim: the claim guards are strictly stricter on the
+        // closed -> in_progress edge (they refuse it outright).
+        if transitions_enforced && !args.claim {
             for id in &resolved_ids {
                 // The current status is the `from` state for the transition
                 // check. An issue that cannot be read (missing/unresolved)
