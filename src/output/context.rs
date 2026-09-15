@@ -164,6 +164,9 @@ pub(crate) struct JsonArrayPageMeta {
     pub(crate) limit: usize,
     pub(crate) offset: usize,
     pub(crate) has_more: bool,
+    /// Search-only (#445): closed matches hidden by the default corpus.
+    /// `None` for list/ready/blocked so their envelopes stay unchanged.
+    pub(crate) hidden_closed_count: Option<usize>,
 }
 
 fn write_json_array_page_to_writer<I, T, W>(
@@ -197,6 +200,12 @@ where
         .write_all(b",\"has_more\":")
         .map_err(serde_json::Error::io)?;
     serde_json::to_writer(&mut *writer, &meta.has_more)?;
+    if let Some(hidden_closed_count) = meta.hidden_closed_count {
+        writer
+            .write_all(b",\"hidden_closed_count\":")
+            .map_err(serde_json::Error::io)?;
+        serde_json::to_writer(&mut *writer, &hidden_closed_count)?;
+    }
     writer.write_all(b"}").map_err(serde_json::Error::io)
 }
 
@@ -1884,6 +1893,7 @@ mod tests {
             limit: 2,
             offset: 1,
             has_more: true,
+            hidden_closed_count: None,
         };
         let mut streamed = Vec::new();
 

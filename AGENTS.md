@@ -163,6 +163,7 @@ Provides lightweight issue tracking with dependency graphs, priority-based triag
 - **Content-addressed dedup** (SHA-256) and **hash-based short IDs** (`bd-###` shape).
 - **Append-only audit log** — every mutation recorded.
 - **Fail-closed close** — gate row + citing sha, per the banner and the br skill.
+- **Self-update** verifies the mandatory `.sha256` sidecar over rustls TLS; minisign `.minisig` assets are for manual verification only (not checked by `br upgrade`).
 
 ## VERIFY Fence Honesty (legal-close interaction)
 

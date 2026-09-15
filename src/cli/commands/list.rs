@@ -228,6 +228,7 @@ fn execute_inner(
                 limit: user_limit,
                 offset: user_offset,
                 has_more,
+                hidden_closed_count: None,
             };
 
             if matches!(output_format, OutputFormat::Toon) {

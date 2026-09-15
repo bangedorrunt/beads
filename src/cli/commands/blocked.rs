@@ -289,6 +289,7 @@ fn output_structured_blocked(
                 limit: args.limit,
                 offset: 0,
                 has_more,
+                hidden_closed_count: None,
             };
             ctx.json_array_page(
                 "issues",
