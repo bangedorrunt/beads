@@ -132,13 +132,26 @@ enum ShaVerdict {
 }
 
 /// Chars that keep a bead id glued to surrounding text: `bd-2qu9` inside
-/// `bd-2qu99` is a different bead, not a citation.
-fn is_bead_boundary_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_'
+/// `bd-2qu99` is a different bead, not a citation. `.` is NOT glue on its
+/// own — `bd-0cqt.` is a sentence-ending citation (bd-qf99). A revision
+/// suffix `.1` still glues (`bd-2qu9.1` is not `bd-2qu9`).
+fn is_bead_id_glue(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
+fn after_char_is_glue(msg: &str, after_idx: usize) -> bool {
+    let mut chars = msg[after_idx..].chars();
+    match chars.next() {
+        None => false,
+        Some(c) if is_bead_id_glue(c) => true,
+        Some('.') => chars.next().is_some_and(|n| n.is_ascii_alphanumeric()),
+        Some(_) => false,
+    }
 }
 
 /// Pure citation check: does `message` cite `bead_id` (case-insensitive,
 /// word-boundary)? `BD-2QU9` cites `bd-2qu9`; `bd-2qu99` does not.
+/// Full message (`%B`), not subject-only. A trailing period is punctuation.
 fn sha_message_cites_bead(message: &str, bead_id: &str) -> bool {
     let needle = bead_id.to_lowercase();
     if needle.is_empty() {
@@ -149,11 +162,8 @@ fn sha_message_cites_bead(message: &str, bead_id: &str) -> bool {
         let before_ok = msg[..start]
             .chars()
             .next_back()
-            .is_none_or(|c| !is_bead_boundary_char(c));
-        let after_ok = msg[start + needle.len()..]
-            .chars()
-            .next()
-            .is_none_or(|c| !is_bead_boundary_char(c));
+            .is_none_or(|c| !is_bead_id_glue(c));
+        let after_ok = !after_char_is_glue(&msg, start + needle.len());
         if before_ok && after_ok {
             return true;
         }
@@ -3540,6 +3550,16 @@ mod tests {
         assert!(!sha_message_cites_bead("fix bd-other done", "bd-2qu9"));
         // bd-2qu99 must not count as citing bd-2qu9.
         assert!(!sha_message_cites_bead("fix bd-2qu99 done", "bd-2qu9"));
+        // Sentence period / colon after the id is punctuation, not glue
+        // (bd-qf99: body "in bd-0cqt." was rejected as uncited).
+        assert!(sha_message_cites_bead(
+            "Also lands the remaining diagnosis in bd-0cqt.",
+            "bd-0cqt"
+        ));
+        assert!(sha_message_cites_bead("see bd-0cqt:", "bd-0cqt"));
+        assert!(sha_message_cites_bead("bd-0cqt\n\nPRINCIPLES:", "bd-0cqt"));
+        // Revision suffix still glues.
+        assert!(!sha_message_cites_bead("fix bd-2qu9.1", "bd-2qu9"));
     }
 
     #[test]
