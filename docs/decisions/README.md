@@ -26,4 +26,6 @@ An ADR is an executable spec for coding agents. A human accepts the decision; an
 | [0002](0002-replace-fsqlite-asupersync-with-rusqlite-and-strip-platform-surface.md) | Replace fsqlite/asupersync with rusqlite and strip platform surface | **Accepted** |
 | [0003](0003-absorb-beads-viewer-into-br.md) | Absorb beads_viewer (bv) into br — robot commands, graph analysis, and TUI | **Proposed** |
 | [0004](0004-adopt-revisioned-witnessed-mutations.md) | Adopt revisioned witnessed mutations for the flywheel × toron × br stack | **Accepted** |
+| [0005](0005-scout-ship-deliverable-and-captain-hold.md) | Scout-ship deliverable types and captain hold | **Accepted** (captain word 2026-09-07; see file) |
+| [0006](0006-jev-never-closes-issues-advisory-only.md) | Jev never closes issues — beads remain sole close | **Proposed** (2026-09-19; GS-055; HOLD merge; advisory readiness only) |
 
