@@ -1054,7 +1054,7 @@ pub struct CreateArgs {
     #[arg(long, short = 'p', add = ArgValueCompleter::new(priority_completer))]
     pub priority: Option<String>,
 
-    /// Description
+    /// Description (required — title alone is not a brief)
     // Markdown bodies routinely begin with a list marker ("- item"), which
     // clap otherwise parses as an unknown flag in the space-separated form.
     #[arg(long, short = 'd', visible_alias = "body", allow_hyphen_values = true)]
@@ -1134,13 +1134,13 @@ pub struct CreateArgs {
 
     // ADR-0001 §5.2 typed work-ledger fields. These write typed columns,
     // never description markdown.
-    /// VERIFY command that proves this bead done (single line).
+    /// VERIFY command that proves this bead done (required; single line).
     #[arg(long = "verify", value_name = "CMD", allow_hyphen_values = true)]
     pub verify: Option<String>,
 
-    /// Cite an engineering principle: 'name — decision' (repeatable). The
-    /// name must be kebab-case; the decision is the concrete choice it
-    /// changed on this bead.
+    /// Cite an engineering principle: 'name — decision' (required when
+    /// priority ≤ 2; repeatable). The name must be kebab-case; the decision
+    /// is the concrete choice it changed on this bead.
     #[arg(
         long = "principle",
         value_name = "NAME — DECISION",

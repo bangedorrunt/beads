@@ -17,6 +17,15 @@ This changelog is organized by capability rather than diff order. Each version s
 
 ## [Unreleased]
 
+### Changed
+
+- **`br create` is fail-closed on the brief schema (bd-h8d6).** Create requires
+  `-d/--description` (or `--description-file`), `--verify '<cmd>'`, and for
+  priority ≤ 2 at least one `--principle 'name — decision'`. Title-only create
+  refuses with an actionable error. Matches the ready/lint dispatchability
+  gate so thin beads never enter the ledger. `br q` remains quick-capture;
+  promote with `br update --verify` / `--principle` before expecting ready.
+
 ### Fixed
 
 - **`br create --deps` parses the documented `type:id` grammar:** `depends`,

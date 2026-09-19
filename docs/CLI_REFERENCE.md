@@ -179,7 +179,9 @@ br create [OPTIONS] [TITLE]
 |--------|-------------|
 | `-t, --type <TYPE>` | Issue type (task, bug, feature, epic, chore, docs, question) |
 | `-p, --priority <PRIORITY>` | Priority (0-4 or P0-P4, where 0=critical) |
-| `-d, --description <TEXT>` | Issue description |
+| `-d, --description <TEXT>` | Issue description (**required**; or `--description-file`) |
+| `--verify <CMD>` | VERIFY command that proves this bead done (**required**) |
+| `--principle <NAME — DECISION>` | Engineering principle citation (**required when P≤2**; repeatable) |
 | `--slug <SLUG>` | Human-readable slug embedded in the generated ID (lowercase ASCII alphanumerics + single hyphens, capped at 48 chars; see [Slug normalization](#slug-normalization)) |
 | `-a, --assignee <NAME>` | Assign to person |
 | `--owner <EMAIL>` | Set owner email |
@@ -196,25 +198,32 @@ br create [OPTIONS] [TITLE]
 | `--silent` | Output only issue ID |
 | `-f, --file <PATH>` | Create issues from markdown file (bulk import) |
 
+Fail-closed: title-only create refuses. P3/P4 may omit `--principle`. `br q` is quick-capture and skips this gate until you `br update --verify` / `--principle`.
+
 **Examples:**
 ```bash
-# Simple task
-br create "Fix login bug"
-
-# High-priority bug with details
-br create "Critical security issue" -t bug -p 0 -d "XSS vulnerability in form input"
+# High-priority bug with a full brief
+br create "Critical security issue" -t bug -p 0 \
+  -d "XSS vulnerability in form input" \
+  --verify 'cargo test xss' \
+  --principle 'prove-it-works — ran cargo test xss'
 
 # Feature with assignee and labels
-br create "Add dark mode" -t feature -a alice -l "ui,enhancement"
+br create "Add dark mode" -t feature -p 2 -a alice -l "ui,enhancement" \
+  -d "theme toggle + persist preference" \
+  --verify 'cargo test dark_mode' \
+  --principle 'experience-first — ship the theme users asked for'
 
-# Task with due date
-br create "Deploy to production" --due "+3d"
+# P3 task (principles optional)
+br create "Deploy to production" -p 3 -d "rollout checklist" --verify 'true' --due "+3d"
 
 # Bulk import from markdown
 br create -f issues.md
 
 # Human-readable slug embedded in the ID
-br create "Fix login bug on mobile" --slug "fix-login-mobile"
+br create "Fix login bug on mobile" --slug "fix-login-mobile" \
+  -d "mobile timeout" --verify 'cargo test login_mobile' \
+  --principle 'prove-it-works — ran cargo test login_mobile'
 # → Created: <prefix>-fix-login-mobile-<hash>  (e.g., br-fix-login-mobile-8cda)
 ```
 

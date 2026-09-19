@@ -56,8 +56,11 @@ br update br-123 --claim --json
 # ... do the work ...
 br close br-123 --reason "Implemented feature X" --json
 
-# Create discovered work
-br create "Found bug during implementation" -t bug -p 1 --deps discovered-from:br-123 --json
+# Create discovered work (full brief — create refuses title-only)
+br create "Found bug during implementation" -t bug -p 1 \
+  -d "repro steps + expected" --verify 'cargo test repro' \
+  --principle 'fix-root-causes — filed from a live failure' \
+  --deps discovered-from:br-123 --json
 
 # Session end: mutations auto-flush by default, but this is an idempotent final check
 br sync --flush-only
@@ -73,7 +76,7 @@ br sync --flush-only
 # Flag on any command
 br list --json
 br show br-123 --json
-br create "Title" --json
+br create "Title" -d "scope" --verify 'true' --principle 'prove-it-works — smoke' -p 3 --json
 
 # Equivalent (when the command supports --format)
 br list --format json

@@ -57,10 +57,13 @@ You need to track issues for your project, but:
 
 ```bash
 br init                              # Initialize in your repo
-br create "Fix login timeout" -p 1   # Create high-priority issue
+br create "Fix login timeout" -p 1 -t bug \
+  -d "timeout after 30s on slow networks" \
+  --verify 'cargo test login_timeout' \
+  --principle 'prove-it-works — ran the VERIFY fence'   # fail-closed brief
 br ready                             # See what's actionable
 br coordination status --json        # Inspect hidden in-progress claims
-br close br-abc123                   # Close when done; JSONL auto-flushes by default
+br close br-abc123 --commit-sha <sha> --reason "..."   # gate + citing sha
 br sync --flush-only                 # Optional final export check before git commit
 ```
 
@@ -87,11 +90,15 @@ br sync --flush-only                 # Optional final export check before git co
 cd my-project
 br init
 
-# Create issues with priority (0=critical, 4=backlog)
-br create "Implement user auth" --type feature --priority 1
+# Create issues with a full brief (description + verify; P≤2 needs principles)
+br create "Implement user auth" --type feature --priority 1 \
+  -d "OAuth login for agents" --verify 'cargo test auth' \
+  --principle 'prove-it-works — ran cargo test auth'
 # Created: br-7f3a2c
 
-br create "Set up database schema" --type task --priority 1
+br create "Set up database schema" --type task --priority 1 \
+  -d "migrations for issues table" --verify 'cargo test schema' \
+  --principle 'prove-it-works — ran cargo test schema'
 # Created: br-e9b1d4
 
 # Auth depends on database schema

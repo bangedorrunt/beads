@@ -470,6 +470,31 @@ pub fn create_issue_impl(
             .parse()
             .map_err(|e: String| BeadsError::validation("deliverable", e))?,
     };
+    // Fail-closed create (bd-h8d6): same brief schema as ready/lint.
+    // Title-only beads never become dispatchable — refuse here instead of
+    // waiting for an empty ready set. Description carries the brief body;
+    // --verify is the one runnable proof; P≤2 also needs principles.
+    if description.as_deref().is_none_or(|d| d.trim().is_empty()) {
+        return Err(BeadsError::validation(
+            "description",
+            "create requires -d/--description or --description-file (title alone is not a brief)",
+        ));
+    }
+    if args.verify.as_deref().is_none_or(|v| v.trim().is_empty()) {
+        return Err(BeadsError::validation(
+            "verify",
+            "create requires --verify '<cmd>' (one runnable command that proves this bead done)",
+        ));
+    }
+    if priority <= Priority::MEDIUM && principles.is_empty() {
+        return Err(BeadsError::validation(
+            "principle",
+            format!(
+                "P≤2 create requires --principle 'name — decision' (priority {priority}; \
+                 use -p 3 or -p 4 to skip principles)"
+            ),
+        ));
+    }
     let ac_shape = super::update::resolve_ac_shape(
         args.verify.as_deref().is_some_and(|v| !v.trim().is_empty()),
         super::update::parse_ac_arg(args.ac.as_deref())?,
@@ -1642,7 +1667,7 @@ mod tests {
     use chrono::Local;
     use tracing::info;
 
-    // Helper to create basic args
+    // Helper to create basic args that satisfy fail-closed create (bd-h8d6).
     fn default_args() -> CreateArgs {
         CreateArgs {
             title: Some("Test Issue".to_string()),
@@ -1650,7 +1675,7 @@ mod tests {
             type_: None,
             slug: None,
             priority: None,
-            description: None,
+            description: Some("unit-test brief body".to_string()),
             description_file: None,
             assignee: None,
             owner: None,
@@ -1665,8 +1690,8 @@ mod tests {
             external_ref: None,
             status: None,
             ephemeral: false,
-            verify: None,
-            principle: vec![],
+            verify: Some("true".to_string()),
+            principle: vec!["prove-it-works — unit test proves create".to_string()],
             wave: None,
             pin: None,
             commit_sha: None,
@@ -1681,6 +1706,43 @@ mod tests {
             harness: None,
             model: None,
         }
+    }
+
+    #[test]
+    fn create_requires_description_verify_and_p2_principles() {
+        let mut storage = setup_memory_storage();
+        let config = default_config();
+
+        let mut no_desc = default_args();
+        no_desc.description = None;
+        let err = create_issue_impl(&mut storage, &no_desc, &config, None).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("description"),
+            "missing description must refuse: {err:#}"
+        );
+
+        let mut no_verify = default_args();
+        no_verify.verify = None;
+        let err = create_issue_impl(&mut storage, &no_verify, &config, None).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("verify"),
+            "missing verify must refuse: {err:#}"
+        );
+
+        let mut no_principle = default_args();
+        no_principle.principle = vec![];
+        // default priority is P2 — principles required
+        let err = create_issue_impl(&mut storage, &no_principle, &config, None).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("principle"),
+            "P2 without principles must refuse: {err:#}"
+        );
+
+        let mut p3 = default_args();
+        p3.priority = Some("3".into());
+        p3.principle = vec![];
+        create_issue_impl(&mut storage, &p3, &config, None)
+            .expect("P3 create may omit principles when verify+description are set");
     }
 
     fn default_config() -> CreateConfig {
