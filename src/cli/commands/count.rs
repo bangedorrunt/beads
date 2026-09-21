@@ -59,23 +59,25 @@ pub fn execute_with_storage(
 
 fn execute_inner(args: &CountArgs, ctx: &OutputContext, storage: &SqliteStorage) -> Result<()> {
     let mut filters = ListFilters::default();
-    let statuses = parse_trimmed_values(&args.status)?;
     let types = parse_trimmed_values(&args.types)?;
     let priorities = parse_trimmed_values(&args.priority)?;
-
     // `--status all` is the same meta-value `br lint` accepts: no status
-    // filter, every status included (beads-6ilv).
+    // filter, every status included (beads-6ilv). Check before parsing:
+    // "all" is not a status and strict parsing rejects it (bd-bqyb).
     if super::status_filter_requests_all(&args.status) {
         filters.include_closed = true;
         filters.include_deferred = true;
-    } else if !statuses.is_empty() {
-        if statuses.iter().any(Status::is_terminal) {
-            filters.include_closed = true;
+    } else {
+        let statuses = parse_trimmed_values(&args.status)?;
+        if !statuses.is_empty() {
+            if statuses.iter().any(Status::is_terminal) {
+                filters.include_closed = true;
+            }
+            if statuses.contains(&Status::Deferred) {
+                filters.include_deferred = true;
+            }
+            filters.statuses = Some(statuses);
         }
-        if statuses.contains(&Status::Deferred) {
-            filters.include_deferred = true;
-        }
-        filters.statuses = Some(statuses);
     }
     if !types.is_empty() {
         filters.types = Some(types);
