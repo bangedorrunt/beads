@@ -35,7 +35,7 @@ fn first_issue(v: Value) -> Value {
 #[test]
 fn deliverable_promotes_default_diff() {
     let ws = setup();
-    let create = run_br(&ws, ["create", "plain bead", "-p", "2"], "create");
+    let create = run_br(&ws, ["create", "plain bead", "-p", "2", "-d", "promotes brief", "--verify", "true", "--principle", "prove-it-works \u{2014} promotes brief"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
     let issue = first_issue(show_json(&ws, &id));
@@ -51,7 +51,7 @@ fn deliverable_promotes_create_report_shows_typed() {
     let ws = setup();
     let create = run_br(
         &ws,
-        ["create", "survey", "-p", "2", "--deliverable", "report"],
+        ["create", "survey", "-p", "2", "--deliverable", "report", "-d", "promotes brief", "--verify", "true", "--principle", "prove-it-works \u{2014} promotes brief"],
         "create_report",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -69,7 +69,7 @@ fn deliverable_promotes_invalid_rejected() {
     let ws = setup();
     let create = run_br(
         &ws,
-        ["create", "bogus", "-p", "2", "--deliverable", "bogus"],
+        ["create", "bogus", "-p", "2", "--deliverable", "bogus", "-d", "promotes brief", "--verify", "true", "--principle", "prove-it-works \u{2014} promotes brief"],
         "create_bogus",
     );
     assert!(
@@ -83,7 +83,7 @@ fn deliverable_promotes_retype_refused() {
     let ws = setup();
     let create = run_br(
         &ws,
-        ["create", "survey", "-p", "2", "--deliverable", "report"],
+        ["create", "survey", "-p", "2", "--deliverable", "report", "-d", "promotes brief", "--verify", "true", "--principle", "prove-it-works \u{2014} promotes brief"],
         "create_report",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -104,12 +104,12 @@ fn deliverable_promotes_retype_refused() {
 #[test]
 fn deliverable_promotes_link_visible_without_ready_gating() {
     let ws = setup();
-    let a = run_br(&ws, ["create", "finding", "-p", "2"], "create_a");
+    let a = run_br(&ws, ["create", "finding", "-p", "2", "-d", "promotes brief", "--verify", "true", "--principle", "prove-it-works \u{2014} promotes brief"], "create_a");
     assert!(a.status.success(), "create A failed: {}", a.stderr);
     let id_a = parse_created_id(&a.stdout);
     let b = run_br(
         &ws,
-        ["create", "follow-on", "-p", "2", "--promotes", &id_a],
+        ["create", "follow-on", "-p", "2", "--promotes", &id_a, "-d", "promotes brief", "--verify", "true", "--principle", "prove-it-works \u{2014} promotes brief"],
         "create_b",
     );
     assert!(b.status.success(), "create B failed: {}", b.stderr);
@@ -127,16 +127,19 @@ fn deliverable_promotes_link_visible_without_ready_gating() {
         "promotes must not create a dependency edge: {:?}",
         issue_b.get("dependencies")
     );
-    // ...and readiness is unaffected: ready output is identical whether
-    // the bead carries the link or not.
+    // ...and readiness is unaffected by the link itself: the linked set is
+    // a subset of the later set (fail-closed create stamps every bead with
+    // proof, so the added plain bead is itself dispatchable and joins ready).
     let ready_linked = run_br(&ws, ["ready", "--json"], "ready_linked");
     assert!(ready_linked.status.success(), "ready failed");
-    let c = run_br(&ws, ["create", "plain", "-p", "2"], "create_plain");
+    let c = run_br(&ws, ["create", "plain", "-p", "2", "-d", "promotes brief", "--verify", "true", "--principle", "prove-it-works \u{2014} promotes brief"], "create_plain");
     assert!(c.status.success(), "create failed: {}", c.stderr);
     let ready_plain = run_br(&ws, ["ready", "--json"], "ready_plain");
     assert!(ready_plain.status.success(), "ready failed");
-    assert_eq!(
-        ready_linked.stdout, ready_plain.stdout,
-        "promotes link must not change the ready set"
-    );
+    for id in [id_a.as_str(), id_b.as_str()] {
+        assert!(
+            ready_plain.stdout.contains(id),
+            "linked bead {id} stays ready after plain joins"
+        );
+    }
 }
