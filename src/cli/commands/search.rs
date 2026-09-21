@@ -359,7 +359,6 @@ struct SearchRelationMetadata {
     dependent_counts: HashMap<String, usize>,
 }
 
-
 /// Trailing stdout note for text modes when the default closed-issue
 /// exclusion hid matches (#445).
 fn emit_hidden_closed_note(ctx: &OutputContext, hidden_closed_count: usize) {

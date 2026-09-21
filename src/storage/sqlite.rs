@@ -8162,6 +8162,52 @@ impl SqliteStorage {
         Self::get_issue_from_conn(&self.conn, id)
     }
 
+    /// Draft issues not updated within `older_than_days` (ADR-0035 Spec 4:
+    /// `q` captures drafts; doctor expires the abandoned ones). Returns ids
+    /// oldest-first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub fn stale_draft_ids(&self, older_than_days: i64) -> Result<Vec<String>> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(older_than_days.max(0));
+        let rows = self.conn.query_with_params(
+            "SELECT id FROM issues WHERE status = 'draft' AND updated_at < ?1 ORDER BY updated_at ASC",
+            &[SqliteValue::from(cutoff.to_rfc3339())],
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| row.get(0).and_then(SqliteValue::as_text).map(String::from))
+            .collect())
+    }
+
+    /// Expire stale drafts to Tombstone with an audit reason (doctor repair).
+    /// Returns expired ids. Each expiry flows through `update_issue`, so the
+    /// Deleted audit event, deleted_at/by, and caches stay consistent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any expiry write fails.
+    pub fn expire_stale_drafts(
+        &mut self,
+        older_than_days: i64,
+        actor: &str,
+    ) -> Result<Vec<String>> {
+        let mut expired = Vec::new();
+        for id in self.stale_draft_ids(older_than_days)? {
+            let updates = IssueUpdate {
+                status: Some(Status::Tombstone),
+                close_reason: Some(Some(format!(
+                    "stale draft expired by doctor (untouched {older_than_days}+ days)"
+                ))),
+                ..IssueUpdate::default()
+            };
+            self.update_issue(&id, &updates, actor)?;
+            expired.push(id);
+        }
+        Ok(expired)
+    }
+
     /// Get metadata for all issues to optimize import collision detection.
     ///
     /// # Errors
@@ -10281,10 +10327,7 @@ impl SqliteStorage {
         exclude_blocked_in_sql: bool,
         blocked_ids: Option<&HashSet<String>>,
     ) -> Result<Vec<Issue>> {
-        let parent_member_ids = filters
-            .parent_member_ids
-            .as_deref()
-            .unwrap_or_default();
+        let parent_member_ids = filters.parent_member_ids.as_deref().unwrap_or_default();
         let chunk_size = ready_parent_membership_sql_capacity(filters).max(1);
         let mut issues = Vec::new();
         for member_chunk in parent_member_ids.chunks(chunk_size) {
@@ -16717,7 +16760,7 @@ impl SqliteStorage {
             id: get_str(0),
             status: parse_status(row.get(1).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(2).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(3).and_then(SqliteValue::as_text))?, 
+            issue_type: parse_issue_type(row.get(3).and_then(SqliteValue::as_text))?,
             assignee: get_non_empty_str(4),
             created_at: parse_datetime_value(row.get(5))?,
             closed_at: get_opt_datetime(6)?,
@@ -17355,18 +17398,16 @@ fn ready_parent_membership_exceeds_sql_parameter_limit(
     };
 
     let configured_priority_count = filters.priorities.as_ref().map_or(0, Vec::len);
-    let hybrid_priority_count = if sort == ReadySortPolicy::Hybrid
-        && filters.limit.is_some_and(|limit| limit > 0)
-    {
-        ready_hybrid_high_bucket_priorities(filters.priorities.as_deref()).len()
-    } else {
-        0
-    };
+    let hybrid_priority_count =
+        if sort == ReadySortPolicy::Hybrid && filters.limit.is_some_and(|limit| limit > 0) {
+            ready_hybrid_high_bucket_priorities(filters.priorities.as_deref()).len()
+        } else {
+            0
+        };
     let non_parent_parameter_count = ready_non_parent_parameter_count(filters)
         .saturating_add(hybrid_priority_count.saturating_sub(configured_priority_count));
 
-    parent_member_ids.len()
-        > SQLITE_VAR_LIMIT.saturating_sub(non_parent_parameter_count)
+    parent_member_ids.len() > SQLITE_VAR_LIMIT.saturating_sub(non_parent_parameter_count)
 }
 
 fn ready_parent_membership_sql_capacity(filters: &ReadyFilters) -> usize {
@@ -21097,7 +21138,7 @@ mod tests {
             ..Default::default()
         };
         workflow.gates.insert(
-            "in_review -> closed".to_string(),
+            "in_progress -> closed".to_string(),
             crate::close_policy::GateRule {
                 require_all: vec![crate::close_policy::GateSpec::Named("ci_green".to_string())],
                 ..Default::default()
@@ -21119,7 +21160,7 @@ mod tests {
         let first = storage
             .record_scoped_gate_result(
                 "bd-cycle",
-                "in_review",
+                "in_progress",
                 0,
                 "closed",
                 "ci_green",
@@ -21131,7 +21172,7 @@ mod tests {
             .unwrap();
         assert_eq!(first.status_revision, 0);
 
-        for status in [Status::Deferred, Status::InProgress] {
+        for status in [Status::Blocked, Status::InProgress] {
             storage
                 .update_issue(
                     "bd-cycle",
@@ -21146,10 +21187,10 @@ mod tests {
 
         assert!(
             storage
-                .get_scoped_gate_results("bd-cycle", "in_review", "closed")
+                .get_scoped_gate_results("bd-cycle", "in_progress", "closed")
                 .unwrap()
                 .is_empty(),
-            "the prior review cycle must not authorize the new status revision"
+            "the prior gate cycle must not authorize the new status revision"
         );
         let error = storage
             .update_issue(
@@ -21177,7 +21218,7 @@ mod tests {
                 .unwrap()
                 .status
                 .as_str(),
-            "in_review"
+            "in_progress"
         );
         let history = storage.get_gate_result_history("bd-cycle").unwrap();
         assert_eq!(history.len(), 1);
@@ -21186,7 +21227,7 @@ mod tests {
         let stale_report = storage
             .record_scoped_gate_result(
                 "bd-cycle",
-                "in_review",
+                "in_progress",
                 first.status_revision,
                 "closed",
                 "ci_green",
@@ -21207,7 +21248,7 @@ mod tests {
         let second = storage
             .record_scoped_gate_result(
                 "bd-cycle",
-                "In_Review",
+                "in_progress",
                 current_revision,
                 "closed",
                 "ci_green",
@@ -21253,7 +21294,7 @@ mod tests {
             .update_issue(
                 "bd-bypass",
                 &IssueUpdate {
-                    status: Some(Status::InProgress),
+                    status: Some(Status::Blocked),
                     workflow_policy_bypass_reason: Some("incident response".to_string()),
                     ..Default::default()
                 },
@@ -21264,9 +21305,7 @@ mod tests {
         let events = storage.get_events("bd-bypass", 0).unwrap();
         let bypass = events
             .iter()
-            .find(|event| {
-                event.event_type == EventType::WorkflowPolicyBypassed
-            })
+            .find(|event| event.event_type == EventType::WorkflowPolicyBypassed)
             .expect("bypass event");
         assert_eq!(bypass.actor, "operator");
         assert_eq!(bypass.comment.as_deref(), Some("incident response"));
@@ -23787,7 +23826,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_all_issues_metadata_preserves_custom_status() {
+    fn test_get_all_issues_metadata_rejects_unknown_status_loudly() {
+        // bd-bqyb: a smuggled unknown status fails the metadata read instead
+        // of materializing as Custom.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let issue = make_issue(
             "bd-custom",
@@ -23803,16 +23844,7 @@ mod tests {
             .execute_test_sql("UPDATE issues SET status = 'mystery-state' WHERE id = 'bd-custom'")
             .unwrap();
 
-        let metadata = storage.get_all_issues_metadata().unwrap();
-        let issue_meta = metadata
-            .iter()
-            .find(|meta| meta.id == "bd-custom")
-            .expect("metadata for bd-custom");
-
-        assert_eq!(
-            issue_meta.status,
-            Status::Deferred
-        );
+        assert!(storage.get_all_issues_metadata().is_err());
     }
 
     #[test]
@@ -32954,15 +32986,7 @@ mod tests {
             .unwrap();
         storage
             .create_issue(
-                &make_issue(
-                    "bd-rework",
-                    "Rework",
-                    Status::Deferred,
-                    2,
-                    None,
-                    t1,
-                    None,
-                ),
+                &make_issue("bd-rework", "Rework", Status::Deferred, 2, None, t1, None),
                 "tester",
             )
             .unwrap();
@@ -32990,15 +33014,7 @@ mod tests {
             .unwrap();
         storage
             .create_issue(
-                &make_issue(
-                    "bd-rework",
-                    "Rework",
-                    Status::Deferred,
-                    2,
-                    None,
-                    t1,
-                    None,
-                ),
+                &make_issue("bd-rework", "Rework", Status::Deferred, 2, None, t1, None),
                 "tester",
             )
             .unwrap();
@@ -37206,6 +37222,100 @@ mod tests {
                 .filter(|event| event.event_type == EventType::Deleted)
                 .count(),
             1
+        );
+    }
+}
+
+#[cfg(test)]
+mod stale_draft_tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+
+    fn draft_issue(id: &str) -> Issue {
+        Issue {
+            revision: 1,
+            id: id.to_string(),
+            title: id.to_string(),
+            description: None,
+            design: None,
+            acceptance_criteria: None,
+            notes: None,
+            status: Status::Draft,
+            priority: Priority(2),
+            issue_type: IssueType::Task,
+            assignee: None,
+            owner: None,
+            estimated_minutes: None,
+            created_at: Utc::now(),
+            created_by: None,
+            updated_at: Utc::now(),
+            closed_at: None,
+            close_reason: None,
+            closed_by_session: None,
+            due_at: None,
+            defer_until: None,
+            external_ref: None,
+            source_system: None,
+            source_repo: None,
+            source_repo_path: None,
+            agent_context: None,
+            deleted_at: None,
+            deleted_by: None,
+            delete_reason: None,
+            labels: Vec::new(),
+            content_hash: None,
+            dependencies: Vec::new(),
+            comments: Vec::new(),
+            commit_sha: None,
+            close_verdict: None,
+            verify: None,
+            principles: Vec::new(),
+            wave: None,
+            pin: None,
+            ac_shape: crate::model::AcShape::Checkable,
+            blast: crate::model::Blast::Normal,
+            deliverable: crate::model::Deliverable::Diff,
+            promotes: None,
+            ephemeral: false,
+            pinned: false,
+            is_template: false,
+            original_type: None,
+            compaction_level: None,
+            compacted_at: None,
+            compacted_at_commit: None,
+            original_size: None,
+            sender: None,
+        }
+    }
+
+    #[test]
+    fn stale_drafts_listed_and_expired_to_tombstone() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        storage
+            .create_issue(&draft_issue("bd-fresh"), "tester")
+            .unwrap();
+        storage
+            .create_issue(&draft_issue("bd-old"), "tester")
+            .unwrap();
+        let backdate = (Utc::now() - Duration::days(30)).to_rfc3339();
+        storage
+            .execute_test_sql(&format!(
+                "UPDATE issues SET updated_at = '{backdate}' WHERE id = 'bd-old'"
+            ))
+            .unwrap();
+
+        assert_eq!(storage.stale_draft_ids(7).unwrap(), vec!["bd-old"]);
+        assert!(storage.stale_draft_ids(365).unwrap().is_empty());
+
+        let expired = storage.expire_stale_drafts(7, "doctor").unwrap();
+        assert_eq!(expired, vec!["bd-old"]);
+        let tombstoned = storage.get_issue("bd-old").unwrap().unwrap();
+        assert_eq!(tombstoned.status, Status::Tombstone);
+        assert!(storage.stale_draft_ids(7).unwrap().is_empty());
+        // Fresh draft untouched.
+        assert_eq!(
+            storage.get_issue("bd-fresh").unwrap().unwrap().status,
+            Status::Draft
         );
     }
 }

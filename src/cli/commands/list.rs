@@ -435,15 +435,10 @@ fn issue_with_batched_relation_metadata(
     }
 }
 
-/// Reject status filter values that no surface of this workspace knows about.
+/// Reject status filter values the typed boundary does not know.
 ///
-/// `Status::from_str` never fails — unknown values become `Status::Custom` so
-/// policy-configured workflow statuses keep working. Without this check a
-/// typo like `--status zzzz` silently matches zero issues with exit code 0,
-/// indistinguishable from a genuinely empty result (#418). A custom status is
-/// accepted when the workflow policy declares it or when at least one issue
-/// in the database currently carries it.
-
+/// `Status::from_str` fails loud on unknown values (bd-bqyb), so a typo
+/// like `--status zzzz` errors instead of silently matching zero issues.
 /// Convert CLI args to storage filter.
 fn build_filters(args: &ListArgs) -> Result<ListFilters> {
     // Parse status strings to Status enums. `--status all` is the same

@@ -216,6 +216,7 @@ struct LocalRepairResult {
     blocked_cache_rebuilt: bool,
     indexes_reindexed: bool,
     vacuumed: bool,
+    stale_drafts_expired: u64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     quarantined_artifacts: Vec<String>,
 }
@@ -499,6 +500,7 @@ impl LocalRepairResult {
         self.blocked_cache_rebuilt
             || self.indexes_reindexed
             || self.vacuumed
+            || self.stale_drafts_expired > 0
             || !self.quarantined_artifacts.is_empty()
     }
 }
@@ -513,6 +515,9 @@ fn local_repair_applied_actions(repair: &LocalRepairResult) -> Vec<String> {
     }
     if repair.vacuumed {
         actions.push("vacuumed".to_string());
+    }
+    if repair.stale_drafts_expired > 0 {
+        actions.push("stale_drafts_expired".to_string());
     }
     if !repair.quarantined_artifacts.is_empty() {
         actions.push("quarantined_artifacts".to_string());
@@ -1238,6 +1243,112 @@ fn parse_sidecar_pass_issue_ids(
         }
     }
     Ok(ids)
+}
+
+/// Drafts untouched this long are abandoned quick-captures (ADR-0035
+/// Spec 4): doctor warns, `--repair` expires them to Tombstone.
+pub const STALE_DRAFT_DAYS: i64 = 7;
+
+fn check_stale_drafts(db_path: &Path, checks: &mut Vec<CheckResult>) {
+    let stale = (|| {
+        let storage =
+            crate::storage::SqliteStorage::open_current_read_only(db_path)?.ok_or_else(|| {
+                BeadsError::Config(format!(
+                    "no readable SQLite database at {}",
+                    db_path.display()
+                ))
+            })?;
+        storage.stale_draft_ids(STALE_DRAFT_DAYS)
+    })();
+    match stale {
+        Ok(ids) => {
+            if ids.is_empty() {
+                push_check(
+                    checks,
+                    "draft.stale",
+                    CheckStatus::Ok,
+                    Some("No stale drafts (nothing untouched 7+ days)".to_string()),
+                    None,
+                );
+            } else {
+                let listed: Vec<String> = ids.iter().take(10).cloned().collect();
+                push_check(
+                    checks,
+                    "draft.stale",
+                    CheckStatus::Warn,
+                    Some(format!(
+                        "{} draft(s) untouched {}+ days: {}{}. Promote with `br update --status open` or expire via `br doctor --repair`.",
+                        ids.len(),
+                        STALE_DRAFT_DAYS,
+                        listed.join(", "),
+                        if ids.len() > 10 { ", ..." } else { "" }
+                    )),
+                    Some(serde_json::json!({
+                        "stale_count": ids.len(),
+                        "stale_ids": listed,
+                        "remediation": "Promote live drafts, or run `br doctor --repair` to expire them to Tombstone."
+                    })),
+                );
+            }
+        }
+        Err(error) => push_check(
+            checks,
+            "draft.stale",
+            CheckStatus::Warn,
+            Some(format!(
+                "Could not query stale drafts (database unavailable to this check): {error}"
+            )),
+            None,
+        ),
+    }
+}
+
+fn report_has_stale_drafts_finding(report: &DoctorReport) -> bool {
+    report
+        .checks
+        .iter()
+        .any(|check| check.name == "draft.stale" && matches!(check.status, CheckStatus::Warn))
+}
+
+fn repair_stale_drafts_under_write_authority(
+    db_path: &Path,
+    repair: &mut LocalRepairResult,
+    write_authority: &Arc<crate::sync::DatabaseFamilyWriteLock>,
+) {
+    if let Err(err) = write_authority.verify_database_authority() {
+        tracing::warn!(
+            path = %db_path.display(),
+            error = %err,
+            "Skipping stale-draft expiry because database authority was lost"
+        );
+        return;
+    }
+    match open_doctor_storage_under_write_authority(db_path, write_authority) {
+        Ok(mut storage) => match storage.expire_stale_drafts(STALE_DRAFT_DAYS, "doctor") {
+            Ok(expired) => {
+                repair.stale_drafts_expired += expired.len() as u64;
+                tracing::info!(
+                    path = %db_path.display(),
+                    expired = expired.len(),
+                    "Expired stale drafts to Tombstone"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    path = %db_path.display(),
+                    error = %err,
+                    "Stale-draft expiry failed; drafts remain"
+                );
+            }
+        },
+        Err(err) => {
+            tracing::warn!(
+                path = %db_path.display(),
+                error = %err,
+                "Skipping stale-draft expiry because the database would not open"
+            );
+        }
+    }
 }
 
 fn check_gate_verdict_orphans(beads_dir: &Path, db_path: &Path, checks: &mut Vec<CheckResult>) {
@@ -2268,6 +2379,12 @@ fn local_repair_message(local_repair: &LocalRepairResult) -> String {
     }
     if local_repair.vacuumed {
         actions.push("compacted database via VACUUM to fix page-level anomalies".to_string());
+    }
+    if local_repair.stale_drafts_expired > 0 {
+        actions.push(format!(
+            "expired {} stale draft(s) to Tombstone",
+            local_repair.stale_drafts_expired
+        ));
     }
     if !local_repair.quarantined_artifacts.is_empty() {
         actions.push(format!(
@@ -11978,6 +12095,8 @@ fn collect_doctor_report_with_mode_and_db_override(
     // gates.jsonl. DB-backed, so skipped under --no-db like its peers.
     if !no_db {
         check_gate_verdict_orphans(beads_dir, &paths.db_path, &mut checks);
+        // ADR-0035 Spec 4: `q` captures drafts; abandoned ones expire.
+        check_stale_drafts(&paths.db_path, &mut checks);
     }
 
     // The JSONL-side audit always runs — it is the source of truth under the
@@ -13433,11 +13552,16 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             && fixer_filter.allows(FM_PARTIAL_INDEX_STALE);
         let has_warn_page_anomalies = report_has_warn_level_page_anomaly(&initial.report)
             && fixer_filter.allows(FM_SQLITE_PAGE_MALFORMED);
+        let has_stale_drafts = report_has_stale_drafts_finding(&initial.report);
 
         // Even when there are no errors, planned deferred cache rebuilds and
         // integrity warnings can be repaired. Run those local repairs when
         // --repair is passed and the warnings are present.
-        if has_blocked_cache_rebuild || has_partial_index_warnings || has_warn_page_anomalies {
+        if has_blocked_cache_rebuild
+            || has_partial_index_warnings
+            || has_warn_page_anomalies
+            || has_stale_drafts
+        {
             local_repair = if has_blocked_cache_rebuild {
                 repair_recoverable_db_state_under_write_authority(
                     &beads_dir,
@@ -13465,6 +13589,14 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
                     &paths.db_path,
                     &mut local_repair,
                     session.as_mut(),
+                    repair_write_authority,
+                );
+            }
+
+            if has_stale_drafts {
+                repair_stale_drafts_under_write_authority(
+                    &paths.db_path,
+                    &mut local_repair,
                     repair_write_authority,
                 );
             }
@@ -15589,6 +15721,7 @@ mod tests {
             blocked_cache_rebuilt: true,
             indexes_reindexed: true,
             vacuumed: false,
+            stale_drafts_expired: 0,
             quarantined_artifacts: vec![".beads/.br_recovery/beads.db-shm.test".to_string()],
         };
 
@@ -16616,7 +16749,7 @@ mod tests {
         );
         assert_eq!(
             offenders[0].get("status").and_then(|v| v.as_str()),
-            Some("completed")
+            Some("deferred")
         );
     }
     /// issue #311: when every issue conforms, the detector reports Ok.
@@ -16685,6 +16818,34 @@ mod tests {
     /// issue #311: with no workflow policy configured the detector stays
     /// silent — it emits no check at all, so repos without the policy see no
     /// new doctor output.
+    #[test]
+    fn test_check_stale_drafts_warns_and_ok() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("beads.db");
+        let mut storage = SqliteStorage::open(&db_path).unwrap();
+        let mut old = sample_issue("bd-old", "Stale draft");
+        old.status = Status::Draft;
+        storage.create_issue(&old, "tester").unwrap();
+        let backdate = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        storage
+            .execute_test_sql(&format!(
+                "UPDATE issues SET updated_at = '{backdate}' WHERE id = 'bd-old'"
+            ))
+            .unwrap();
+        let mut fresh = sample_issue("bd-fresh", "Fresh draft");
+        fresh.status = Status::Draft;
+        storage.create_issue(&fresh, "tester").unwrap();
+        drop(storage);
+
+        let mut checks = Vec::new();
+        check_stale_drafts(&db_path, &mut checks);
+        let check = find_check(&checks, "draft.stale").expect("check present");
+        assert!(matches!(check.status, CheckStatus::Warn), "{check:?}");
+        let details = check.details.as_ref().expect("details");
+        assert_eq!(details["stale_count"], 1);
+        assert_eq!(details["stale_ids"][0], "bd-old");
+    }
+
     #[test]
     fn test_check_workflow_statuses_silent_without_policy() {
         let temp = TempDir::new().unwrap();

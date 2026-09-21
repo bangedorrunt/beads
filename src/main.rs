@@ -3628,7 +3628,14 @@ mod tests {
         )
         .expect("rewrite metadata");
 
-        let cli = Cli::parse_from(["br", "--json", "create", "Use preopened storage"]);
+        let cli = Cli::parse_from([
+            "br",
+            "--json",
+            "create",
+            "-d",
+            "preopened storage brief",
+            "Use preopened storage",
+        ]);
         let output_ctx = OutputContext::from_args(&cli);
         let Commands::Create(args) = cli.command else {
             unreachable!("expected create command");
