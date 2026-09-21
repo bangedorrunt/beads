@@ -1850,6 +1850,15 @@ pub(crate) struct ReconcileTransactionOutcome<T> {
     pub database_authority_preserved: bool,
 }
 
+/// One v20 event-log row (ADR-0035 Spec 4 source of truth).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredLogEvent {
+    pub generation: i64,
+    pub event_id: String,
+    pub kind: String,
+    pub payload: String,
+}
+
 impl SqliteStorage {
     #[cfg(test)]
     pub(crate) fn arm_database_replacement_after_commit_for_test() {
@@ -8220,6 +8229,44 @@ impl SqliteStorage {
             &[SqliteValue::from(next), SqliteValue::from(ts_us)],
         )?;
         Ok(())
+    }
+
+    /// Read the v20 event log in generation order (rebuild input). Skips
+    /// pre-v20 databases without the table (empty log, not an error).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub fn read_event_log(&self) -> Result<Vec<StoredLogEvent>> {
+        if !crate::storage::schema::table_exists(&self.conn, "event_log") {
+            return Ok(Vec::new());
+        }
+        let rows = self.conn.query_with_params(
+            "SELECT generation, event_id, kind, payload FROM event_log ORDER BY generation ASC",
+            &[],
+        )?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let Some(generation) = row.get(0).and_then(SqliteValue::as_integer) else {
+                continue;
+            };
+            let Some(event_id) = row.get(1).and_then(SqliteValue::as_text) else {
+                continue;
+            };
+            let Some(kind) = row.get(2).and_then(SqliteValue::as_text) else {
+                continue;
+            };
+            let Some(payload) = row.get(3).and_then(SqliteValue::as_text) else {
+                continue;
+            };
+            out.push(StoredLogEvent {
+                generation,
+                event_id: event_id.to_string(),
+                kind: kind.to_string(),
+                payload: payload.to_string(),
+            });
+        }
+        Ok(out)
     }
 
     /// Draft issues not updated within `older_than_days` (ADR-0035 Spec 4:

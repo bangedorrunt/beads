@@ -13413,6 +13413,58 @@ fn process_import_action(
     Ok(())
 }
 
+/// Rebuild outcome for [`rebuild_from_event_log`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RebuildStats {
+    /// Issue rows written from the fold.
+    pub applied: u64,
+    /// Events skipped (unknown kind, unparseable payload).
+    pub skipped: u64,
+}
+
+/// Rebuild the issues table from the v20 event log (ADR-0035 Spec 4,
+/// bd-hj1t): fold `issue.snapshot` events last-write-wins per issue id and
+/// upsert each row with the import path (table-only, no new events, no
+/// policy gating — a projection restore, like a JSONL rebuild). Relations
+/// sync from the folded snapshots. Tombstoned snapshots restore as
+/// Tombstone rows (history preserved, never resurrected as live).
+///
+/// # Errors
+///
+/// Returns an error if the log cannot be read or a row write fails.
+pub fn rebuild_from_event_log(storage: &SqliteStorage) -> Result<RebuildStats> {
+    use std::collections::BTreeMap;
+    let mut folded: BTreeMap<String, crate::model::Issue> = BTreeMap::new();
+    let mut skipped = 0u64;
+    for event in storage.read_event_log()? {
+        if event.kind != "issue.snapshot" {
+            skipped += 1;
+            continue;
+        }
+        let payload: serde_json::Value = if let Ok(v) = serde_json::from_str(&event.payload) {
+            v
+        } else {
+            skipped += 1;
+            continue;
+        };
+        let Some(issue): Option<crate::model::Issue> = payload
+            .get("issue")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+        else {
+            skipped += 1;
+            continue;
+        };
+        folded.insert(issue.id.clone(), issue);
+    }
+    let mut applied = 0u64;
+    for issue in folded.values() {
+        insert_new_import_issue(storage, issue)?;
+        sync_issue_relations(storage, issue)?;
+        applied += 1;
+    }
+    Ok(RebuildStats { applied, skipped })
+}
+
 fn insert_new_import_issue(storage: &SqliteStorage, issue: &Issue) -> Result<bool> {
     match storage.insert_new_issue_for_import_in_tx(issue) {
         Ok(_) => Ok(true),
@@ -19834,6 +19886,46 @@ mod tests {
                 "alias {raw:?} should map to Closed"
             );
         }
+    }
+
+    #[test]
+    fn test_rebuild_from_event_log_restores_latest_snapshots() {
+        // bd-hj1t (3/3): wipe the table, rebuild purely from the dual-written
+        // log — latest snapshots win, tombstones stay tombstoned.
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let one = make_test_issue("bd-r1", "v1");
+        storage.create_issue(&one, "tester").unwrap();
+        storage
+            .update_issue(
+                "bd-r1",
+                &crate::storage::IssueUpdate {
+                    title: Some("v2".to_string()),
+                    ..Default::default()
+                },
+                "tester",
+            )
+            .unwrap();
+        let two = make_test_issue("bd-r2", "Gone");
+        storage.create_issue(&two, "tester").unwrap();
+        storage
+            .update_issue(
+                "bd-r2",
+                &crate::storage::IssueUpdate {
+                    status: Some(crate::model::Status::Tombstone),
+                    ..Default::default()
+                },
+                "tester",
+            )
+            .unwrap();
+        storage.execute_test_sql("DELETE FROM issues").unwrap();
+
+        let stats = rebuild_from_event_log(&storage).unwrap();
+        assert_eq!(stats.applied, 2);
+        assert_eq!(stats.skipped, 0);
+        let r1 = storage.get_issue("bd-r1").unwrap().unwrap();
+        assert_eq!(r1.title, "v2");
+        let r2 = storage.get_issue("bd-r2").unwrap().unwrap();
+        assert_eq!(r2.status, crate::model::Status::Tombstone);
     }
 
     #[test]

@@ -27,5 +27,5 @@ pub(crate) use sqlite::ChangelogIssueRow;
 
 pub use sqlite::{
     CloseMetadataRow, CloseMetadataUpdate, EventAttribution, IssueUpdate, ListFilters,
-    ReadyFilters, ReadySortPolicy, SqliteStorage, StatsIssueRow,
+    ReadyFilters, ReadySortPolicy, SqliteStorage, StatsIssueRow, StoredLogEvent,
 };
