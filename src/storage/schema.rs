@@ -946,6 +946,36 @@ fn validate_reviewed_schema_migration(
 /// # Errors
 ///
 /// Returns an error when any `ALTER TABLE` statement fails.
+/// v20 event-log tables for the reviewed migration path (ADR-0035 Spec 4,
+/// bd-hj1t). Idempotent IF NOT EXISTS DDL shared with the base schema and
+/// the auto-migrate block; a single source would be nicer, but the three
+/// call sites have different transactional contexts.
+fn apply_event_log_migration_in_transaction(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS event_log (\
+         generation INTEGER NOT NULL, \
+         event_id TEXT PRIMARY KEY, \
+         kind TEXT NOT NULL, \
+         payload TEXT NOT NULL, \
+         ts_us INTEGER NOT NULL)",
+    )?;
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_generation ON event_log (generation)",
+    )?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_event_log_kind ON event_log (kind)")?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS generation_manifest (\
+         singleton INTEGER PRIMARY KEY CHECK (singleton = 1), \
+         generation INTEGER NOT NULL, \
+         updated_ts_us INTEGER NOT NULL)",
+    )?;
+    conn.execute(
+        "INSERT INTO generation_manifest (singleton, generation, updated_ts_us) \
+         SELECT 1, 0, 0 WHERE NOT EXISTS (SELECT 1 FROM generation_manifest WHERE singleton = 1)",
+    )?;
+    Ok(())
+}
+
 fn add_missing_typed_work_ledger_columns(conn: &Connection) -> Result<()> {
     let existing: std::collections::HashSet<String> = conn
         .query("SELECT name FROM pragma_table_info('issues')")?
@@ -1042,6 +1072,10 @@ pub fn run_reviewed_schema_migration_steps_in_transaction(
     // every reviewed source (13–17) and leaves already-shaped tables
     // untouched.
     add_missing_typed_work_ledger_columns(conn)?;
+
+    // v20 (ADR-0035 Spec 4, bd-hj1t): the event log is the source of truth.
+    // Purely additive IF NOT EXISTS tables, safe on every reviewed source.
+    apply_event_log_migration_in_transaction(conn)?;
 
     // #428 integrity gate: the version stamp lands only when integrity_check
     // agrees. On failure the error propagates and the caller's transaction
@@ -3596,6 +3630,28 @@ mod tests {
         assert!(!column_exists(&conn, "gate_result_history", "issue_id"));
         assert!(!index_exists(&conn, "idx_gate_result_history_issue"));
         assert!(!index_exists(&conn, "idx_gate_result_history_scope"));
+    }
+
+    #[test]
+    fn test_reviewed_migration_to_current_creates_event_log() {
+        // bd-hj1t: the reviewed path (doctor migrate-schema) must land the
+        // v20 event tables, not just the auto-migrate ensure block.
+        let (_temp, conn) = reviewed_v14_with_gate_history_schema(GATE_RESULT_HISTORY_MIGRATION_SQL);
+        // apply_schema already created the v20 tables: drop them so the
+        // reviewed migration itself must recreate them.
+        conn.execute("DROP TABLE event_log").expect("drop log");
+        conn.execute("DROP TABLE generation_manifest").expect("drop manifest");
+        run_migrations_atomic(&conn, 14, 20).expect("reviewed 14->20 migrates");
+        assert!(table_exists(&conn, "event_log"));
+        assert!(table_exists(&conn, "generation_manifest"));
+        let row = conn
+            .query_row("SELECT generation FROM generation_manifest WHERE singleton = 1")
+            .expect("manifest row");
+        assert_eq!(row.get(0).and_then(SqliteValue::as_integer), Some(0));
+        assert_eq!(
+            connection_user_version(&conn).expect("read version"),
+            20
+        );
     }
 
     #[test]
