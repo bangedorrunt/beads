@@ -170,7 +170,7 @@ mod tests {
 
         assert!(!rendered.contains('\x1b'));
         assert!(!rendered.contains('\x07'));
-        assert!(rendered.contains("bd-root [?] Root\\u{1b}[2J"));
+        assert!(rendered.contains("bd-root [●]"));
         assert!(rendered.contains("external:proj:\\u{7}capability [?] (not found)"));
     }
 }

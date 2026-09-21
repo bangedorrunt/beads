@@ -121,7 +121,6 @@ impl Theme {
             Status::Deferred | Status::Draft => &self.status_deferred,
             Status::Closed | Status::Tombstone => &self.status_closed,
             Status::Pinned => &self.status_pinned,
-            
         }
     }
 
@@ -238,10 +237,7 @@ mod tests {
             &theme.status_deferred
         );
         assert_eq!(theme.status_style(&Status::Closed), &theme.status_closed);
-        assert_eq!(
-            theme.status_style(&Status::Blocked),
-            &theme.status_blocked
-        );
+        assert_eq!(theme.status_style(&Status::Blocked), &theme.status_blocked);
     }
 
     #[test]
@@ -268,10 +264,7 @@ mod tests {
         assert_eq!(theme.type_style(&IssueType::Bug), &theme.type_bug);
         assert_eq!(theme.type_style(&IssueType::Feature), &theme.type_feature);
         assert_eq!(theme.type_style(&IssueType::Task), &theme.type_task);
-        assert_eq!(
-            theme.type_style(&IssueType::Bug),
-            &theme.type_bug
-        );
+        assert_eq!(theme.type_style(&IssueType::Bug), &theme.type_bug);
         assert_eq!(theme.type_style(&IssueType::Epic), &theme.type_epic);
         assert_eq!(theme.type_style(&IssueType::Docs), &theme.type_docs);
         assert_eq!(theme.type_style(&IssueType::Chore), &theme.type_chore);

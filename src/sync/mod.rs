@@ -19824,9 +19824,15 @@ mod tests {
     #[test]
     fn test_import_remaps_mixed_case_terminal_aliases() {
         for raw in ["Done", "COMPLETE", "completed", "Finished", "Resolved"] {
-            let line = format!("{{\"id\":\"bd-001\",\"title\":\"Legacy alias\",\"status\":\"{raw}\",\"issue_type\":\"task\",\"priority\":2,\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\"}}");
+            let line = format!(
+                "{{\"id\":\"bd-001\",\"title\":\"Legacy alias\",\"status\":\"{raw}\",\"issue_type\":\"task\",\"priority\":2,\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\"}}"
+            );
             let issue = parse_normalized_import_issue(&line, 1).expect("alias imports");
-            assert_eq!(issue.status, Status::Closed, "alias {raw:?} should map to Closed");
+            assert_eq!(
+                issue.status,
+                Status::Closed,
+                "alias {raw:?} should map to Closed"
+            );
         }
     }
 
@@ -19842,7 +19848,7 @@ mod tests {
         issue.dependencies.push(crate::model::Dependency {
             issue_id: issue.id.clone(),
             depends_on_id: "bd-002".to_string(),
-dep_type: crate::model::DependencyType::ParentChild,
+            dep_type: crate::model::DependencyType::ParentChild,
             created_at: Utc::now(),
             created_by: None,
             metadata: None,

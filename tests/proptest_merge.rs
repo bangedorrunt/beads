@@ -502,42 +502,69 @@ fn three_way_merge_notes_are_byte_identical_across_context_order() {
 /// Both sides change to different known statuses → Conflict(BothModified).
 #[test]
 fn merge_both_changed_status_manual_is_conflict() {
-        let base = make_issue("bd-cust", "Changed test", Status::Open, Priority(1), IssueType::Task, 0);
+    let base = make_issue(
+        "bd-cust",
+        "Changed test",
+        Status::Open,
+        Priority(1),
+        IssueType::Task,
+        0,
+    );
 
-        let mut left = base.clone();
-        left.status = Status::Blocked;
-        left.updated_at = base.updated_at + Duration::seconds(10);
+    let mut left = base.clone();
+    left.status = Status::Blocked;
+    left.updated_at = base.updated_at + Duration::seconds(10);
 
-        let mut right = base.clone();
-        right.status = Status::Deferred;
-        right.updated_at = base.updated_at + Duration::seconds(20);
+    let mut right = base.clone();
+    right.status = Status::Deferred;
+    right.updated_at = base.updated_at + Duration::seconds(20);
 
-        let result = merge_issue(Some(&base), Some(&left), Some(&right), ConflictResolution::Manual);
-        assert!(
-            matches!(result, MergeResult::Conflict(ConflictType::BothModified)),
-            "expected Conflict(BothModified), got {result:?}"
-        );
-    }
+    let result = merge_issue(
+        Some(&base),
+        Some(&left),
+        Some(&right),
+        ConflictResolution::Manual,
+    );
+    assert!(
+        matches!(result, MergeResult::Conflict(ConflictType::BothModified)),
+        "expected Conflict(BothModified), got {result:?}"
+    );
+}
 
-    /// Both sides change to the same known status → convergent (Keep).
-    #[test]
-    fn merge_same_status_both_sides_is_keep() {
-        let base = make_issue("bd-conv", "Converge", Status::Open, Priority(1), IssueType::Task, 0);
+/// Both sides change to the same known status → convergent (Keep).
+#[test]
+fn merge_same_status_both_sides_is_keep() {
+    let base = make_issue(
+        "bd-conv",
+        "Converge",
+        Status::Open,
+        Priority(1),
+        IssueType::Task,
+        0,
+    );
 
-        let mut left = base.clone();
-        left.status = Status::Deferred;
-        left.updated_at = base.updated_at + Duration::seconds(10);
+    let mut left = base.clone();
+    left.status = Status::Deferred;
+    left.updated_at = base.updated_at + Duration::seconds(10);
 
-        let mut right = base.clone();
-        right.status = Status::Deferred;
-        right.updated_at = base.updated_at + Duration::seconds(10);
+    let mut right = base.clone();
+    right.status = Status::Deferred;
+    right.updated_at = base.updated_at + Duration::seconds(10);
 
-        let result = merge_issue(Some(&base), Some(&left), Some(&right), ConflictResolution::Manual);
-        assert!(
-            matches!(result, MergeResult::Keep(_) | MergeResult::KeepWithNote(_, _)),
-            "same status on both sides should not conflict, got {result:?}"
-        );
-    }
+    let result = merge_issue(
+        Some(&base),
+        Some(&left),
+        Some(&right),
+        ConflictResolution::Manual,
+    );
+    assert!(
+        matches!(
+            result,
+            MergeResult::Keep(_) | MergeResult::KeepWithNote(_, _)
+        ),
+        "same status on both sides should not conflict, got {result:?}"
+    );
+}
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]

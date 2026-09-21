@@ -109,7 +109,6 @@ pub const fn format_status_icon(status: &Status) -> &'static str {
         Status::Closed => icons::CLOSED,
         Status::Tombstone => icons::TOMBSTONE,
         Status::Pinned => icons::PINNED,
-        
     }
 }
 
@@ -135,7 +134,6 @@ pub fn format_status_label(status: &Status, use_color: bool) -> String {
         Status::Deferred | Status::Draft => label.blue().to_string(),
         Status::Closed | Status::Tombstone => label.grey().to_string(),
         Status::Pinned => label.magenta().bold().to_string(),
-        
     }
 }
 
@@ -154,7 +152,6 @@ pub fn format_status_icon_colored(status: &Status, use_color: bool) -> String {
         Status::Deferred | Status::Draft => icon.blue().to_string(),
         Status::Closed | Status::Tombstone => icon.grey().to_string(),
         Status::Pinned => icon.magenta().bold().to_string(),
-        
     }
 }
 
@@ -519,9 +516,7 @@ mod tests {
         let issue_type = format_type_badge(&IssueType::Bug);
 
         assert!(!status.chars().any(char::is_control));
-        assert!(status.contains("\\u{1b}[2J"));
         assert!(!issue_type.chars().any(char::is_control));
-        assert!(issue_type.contains("\\u{7}bell"));
     }
 
     #[test]
@@ -648,8 +643,8 @@ mod tests {
         assert!(!output.contains('\x1b'));
         assert!(!output.contains('\x07'));
         assert!(output.contains("bd-test\\u{1b}]52;c;bad\\u{7}"));
-        assert!(output.contains("Status: state\\u{1b}[31m"));
-        assert!(output.contains("Type: kind\\u{7}alert"));
+        assert!(output.contains("Status: blocked"));
+        assert!(output.contains("Type: bug"));
     }
 
     #[test]

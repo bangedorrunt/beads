@@ -888,14 +888,14 @@ mod tests {
 
         let errors = IssueValidator::validate(&issue).unwrap_err();
         let fields: Vec<_> = errors.iter().map(|err| err.field.as_str()).collect();
+        // bd-bqyb: status/issue_type are closed enums — NUL bytes cannot
+        // reach validation (parse rejects them); only string fields apply.
         for field in [
             "title",
             "description",
             "design",
             "acceptance_criteria",
             "notes",
-            "status",
-            "issue_type",
             "assignee",
             "owner",
             "created_by",

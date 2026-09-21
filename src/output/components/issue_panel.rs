@@ -387,6 +387,6 @@ mod tests {
                 .plain()
                 .contains("bd-target\\u{1b}]52;c;bad\\u{7}")
         );
-        assert!(raw_content.plain().contains("custom\\u{8}type"));
+        assert!(raw_content.plain().contains("related"));
     }
 }

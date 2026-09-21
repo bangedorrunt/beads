@@ -211,13 +211,15 @@ fn import_unknown_status_fails_loudly() {
     let jsonl = make_jsonl_issue("bd-cust1", "Custom status", "QA_Review", "task");
     fs::write(&jsonl_path, &jsonl).unwrap();
 
-    assert!(import_from_jsonl(
-        &mut storage,
-        &jsonl_path,
-        &import_config(&beads_dir),
-        Some("bd"),
-    )
-    .is_err());
+    assert!(
+        import_from_jsonl(
+            &mut storage,
+            &jsonl_path,
+            &import_config(&beads_dir),
+            Some("bd"),
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -228,11 +230,13 @@ fn import_unknown_issue_type_fails_loudly() {
     let jsonl = make_jsonl_issue("bd-cust2", "Custom type", "open", "Security_Audit");
     fs::write(&jsonl_path, &jsonl).unwrap();
 
-    assert!(import_from_jsonl(
-        &mut storage,
-        &jsonl_path,
-        &import_config(&beads_dir),
-        Some("bd"),
-    )
-    .is_err());
+    assert!(
+        import_from_jsonl(
+            &mut storage,
+            &jsonl_path,
+            &import_config(&beads_dir),
+            Some("bd"),
+        )
+        .is_err()
+    );
 }

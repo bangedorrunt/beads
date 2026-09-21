@@ -100,11 +100,7 @@ fn test_deferred_status_blocks_dependents() {
     // Verify that a non-terminal known status also blocks
     let mut storage = SqliteStorage::open_memory().unwrap();
 
-    let issue_a = make_issue(
-        "bd-a",
-        "Custom Blocker",
-        Status::Deferred,
-    );
+    let issue_a = make_issue("bd-a", "Custom Blocker", Status::Deferred);
     storage.create_issue(&issue_a, "setup").unwrap();
 
     let issue_b = make_issue("bd-b", "Blocked Task", Status::Open);

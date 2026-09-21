@@ -3193,7 +3193,7 @@ mod tests {
     const GATE_POLICY_YAML: &str = r#"workflow:
   strict: true
   gates:
-    "in_review -> closed":
+    "in_progress -> closed":
       require_all:
         - ci_green
 "#;
@@ -3278,7 +3278,7 @@ mod tests {
             storage
                 .record_scoped_gate_result(
                     "bd-1",
-                    "in_review",
+                    "in_progress",
                     0,
                     "closed",
                     "ci_green",
@@ -3361,11 +3361,7 @@ mod tests {
             let mut storage = SqliteStorage::open(&db_path).expect("storage");
             storage
                 .create_issue(
-                    &make_issue_with_status(
-                        "bd-1",
-                        "Plain",
-                        Status::InProgress,
-                    ),
+                    &make_issue_with_status("bd-1", "Plain", Status::InProgress),
                     "tester",
                 )
                 .expect("create");
@@ -3391,7 +3387,7 @@ mod tests {
             storage
                 .record_scoped_gate_result(
                     "bd-1",
-                    "in_review",
+                    "in_progress",
                     0,
                     "closed",
                     "unit-test-verified",

@@ -221,7 +221,9 @@ impl<'de> Deserialize<'de> for IssueType {
         Self::known_value(&value).ok_or_else(|| {
             serde::de::Error::unknown_variant(
                 &value,
-                &["task", "bug", "feature", "epic", "chore", "docs", "question"],
+                &[
+                    "task", "bug", "feature", "epic", "chore", "docs", "question",
+                ],
             )
         })
     }
@@ -273,8 +275,9 @@ impl FromStr for IssueType {
     type Err = crate::error::BeadsError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::known_value(s)
-            .ok_or_else(|| crate::error::BeadsError::validation("issue_type", format!("unknown issue type {s:?}")))
+        Self::known_value(s).ok_or_else(|| {
+            crate::error::BeadsError::validation("issue_type", format!("unknown issue type {s:?}"))
+        })
     }
 }
 

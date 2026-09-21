@@ -6520,6 +6520,23 @@ impl SqliteStorage {
                 }
             }
 
+            // ADR-0035 Spec 4 dual-write (bd-hj1t): one event_log row per
+            // touched issue, same transaction. Payload is the post-mutation
+            // snapshot; replaying the log rebuilds the table. A log failure
+            // fails the mutation (fail-closed) — never row-without-event.
+            if !ctx.dirty_ids.is_empty() {
+                let mut ids: Vec<&String> = ctx.dirty_ids.iter().collect();
+                ids.sort();
+                for id in ids {
+                    Self::append_issue_snapshot_in_tx(
+                        &storage.conn,
+                        id,
+                        op,
+                        &ctx.actor,
+                    )?;
+                }
+            }
+
             let mut blocked_cache_plan = BlockedCacheRefreshPlan::from_context(&ctx);
             if blocked_cache_plan.is_some() {
                 // An Incremental refresh only rewrites its own connected
@@ -8160,6 +8177,49 @@ impl SqliteStorage {
     /// Returns an error if the database query fails.
     pub fn get_issue(&self, id: &str) -> Result<Option<Issue>> {
         Self::get_issue_from_conn(&self.conn, id)
+    }
+
+    /// Append one `issue.snapshot` event for a touched issue inside the
+    /// committing mutation transaction (dual-write half of the v20 log).
+    /// Generation-qualified id makes replay idempotent by event_id.
+    fn append_issue_snapshot_in_tx(
+        conn: &Connection,
+        issue_id: &str,
+        op: &str,
+        actor: &str,
+    ) -> Result<()> {
+        let issue = Self::get_issue_from_conn(conn, issue_id)?;
+        let payload = serde_json::json!({
+            "issue_id": issue_id,
+            "op": op,
+            "actor": actor,
+            "issue": issue,
+        });
+        let payload_s = serde_json::to_string(&payload).unwrap_or_default();
+        let ts_us = chrono::Utc::now().timestamp_micros();
+        let row = conn.query_row_with_params(
+            "SELECT generation FROM generation_manifest WHERE singleton = 1",
+            &[],
+        )?;
+        let next = row.get(0).and_then(SqliteValue::as_integer).unwrap_or(0) + 1;
+        let event_id = format!("{issue_id}:{next}");
+        conn.execute_with_params(
+            "INSERT INTO event_log (generation, event_id, kind, payload, ts_us) \
+             VALUES (?1, ?2, 'issue.snapshot', ?3, ?4) \
+             ON CONFLICT(event_id) DO NOTHING",
+            &[
+                SqliteValue::from(next),
+                SqliteValue::from(event_id.as_str()),
+                SqliteValue::from(payload_s.as_str()),
+                SqliteValue::from(ts_us),
+            ],
+        )?;
+        conn.execute_with_params(
+            "UPDATE generation_manifest SET generation = ?1, updated_ts_us = ?2 \
+             WHERE singleton = 1 AND generation < ?1",
+            &[SqliteValue::from(next), SqliteValue::from(ts_us)],
+        )?;
+        Ok(())
     }
 
     /// Draft issues not updated within `older_than_days` (ADR-0035 Spec 4:
@@ -37223,6 +37283,39 @@ mod tests {
                 .count(),
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod event_log_tests {
+    use super::*;
+    use crate::model::Issue;
+
+    #[test]
+    fn dual_write_appends_snapshot_per_mutation() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let issue = Issue {
+            id: "bd-ew".to_string(),
+            title: "dual write".to_string(),
+            ..Issue::default()
+        };
+        storage.create_issue(&issue, "tester").unwrap();
+        let count: i64 = storage
+            .conn
+            .query_row("SELECT COUNT(*) FROM event_log")
+            .unwrap()
+            .get(0)
+            .and_then(SqliteValue::as_integer)
+            .unwrap_or(-1);
+        assert_eq!(count, 1);
+        let generation: i64 = storage
+            .conn
+            .query_row("SELECT generation FROM generation_manifest WHERE singleton = 1")
+            .unwrap()
+            .get(0)
+            .and_then(SqliteValue::as_integer)
+            .unwrap_or(-1);
+        assert_eq!(generation, 1);
     }
 }
 

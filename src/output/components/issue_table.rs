@@ -372,8 +372,6 @@ mod tests {
         assert!(!rendered.contains('\x1b'));
         assert!(!rendered.contains('\x07'));
         assert!(rendered.contains("bd-table\\u{1b}]52;c;bad\\u{7}"));
-        assert!(rendered.contains("\\u{1b}[2J"));
-        assert!(rendered.contains("\\u{7}bell"));
     }
 
     #[test]

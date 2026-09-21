@@ -147,7 +147,6 @@ impl Theme {
             IssueType::Chore => self.type_chore.clone(),
             IssueType::Docs => self.type_docs.clone(),
             IssueType::Question => self.type_question.clone(),
-            
         }
     }
 }
