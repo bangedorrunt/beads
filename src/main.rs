@@ -3634,6 +3634,10 @@ mod tests {
             "create",
             "-d",
             "preopened storage brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} preopened storage reuse",
             "Use preopened storage",
         ]);
         let output_ctx = OutputContext::from_args(&cli);
