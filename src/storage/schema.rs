@@ -7,7 +7,7 @@ use crate::error::{BeadsError, Result};
 use crate::model::{IssueType, Priority, Status};
 use crate::util::content_hash_from_parts;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 19;
+pub const CURRENT_SCHEMA_VERSION: i32 = 20;
 const ISSUES_CLOSED_AT_CHECK: &str = "CHECK ((status = 'closed' AND closed_at IS NOT NULL) OR (status = 'tombstone') OR (status NOT IN ('closed', 'tombstone') AND closed_at IS NULL))";
 const GATE_RESULT_HISTORY_MIGRATION_SQL: &str = r"
     CREATE TABLE IF NOT EXISTS gate_result_history (
@@ -399,6 +399,26 @@ pub const SCHEMA_SQL: &str = r"
     CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
     CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
     CREATE INDEX IF NOT EXISTS idx_events_actor ON events(actor) WHERE actor != '';
+
+    -- v20 event log (ADR-0035 Spec 4, bd-hj1t): the source of truth.
+    -- Issues/JSONL are projections rebuilt from this log.
+    CREATE TABLE IF NOT EXISTS event_log (
+        generation INTEGER NOT NULL,
+        event_id   TEXT PRIMARY KEY,
+        kind       TEXT NOT NULL,
+        payload    TEXT NOT NULL,
+        ts_us      INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_generation ON event_log (generation);
+    CREATE INDEX IF NOT EXISTS idx_event_log_kind ON event_log (kind);
+    CREATE TABLE IF NOT EXISTS generation_manifest (
+        singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+        generation     INTEGER NOT NULL,
+        updated_ts_us  INTEGER NOT NULL
+    );
+    INSERT INTO generation_manifest (singleton, generation, updated_ts_us)
+        SELECT 1, 0, 0
+        WHERE NOT EXISTS (SELECT 1 FROM generation_manifest WHERE singleton = 1);
 
     -- Config (Runtime)
     -- NOTE: Avoid PRIMARY KEY/UNIQUE constraints here because the current
@@ -863,9 +883,9 @@ fn connection_user_version(conn: &Connection) -> Result<u32> {
 /// stay upgradeable here: 13/14 (pre-gate-history releases), 15 (the #388
 /// gate-history schema shipped in the v0.2.19-era line), 16 (the #384
 /// capacity-exemptions schema created by the released v0.2.19 binary), 17
-/// (the W4-era release), and 18 (the typed work-ledger release). See GitHub
-/// #398 and beads_rust-migrate-17-18-7jduh.
-pub const REVIEWED_MIGRATION_SOURCE_VERSIONS: [u32; 6] = [13, 14, 15, 16, 17, 18];
+/// (the W4-era release), 18 (the typed work-ledger release), and 19 (the
+/// issue-revision release). See GitHub #398 and beads_rust-migrate-17-18-7jduh.
+pub const REVIEWED_MIGRATION_SOURCE_VERSIONS: [u32; 7] = [13, 14, 15, 16, 17, 18, 19];
 
 fn current_schema_version_u32() -> Result<u32> {
     u32::try_from(CURRENT_SCHEMA_VERSION).map_err(|_| {
@@ -1634,7 +1654,9 @@ fn rebuild_issues_table_inner(conn: &Connection, existing_columns: &[String]) ->
     let mut extension_index_sql = Vec::new();
     for row in &index_rows {
         if let Some(name) = row.get(0).and_then(SqliteValue::as_text) {
-            let is_canonical = REQUIRED_RUNTIME_INDEXES.iter().any(|expected| *expected == name);
+            let is_canonical = REQUIRED_RUNTIME_INDEXES
+                .iter()
+                .any(|expected| *expected == name);
             if !is_canonical {
                 let sql = row.get(1).and_then(SqliteValue::as_text).ok_or_else(|| {
                     BeadsError::Config(format!(
@@ -2465,6 +2487,32 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
     ",
     )?;
 
+    // v20 (ADR-0035 Spec 4, bd-hj1t): the event log is the source of truth;
+    // issues/JSONL are projections. Tables only — dual-write lands next.
+    // Idempotent: ordinary opens may encounter partially-shaped databases.
+    execute_batch(
+        conn,
+        r"
+        CREATE TABLE IF NOT EXISTS event_log (
+            generation INTEGER NOT NULL,
+            event_id   TEXT PRIMARY KEY,
+            kind       TEXT NOT NULL,
+            payload    TEXT NOT NULL,
+            ts_us      INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_generation ON event_log (generation);
+        CREATE INDEX IF NOT EXISTS idx_event_log_kind ON event_log (kind);
+        CREATE TABLE IF NOT EXISTS generation_manifest (
+            singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+            generation     INTEGER NOT NULL,
+            updated_ts_us  INTEGER NOT NULL
+        );
+        INSERT INTO generation_manifest (singleton, generation, updated_ts_us)
+            SELECT 1, 0, 0
+            WHERE NOT EXISTS (SELECT 1 FROM generation_manifest WHERE singleton = 1);
+    ",
+    )?;
+
     if table_exists(conn, "dependencies") {
         execute_batch(
             conn,
@@ -2849,10 +2897,14 @@ fn rebuild_content_hashes_for_current_format_in_transaction(
 
         // Unknown wire values fail loud (bd-bqyb) — never silent Customs.
         let status = status_raw.parse::<Status>().map_err(|e| {
-            crate::error::BeadsError::Config(format!("stored issue has unknown status {status_raw:?}: {e}"))
+            crate::error::BeadsError::Config(format!(
+                "stored issue has unknown status {status_raw:?}: {e}"
+            ))
         })?;
         let issue_type = issue_type_raw.parse::<IssueType>().map_err(|e| {
-            crate::error::BeadsError::Config(format!("stored issue has unknown type {issue_type_raw:?}: {e}"))
+            crate::error::BeadsError::Config(format!(
+                "stored issue has unknown type {issue_type_raw:?}: {e}"
+            ))
         })?;
         let content_hash = content_hash_from_parts(
             &title,
@@ -2979,6 +3031,14 @@ mod tests {
         assert!(tables.contains(&"dependencies".to_string()));
         assert!(tables.contains(&"config".to_string()));
         assert!(tables.contains(&"dirty_issues".to_string()));
+        // v20 (ADR-0035 Spec 4, bd-hj1t): the event log is the source of
+        // truth; projections rebuild from it.
+        assert!(tables.contains(&"event_log".to_string()));
+        assert!(tables.contains(&"generation_manifest".to_string()));
+        let row = conn
+            .query_row("SELECT generation FROM generation_manifest WHERE singleton = 1")
+            .unwrap();
+        assert_eq!(row.get(0).and_then(|v| v.as_integer()), Some(0));
 
         // Verify pragmas
         let row = conn.query_row("PRAGMA journal_mode").unwrap();
@@ -4635,7 +4695,6 @@ mod tests {
         }
     }
 
-    
     #[test]
     fn test_rebuild_issues_table_preserves_extension_unique_index() {
         const INDEX_NAME: &str = "extension_issues_source_title_unique";
