@@ -69,7 +69,7 @@ fn seeded_workspace() -> BrWorkspace {
     assert!(init.status.success(), "init failed: {}", init.stderr);
     let create = run_br(
         &workspace,
-        ["create", "Survive a closed pipe", "-p", "2"],
+        ["create", "Survive a closed pipe", "-p", "2", "-d", "pipe brief", "--verify", "true", "--principle", "prove-it-works — pipe brief"],
         "create",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
