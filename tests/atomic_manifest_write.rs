@@ -15,7 +15,18 @@ fn init_and_create_issue(workspace: &BrWorkspace) {
 
     let create = run_br(
         workspace,
-        ["create", "--title", "test issue", "--no-auto-flush"],
+        [
+            "create",
+            "--title",
+            "test issue",
+            "-d",
+            "manifest brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} manifest brief",
+            "--no-auto-flush",
+        ],
         "create",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);

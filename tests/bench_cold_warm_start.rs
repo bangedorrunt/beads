@@ -298,7 +298,19 @@ fn create_br_workspace(br_path: &Path, issue_count: usize) -> std::io::Result<(T
         let priority = (i % 5).to_string();
 
         let _ = Command::new(br_path)
-            .args(["create", "--title", &title, "--priority", &priority])
+            .args([
+                "create",
+                "--title",
+                &title,
+                "--priority",
+                &priority,
+                "-d",
+                "benchmark brief",
+                "--verify",
+                "true",
+                "--principle",
+                "prove-it-works \u{2014} benchmark brief",
+            ])
             .current_dir(&root)
             .output()?;
     }
@@ -427,7 +439,17 @@ fn prepare_startup_matrix_workspace(
     match state {
         "stale" => {
             let output = Command::new(br_path)
-                .args(["create", "Startup matrix stale marker", "--no-auto-flush"])
+                .args([
+                    "create",
+                    "Startup matrix stale marker",
+                    "-d",
+                    "stale marker brief",
+                    "--verify",
+                    "true",
+                    "--principle",
+                    "prove-it-works \u{2014} stale marker brief",
+                    "--no-auto-flush",
+                ])
                 .current_dir(&root)
                 .output()?;
             if !output.status.success() {

@@ -2948,6 +2948,12 @@ pub mod catalog {
                 ScenarioCommand::new(vec![
                     "create".to_string(),
                     seeded_title(seed, role),
+                    "-d".to_string(),
+                    "scenario brief".to_string(),
+                    "--verify".to_string(),
+                    "true".to_string(),
+                    "--principle".to_string(),
+                    "prove-it-works \u{2014} scenario brief".to_string(),
                     "--json".to_string(),
                     "--no-auto-flush".to_string(),
                 ])
@@ -3077,6 +3083,12 @@ pub mod catalog {
                         ScenarioCommand::new(vec![
                             "create".to_string(),
                             seeded_title(seed, "recovery"),
+                            "-d".to_string(),
+                            "scenario brief".to_string(),
+                            "--verify".to_string(),
+                            "true".to_string(),
+                            "--principle".to_string(),
+                            "prove-it-works \u{2014} scenario brief".to_string(),
                             "--json".to_string(),
                         ])
                         .with_label("create_recovery_issue"),
@@ -4423,17 +4435,14 @@ mod tests {
             .get("issues")
             .and_then(Value::as_array)
             .expect("ready pagination object with issues array");
-        // ADR-0001 §5.5: `captured_create_step` beads carry no typed VERIFY
-        // (the create-time flag is the lint-cli-flags bead's landing), so the
-        // unblocked child is NOT dispatchable until a fence import stamps it.
-        // The predicate change intentionally narrows this scenario's ready
-        // set; assert the child is at least known-unblocked (queryable via
-        // list) and absent from ready rather than dispatched.
+        // Fail-closed create (bd-h8d6) stamps every bead with a typed
+        // VERIFY, so `captured_create_step` children are dispatchable as
+        // soon as they are unblocked (the old no-verify narrowing is gone).
         assert!(
-            !ready_items
+            ready_items
                 .iter()
                 .any(|item| { item.get("id").and_then(Value::as_str) == Some(child_id.as_str()) }),
-            "child without typed verify must not be dispatchable under §5.5"
+            "verified child must be dispatchable once unblocked"
         );
 
         let isolated = isolated_from_override(
