@@ -74,7 +74,7 @@ impl<'de> Deserialize<'de> for Status {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
         // ADR-0035 Spec 4/6: unknown statuses fail loud at the boundary —
-        // never a silent Custom default (bd-bqyb).
+        // never a silent catch-all default (bd-bqyb).
         Self::known_value(&value).ok_or_else(|| {
             serde::de::Error::unknown_variant(
                 &value,
@@ -258,7 +258,7 @@ impl IssueType {
 
     /// Returns true if this is a standard (non-custom) issue type.
     /// Used for bd conformance validation in CLI commands.
-    /// ADR-0035: every type is standard now — Customs are rejected at parse.
+    /// ADR-0035: every type is standard now — unknowns are rejected at parse.
     #[must_use]
     pub const fn is_standard(&self) -> bool {
         true
@@ -1118,7 +1118,7 @@ mod tests {
 
     #[test]
     fn status_unknown_rejected_loudly() {
-        // bd-bqyb: unknown statuses fail at the boundary, never Custom.
+        // bd-bqyb: unknown statuses fail at the boundary, never a default.
         assert!(serde_json::from_str::<Status>("\"custom_status\"").is_err());
         assert!(serde_json::from_str::<Status>("\"QaReview\"").is_err());
         assert!(Status::from_str("bogus").is_err());
@@ -1466,7 +1466,7 @@ mod tests {
 
     #[test]
     fn test_issue_type_from_str_custom_rejected() {
-        // bd-bqyb: unknown types fail loud, never Custom.
+        // bd-bqyb: unknown types fail loud, never a default.
         assert!(IssueType::from_str("custom_type").is_err());
         assert!(IssueType::from_str("Odd_Type").is_err());
     }
@@ -1553,7 +1553,7 @@ mod tests {
     #[test]
     fn test_dependency_type_from_str_unknown_rejected() {
         assert!(DependencyType::from_str("my-custom-dep").is_err());
-        assert!(DependencyType::from_str("My-Custom-Dep").is_err());
+        assert!(DependencyType::from_str("My-Dep").is_err());
     }
 
     #[test]
@@ -2035,7 +2035,7 @@ mod tests {
     #[test]
     fn test_event_type_deserialize_unknown_rejected() {
         assert!(serde_json::from_str::<EventType>("\"my_custom_event\"").is_err());
-        assert!(serde_json::from_str::<EventType>("\"My_Custom_Event\"").is_err());
+        assert!(serde_json::from_str::<EventType>("\"My_Event\"").is_err());
     }
 
     #[test]
