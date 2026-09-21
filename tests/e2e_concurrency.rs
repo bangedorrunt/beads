@@ -569,7 +569,7 @@ fn e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace() {
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let seed = run_br_in_dir(&root, ["create", "Seed before killed writer"]);
+    let seed = run_br_in_dir(&root, ["create", "Seed before killed writer", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(seed.success, "seed create failed: {}", seed.stderr);
 
     let lock_path = root.join(".beads").join(".write.lock");
@@ -584,7 +584,7 @@ fn e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace() {
 
     let mut blocked_writer = spawn_br_child_in_dir(
         &root,
-        ["create", "Killed while waiting for write lock", "--json"],
+        ["create", "Killed while waiting for write lock", "--json", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"],
     );
     wait_for_child_to_block_on_write_lock(&mut blocked_writer, "writer create");
 
@@ -598,7 +598,7 @@ fn e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace() {
     );
     drop(write_lock);
 
-    let after = run_br_in_dir(&root, ["create", "After killed writer", "--json"]);
+    let after = run_br_in_dir(&root, ["create", "After killed writer", "--json", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(
         after.success,
         "post-kill writer failed: stdout={} stderr={}",
@@ -656,7 +656,7 @@ fn e2e_mutating_command_fails_when_write_lock_path_unusable() {
 
     let create = run_br_in_dir(
         &root,
-        ["create", "Should not bypass broken write lock", "--json"],
+        ["create", "Should not bypass broken write lock", "--json", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"],
     );
     assert!(
         !create.success,
@@ -737,7 +737,7 @@ fn e2e_write_lock_contention_respects_lock_timeout() {
     );
 
     drop(write_lock);
-    let after = run_br_in_dir(&root, ["create", "After write lock timeout", "--json"]);
+    let after = run_br_in_dir(&root, ["create", "After write lock timeout", "--json", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(
         after.success,
         "workspace should accept writes after lock release: stdout={} stderr={}",
@@ -760,7 +760,7 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
 
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
-    let seed = run_br_in_dir(&root, ["create", "Lock evidence seed", "--json"]);
+    let seed = run_br_in_dir(&root, ["create", "Lock evidence seed", "--json", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(seed.success, "seed failed: {}", seed.stderr);
 
     let lock_path = root.join(".beads/.write.lock");
@@ -927,7 +927,7 @@ fn e2e_read_command_auto_import_waits_for_write_lock() {
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let seed = run_br_in_dir(&root, ["create", "Seed before auto-import"]);
+    let seed = run_br_in_dir(&root, ["create", "Seed before auto-import", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(seed.success, "seed create failed: {}", seed.stderr);
 
     let flush = run_br_in_dir(&root, ["sync", "--flush-only"]);
@@ -1001,7 +1001,7 @@ fn e2e_read_command_witness_refresh_waits_for_write_lock() {
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let seed = run_br_in_dir(&root, ["create", "Seed before witness refresh"]);
+    let seed = run_br_in_dir(&root, ["create", "Seed before witness refresh", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(seed.success, "seed create failed: {}", seed.stderr);
 
     let flush = run_br_in_dir(&root, ["sync", "--flush-only"]);
@@ -1087,7 +1087,7 @@ fn e2e_concurrent_writes_succeed_with_retry() {
         barrier1.wait();
         run_br_in_dir(
             &root1_clone,
-            ["--lock-timeout", "1000", "create", "Issue from thread 1"],
+            ["--lock-timeout", "1000", "create", "Issue from thread 1", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"],
         )
     });
 
@@ -1095,7 +1095,7 @@ fn e2e_concurrent_writes_succeed_with_retry() {
         barrier2.wait();
         run_br_in_dir(
             &root2_clone,
-            ["--lock-timeout", "1000", "create", "Issue from thread 2"],
+            ["--lock-timeout", "1000", "create", "Issue from thread 2", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"],
         )
     });
 
@@ -1165,7 +1165,7 @@ fn e2e_lock_timeout_behavior() {
     assert!(init.success, "init failed: {}", init.stderr);
 
     // Create an issue first
-    let create = run_br_in_dir(&root, ["create", "Seed issue"]);
+    let create = run_br_in_dir(&root, ["create", "Seed issue", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(create.success, "create seed failed: {}", create.stderr);
     let seed_id = parse_created_id(&create.stdout);
 
@@ -1198,7 +1198,7 @@ fn e2e_lock_timeout_behavior() {
         let start = Instant::now();
         let result = run_br_in_dir(
             &root2_clone,
-            ["--lock-timeout", "1", "create", "Low timeout issue"],
+            ["--lock-timeout", "1", "create", "Low timeout issue", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"],
         );
         let elapsed = start.elapsed();
         (result, elapsed)
@@ -1252,7 +1252,7 @@ fn e2e_concurrent_reads_succeed() {
 
     let mut ids = Vec::new();
     for i in 0..5 {
-        let create = run_br_in_dir(&root, ["create", &format!("Issue {i}")]);
+        let create = run_br_in_dir(&root, ["create", &format!("Issue {i}"), "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
         assert!(create.success, "create {i} failed: {}", create.stderr);
         ids.push(parse_created_id(&create.stdout));
     }
@@ -1330,6 +1330,7 @@ fn e2e_parallel_read_only_commands_serialize_without_busy_on_drop() {
             "--no-auto-flush",
             "create",
             "Concurrency seed issue",
+            "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief",
         ],
     );
     assert!(create.success, "seed create failed: {}", create.stderr);
@@ -1418,7 +1419,7 @@ fn e2e_lock_timeout_timing() {
     assert!(init.success, "init failed: {}", init.stderr);
 
     // Create a seed issue
-    let create = run_br_in_dir(&root, ["create", "Seed"]);
+    let create = run_br_in_dir(&root, ["create", "Seed", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(create.success, "create failed: {}", create.stderr);
 
     // Test with a 500ms timeout (should complete quickly without contention)
@@ -1476,6 +1477,7 @@ fn e2e_write_serialization() {
                     "1000",
                     "create",
                     &format!("Serialized issue {i}"),
+                    "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works — concurrency brief",
                 ],
             );
             let thread_elapsed = thread_start.elapsed();
@@ -1558,7 +1560,7 @@ fn e2e_mixed_read_write_concurrency() {
     assert!(init.success, "init failed: {}", init.stderr);
 
     for i in 0..3 {
-        let create = run_br_in_dir(&root, ["create", &format!("Existing issue {i}")]);
+        let create = run_br_in_dir(&root, ["create", &format!("Existing issue {i}"), "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
         assert!(create.success, "create {i} failed");
     }
 
@@ -1601,7 +1603,7 @@ fn e2e_mixed_read_write_concurrency() {
         let handle = thread::spawn(move || {
             barrier_clone.wait();
             let start = Instant::now();
-            let result = run_br_in_dir(&root_clone, ["create", &format!("New issue {i}")]);
+            let result = run_br_in_dir(&root_clone, ["create", &format!("New issue {i}"), "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
             let elapsed = start.elapsed();
             ("writer", i, result, elapsed)
         });
@@ -1667,7 +1669,7 @@ fn e2e_interleaved_command_families_remain_bounded() {
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let create = run_br_in_dir(&root, ["create", "Interleaved seed issue"]);
+    let create = run_br_in_dir(&root, ["create", "Interleaved seed issue", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(create.success, "create seed failed: {}", create.stderr);
     let seed_id = parse_created_id(&create.stdout);
 
@@ -1689,6 +1691,7 @@ fn e2e_interleaved_command_families_remain_bounded() {
                         "1",
                         "create",
                         &format!("Interleaved issue {idx}"),
+                        "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works — concurrency brief",
                     ],
                 ));
                 thread::sleep(Duration::from_millis(10));
@@ -1830,7 +1833,7 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
 
     configure_external_route(&main_root, &external_root);
 
-    let create_local = run_br_in_dir(&main_root, ["create", "Local issue under mutation"]);
+    let create_local = run_br_in_dir(&main_root, ["create", "Local issue under mutation", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(
         create_local.success,
         "create local failed: {}",
@@ -1838,7 +1841,7 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
     );
     let local_id = parse_created_id(&create_local.stdout);
 
-    let create_external = run_br_in_dir(&external_root, ["create", "External routed issue"]);
+    let create_external = run_br_in_dir(&external_root, ["create", "External routed issue", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(
         create_external.success,
         "create external failed: {}",
@@ -1973,7 +1976,7 @@ fn e2e_sync_status_observer_stays_available_during_writes() {
             for idx in 0..6 {
                 results.push(run_br_in_dir(
                     &root,
-                    ["create", &format!("background observer issue {idx}")],
+                    ["create", &format!("background observer issue {idx}"), "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"],
                 ));
                 thread::sleep(Duration::from_millis(10));
             }
@@ -2043,7 +2046,7 @@ fn e2e_lock_error_reporting() {
     assert!(init.success, "init failed: {}", init.stderr);
 
     // Create a seed issue
-    let create = run_br_in_dir(&root, ["create", "Lock test issue"]);
+    let create = run_br_in_dir(&root, ["create", "Lock test issue", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(create.success, "create failed: {}", create.stderr);
 
     // Normal operation should report no lock issues
@@ -2068,7 +2071,7 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let seed = run_br_in_dir(&root, ["create", "Concurrency seed issue"]);
+    let seed = run_br_in_dir(&root, ["create", "Concurrency seed issue", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(seed.success, "seed create failed: {}", seed.stderr);
     let issue_id = parse_created_id(&seed.stdout);
     assert!(!issue_id.is_empty(), "missing seed issue id");
@@ -2088,6 +2091,12 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
                 CONTENTION_SUCCESS_LOCK_TIMEOUT_MS.to_string(),
                 "create".to_string(),
                 format!("Agent-created issue {i}"),
+                "-d".to_string(),
+                "concurrency brief".to_string(),
+                "--verify".to_string(),
+                "true".to_string(),
+                "--principle".to_string(),
+                "prove-it-works \u{2014} concurrency brief".to_string(),
             ];
             results.push(run_br_in_dir(&create_root, args));
             thread::sleep(Duration::from_millis(10));
@@ -2280,7 +2289,7 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let seed = run_br_in_dir(&root, ["create", "External access seed issue"]);
+    let seed = run_br_in_dir(&root, ["create", "External access seed issue", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(seed.success, "seed create failed: {}", seed.stderr);
     let issue_id = parse_created_id(&seed.stdout);
     assert!(!issue_id.is_empty(), "missing seed issue id");
@@ -2304,6 +2313,12 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
                 CONTENTION_SUCCESS_LOCK_TIMEOUT_MS.to_string(),
                 "create".to_string(),
                 format!("local-mutation-{i}"),
+                "-d".to_string(),
+                "concurrency brief".to_string(),
+                "--verify".to_string(),
+                "true".to_string(),
+                "--principle".to_string(),
+                "prove-it-works \u{2014} concurrency brief".to_string(),
             ];
             results.push(run_br_in_dir(&writer_root, args));
             thread::sleep(Duration::from_millis(8));
@@ -2433,19 +2448,19 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let claim_issue = run_br_in_dir(&root, ["create", "Claim target"]);
+    let claim_issue = run_br_in_dir(&root, ["create", "Claim target", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(claim_issue.success, "create claim target failed");
     let claim_id = parse_created_id(&claim_issue.stdout);
 
-    let defer_issue = run_br_in_dir(&root, ["create", "Deferred target"]);
+    let defer_issue = run_br_in_dir(&root, ["create", "Deferred target", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(defer_issue.success, "create defer target failed");
     let defer_id = parse_created_id(&defer_issue.stdout);
 
-    let comment_issue = run_br_in_dir(&root, ["create", "Comment target"]);
+    let comment_issue = run_br_in_dir(&root, ["create", "Comment target", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(comment_issue.success, "create comment target failed");
     let comment_id = parse_created_id(&comment_issue.stdout);
 
-    let label_issue = run_br_in_dir(&root, ["create", "Label target"]);
+    let label_issue = run_br_in_dir(&root, ["create", "Label target", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(label_issue.success, "create label target failed");
     let label_id = parse_created_id(&label_issue.stdout);
 
@@ -2741,14 +2756,14 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
 
     let mut close_ids = Vec::new();
     for idx in 0..6 {
-        let created = run_br_in_dir(&root, ["create", &format!("Close target {idx}")]);
+        let created = run_br_in_dir(&root, ["create", &format!("Close target {idx}"), "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
         assert!(created.success, "create close target {idx} failed");
         close_ids.push(parse_created_id(&created.stdout));
     }
 
     let mut reopen_ids = Vec::new();
     for idx in 0..3 {
-        let created = run_br_in_dir(&root, ["create", &format!("Reopen target {idx}")]);
+        let created = run_br_in_dir(&root, ["create", &format!("Reopen target {idx}"), "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
         assert!(created.success, "create reopen target {idx} failed");
         let issue_id = parse_created_id(&created.stdout);
         let gate = run_br_in_dir(
@@ -2783,7 +2798,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
         reopen_ids.push(issue_id);
     }
 
-    let update_issue = run_br_in_dir(&root, ["create", "Update target"]);
+    let update_issue = run_br_in_dir(&root, ["create", "Update target", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(update_issue.success, "create update target failed");
     let update_id = parse_created_id(&update_issue.stdout);
 
@@ -2992,7 +3007,7 @@ fn e2e_parallel_mixed_db_commands_preserve_sqlite_integrity() {
 
     let mut issue_ids = Vec::new();
     for idx in 0..14 {
-        let created = run_br_in_dir(&root, ["create", &format!("ts2 mixed issue {idx}")]);
+        let created = run_br_in_dir(&root, ["create", &format!("ts2 mixed issue {idx}"), "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
         assert!(
             created.success,
             "seed create {idx} failed: stdout={} stderr={}",
@@ -3066,6 +3081,12 @@ fn e2e_parallel_mixed_db_commands_preserve_sqlite_integrity() {
                     "15000".to_string(),
                     "create".to_string(),
                     format!("ts2 mixed concurrent create {idx}"),
+                    "-d".to_string(),
+                    "concurrency brief".to_string(),
+                    "--verify".to_string(),
+                    "true".to_string(),
+                    "--principle".to_string(),
+                    "prove-it-works \u{2014} concurrency brief".to_string(),
                     "--json".to_string(),
                 ];
                 results.push(run_br_in_dir(&root, args));
@@ -3189,6 +3210,7 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
             "Large overflow-page regression record",
             "--description",
             &description,
+            "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief",
         ],
     );
     assert!(
@@ -3312,13 +3334,13 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
 
     configure_external_route(&main_root, &external_root);
 
-    let local_issue = run_br_in_dir(&main_root, ["create", "Local routed contention target"]);
+    let local_issue = run_br_in_dir(&main_root, ["create", "Local routed contention target", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"]);
     assert!(local_issue.success, "create local issue failed");
     let local_id = parse_created_id(&local_issue.stdout);
 
     let external_issue = run_br_in_dir(
         &external_root,
-        ["create", "External routed contention target"],
+        ["create", "External routed contention target", "-d", "concurrency brief", "--verify", "true", "--principle", "prove-it-works \u{2014} concurrency brief"],
     );
     assert!(external_issue.success, "create external issue failed");
     let external_id = parse_created_id(&external_issue.stdout);
@@ -3339,6 +3361,12 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
                     CONTENTION_SUCCESS_LOCK_TIMEOUT_MS.to_string(),
                     "create".to_string(),
                     format!("local-route-write-{i}"),
+                    "-d".to_string(),
+                    "concurrency brief".to_string(),
+                    "--verify".to_string(),
+                    "true".to_string(),
+                    "--principle".to_string(),
+                    "prove-it-works — concurrency brief".to_string(),
                 ];
                 results.push(run_br_in_dir(&main_root, args));
                 thread::sleep(Duration::from_millis(8));
