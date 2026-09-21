@@ -7,7 +7,7 @@ fn test_comments_add_from_stdin() {
     let workspace = BrWorkspace::new();
     run_br(&workspace, ["init"], "init");
 
-    let create = run_br(&workspace, ["create", "Issue"], "create");
+    let create = run_br(&workspace, ["create", "Issue", "-d", "stdin brief", "--verify", "true", "--principle", "prove-it-works — stdin brief"], "create");
     // Extract ID from "✓ Created bd-1: Issue"
     // Word 0: "✓", Word 1: "Created", Word 2: "bd-1:"
     let id = create
