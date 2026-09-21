@@ -353,8 +353,8 @@ mod tests {
         let issue = Issue {
             id: "bd-table\x1b]52;c;bad\x07".to_string(),
             title: "safe title".to_string(),
-            status: Status::Custom("state\x1b[2J".to_string()),
-            issue_type: IssueType::Custom("kind\x07bell".to_string()),
+            status: Status::Blocked,
+            issue_type: IssueType::Task,
             ..Issue::default()
         };
         let theme = Theme::default();

@@ -288,25 +288,21 @@ proptest! {
         assert_validation_error_for_field(IssueValidator::validate(&issue), expected_field);
     }
 
-    /// Property: custom status/type variants over 50 chars fail validation.
+    /// Property: unknown status/type strings fail at parse (bd-bqyb moved
+    /// the 50-char custom cap to the boundary — unparsable input never
+    /// becomes a value).
     #[test]
-    fn long_custom_status_and_type_fail(
+    fn long_unknown_status_and_type_fail_parse(
         field_index in 0usize..2usize,
         extra_chars in 1usize..50usize,
     ) {
         init_test_logging();
         let payload = "x".repeat(50 + extra_chars);
-
-        let mut issue = make_valid_issue("Test Issue");
-        let expected_field = if field_index == 0 {
-            issue.status = Status::Custom(payload);
-            "status"
+        if field_index == 0 {
+            assert!(payload.parse::<Status>().is_err());
         } else {
-            issue.issue_type = IssueType::Custom(payload);
-            "issue_type"
-        };
-
-        assert_validation_error_for_field(IssueValidator::validate(&issue), expected_field);
+            assert!(payload.parse::<IssueType>().is_err());
+        }
     }
 
     /// Property: pathological label arrays and label payloads fail validation.

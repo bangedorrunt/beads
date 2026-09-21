@@ -92,7 +92,6 @@ fn status_strategy() -> impl Strategy<Value = Status> {
         Just(Status::Closed),
         Just(Status::Tombstone),
         Just(Status::Pinned),
-        "[a-z][a-z0-9_-]{0,16}".prop_map(Status::Custom),
     ]
 }
 
@@ -105,7 +104,6 @@ fn issue_type_strategy() -> impl Strategy<Value = IssueType> {
         Just(IssueType::Chore),
         Just(IssueType::Docs),
         Just(IssueType::Question),
-        "[a-z][a-z0-9_-]{0,16}".prop_map(IssueType::Custom),
     ]
 }
 

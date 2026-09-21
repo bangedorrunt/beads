@@ -3241,7 +3241,7 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().expect("tempdir");
-        let db_path = setup_gate_repo(&temp, Status::Custom("in_review".to_string()));
+        let db_path = setup_gate_repo(&temp, Status::InProgress);
         let _guard = DirGuard::new(temp.path());
         let ctx = OutputContext::from_flags(false, false, true);
 
@@ -3262,7 +3262,7 @@ mod tests {
         let storage = SqliteStorage::open(&db_path).expect("reopen");
         assert_eq!(
             storage.get_issue("bd-1").unwrap().unwrap().status,
-            Status::Custom("in_review".to_string())
+            Status::InProgress
         );
     }
 
@@ -3272,7 +3272,7 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().expect("tempdir");
-        let db_path = setup_gate_repo(&temp, Status::Custom("in_review".to_string()));
+        let db_path = setup_gate_repo(&temp, Status::InProgress);
         {
             let storage = SqliteStorage::open(&db_path).expect("storage");
             storage
@@ -3364,7 +3364,7 @@ mod tests {
                     &make_issue_with_status(
                         "bd-1",
                         "Plain",
-                        Status::Custom("in_review".to_string()),
+                        Status::InProgress,
                     ),
                     "tester",
                 )

@@ -998,9 +998,7 @@ fn import_persists_inline_dependencies_and_rejects_unresolvable_targets() {
             .map(|(target, dep_type)| beads::model::Dependency {
                 issue_id: id.to_string(),
                 depends_on_id: (*target).to_string(),
-                dep_type: dep_type
-                    .parse()
-                    .unwrap_or_else(|_| DependencyType::Custom((*dep_type).to_string())),
+                dep_type: dep_type.parse().expect("fixture uses known dep types"),
                 created_at: issue.created_at,
                 created_by: Some("tester".to_string()),
                 metadata: None,
@@ -1060,9 +1058,7 @@ fn import_rejects_inline_dependency_with_unknown_target_up_front() {
             .map(|(target, dep_type)| beads::model::Dependency {
                 issue_id: id.to_string(),
                 depends_on_id: (*target).to_string(),
-                dep_type: dep_type
-                    .parse()
-                    .unwrap_or_else(|_| DependencyType::Custom((*dep_type).to_string())),
+                dep_type: dep_type.parse().expect("fixture uses known dep types"),
                 created_at: issue.created_at,
                 created_by: Some("tester".to_string()),
                 metadata: None,

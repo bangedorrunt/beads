@@ -27,8 +27,6 @@ pub mod icons {
     pub const TOMBSTONE: &str = "✗";
     /// Pinned - elevated priority (pushpin).
     pub const PINNED: &str = "📌";
-    /// Unknown status.
-    pub const UNKNOWN: &str = "?";
 }
 
 /// Escape terminal control characters before rendering untrusted text.
@@ -111,7 +109,7 @@ pub const fn format_status_icon(status: &Status) -> &'static str {
         Status::Closed => icons::CLOSED,
         Status::Tombstone => icons::TOMBSTONE,
         Status::Pinned => icons::PINNED,
-        Status::Custom(_) => icons::UNKNOWN,
+        
     }
 }
 
@@ -137,7 +135,7 @@ pub fn format_status_label(status: &Status, use_color: bool) -> String {
         Status::Deferred | Status::Draft => label.blue().to_string(),
         Status::Closed | Status::Tombstone => label.grey().to_string(),
         Status::Pinned => label.magenta().bold().to_string(),
-        Status::Custom(_) => label.to_string(),
+        
     }
 }
 
@@ -156,7 +154,7 @@ pub fn format_status_icon_colored(status: &Status, use_color: bool) -> String {
         Status::Deferred | Status::Draft => icon.blue().to_string(),
         Status::Closed | Status::Tombstone => icon.grey().to_string(),
         Status::Pinned => icon.magenta().bold().to_string(),
-        Status::Custom(_) => icon.to_string(),
+        
     }
 }
 
@@ -208,7 +206,7 @@ pub fn format_type_badge_colored(issue_type: &IssueType, use_color: bool) -> Str
     let colored = match issue_type {
         IssueType::Bug => label.as_str().red().to_string(),
         IssueType::Feature => label.as_str().cyan().to_string(),
-        IssueType::Task | IssueType::Custom(_) => label,
+        IssueType::Task => label,
         IssueType::Epic => label.as_str().magenta().bold().to_string(),
         IssueType::Docs | IssueType::Question => label.as_str().blue().to_string(),
         IssueType::Chore => label.as_str().grey().to_string(),
@@ -491,10 +489,6 @@ mod tests {
         assert_eq!(format_status_icon(&Status::Closed), "✓");
         assert_eq!(format_status_icon(&Status::Tombstone), "✗");
         assert_eq!(format_status_icon(&Status::Pinned), "📌");
-        assert_eq!(
-            format_status_icon(&Status::Custom("custom".to_string())),
-            "?"
-        );
     }
 
     #[test]
@@ -515,16 +509,14 @@ mod tests {
         assert_eq!(format_type_badge(&IssueType::Chore), "[chore]");
         assert_eq!(format_type_badge(&IssueType::Docs), "[docs]");
         assert_eq!(format_type_badge(&IssueType::Question), "[question]");
-        assert_eq!(
-            format_type_badge(&IssueType::Custom("custom".to_string())),
-            "[custom]"
-        );
     }
 
     #[test]
     fn status_and_type_labels_escape_terminal_controls() {
-        let status = format_status_label(&Status::Custom("bad\x1b[2J".to_string()), false);
-        let issue_type = format_type_badge(&IssueType::Custom("kind\x07bell".to_string()));
+        // bd-bqyb: statuses/types parse strictly, so control characters can
+        // no longer enter through these fields — the labels still sanitize.
+        let status = format_status_label(&Status::Blocked, false);
+        let issue_type = format_type_badge(&IssueType::Bug);
 
         assert!(!status.chars().any(char::is_control));
         assert!(status.contains("\\u{1b}[2J"));
@@ -648,8 +640,8 @@ mod tests {
     fn test_format_issue_long_with_sanitizes_custom_status_and_type() {
         let mut issue = make_test_issue();
         issue.id = "bd-test\x1b]52;c;bad\x07".to_string();
-        issue.status = Status::Custom("state\x1b[31m".to_string());
-        issue.issue_type = IssueType::Custom("kind\x07alert".to_string());
+        issue.status = Status::Blocked;
+        issue.issue_type = IssueType::Bug;
 
         let output = format_issue_long_with(&issue, TextFormatOptions::plain());
 

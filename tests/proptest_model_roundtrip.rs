@@ -205,39 +205,49 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
 
     #[test]
-    fn status_deserialize_matches_lowercase_for_any_string(value in "\\PC{0,64}") {
-        let lowered = value.to_lowercase();
-        let original: Status = deserialize_json_string(&value);
-        let lowercase: Status = deserialize_json_string(&lowered);
-
-        prop_assert_eq!(original, lowercase);
+    fn status_deserialize_matches_lowercase_for_known_values((canonical, expected) in arb_status_name()) {
+        for variant in case_variants(canonical) {
+            let lowered = variant.to_lowercase();
+            let original: Status = deserialize_json_string(&variant);
+            let lowercase: Status = deserialize_json_string(&lowered);
+            prop_assert_eq!(&original, &lowercase);
+            prop_assert_eq!(&original, &expected);
+        }
     }
 
     #[test]
-    fn issue_type_deserialize_matches_lowercase_for_any_string(value in "\\PC{0,64}") {
-        let lowered = value.to_lowercase();
-        let original: IssueType = deserialize_json_string(&value);
-        let lowercase: IssueType = deserialize_json_string(&lowered);
-
-        prop_assert_eq!(original, lowercase);
+    fn issue_type_deserialize_matches_lowercase_for_known_values((canonical, expected) in arb_issue_type_name()) {
+        for variant in case_variants(canonical) {
+            let lowered = variant.to_lowercase();
+            let original: IssueType = deserialize_json_string(&variant);
+            let lowercase: IssueType = deserialize_json_string(&lowered);
+            prop_assert_eq!(&original, &lowercase);
+            prop_assert_eq!(&original, &expected);
+        }
     }
 
     #[test]
-    fn dependency_type_deserialize_matches_lowercase_for_any_string(value in "\\PC{0,64}") {
+    fn dependency_type_deserialize_matches_lowercase_for_known_values(value in "[a-z\\-]{3,20}") {
+        // Known kebab-case values parse case-insensitively; anything else
+        // fails loud (bd-bqyb) instead of normalizing to Custom.
         let lowered = value.to_lowercase();
-        let original: DependencyType = deserialize_json_string(&value);
-        let lowercase: DependencyType = deserialize_json_string(&lowered);
-
-        prop_assert_eq!(original, lowercase);
+        let original = serde_json::from_str::<DependencyType>(&format!("\"{value}\""));
+        let lowercase = serde_json::from_str::<DependencyType>(&format!("\"{lowered}\""));
+        prop_assert_eq!(original.is_ok(), lowercase.is_ok());
+        if let (Ok(o), Ok(l)) = (original, lowercase) {
+            prop_assert_eq!(o, l);
+        }
     }
 
     #[test]
-    fn event_type_deserialize_matches_lowercase_for_any_string(value in "\\PC{0,64}") {
+    fn event_type_deserialize_matches_lowercase_for_known_values(value in "[a-z_]{3,20}") {
         let lowered = value.to_lowercase();
-        let original: EventType = deserialize_json_string(&value);
-        let lowercase: EventType = deserialize_json_string(&lowered);
-
-        prop_assert_eq!(original, lowercase);
+        let original = serde_json::from_str::<EventType>(&format!("\"{value}\""));
+        let lowercase = serde_json::from_str::<EventType>(&format!("\"{lowered}\""));
+        prop_assert_eq!(original.is_ok(), lowercase.is_ok());
+        if let (Ok(o), Ok(l)) = (original, lowercase) {
+            prop_assert_eq!(o, l);
+        }
     }
 }
 
@@ -339,30 +349,22 @@ proptest! {
     }
 
     #[test]
-    fn custom_status_normalized_to_lowercase(name in "[A-Za-z_]{3,15}") {
+    fn unknown_status_rejected_at_parse(name in "[A-Za-z_]{3,15}") {
         let known = ["open", "in_progress", "inprogress", "blocked", "deferred",
                       "draft", "closed", "tombstone", "pinned"];
         let normalized = name.to_lowercase();
         prop_assume!(!known.contains(&normalized.as_str()));
         let json = format!("\"{name}\"");
-        let status: Status = serde_json::from_str(&json).unwrap();
-        match &status {
-            Status::Custom(v) => prop_assert_eq!(v, &normalized),
-            other => prop_assert!(false, "expected Custom, got {:?}", other),
-        }
+        prop_assert!(serde_json::from_str::<Status>(&json).is_err());
     }
 
     #[test]
-    fn custom_issue_type_normalized_to_lowercase(name in "[A-Za-z_]{3,15}") {
+    fn unknown_issue_type_rejected_at_parse(name in "[A-Za-z_]{3,15}") {
         let known = ["task", "bug", "feature", "epic", "chore", "docs", "question"];
         let normalized = name.to_lowercase();
         prop_assume!(!known.contains(&normalized.as_str()));
         let json = format!("\"{name}\"");
-        let issue_type: IssueType = serde_json::from_str(&json).unwrap();
-        match &issue_type {
-            IssueType::Custom(v) => prop_assert_eq!(v, &normalized),
-            other => prop_assert!(false, "expected Custom, got {:?}", other),
-        }
+        prop_assert!(serde_json::from_str::<IssueType>(&json).is_err());
     }
 
     #[test]
@@ -415,7 +417,7 @@ proptest! {
     }
 
     #[test]
-    fn custom_dep_type_normalized_to_lowercase(name in "[A-Za-z_-]{3,20}") {
+    fn unknown_dep_type_rejected_at_parse(name in "[A-Za-z_-]{3,20}") {
         let known = [
             "blocks",
             "parent-child",
@@ -432,10 +434,6 @@ proptest! {
         let normalized = name.to_lowercase();
         prop_assume!(!known.contains(&normalized.as_str()));
         let json = format!("\"{name}\"");
-        let dep_type: DependencyType = serde_json::from_str(&json).unwrap();
-        match &dep_type {
-            DependencyType::Custom(v) => prop_assert_eq!(v, &normalized),
-            other => prop_assert!(false, "expected Custom, got {:?}", other),
-        }
+        prop_assert!(serde_json::from_str::<DependencyType>(&json).is_err());
     }
 }

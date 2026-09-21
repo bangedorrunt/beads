@@ -434,7 +434,7 @@ fn compute_summary(
             Status::Deferred => deferred += 1,
             Status::Draft => draft += 1,
             Status::Tombstone => tombstone += 1,
-            Status::Pinned | Status::Custom(_) => {}
+            Status::Pinned => {}
         }
         if issue.pinned || issue.status == Status::Pinned {
             pinned += 1;

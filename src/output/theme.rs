@@ -121,7 +121,7 @@ impl Theme {
             Status::Blocked => self.status_blocked.clone(),
             Status::Deferred | Status::Draft => self.status_deferred.clone(),
             Status::Closed => self.status_closed.clone(),
-            Status::Tombstone | Status::Custom(_) => self.muted.clone(),
+            Status::Tombstone => self.muted.clone(),
             Status::Pinned => self.highlight.clone(),
         }
     }
@@ -147,7 +147,7 @@ impl Theme {
             IssueType::Chore => self.type_chore.clone(),
             IssueType::Docs => self.type_docs.clone(),
             IssueType::Question => self.type_question.clone(),
-            IssueType::Custom(_) => self.muted.clone(),
+            
         }
     }
 }

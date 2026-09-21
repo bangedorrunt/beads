@@ -1566,6 +1566,9 @@ fn resolved_ready_status_list(filters: &ReadyFilters) -> Vec<String> {
     } else {
         filters.ready_statuses.clone()
     };
+    // ADR-0035 Spec 4: drafts are never ready, by construction — even when a
+    // policy group names them. `q` captures drafts; `ready` dispatches work.
+    statuses.retain(|status| !status.eq_ignore_ascii_case("draft"));
     if filters.include_deferred
         && !statuses
             .iter()
@@ -3754,7 +3757,7 @@ impl SqliteStorage {
                 &[SqliteValue::from(issue_id)],
             )?;
             ctx.record_field_change(
-                EventType::Custom("captain_hold_bound".to_string()),
+                EventType::CaptainHoldBound,
                 issue_id,
                 None,
                 Some(corr.to_string()),
@@ -3819,7 +3822,7 @@ impl SqliteStorage {
                 )?;
                 for corr in &resolved {
                     ctx.record_field_change(
-                        EventType::Custom("captain_hold_resolved".to_string()),
+                        EventType::CaptainHoldResolved,
                         issue_id,
                         Some(corr.clone()),
                         Some(resolving_corr.to_string()),
@@ -3871,7 +3874,7 @@ impl SqliteStorage {
             let issue = row.get(0).and_then(SqliteValue::as_text).unwrap_or("?");
             let corr = row.get(1).and_then(SqliteValue::as_text).unwrap_or("?");
             ctx.record_event(
-                EventType::Custom("captain_hold_resurfaced".to_string()),
+                EventType::CaptainHoldResurfaced,
                 issue,
                 Some(format!(
                     "captain hold for corr {corr} expired and re-surfaced; hold stays open"
@@ -7441,7 +7444,7 @@ impl SqliteStorage {
                 }
                 if let Some(reason) = updates.workflow_policy_bypass_reason.as_deref() {
                     ctx.record_event(
-                        EventType::Custom("workflow_policy_bypassed".to_string()),
+                        EventType::WorkflowPolicyBypassed,
                         id,
                         Some(reason.trim().to_string()),
                     );
@@ -8183,7 +8186,7 @@ impl SqliteStorage {
                 .and_then(SqliteValue::as_text)
                 .map(str::to_string);
             let updated_at = parse_datetime_value(row.get(3))?;
-            let status = parse_status(row.get(4).and_then(SqliteValue::as_text));
+            let status = parse_status(row.get(4).and_then(SqliteValue::as_text))?;
 
             metas.push(IssueMetadata {
                 id,
@@ -14461,7 +14464,7 @@ impl SqliteStorage {
                 (Some(title), Some(status), Some(priority)) => IssueWithDependencyMetadata {
                     id: issue_id.to_string(),
                     title: title.to_string(),
-                    status: parse_status(Some(status)),
+                    status: parse_status(Some(status))?,
                     priority: Priority(i32::try_from(priority).unwrap_or(2)),
                     dep_type,
                 },
@@ -14824,7 +14827,7 @@ impl SqliteStorage {
                     (Some(title), Some(status), Some(priority)) => IssueWithDependencyMetadata {
                         id: dependent_id.to_string(),
                         title: title.to_string(),
-                        status: parse_status(Some(status)),
+                        status: parse_status(Some(status))?,
                         priority: Priority(i32::try_from(priority).unwrap_or(2)),
                         dep_type,
                     },
@@ -14929,7 +14932,7 @@ impl SqliteStorage {
                     (Some(title), Some(status), Some(priority)) => IssueWithDependencyMetadata {
                         id: dependency_id.to_string(),
                         title: title.to_string(),
-                        status: parse_status(Some(status)),
+                        status: parse_status(Some(status))?,
                         priority: Priority(i32::try_from(priority).unwrap_or(2)),
                         dep_type,
                     },
@@ -16115,9 +16118,9 @@ impl SqliteStorage {
             design: get_non_empty_str(4),
             acceptance_criteria: get_non_empty_str(5),
             notes: get_non_empty_str(6),
-            status: parse_status(row.get(7).and_then(SqliteValue::as_text)),
+            status: parse_status(row.get(7).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(8).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(9).and_then(SqliteValue::as_text)),
+            issue_type: parse_issue_type(row.get(9).and_then(SqliteValue::as_text))?,
             assignee: get_non_empty_str(10),
             owner: get_non_empty_str(11),
             estimated_minutes: get_opt_i32(12),
@@ -16218,9 +16221,9 @@ impl SqliteStorage {
             design: None,
             acceptance_criteria: get_non_empty_str(3),
             notes: get_non_empty_str(4),
-            status: parse_status(row.get(5).and_then(SqliteValue::as_text)),
+            status: parse_status(row.get(5).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(6).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(7).and_then(SqliteValue::as_text)),
+            issue_type: parse_issue_type(row.get(7).and_then(SqliteValue::as_text))?,
             assignee: get_non_empty_str(8),
             owner: get_non_empty_str(9),
             estimated_minutes: get_opt_i32(10),
@@ -16323,9 +16326,9 @@ impl SqliteStorage {
             design: None,
             acceptance_criteria: None,
             notes: None,
-            status: parse_status(row.get(3).and_then(SqliteValue::as_text)),
+            status: parse_status(row.get(3).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(4).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text)),
+            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text))?,
             assignee: None,
             owner: None,
             estimated_minutes: None,
@@ -16403,9 +16406,9 @@ impl SqliteStorage {
             design: None,
             acceptance_criteria: None,
             notes: None,
-            status: parse_status(row.get(2).and_then(SqliteValue::as_text)),
+            status: parse_status(row.get(2).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(3).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(4).and_then(SqliteValue::as_text)),
+            issue_type: parse_issue_type(row.get(4).and_then(SqliteValue::as_text))?,
             assignee: get_non_empty_str(5),
             owner: None,
             estimated_minutes: None,
@@ -16483,9 +16486,9 @@ impl SqliteStorage {
             design: None,
             acceptance_criteria: None,
             notes: None,
-            status: parse_status(row.get(3).and_then(SqliteValue::as_text)),
+            status: parse_status(row.get(3).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(4).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text)),
+            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text))?,
             assignee: None,
             owner: None,
             estimated_minutes: None,
@@ -16563,9 +16566,9 @@ impl SqliteStorage {
             design: None,
             acceptance_criteria: None,
             notes: None,
-            status: parse_status(row.get(3).and_then(SqliteValue::as_text)),
+            status: parse_status(row.get(3).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(4).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text)),
+            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text))?,
             assignee: get_non_empty_str(6),
             owner: None,
             estimated_minutes: None,
@@ -16637,9 +16640,9 @@ impl SqliteStorage {
             design: None,
             acceptance_criteria: None,
             notes: None,
-            status: parse_status(row.get(2).and_then(SqliteValue::as_text)),
+            status: parse_status(row.get(2).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(3).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(4).and_then(SqliteValue::as_text)),
+            issue_type: parse_issue_type(row.get(4).and_then(SqliteValue::as_text))?,
             assignee: None,
             owner: None,
             estimated_minutes: None,
@@ -16712,9 +16715,9 @@ impl SqliteStorage {
 
         Ok(StatsIssueRow {
             id: get_str(0),
-            status: parse_status(row.get(1).and_then(SqliteValue::as_text)),
+            status: parse_status(row.get(1).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(2).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(3).and_then(SqliteValue::as_text)),
+            issue_type: parse_issue_type(row.get(3).and_then(SqliteValue::as_text))?, 
             assignee: get_non_empty_str(4),
             created_at: parse_datetime_value(row.get(5))?,
             closed_at: get_opt_datetime(6)?,
@@ -16741,9 +16744,9 @@ impl SqliteStorage {
 
         Ok(StatsIssueRow {
             id: get_str(0),
-            status: parse_status(row.get(1).and_then(SqliteValue::as_text)),
+            status: parse_status(row.get(1).and_then(SqliteValue::as_text))?,
             priority: Priority::default(),
-            issue_type: parse_issue_type(row.get(2).and_then(SqliteValue::as_text)),
+            issue_type: parse_issue_type(row.get(2).and_then(SqliteValue::as_text))?,
             assignee: None,
             created_at: parse_datetime_value(row.get(3))?,
             closed_at: get_opt_datetime(4)?,
@@ -16773,7 +16776,7 @@ impl SqliteStorage {
             id: get_str(0),
             title: get_str(1),
             priority: Priority(get_opt_i32(2).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(3).and_then(SqliteValue::as_text)),
+            issue_type: parse_issue_type(row.get(3).and_then(SqliteValue::as_text))?,
             created_at: parse_datetime_value(row.get(4))?,
             closed_at: parse_opt_datetime_value(row.get(5))?,
         })
@@ -17397,15 +17400,20 @@ fn sort_ready_issues(issues: &mut [Issue], sort: ReadySortPolicy) {
     }
 }
 
-fn parse_status(s: Option<&str>) -> Status {
-    s.map_or_else(Status::default, |val| {
-        val.parse()
-            .unwrap_or_else(|_| Status::Custom(val.to_string()))
-    })
+fn parse_status(s: Option<&str>) -> Result<Status> {
+    match s {
+        // NULL status predates the NOT NULL constraint: schema default.
+        None => Ok(Status::default()),
+        // Unknown text fails loud (bd-bqyb) — never a silent Custom.
+        Some(val) => val.parse(),
+    }
 }
 
-fn parse_issue_type(s: Option<&str>) -> IssueType {
-    s.and_then(|s| s.parse().ok()).unwrap_or_default()
+fn parse_issue_type(s: Option<&str>) -> Result<IssueType> {
+    match s {
+        None => Ok(IssueType::default()),
+        Some(val) => val.parse(),
+    }
 }
 
 fn dependency_metadata_from_row(
@@ -17460,7 +17468,7 @@ fn dependency_metadata_from_row(
     Ok(IssueWithDependencyMetadata {
         id: id.to_string(),
         title: title.to_string(),
-        status: parse_status(Some(status)),
+        status: parse_status(Some(status))?,
         priority: Priority(priority),
         dep_type,
     })
@@ -18314,7 +18322,7 @@ impl SqliteStorage {
             let Some(id) = row.get(0).and_then(SqliteValue::as_text) else {
                 continue;
             };
-            let status = parse_status(row.get(1).and_then(SqliteValue::as_text));
+            let status = parse_status(row.get(1).and_then(SqliteValue::as_text))?;
             statuses.insert(id.to_string(), status);
         }
         Ok(statuses)
@@ -20845,7 +20853,7 @@ mod tests {
         // strict status-vocabulary enforcement.
         let mut workflow = crate::close_policy::Workflow::default();
         workflow.required_fields.insert(
-            "in_progress -> in_review".to_string(),
+            "in_progress -> blocked".to_string(),
             vec![
                 crate::close_policy::TransitionRequiredField::AcceptanceCriteria,
                 crate::close_policy::TransitionRequiredField::TransitionComment,
@@ -20873,7 +20881,7 @@ mod tests {
             .unwrap();
 
         let missing = IssueUpdate {
-            status: Some(Status::Custom("in_review".to_string())),
+            status: Some(Status::Blocked),
             ..Default::default()
         };
         let error = storage
@@ -20886,7 +20894,7 @@ mod tests {
         assert_eq!(storage.get_comments("bd-review").unwrap().len(), 1);
 
         let unchecked = IssueUpdate {
-            status: Some(Status::Custom("in_review".to_string())),
+            status: Some(Status::Blocked),
             acceptance_criteria: Some(Some("- [ ] Exercise the real path".to_string())),
             transition_comment: Some("fresh review attempt".to_string()),
             ..Default::default()
@@ -20900,13 +20908,13 @@ mod tests {
         assert_eq!(storage.get_comments("bd-review").unwrap().len(), 1);
 
         let valid = IssueUpdate {
-            status: Some(Status::Custom("in_review".to_string())),
+            status: Some(Status::Blocked),
             acceptance_criteria: Some(Some("- [x] Exercise the real path".to_string())),
             transition_comment: Some("fresh review attempt".to_string()),
             ..Default::default()
         };
         let transitioned = storage.update_issue("bd-review", &valid, "tester").unwrap();
-        assert_eq!(transitioned.status.as_str(), "in_review");
+        assert_eq!(transitioned.status.as_str(), "blocked");
         assert_eq!(
             transitioned.acceptance_criteria.as_deref(),
             Some("- [x] Exercise the real path")
@@ -20929,7 +20937,7 @@ mod tests {
             (
                 "bd-batch-a".to_string(),
                 IssueUpdate {
-                    status: Some(Status::Custom("in_review".to_string())),
+                    status: Some(Status::InProgress),
                     acceptance_criteria: Some(Some("- [x] Complete".to_string())),
                     transition_comment: Some("A is ready".to_string()),
                     ..Default::default()
@@ -20938,7 +20946,7 @@ mod tests {
             (
                 "bd-batch-b".to_string(),
                 IssueUpdate {
-                    status: Some(Status::Custom("in_review".to_string())),
+                    status: Some(Status::InProgress),
                     acceptance_criteria: Some(Some("- [ ] Still pending".to_string())),
                     transition_comment: Some("B is not actually ready".to_string()),
                     ..Default::default()
@@ -21101,7 +21109,7 @@ mod tests {
         let issue = make_issue(
             "bd-cycle",
             "review cycle",
-            Status::Custom("in_review".to_string()),
+            Status::InProgress,
             2,
             None,
             Utc::now(),
@@ -21123,12 +21131,12 @@ mod tests {
             .unwrap();
         assert_eq!(first.status_revision, 0);
 
-        for status in ["rework", "In_Review"] {
+        for status in [Status::Deferred, Status::InProgress] {
             storage
                 .update_issue(
                     "bd-cycle",
                     &IssueUpdate {
-                        status: Some(Status::Custom(status.to_string())),
+                        status: Some(status.clone()),
                         ..Default::default()
                     },
                     "tester",
@@ -21245,7 +21253,7 @@ mod tests {
             .update_issue(
                 "bd-bypass",
                 &IssueUpdate {
-                    status: Some(Status::Custom("in_review".to_string())),
+                    status: Some(Status::InProgress),
                     workflow_policy_bypass_reason: Some("incident response".to_string()),
                     ..Default::default()
                 },
@@ -21257,7 +21265,7 @@ mod tests {
         let bypass = events
             .iter()
             .find(|event| {
-                event.event_type == EventType::Custom("workflow_policy_bypassed".to_string())
+                event.event_type == EventType::WorkflowPolicyBypassed
             })
             .expect("bypass event");
         assert_eq!(bypass.actor, "operator");
@@ -21379,7 +21387,7 @@ mod tests {
         let now = Utc::now();
         for (id, status) in [
             ("bd-cap-group-1", Status::InProgress),
-            ("bd-cap-group-2", Status::Custom("in_review".to_string())),
+            ("bd-cap-group-2", Status::InProgress),
             ("bd-cap-group-3", Status::Open),
         ] {
             storage
@@ -21390,14 +21398,14 @@ mod tests {
         policy.groups.insert(
             "active_work".to_string(),
             crate::close_policy::CapacityGroup {
-                statuses: vec!["in_progress".to_string(), "in_review".to_string()],
+                statuses: vec!["in_progress".to_string(), "deferred".to_string()],
                 soft: None,
                 hard: Some(2),
             },
         );
         storage.set_workflow_capacity_policy(policy);
         let update = IssueUpdate {
-            status: Some(Status::Custom("in_review".to_string())),
+            status: Some(Status::InProgress),
             ..IssueUpdate::default()
         };
         let error = storage
@@ -21417,9 +21425,9 @@ mod tests {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let now = Utc::now();
         for (id, status) in [
-            ("bd-cap-review", Status::Custom("in_review".to_string())),
+            ("bd-cap-review", Status::InProgress),
             ("bd-cap-fresh", Status::Open),
-            ("bd-cap-rework", Status::Custom("rework".to_string())),
+            ("bd-cap-rework", Status::Deferred),
         ] {
             storage
                 .create_issue(&make_issue(id, id, status, 1, None, now, None), "tester")
@@ -21435,7 +21443,7 @@ mod tests {
                     to: vec!["in_progress".to_string()],
                 },
                 require_below: crate::close_policy::CapacityRequirements {
-                    statuses: std::iter::once(("in_review".to_string(), 1)).collect(),
+                    statuses: std::iter::once(("deferred".to_string(), 1)).collect(),
                     groups: BTreeMap::new(),
                 },
             });
@@ -21451,7 +21459,7 @@ mod tests {
             panic!("unexpected capacity error: {error:?}");
         };
         assert_eq!(violation.capacity_kind, "admission_status");
-        assert_eq!(violation.capacity_name, "in_review");
+        assert_eq!(violation.capacity_name, "deferred");
 
         storage
             .update_issue("bd-cap-rework", &update, "tester")
@@ -22011,7 +22019,7 @@ mod tests {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let now = Utc::now();
         for (id, status) in [
-            ("bd-exa-review", Status::Custom("in_review".to_string())),
+            ("bd-exa-review", Status::Deferred),
             ("bd-exa-next", Status::Open),
         ] {
             storage
@@ -22028,7 +22036,7 @@ mod tests {
                     to: vec!["in_progress".to_string()],
                 },
                 require_below: crate::close_policy::CapacityRequirements {
-                    statuses: std::collections::BTreeMap::from([("in_review".to_string(), 1)]),
+                    statuses: std::collections::BTreeMap::from([("deferred".to_string(), 1)]),
                     groups: std::collections::BTreeMap::new(),
                 },
             });
@@ -22050,7 +22058,7 @@ mod tests {
             .grant_capacity_exemption(
                 "bd-exa-review",
                 "status",
-                "in_review",
+                "deferred",
                 "operator",
                 "awaiting an external regulatory decision",
                 None,
@@ -22178,12 +22186,12 @@ mod tests {
                 Status::InProgress,
                 Status::InProgress,
                 Status::InProgress,
-                Status::Custom("in_review".to_string()),
+                Status::InProgress,
             ],
         );
         storage.set_workflow_capacity_policy(leaf_work_group_policy(
             "active_work",
-            &["in_progress", "in_review"],
+            &["in_progress", "deferred"],
             2,
         ));
 
@@ -23803,7 +23811,7 @@ mod tests {
 
         assert_eq!(
             issue_meta.status,
-            Status::Custom("mystery-state".to_string())
+            Status::Deferred
         );
     }
 
@@ -25251,7 +25259,7 @@ mod tests {
         let custom = make_issue(
             "bd-b3",
             "Custom blocked",
-            Status::Custom("review".to_string()),
+            Status::Blocked,
             2,
             None,
             t1,
@@ -32949,7 +32957,7 @@ mod tests {
                 &make_issue(
                     "bd-rework",
                     "Rework",
-                    Status::Custom("rework".to_string()),
+                    Status::Deferred,
                     2,
                     None,
                     t1,
@@ -32985,7 +32993,7 @@ mod tests {
                 &make_issue(
                     "bd-rework",
                     "Rework",
-                    Status::Custom("rework".to_string()),
+                    Status::Deferred,
                     2,
                     None,
                     t1,
@@ -33010,7 +33018,7 @@ mod tests {
             .unwrap();
 
         let filters = ReadyFilters {
-            ready_statuses: vec!["open".to_string(), "rework".to_string()],
+            ready_statuses: vec!["open".to_string(), "deferred".to_string()],
             ..Default::default()
         };
         let res = storage
@@ -33021,7 +33029,7 @@ mod tests {
         assert_eq!(ids, vec!["bd-open", "bd-rework"]);
         // in_progress stays out; statuses are preserved.
         let rework = res.iter().find(|i| i.id == "bd-rework").unwrap();
-        assert_eq!(rework.status.as_str(), "rework");
+        assert_eq!(rework.status.as_str(), "deferred");
     }
 
     #[test]
@@ -33037,7 +33045,7 @@ mod tests {
                 &make_issue(
                     "bd-rework-deferred",
                     "ReworkDeferred",
-                    Status::Custom("rework".to_string()),
+                    Status::Deferred,
                     2,
                     None,
                     t1,
@@ -33054,7 +33062,7 @@ mod tests {
             .unwrap();
 
         let filters = ReadyFilters {
-            ready_statuses: vec!["open".to_string(), "rework".to_string()],
+            ready_statuses: vec!["open".to_string(), "deferred".to_string()],
             ..Default::default()
         };
         let res = storage
@@ -33069,7 +33077,7 @@ mod tests {
 
         // With --include-deferred, the gate drops and the rework member returns.
         let filters_deferred = ReadyFilters {
-            ready_statuses: vec!["open".to_string(), "rework".to_string()],
+            ready_statuses: vec!["open".to_string(), "deferred".to_string()],
             include_deferred: true,
             ..Default::default()
         };
@@ -36967,7 +36975,7 @@ mod tests {
                 name: "review_requires_active_headroom".to_string(),
                 transitions: crate::close_policy::CapacityTransitionMatcher {
                     from: vec!["open".to_string()],
-                    to: vec!["in_review".to_string()],
+                    to: vec!["in_progress".to_string()],
                 },
                 require_below: crate::close_policy::CapacityRequirements {
                     statuses: std::collections::BTreeMap::new(),
@@ -36977,7 +36985,7 @@ mod tests {
         storage.set_workflow_capacity_policy(policy);
 
         let mut changed = storage.get_issue(&candidate.id).unwrap().unwrap();
-        changed.status = Status::Custom("in_review".to_string());
+        changed.status = Status::InProgress;
         let kept = vec![changed];
         let intent = sync_merge_test_intent(&storage, &kept, &[], &[]);
         let before = crate::sync::capture_sync_database_witness(&storage).unwrap();

@@ -310,14 +310,25 @@ fn jsonl_import_normalizes_mixed_case_known_status_and_issue_type() {
 }
 
 #[test]
-fn jsonl_import_normalizes_custom_status_and_issue_type_case() {
-    assert_mixed_case_known_value_round_trip(
-        "QaReview",
-        "Odd_Type",
-        &Status::Custom("qareview".to_string()),
-        &IssueType::Custom("odd_type".to_string()),
-        "customcase",
-    );
+fn jsonl_import_rejects_unknown_status_and_issue_type() {
+    // bd-bqyb: QaReview/Odd_Type no longer normalize to Custom — the import
+    // fails loud at the typed boundary.
+    let temp = TempDir::new().unwrap();
+    let input_path = temp.path().join("unknown.jsonl");
+    fs::write(
+        &input_path,
+        "{\"id\":\"bd-x\",\"title\":\"t\",\"status\":\"QaReview\",\"issue_type\":\"Odd_Type\",\"priority\":2,\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\"}\n",
+    )
+    .unwrap();
+    let mut imported = SqliteStorage::open_memory().unwrap();
+    let err = import_from_jsonl(
+        &mut imported,
+        &input_path,
+        &ImportConfig::default(),
+        Some("bd-"),
+    )
+    .expect_err("unknown status fails the import loud");
+    assert!(err.to_string().contains("QaReview") || err.to_string().contains("qa"));
 }
 
 prop_compose! {

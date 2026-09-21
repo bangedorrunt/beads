@@ -8617,7 +8617,8 @@ fn validate_jsonl_issue_records_from_reader(
         }
 
         summary.record_count += 1;
-        match serde_json::from_str::<Issue>(trimmed) {
+        let normalized = normalize_import_legacy_spellings(trimmed);
+        match serde_json::from_str::<Issue>(&normalized) {
             Ok(mut issue) => {
                 normalize_issue(&mut issue);
                 if !seen_ids.insert(issue.id.clone()) {
@@ -12471,17 +12472,8 @@ fn normalize_issue(issue: &mut Issue) {
         issue.labels.dedup();
     }
 
-    // Normalize dependency types (fix legacy underscores)
-    for dep in &mut issue.dependencies {
-        if let crate::model::DependencyType::Custom(custom) = &dep.dep_type {
-            let candidate = custom.replace('_', "-");
-            if let Ok(normalized) = candidate.parse::<crate::model::DependencyType>()
-                && !matches!(normalized, crate::model::DependencyType::Custom(_))
-            {
-                dep.dep_type = normalized;
-            }
-        }
-    }
+    // Dependency types parse strictly at import (bd-bqyb) — no Custom
+    // normalization pass remains.
 
     // Deduplicate dependencies by the database key (issue_id, depends_on_id),
     // keeping only the most recent entry by created_at. This handles duplicate
@@ -12512,21 +12504,9 @@ fn normalize_issue(issue: &mut Issue) {
         }
     }
 
-    // Normalize legacy Go-beads (bd) terminal status aliases that survived
-    // JSONL import as `Status::Custom(_)`. Leaving them unmapped is
-    // corruptive: our own `is_terminal()` returns false for Custom, so the
-    // closed_at repair below skips them and the CHECK constraint later
-    // rejects the row. Downstream consumers (bv, bd-style readers) also
-    // reject unknown statuses outright.
-    if let crate::model::Status::Custom(raw) = &issue.status {
-        let key = raw.trim().to_ascii_lowercase();
-        if matches!(
-            key.as_str(),
-            "done" | "complete" | "completed" | "finished" | "resolved"
-        ) {
-            issue.status = crate::model::Status::Closed;
-        }
-    }
+    // Legacy terminal aliases are normalized pre-parse
+    // (normalize_import_status_aliases) — strictly-typed statuses need no
+    // post-parse repair here.
 
     // Wisp detection: if ID contains "-wisp-", mark as ephemeral
     if issue.id.contains("-wisp-") {
@@ -12597,8 +12577,36 @@ struct ImportCollisionPlan {
     comment_owner_ids_to_replace: Vec<String>,
 }
 
+/// Normalize legacy spellings at the JSON value level, BEFORE typed
+/// deserialization (bd-bqyb: unknown statuses/types fail loud, so the
+/// migration must happen pre-parse): Go-beads terminal status aliases to
+/// `closed`, legacy `parent_child` dependency spellings to `parent-child`.
+fn normalize_import_legacy_spellings(trimmed: &str) -> String {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return trimmed.to_string();
+    };
+    if let Some(status) = v.get("status").and_then(|s| s.as_str()) {
+        let key = status.trim().to_ascii_lowercase();
+        if matches!(
+            key.as_str(),
+            "done" | "complete" | "completed" | "finished" | "resolved"
+        ) {
+            v["status"] = serde_json::Value::String("closed".to_string());
+        }
+    }
+    if let Some(deps) = v.get_mut("dependencies").and_then(|d| d.as_array_mut()) {
+        for dep in deps.iter_mut() {
+            if dep.get("dep_type").and_then(|t| t.as_str()) == Some("parent_child") {
+                dep["dep_type"] = serde_json::Value::String("parent-child".to_string());
+            }
+        }
+    }
+    serde_json::to_string(&v).unwrap_or_else(|_| trimmed.to_string())
+}
+
 fn parse_normalized_import_issue(trimmed: &str, line_num: usize) -> Result<Issue> {
-    let mut issue: Issue = serde_json::from_str(trimmed)
+    let normalized = normalize_import_legacy_spellings(trimmed);
+    let mut issue: Issue = serde_json::from_str(&normalized)
         .map_err(|e| BeadsError::Config(format!("Invalid JSON at line {line_num}: {e}")))?;
 
     normalize_issue(&mut issue);
@@ -19805,40 +19813,27 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_issue_remaps_legacy_done_to_closed() {
-        // Go-beads "done" survives round-tripping as Status::Custom; ensure
-        // import normalization promotes it to the canonical Closed variant
-        // and that closed_at gets populated to satisfy the DB CHECK.
-        let mut issue = make_test_issue("bd-001", "Legacy done");
-        issue.status = Status::Custom("done".to_string());
-        issue.closed_at = None;
-
-        normalize_issue(&mut issue);
-
+    fn test_import_remaps_legacy_done_to_closed() {
+        // Go-beads "done" arrives as raw JSON; the pre-parse migration
+        // promotes it to Closed (bd-bqyb: typed parse would reject it).
+        let line = r#"{"id":"bd-001","title":"Legacy done","status":"done","issue_type":"task","priority":2,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let issue = parse_normalized_import_issue(line, 1).expect("legacy done imports");
         assert_eq!(issue.status, Status::Closed);
-        assert!(issue.closed_at.is_some());
     }
 
     #[test]
-    fn test_normalize_issue_remaps_mixed_case_terminal_aliases() {
+    fn test_import_remaps_mixed_case_terminal_aliases() {
         for raw in ["Done", "COMPLETE", "completed", "Finished", "Resolved"] {
-            let mut issue = make_test_issue("bd-001", "Legacy alias");
-            issue.status = Status::Custom(raw.to_string());
-            normalize_issue(&mut issue);
-            assert_eq!(
-                issue.status,
-                Status::Closed,
-                "alias {raw:?} should map to Closed"
-            );
+            let line = format!("{{\"id\":\"bd-001\",\"title\":\"Legacy alias\",\"status\":\"{raw}\",\"issue_type\":\"task\",\"priority\":2,\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\"}}");
+            let issue = parse_normalized_import_issue(&line, 1).expect("alias imports");
+            assert_eq!(issue.status, Status::Closed, "alias {raw:?} should map to Closed");
         }
     }
 
     #[test]
-    fn test_normalize_issue_preserves_unknown_custom_status() {
-        let mut issue = make_test_issue("bd-001", "Custom status");
-        issue.status = Status::Custom("qa-review".to_string());
-        normalize_issue(&mut issue);
-        assert_eq!(issue.status, Status::Custom("qa-review".to_string()));
+    fn test_import_rejects_unknown_status_loudly() {
+        let line = r#"{"id":"bd-001","title":"Custom status","status":"qa-review","issue_type":"task","priority":2,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        assert!(parse_normalized_import_issue(line, 1).is_err());
     }
 
     #[test]
@@ -19847,7 +19842,7 @@ mod tests {
         issue.dependencies.push(crate::model::Dependency {
             issue_id: issue.id.clone(),
             depends_on_id: "bd-002".to_string(),
-            dep_type: crate::model::DependencyType::Custom("parent_child".to_string()),
+dep_type: crate::model::DependencyType::ParentChild,
             created_at: Utc::now(),
             created_by: None,
             metadata: None,
@@ -19863,24 +19858,9 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_issue_preserves_custom_dependency_type_with_underscores() {
-        let mut issue = make_test_issue("bd-001", "Custom dependency");
-        issue.dependencies.push(crate::model::Dependency {
-            issue_id: issue.id.clone(),
-            depends_on_id: "bd-002".to_string(),
-            dep_type: crate::model::DependencyType::Custom("review_needed".to_string()),
-            created_at: Utc::now(),
-            created_by: None,
-            metadata: None,
-            thread_id: None,
-        });
-
-        normalize_issue(&mut issue);
-
-        assert_eq!(
-            issue.dependencies[0].dep_type,
-            crate::model::DependencyType::Custom("review_needed".to_string())
-        );
+    fn test_import_rejects_unknown_dependency_type_loudly() {
+        let line = r#"{"id":"bd-001","title":"Custom dependency","status":"open","issue_type":"task","priority":2,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","dependencies":[{"issue_id":"bd-001","depends_on_id":"bd-002","dep_type":"review_needed"}]}"#;
+        assert!(parse_normalized_import_issue(line, 1).is_err());
     }
 
     #[test]

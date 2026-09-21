@@ -885,9 +885,7 @@ fn canonical_create_dep_type(name: &str) -> Option<DependencyType> {
     {
         return Some(DependencyType::Blocks);
     }
-    DependencyType::from_str(name)
-        .ok()
-        .filter(|dep_type| !matches!(dep_type, DependencyType::Custom(_)))
+    DependencyType::from_str(name).ok()
 }
 
 struct RelationContext<'a> {
@@ -2169,23 +2167,19 @@ mod tests {
     }
 
     #[test]
-    fn test_create_issue_custom_type_accepted() {
+    fn test_create_issue_custom_type_rejected() {
         init_test_logging();
-        info!("test_create_issue_custom_type_accepted: starting");
-        // Custom types are now accepted
+        info!("test_create_issue_custom_type_rejected: starting");
+        // bd-bqyb: unknown types fail loud at the boundary.
         let mut storage = setup_memory_storage();
         let mut args = default_args();
         args.type_ = Some("custom_type".to_string());
         let config = default_config();
 
         let result = create_issue_impl(&mut storage, &args, &config, None);
-        assert!(result.is_ok(), "create should succeed with custom type");
-        let issue = result.unwrap();
-        assert_eq!(
-            issue.issue_type,
-            IssueType::Custom("custom_type".to_string())
-        );
-        info!("test_create_issue_custom_type_accepted: assertions passed");
+        let err = result.expect_err("unknown issue type fails loud");
+        assert!(err.to_string().contains("custom_type"));
+        info!("test_create_issue_custom_type_rejected: assertions passed");
     }
 
     // =========================================================================

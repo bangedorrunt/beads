@@ -96,14 +96,14 @@ fn test_pinned_status_blocks_dependents() {
 }
 
 #[test]
-fn test_custom_status_blocks_dependents() {
-    // Verify that a custom status also blocks
+fn test_deferred_status_blocks_dependents() {
+    // Verify that a non-terminal known status also blocks
     let mut storage = SqliteStorage::open_memory().unwrap();
 
     let issue_a = make_issue(
         "bd-a",
         "Custom Blocker",
-        Status::Custom("review".to_string()),
+        Status::Deferred,
     );
     storage.create_issue(&issue_a, "setup").unwrap();
 

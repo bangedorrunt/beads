@@ -150,7 +150,7 @@ mod tests {
         let mut issue = Issue {
             id: "bd-root".to_string(),
             title: "Root\x1b[2J".to_string(),
-            status: Status::Custom("\x1b[31mhidden".to_string()),
+            status: Status::Blocked,
             ..Issue::default()
         };
         issue.dependencies.push(Dependency {

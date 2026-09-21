@@ -2847,12 +2847,13 @@ fn rebuild_content_hashes_for_current_format_in_transaction(
         let pinned = row_bool(row, 14);
         let is_template = row_bool(row, 15);
 
-        let status = status_raw
-            .parse::<Status>()
-            .unwrap_or_else(|_| Status::Custom(status_raw.clone()));
-        let issue_type = issue_type_raw
-            .parse::<IssueType>()
-            .unwrap_or_else(|_| IssueType::Custom(issue_type_raw.clone()));
+        // Unknown wire values fail loud (bd-bqyb) — never silent Customs.
+        let status = status_raw.parse::<Status>().map_err(|e| {
+            crate::error::BeadsError::Config(format!("stored issue has unknown status {status_raw:?}: {e}"))
+        })?;
+        let issue_type = issue_type_raw.parse::<IssueType>().map_err(|e| {
+            crate::error::BeadsError::Config(format!("stored issue has unknown type {issue_type_raw:?}: {e}"))
+        })?;
         let content_hash = content_hash_from_parts(
             &title,
             description.as_deref(),

@@ -147,7 +147,9 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
         id,
         title,
         description: args.description,
-        status: Status::Open,
+        // ADR-0035 Spec 4: quick capture mints an explicit draft — dispatchable
+        // only after triage promotes it. `ready` excludes drafts by construction.
+        status: Status::Draft,
         priority,
         issue_type,
         created_at: now,

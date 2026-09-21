@@ -885,18 +885,6 @@ fn parse_dependency_type(dep_type: &str) -> Result<DependencyType> {
         reason: format!("Invalid dependency type: {dep_type}"),
     })?;
 
-    if let DependencyType::Custom(_) = parsed {
-        return Err(BeadsError::Validation {
-            field: "type".to_string(),
-            reason: format!(
-                "Unknown dependency type: '{dep_type}'. \
-                 Allowed types: blocks, parent-child, conditional-blocks, waits-for, \
-                 related, discovered-from, replies-to, relates-to, duplicates, \
-                 supersedes, caused-by"
-            ),
-        });
-    }
-
     Ok(parsed)
 }
 

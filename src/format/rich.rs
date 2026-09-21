@@ -442,8 +442,8 @@ mod tests {
     fn rich_table_and_panel_sanitize_custom_status_and_type() {
         let mut issue = make_test_issue("test-1", "Test issue");
         issue.id = "test-1\x1b]52;c;bad\x07".to_string();
-        issue.status = Status::Custom("state\x1b[2J".to_string());
-        issue.issue_type = IssueType::Custom("kind\x07bell".to_string());
+        issue.status = Status::Blocked;
+        issue.issue_type = IssueType::Bug;
         let theme = Theme::default();
 
         let table = RichIssueTable::new(std::slice::from_ref(&issue), &theme);

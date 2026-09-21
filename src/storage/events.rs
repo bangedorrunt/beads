@@ -411,7 +411,7 @@ fn event_from_row(row: &Row) -> Result<Event> {
     let model = row.get(10).and_then(|v| v.as_text()).map(String::from);
 
     // Parse event type
-    let event_type = parse_event_type(event_type_str);
+    let event_type = parse_event_type(event_type_str)?;
 
     // Parse timestamp (support RFC3339 and SQLite default format)
     let created_at = parse_event_timestamp(created_at_str)?;
@@ -485,10 +485,12 @@ pub fn count_events(conn: &Connection, issue_id: &str) -> Result<i64> {
     Ok(count)
 }
 
-/// Parse event type string to `EventType` enum.
-fn parse_event_type(s: &str) -> EventType {
+/// Parse event type string to `EventType` enum. Unknown wire values fail
+/// loud (bd-bqyb) — audit rows with unrecognized types surface as errors,
+/// never silent Customs.
+fn parse_event_type(s: &str) -> crate::error::Result<EventType> {
     let normalized = s.to_lowercase();
-    match normalized.as_str() {
+    Ok(match normalized.as_str() {
         "created" => EventType::Created,
         "updated" => EventType::Updated,
         "status_changed" => EventType::StatusChanged,
@@ -504,8 +506,17 @@ fn parse_event_type(s: &str) -> EventType {
         "compacted" => EventType::Compacted,
         "deleted" => EventType::Deleted,
         "restored" => EventType::Restored,
-        other => EventType::Custom(other.to_string()),
-    }
+        "captain_hold_bound" => EventType::CaptainHoldBound,
+        "captain_hold_resolved" => EventType::CaptainHoldResolved,
+        "captain_hold_resurfaced" => EventType::CaptainHoldResurfaced,
+        "workflow_policy_bypassed" => EventType::WorkflowPolicyBypassed,
+        other => {
+            return Err(crate::error::BeadsError::validation(
+                "event_type",
+                format!("unknown event type {other:?}"),
+            ));
+        }
+    })
 }
 
 /// Initialize the events table in the database.
@@ -552,16 +563,16 @@ mod tests {
 
     #[test]
     fn test_parse_event_type_normalizes_known_variant_case() {
-        assert_eq!(parse_event_type("CREATED"), EventType::Created);
-        assert_eq!(parse_event_type("Status_Changed"), EventType::StatusChanged);
+        assert_eq!(parse_event_type("CREATED").unwrap(), EventType::Created);
+        assert_eq!(
+            parse_event_type("Status_Changed").unwrap(),
+            EventType::StatusChanged
+        );
     }
 
     #[test]
-    fn test_parse_event_type_normalizes_custom_case() {
-        assert_eq!(
-            parse_event_type("My_Custom_Event"),
-            EventType::Custom("my_custom_event".to_string())
-        );
+    fn test_parse_event_type_rejects_unknown() {
+        assert!(parse_event_type("My_Custom_Event").is_err());
     }
 
     #[test]
@@ -764,14 +775,8 @@ mod tests {
             .expect("insert event");
         }
 
-        let events = get_events(&conn, "test-001", 0).expect("events");
-
-        assert_eq!(events.len(), 2);
-        assert_eq!(
-            events[0].event_type,
-            EventType::Custom("my_custom_event".to_string())
-        );
-        assert_eq!(events[1].event_type, EventType::Created);
+        // Unknown persisted types fail loud at read (bd-bqyb).
+        assert!(get_events(&conn, "test-001", 0).is_err());
     }
 
     #[test]

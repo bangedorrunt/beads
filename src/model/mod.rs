@@ -68,16 +68,27 @@ pub enum Status {
     Tombstone,
     #[serde(rename = "pinned")]
     Pinned,
-    #[serde(untagged)]
-    Custom(String),
 }
 
 impl<'de> Deserialize<'de> for Status {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
-        Ok(match Self::known_value(&value) {
-            Some(status) => status,
-            None => Self::Custom(value.to_lowercase()),
+        // ADR-0035 Spec 4/6: unknown statuses fail loud at the boundary —
+        // never a silent Custom default (bd-bqyb).
+        Self::known_value(&value).ok_or_else(|| {
+            serde::de::Error::unknown_variant(
+                &value,
+                &[
+                    "open",
+                    "in_progress",
+                    "blocked",
+                    "deferred",
+                    "draft",
+                    "closed",
+                    "tombstone",
+                    "pinned",
+                ],
+            )
         })
     }
 }
@@ -108,7 +119,6 @@ impl Status {
             Self::Closed => "closed",
             Self::Tombstone => "tombstone",
             Self::Pinned => "pinned",
-            Self::Custom(value) => value,
         }
     }
 
@@ -139,7 +149,9 @@ impl FromStr for Status {
     type Err = crate::error::BeadsError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self::known_value(s).unwrap_or_else(|| Self::Custom(s.to_lowercase())))
+        Self::known_value(s).ok_or_else(|| crate::error::BeadsError::InvalidStatus {
+            status: s.to_string(),
+        })
     }
 }
 
@@ -201,16 +213,16 @@ pub enum IssueType {
     Chore,
     Docs,
     Question,
-    #[serde(untagged)]
-    Custom(String),
 }
 
 impl<'de> Deserialize<'de> for IssueType {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
-        Ok(match Self::known_value(&value) {
-            Some(issue_type) => issue_type,
-            None => Self::Custom(value.to_lowercase()),
+        Self::known_value(&value).ok_or_else(|| {
+            serde::de::Error::unknown_variant(
+                &value,
+                &["task", "bug", "feature", "epic", "chore", "docs", "question"],
+            )
         })
     }
 }
@@ -239,15 +251,15 @@ impl IssueType {
             Self::Chore => "chore",
             Self::Docs => "docs",
             Self::Question => "question",
-            Self::Custom(value) => value,
         }
     }
 
     /// Returns true if this is a standard (non-custom) issue type.
     /// Used for bd conformance validation in CLI commands.
+    /// ADR-0035: every type is standard now — Customs are rejected at parse.
     #[must_use]
     pub const fn is_standard(&self) -> bool {
-        !matches!(self, Self::Custom(_))
+        true
     }
 }
 
@@ -261,7 +273,8 @@ impl FromStr for IssueType {
     type Err = crate::error::BeadsError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self::known_value(s).unwrap_or_else(|| Self::Custom(s.to_lowercase())))
+        Self::known_value(s)
+            .ok_or_else(|| crate::error::BeadsError::validation("issue_type", format!("unknown issue type {s:?}")))
     }
 }
 
@@ -280,28 +293,12 @@ pub enum DependencyType {
     Duplicates,
     Supersedes,
     CausedBy,
-    #[serde(untagged)]
-    Custom(String),
 }
 
 impl<'de> Deserialize<'de> for DependencyType {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
-        let normalized = value.to_lowercase();
-        Ok(match normalized.as_str() {
-            "blocks" => Self::Blocks,
-            "parent-child" => Self::ParentChild,
-            "conditional-blocks" => Self::ConditionalBlocks,
-            "waits-for" => Self::WaitsFor,
-            "related" => Self::Related,
-            "discovered-from" => Self::DiscoveredFrom,
-            "replies-to" => Self::RepliesTo,
-            "relates-to" => Self::RelatesTo,
-            "duplicates" => Self::Duplicates,
-            "supersedes" => Self::Supersedes,
-            "caused-by" => Self::CausedBy,
-            _ => Self::Custom(normalized),
-        })
+        value.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -320,7 +317,6 @@ impl DependencyType {
             Self::Duplicates => "duplicates",
             Self::Supersedes => "supersedes",
             Self::CausedBy => "caused-by",
-            Self::Custom(value) => value,
         }
     }
 
@@ -363,7 +359,10 @@ impl FromStr for DependencyType {
             "duplicates" => Ok(Self::Duplicates),
             "supersedes" => Ok(Self::Supersedes),
             "caused-by" => Ok(Self::CausedBy),
-            other => Ok(Self::Custom(other.to_string())),
+            _ => Err(crate::error::BeadsError::validation(
+                "dep_type",
+                format!("unknown dependency type {s:?}"),
+            )),
         }
     }
 }
@@ -386,7 +385,14 @@ pub enum EventType {
     Compacted,
     Deleted,
     Restored,
-    Custom(String),
+    /// Captain hold bound for a corr (flywheel × toron coordination).
+    CaptainHoldBound,
+    /// Captain hold resolved by a corr.
+    CaptainHoldResolved,
+    /// Expired captain hold re-surfaced (hold stays open).
+    CaptainHoldResurfaced,
+    /// Workflow policy bypass recorded with a reason.
+    WorkflowPolicyBypassed,
 }
 
 impl EventType {
@@ -408,7 +414,10 @@ impl EventType {
             Self::Compacted => "compacted",
             Self::Deleted => "deleted",
             Self::Restored => "restored",
-            Self::Custom(value) => value,
+            Self::CaptainHoldBound => "captain_hold_bound",
+            Self::CaptainHoldResolved => "captain_hold_resolved",
+            Self::CaptainHoldResurfaced => "captain_hold_resurfaced",
+            Self::WorkflowPolicyBypassed => "workflow_policy_bypassed",
         }
     }
 }
@@ -439,7 +448,32 @@ impl<'de> Deserialize<'de> for EventType {
             "compacted" => Self::Compacted,
             "deleted" => Self::Deleted,
             "restored" => Self::Restored,
-            _ => Self::Custom(normalized),
+            "captain_hold_bound" => Self::CaptainHoldBound,
+            "captain_hold_resolved" => Self::CaptainHoldResolved,
+            "captain_hold_resurfaced" => Self::CaptainHoldResurfaced,
+            "workflow_policy_bypassed" => Self::WorkflowPolicyBypassed,
+            _ => {
+                return Err(serde::de::Error::unknown_variant(
+                    &value,
+                    &[
+                        "created",
+                        "updated",
+                        "status_changed",
+                        "priority_changed",
+                        "assignee_changed",
+                        "commented",
+                        "closed",
+                        "reopened",
+                        "dependency_added",
+                        "dependency_removed",
+                        "label_added",
+                        "label_removed",
+                        "compacted",
+                        "deleted",
+                        "restored",
+                    ],
+                ));
+            }
         };
         Ok(event_type)
     }
@@ -1080,26 +1114,28 @@ mod tests {
     use chrono::TimeZone;
 
     #[test]
-    fn status_custom_roundtrip() {
-        let status: Status = serde_json::from_str("\"custom_status\"").unwrap();
-        assert_eq!(status, Status::Custom("custom_status".to_string()));
-        let serialized = serde_json::to_string(&status).unwrap();
-        assert_eq!(serialized, "\"custom_status\"");
-
-        let mixed_case: Status = serde_json::from_str("\"QaReview\"").unwrap();
-        assert_eq!(mixed_case, Status::Custom("qareview".to_string()));
+    fn status_unknown_rejected_loudly() {
+        // bd-bqyb: unknown statuses fail at the boundary, never Custom.
+        assert!(serde_json::from_str::<Status>("\"custom_status\"").is_err());
+        assert!(serde_json::from_str::<Status>("\"QaReview\"").is_err());
+        assert!(Status::from_str("bogus").is_err());
+        // Known values still parse (case-insensitive).
+        assert_eq!(
+            serde_json::from_str::<Status>("\"Blocked\"").unwrap(),
+            Status::Blocked
+        );
     }
 
     #[test]
-    fn issue_type_custom_deserialize_normalizes_spelling() {
-        let issue_type: IssueType = serde_json::from_str("\"Odd_Type\"").unwrap();
-        assert_eq!(issue_type, IssueType::Custom("odd_type".to_string()));
+    fn issue_type_unknown_rejected_loudly() {
+        assert!(serde_json::from_str::<IssueType>("\"Odd_Type\"").is_err());
+        assert!(IssueType::from_str("bogus").is_err());
     }
 
     #[test]
-    fn dependency_type_custom_deserialize_normalizes_spelling() {
-        let dep_type: DependencyType = serde_json::from_str("\"Odd-Dep\"").unwrap();
-        assert_eq!(dep_type, DependencyType::Custom("odd-dep".to_string()));
+    fn dependency_type_unknown_rejected_loudly() {
+        assert!(serde_json::from_str::<DependencyType>("\"Odd-Dep\"").is_err());
+        assert!(DependencyType::from_str("bogus").is_err());
     }
 
     #[test]
@@ -1220,10 +1256,8 @@ mod tests {
         let e = EventType::StatusChanged;
         let json = serde_json::to_string(&e).unwrap();
         assert_eq!(json, "\"status_changed\"");
-
-        let e = EventType::Custom("foobar".to_string());
-        let json = serde_json::to_string(&e).unwrap();
-        assert_eq!(json, "\"foobar\"");
+        // Unknown event types fail loud (bd-bqyb).
+        assert!(serde_json::from_str::<EventType>("\"foobar\"").is_err());
     }
 
     // ========================================================================
@@ -1275,12 +1309,9 @@ mod tests {
     }
 
     #[test]
-    fn test_status_from_str_unknown_becomes_custom() {
-        let result = Status::from_str("invalid_status").unwrap();
-        assert_eq!(result, Status::Custom("invalid_status".to_string()));
-
-        let mixed_case = Status::from_str("QaReview").unwrap();
-        assert_eq!(mixed_case, Status::Custom("qareview".to_string()));
+    fn test_status_from_str_unknown_rejected() {
+        assert!(Status::from_str("invalid_status").is_err());
+        assert!(Status::from_str("QaReview").is_err());
     }
 
     #[test]
@@ -1292,7 +1323,6 @@ mod tests {
         assert_eq!(Status::Closed.to_string(), "closed");
         assert_eq!(Status::Tombstone.to_string(), "tombstone");
         assert_eq!(Status::Pinned.to_string(), "pinned");
-        assert_eq!(Status::Custom("custom".to_string()).to_string(), "custom");
     }
 
     #[test]
@@ -1304,7 +1334,6 @@ mod tests {
         assert!(!Status::Blocked.is_terminal());
         assert!(!Status::Deferred.is_terminal());
         assert!(!Status::Pinned.is_terminal());
-        assert!(!Status::Custom("custom".to_string()).is_terminal());
     }
 
     #[test]
@@ -1316,7 +1345,6 @@ mod tests {
         assert!(!Status::Closed.is_active());
         assert!(!Status::Tombstone.is_active());
         assert!(!Status::Pinned.is_active());
-        assert!(!Status::Custom("custom".to_string()).is_active());
     }
 
     #[test]
@@ -1328,10 +1356,6 @@ mod tests {
         assert_eq!(Status::Closed.as_str(), "closed");
         assert_eq!(Status::Tombstone.as_str(), "tombstone");
         assert_eq!(Status::Pinned.as_str(), "pinned");
-        assert_eq!(
-            Status::Custom("my_status".to_string()).as_str(),
-            "my_status"
-        );
     }
 
     // ========================================================================
@@ -1438,17 +1462,10 @@ mod tests {
     }
 
     #[test]
-    fn test_issue_type_from_str_custom_accepted() {
-        // Custom/unknown types are accepted as IssueType::Custom
-        let result = IssueType::from_str("custom_type");
-        assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            IssueType::Custom("custom_type".to_string())
-        );
-
-        let mixed_case = IssueType::from_str("Odd_Type").unwrap();
-        assert_eq!(mixed_case, IssueType::Custom("odd_type".to_string()));
+    fn test_issue_type_from_str_custom_rejected() {
+        // bd-bqyb: unknown types fail loud, never Custom.
+        assert!(IssueType::from_str("custom_type").is_err());
+        assert!(IssueType::from_str("Odd_Type").is_err());
     }
 
     #[test]
@@ -1460,10 +1477,6 @@ mod tests {
         assert_eq!(IssueType::Chore.to_string(), "chore");
         assert_eq!(IssueType::Docs.to_string(), "docs");
         assert_eq!(IssueType::Question.to_string(), "question");
-        assert_eq!(
-            IssueType::Custom("my_type".to_string()).to_string(),
-            "my_type"
-        );
     }
 
     #[test]
@@ -1475,7 +1488,6 @@ mod tests {
         assert_eq!(IssueType::Chore.as_str(), "chore");
         assert_eq!(IssueType::Docs.as_str(), "docs");
         assert_eq!(IssueType::Question.as_str(), "question");
-        assert_eq!(IssueType::Custom("custom".to_string()).as_str(), "custom");
     }
 
     #[test]
@@ -1536,15 +1548,9 @@ mod tests {
     }
 
     #[test]
-    fn test_dependency_type_from_str_custom() {
-        let result = DependencyType::from_str("my-custom-dep").unwrap();
-        assert_eq!(result, DependencyType::Custom("my-custom-dep".to_string()));
-
-        let mixed_case = DependencyType::from_str("My-Custom-Dep").unwrap();
-        assert_eq!(
-            mixed_case,
-            DependencyType::Custom("my-custom-dep".to_string())
-        );
+    fn test_dependency_type_from_str_unknown_rejected() {
+        assert!(DependencyType::from_str("my-custom-dep").is_err());
+        assert!(DependencyType::from_str("My-Custom-Dep").is_err());
     }
 
     #[test]
@@ -1560,7 +1566,6 @@ mod tests {
         assert!(!DependencyType::Duplicates.is_blocking());
         assert!(!DependencyType::Supersedes.is_blocking());
         assert!(!DependencyType::CausedBy.is_blocking());
-        assert!(!DependencyType::Custom("custom".to_string()).is_blocking());
     }
 
     #[test]
@@ -1576,7 +1581,6 @@ mod tests {
         assert!(!DependencyType::Duplicates.affects_ready_work());
         assert!(!DependencyType::Supersedes.affects_ready_work());
         assert!(!DependencyType::CausedBy.affects_ready_work());
-        assert!(!DependencyType::Custom("custom".to_string()).affects_ready_work());
     }
 
     #[test]
@@ -1598,10 +1602,6 @@ mod tests {
         assert_eq!(DependencyType::Duplicates.to_string(), "duplicates");
         assert_eq!(DependencyType::Supersedes.to_string(), "supersedes");
         assert_eq!(DependencyType::CausedBy.to_string(), "caused-by");
-        assert_eq!(
-            DependencyType::Custom("custom".to_string()).to_string(),
-            "custom"
-        );
     }
 
     // ========================================================================
@@ -2001,10 +2001,6 @@ mod tests {
         assert_eq!(EventType::Compacted.as_str(), "compacted");
         assert_eq!(EventType::Deleted.as_str(), "deleted");
         assert_eq!(EventType::Restored.as_str(), "restored");
-        assert_eq!(
-            EventType::Custom("my_event".to_string()).as_str(),
-            "my_event"
-        );
     }
 
     #[test]
@@ -2034,12 +2030,9 @@ mod tests {
     }
 
     #[test]
-    fn test_event_type_deserialize_custom() {
-        let result: EventType = serde_json::from_str("\"my_custom_event\"").unwrap();
-        assert_eq!(result, EventType::Custom("my_custom_event".to_string()));
-
-        let mixed_case: EventType = serde_json::from_str("\"My_Custom_Event\"").unwrap();
-        assert_eq!(mixed_case, EventType::Custom("my_custom_event".to_string()));
+    fn test_event_type_deserialize_unknown_rejected() {
+        assert!(serde_json::from_str::<EventType>("\"my_custom_event\"").is_err());
+        assert!(serde_json::from_str::<EventType>("\"My_Custom_Event\"").is_err());
     }
 
     #[test]

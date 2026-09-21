@@ -20,7 +20,6 @@ use std::path::Path;
 
 const TITLE_MAX_CHARS: usize = 500;
 const ACTOR_MAX_CHARS: usize = 200;
-const CUSTOM_VARIANT_MAX_CHARS: usize = 50;
 pub(crate) const ISSUE_LABEL_MAX_COUNT: usize = 64;
 
 /// Validates issue fields and invariants.
@@ -146,9 +145,7 @@ fn validate_issue_text_fields(issue: &Issue, errors: &mut Vec<ValidationError>) 
         reject_nul("notes", s, errors);
     }
     reject_nul("status", issue.status.as_str(), errors);
-    validate_custom_status(&issue.status, errors);
     reject_nul("issue_type", issue.issue_type.as_str(), errors);
-    validate_custom_issue_type(&issue.issue_type, errors);
     reject_bounded_chars_opt(
         "assignee",
         issue.assignee.as_deref(),
@@ -210,31 +207,6 @@ fn reject_bounded_chars_opt(
                 format!("exceeds {max_chars} characters"),
             ));
         }
-    }
-}
-
-fn validate_custom_status(status: &Status, errors: &mut Vec<ValidationError>) {
-    if let Status::Custom(value) = status
-        && value.chars().count() > CUSTOM_VARIANT_MAX_CHARS
-    {
-        errors.push(ValidationError::new(
-            "status",
-            "custom status exceeds 50 characters",
-        ));
-    }
-}
-
-fn validate_custom_issue_type(
-    issue_type: &crate::model::IssueType,
-    errors: &mut Vec<ValidationError>,
-) {
-    if let crate::model::IssueType::Custom(value) = issue_type
-        && value.chars().count() > CUSTOM_VARIANT_MAX_CHARS
-    {
-        errors.push(ValidationError::new(
-            "issue_type",
-            "custom issue type exceeds 50 characters",
-        ));
     }
 }
 
@@ -906,8 +878,8 @@ mod tests {
         issue.design = Some("nul\0design".to_string());
         issue.acceptance_criteria = Some("nul\0acceptance".to_string());
         issue.notes = Some("nul\0notes".to_string());
-        issue.status = Status::Custom("nul\0status".to_string());
-        issue.issue_type = IssueType::Custom("nul\0type".to_string());
+        issue.status = Status::Blocked;
+        issue.issue_type = IssueType::Bug;
         issue.assignee = Some("nul\0assignee".to_string());
         issue.owner = Some("nul\0owner".to_string());
         issue.created_by = Some("nul\0creator".to_string());

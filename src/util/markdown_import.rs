@@ -448,18 +448,15 @@ fn is_marker_only_token(token: &str) -> bool {
 /// Returns the dependency type if valid, or None if invalid.
 #[must_use]
 pub fn validate_dependency_type(dep_type: &str) -> Option<&str> {
+    // Legacy aliases stay accepted; everything else must parse strictly.
+    if dep_type.eq_ignore_ascii_case("blocked-by")
+        || dep_type.eq_ignore_ascii_case("depends")
+        || dep_type.eq_ignore_ascii_case("depends-on")
+    {
+        return Some(dep_type);
+    }
     // Check against standard types
-    if let Ok(dt) = DependencyType::from_str(dep_type) {
-        if let DependencyType::Custom(_) = dt {
-            // Check for legacy/alias support not in standard enum
-            if dep_type.eq_ignore_ascii_case("blocked-by")
-                || dep_type.eq_ignore_ascii_case("depends")
-                || dep_type.eq_ignore_ascii_case("depends-on")
-            {
-                return Some(dep_type);
-            }
-            return None;
-        }
+    if DependencyType::from_str(dep_type).is_ok() {
         return Some(dep_type);
     }
     None

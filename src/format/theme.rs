@@ -121,7 +121,7 @@ impl Theme {
             Status::Deferred | Status::Draft => &self.status_deferred,
             Status::Closed | Status::Tombstone => &self.status_closed,
             Status::Pinned => &self.status_pinned,
-            Status::Custom(_) => &self.muted,
+            
         }
     }
 
@@ -143,7 +143,7 @@ impl Theme {
         match issue_type {
             IssueType::Bug => &self.type_bug,
             IssueType::Feature => &self.type_feature,
-            IssueType::Task | IssueType::Custom(_) => &self.type_task,
+            IssueType::Task => &self.type_task,
             IssueType::Epic => &self.type_epic,
             IssueType::Docs | IssueType::Question => &self.type_docs,
             IssueType::Chore => &self.type_chore,
@@ -239,8 +239,8 @@ mod tests {
         );
         assert_eq!(theme.status_style(&Status::Closed), &theme.status_closed);
         assert_eq!(
-            theme.status_style(&Status::Custom("waiting".to_string())),
-            &theme.muted
+            theme.status_style(&Status::Blocked),
+            &theme.status_blocked
         );
     }
 
@@ -269,8 +269,8 @@ mod tests {
         assert_eq!(theme.type_style(&IssueType::Feature), &theme.type_feature);
         assert_eq!(theme.type_style(&IssueType::Task), &theme.type_task);
         assert_eq!(
-            theme.type_style(&IssueType::Custom("ops".to_string())),
-            &theme.type_task
+            theme.type_style(&IssueType::Bug),
+            &theme.type_bug
         );
         assert_eq!(theme.type_style(&IssueType::Epic), &theme.type_epic);
         assert_eq!(theme.type_style(&IssueType::Docs), &theme.type_docs);

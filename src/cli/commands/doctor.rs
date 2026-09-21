@@ -12293,7 +12293,6 @@ fn classify_fully_unblocked(issue: &crate::model::Issue) -> FullyUnblockedIssue 
         Status::Blocked => stale_blocked = true,
         Status::Deferred => excluded_reasons.push("status deferred"),
         Status::Pinned => excluded_reasons.push("status pinned"),
-        Status::Custom(_) => excluded_reasons.push("custom status"),
     }
     if issue
         .defer_until
@@ -16587,9 +16586,9 @@ mod tests {
         storage
             .create_issue(&sample_issue("bd-ok", "Open issue"), "tester")
             .unwrap();
-        // Non-conforming issue: custom status outside the allowed set.
+        // Non-conforming issue: known status outside the allowed set.
         let mut bad = sample_issue("bd-bad", "Has bogus status");
-        bad.status = Status::Custom("completed".to_string());
+        bad.status = Status::Deferred;
         storage.create_issue(&bad, "tester").unwrap();
         drop(storage);
 
@@ -16693,7 +16692,7 @@ mod tests {
         let db_path = beads_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let mut bad = sample_issue("bd-x", "Weird status");
-        bad.status = Status::Custom("completed".to_string());
+        bad.status = Status::Deferred;
         storage.create_issue(&bad, "tester").unwrap();
         drop(storage);
 

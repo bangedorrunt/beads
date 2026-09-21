@@ -819,9 +819,7 @@ mod tests {
         assert!(include_in_blocked_list(&Status::Deferred));
         assert!(include_in_blocked_list(&Status::Blocked));
         assert!(include_in_blocked_list(&Status::Pinned));
-        assert!(include_in_blocked_list(&Status::Custom(
-            "review".to_string()
-        )));
+        assert!(include_in_blocked_list(&Status::Draft));
         assert!(!include_in_blocked_list(&Status::Closed));
         assert!(!include_in_blocked_list(&Status::Tombstone));
     }

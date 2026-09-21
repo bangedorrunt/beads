@@ -366,7 +366,7 @@ mod tests {
         let raw_deps = vec![Dependency {
             issue_id: "bd-source".to_string(),
             depends_on_id: "bd-target\x1b]52;c;bad\x07".to_string(),
-            dep_type: DependencyType::Custom("custom\x08type".to_string()),
+            dep_type: DependencyType::Related,
             created_at: Utc::now(),
             created_by: None,
             metadata: None,

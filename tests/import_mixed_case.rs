@@ -203,57 +203,36 @@ fn import_mixed_case_content_hash_matches_canonical() {
 }
 
 #[test]
-fn import_custom_status_normalizes_case_through_roundtrip() {
+fn import_unknown_status_fails_loudly() {
+    // bd-bqyb: QA_Review no longer normalizes to a Custom variant — the
+    // import fails at the typed boundary.
     let (_temp, beads_dir, jsonl_path, mut storage) = setup();
 
     let jsonl = make_jsonl_issue("bd-cust1", "Custom status", "QA_Review", "task");
     fs::write(&jsonl_path, &jsonl).unwrap();
 
-    import_from_jsonl(
+    assert!(import_from_jsonl(
         &mut storage,
         &jsonl_path,
         &import_config(&beads_dir),
         Some("bd"),
     )
-    .unwrap();
-
-    let issues = storage.get_all_issues_for_export().unwrap();
-    assert_eq!(issues.len(), 1);
-    match &issues[0].status {
-        Status::Custom(val) => {
-            assert_eq!(
-                val, "qa_review",
-                "custom status normalizes to lowercase through DB round-trip"
-            );
-        }
-        other => panic!("Expected Custom status, got {:?}", other),
-    }
+    .is_err());
 }
 
 #[test]
-fn import_custom_issue_type_normalizes_case_through_roundtrip() {
+fn import_unknown_issue_type_fails_loudly() {
+    // bd-bqyb: Security_Audit no longer normalizes — loud failure instead.
     let (_temp, beads_dir, jsonl_path, mut storage) = setup();
 
     let jsonl = make_jsonl_issue("bd-cust2", "Custom type", "open", "Security_Audit");
     fs::write(&jsonl_path, &jsonl).unwrap();
 
-    import_from_jsonl(
+    assert!(import_from_jsonl(
         &mut storage,
         &jsonl_path,
         &import_config(&beads_dir),
         Some("bd"),
     )
-    .unwrap();
-
-    let issues = storage.get_all_issues_for_export().unwrap();
-    assert_eq!(issues.len(), 1);
-    match &issues[0].issue_type {
-        IssueType::Custom(val) => {
-            assert_eq!(
-                val, "security_audit",
-                "custom issue type normalizes to lowercase through DB round-trip"
-            );
-        }
-        other => panic!("Expected Custom issue type, got {:?}", other),
-    }
+    .is_err());
 }

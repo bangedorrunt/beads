@@ -30,7 +30,8 @@ fn status_with_custom_strategy() -> impl Strategy<Value = Status> {
         Just(Status::InProgress),
         Just(Status::Draft),
         Just(Status::Closed),
-        "[a-z_]{3,15}".prop_map(Status::Custom),
+        Just(Status::Blocked),
+        Just(Status::Deferred),
     ]
 }
 
@@ -241,10 +242,10 @@ proptest! {
         right.updated_at = base.updated_at + Duration::seconds(20);
 
         let result = merge_issue(Some(&base), Some(&left), Some(&right), ConflictResolution::Manual);
-        match result {
-            MergeResult::Conflict(ConflictType::BothModified) => {}
-            other => prop_assert!(false, "Expected Conflict(BothModified), got {:?}", other),
-        }
+        assert!(
+            matches!(result, MergeResult::Conflict(ConflictType::BothModified)),
+            "expected Conflict(BothModified), got {result:?}"
+        );
     }
 
     /// PreferLocal with both-modified → keeps left.
@@ -494,86 +495,75 @@ fn three_way_merge_notes_are_byte_identical_across_context_order() {
 }
 
 // ---------------------------------------------------------------------------
-// Custom status variant tests (beads-jvkc)
+// Known-status merge semantics (bd-bqyb: Custom variants removed; conflict
+// and convergence are status-agnostic).
 // ---------------------------------------------------------------------------
+
+/// Both sides change to different known statuses → Conflict(BothModified).
+#[test]
+fn merge_both_changed_status_manual_is_conflict() {
+        let base = make_issue("bd-cust", "Changed test", Status::Open, Priority(1), IssueType::Task, 0);
+
+        let mut left = base.clone();
+        left.status = Status::Blocked;
+        left.updated_at = base.updated_at + Duration::seconds(10);
+
+        let mut right = base.clone();
+        right.status = Status::Deferred;
+        right.updated_at = base.updated_at + Duration::seconds(20);
+
+        let result = merge_issue(Some(&base), Some(&left), Some(&right), ConflictResolution::Manual);
+        assert!(
+            matches!(result, MergeResult::Conflict(ConflictType::BothModified)),
+            "expected Conflict(BothModified), got {result:?}"
+        );
+    }
+
+    /// Both sides change to the same known status → convergent (Keep).
+    #[test]
+    fn merge_same_status_both_sides_is_keep() {
+        let base = make_issue("bd-conv", "Converge", Status::Open, Priority(1), IssueType::Task, 0);
+
+        let mut left = base.clone();
+        left.status = Status::Deferred;
+        left.updated_at = base.updated_at + Duration::seconds(10);
+
+        let mut right = base.clone();
+        right.status = Status::Deferred;
+        right.updated_at = base.updated_at + Duration::seconds(10);
+
+        let result = merge_issue(Some(&base), Some(&left), Some(&right), ConflictResolution::Manual);
+        assert!(
+            matches!(result, MergeResult::Keep(_) | MergeResult::KeepWithNote(_, _)),
+            "same status on both sides should not conflict, got {result:?}"
+        );
+    }
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
-    /// Both sides change to different Custom statuses → Conflict(BothModified) under Manual.
-    #[test]
-    fn merge_both_custom_status_manual_is_conflict(
-        left_custom in "[a-z_]{3,15}",
-        right_custom in "[a-z_]{3,15}",
-    ) {
-        prop_assume!(left_custom != right_custom);
-
-        let base = make_issue("bd-cust", "Custom test", Status::Open, Priority(1), IssueType::Task, 0);
-
-        let mut left = base.clone();
-        left.status = Status::Custom(left_custom);
-        left.updated_at = base.updated_at + Duration::seconds(10);
-
-        let mut right = base.clone();
-        right.status = Status::Custom(right_custom);
-        right.updated_at = base.updated_at + Duration::seconds(20);
-
-        let result = merge_issue(Some(&base), Some(&left), Some(&right), ConflictResolution::Manual);
-        match result {
-            MergeResult::Conflict(ConflictType::BothModified) => {}
-            other => prop_assert!(false, "Expected Conflict(BothModified), got {:?}", other),
-        }
-    }
-
-    /// Both sides change to the same Custom status → convergent (Keep, not conflict).
-    #[test]
-    fn merge_same_custom_status_both_sides_is_keep(
-        custom_name in "[a-z_]{3,15}",
-    ) {
-        let base = make_issue("bd-conv", "Converge", Status::Open, Priority(1), IssueType::Task, 0);
-
-        let mut left = base.clone();
-        left.status = Status::Custom(custom_name.clone());
-        left.updated_at = base.updated_at + Duration::seconds(10);
-
-        let mut right = base.clone();
-        right.status = Status::Custom(custom_name);
-        right.updated_at = base.updated_at + Duration::seconds(10);
-
-        let result = merge_issue(Some(&base), Some(&left), Some(&right), ConflictResolution::Manual);
-        match result {
-            MergeResult::Keep(_) | MergeResult::KeepWithNote(_, _) => {}
-            MergeResult::Conflict(_) => prop_assert!(false, "Same custom status on both sides should not conflict"),
-            other => prop_assert!(false, "Unexpected result: {:?}", other),
-        }
-    }
-
     /// PreferNewer with different Custom statuses → keeps the newer side.
     #[test]
-    fn merge_custom_status_prefer_newer_keeps_newer(
-        left_custom in "[a-z_]{3,15}",
-        right_custom in "[a-z_]{3,15}",
+    fn merge_changed_status_prefer_newer_keeps_newer(
         left_newer in any::<bool>(),
     ) {
-        prop_assume!(left_custom != right_custom);
-
         let base = make_issue("bd-newer", "Newer test", Status::Open, Priority(1), IssueType::Task, 0);
 
         let mut left = base.clone();
-        left.status = Status::Custom(left_custom.clone());
+        left.status = Status::Blocked;
         left.updated_at = base.updated_at + Duration::seconds(if left_newer { 20 } else { 10 });
 
         let mut right = base.clone();
-        right.status = Status::Custom(right_custom.clone());
+        right.status = Status::Deferred;
         right.updated_at = base.updated_at + Duration::seconds(if left_newer { 10 } else { 20 });
 
         let result = merge_issue(Some(&base), Some(&left), Some(&right), ConflictResolution::PreferNewer);
         match result {
             MergeResult::Keep(kept) | MergeResult::KeepWithNote(kept, _) => {
                 let expected_status = if left_newer {
-                    Status::Custom(left_custom)
+                    Status::Blocked
                 } else {
-                    Status::Custom(right_custom)
+                    Status::Deferred
                 };
                 prop_assert_eq!(kept.status, expected_status);
             }
@@ -583,8 +573,7 @@ proptest! {
 
     /// Only one side changes to Custom status → the changed side wins (no conflict).
     #[test]
-    fn merge_one_side_custom_status_no_conflict(
-        custom_name in "[a-z_]{3,15}",
+    fn merge_one_side_changed_status_no_conflict(
         change_left in any::<bool>(),
         strategy in strategy_strategy(),
     ) {
@@ -594,10 +583,10 @@ proptest! {
         let mut right = base.clone();
 
         if change_left {
-            left.status = Status::Custom(custom_name);
+            left.status = Status::Blocked;
             left.updated_at = base.updated_at + Duration::seconds(10);
         } else {
-            right.status = Status::Custom(custom_name);
+            right.status = Status::Blocked;
             right.updated_at = base.updated_at + Duration::seconds(10);
         }
 
@@ -605,7 +594,7 @@ proptest! {
         match result {
             MergeResult::Keep(_) | MergeResult::KeepWithNote(_, _) => {}
             MergeResult::Conflict(_) => {
-                prop_assert!(false, "One-sided custom status change should not conflict");
+                prop_assert!(false, "One-sided status change should not conflict");
             }
             other => prop_assert!(false, "Unexpected result: {:?}", other),
         }
