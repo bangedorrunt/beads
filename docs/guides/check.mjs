@@ -24,9 +24,9 @@
 //
 // ponytail: mermaid is header-checked only; a full parse needs mermaid-cli, add when
 // diagrams actually break in CI.
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join, dirname, relative } from "node:path";
+import { join, dirname, relative, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // --- per-repo setting: the one line that differs between the four copies ---------
@@ -532,5 +532,93 @@ for (const f of files) {
   else { failed = 1; for (const e of errors) console.error(`FAIL ${rel}: ${e}`); }
   bodies.push({ rel, body: readFileSync(f, "utf8") });
 }
+// ---------------------------------------------------------------- index coverage
+//
+// A guide nobody can reach is a guide nobody reads. `index.mdx` is this
+// repository's own navigation for `docs/guides/`, and a guide that exists but
+// has no row there is invisible to anyone who arrives through the index.
+//
+// This is the same class of drift the surface check above hunts: a file on
+// disk that the world cannot see. It shipped uncaught here for a long time,
+// which is why it exists. toron was missing tool-authoring, flywheel was
+// missing integration, jev-w2-enable, judgment-packs, and stack, and both
+// indexes were internally consistent while omitting a third of a plane's
+// documentation in one case.
+//
+// Pure function over plain data so the self-test can prove it bites.
+function indexGaps(guideNames, indexText) {
+  const linked = new Set(
+    [...indexText.matchAll(/\]\(\.\/([a-z0-9-]+)(?:\.mdx)?\)/g)].map((m) => m[1]),
+  );
+  return guideNames.filter((name) => !linked.has(name)).sort();
+}
+
+// The other direction. A row pointing at a page that does not exist is a dead
+// link in the index, which is the same reader-facing fault as a missing row:
+// the index promises a guide and cannot deliver it. Checking only one
+// direction would have let the negative test above pass with a bogus row added.
+function indexDanglingLinks(guideNames, indexText) {
+  const present = new Set(guideNames);
+  return [...indexText.matchAll(/\]\(\.\/([a-z0-9-]+)(?:\.mdx)?\)/g)]
+    .map((m) => m[1])
+    .filter((name) => !present.has(name))
+    .sort();
+}
+
+// The extension is optional on purpose: two of the four repositories write
+// `./quick-start` and two write `./quick-start.mdx`, and both resolve. A check
+// that rejected the second spelling would have been a gate reporting style
+// errors as missing documentation.
+if (indexGaps(["a", "b"], "| [a](./a) | x |\n| [b](./b.mdx) | y |\n").length !== 0) {
+  console.error("FAIL the index-coverage check rejects a valid link, refusing to trust this run");
+  process.exit(1);
+}
+if (!indexGaps(["a", "b"], "| [a](./a) | x |\n").includes("b")) {
+  console.error("FAIL the index-coverage check misses an unlisted guide, refusing to trust this run");
+  process.exit(1);
+}
+if (indexDanglingLinks(["a", "b"], "| [a](./a) | x |\n| [b](./b) | y |\n").length !== 0) {
+  console.error("FAIL the dangling-link check rejects valid rows, refusing to trust this run");
+  process.exit(1);
+}
+if (!indexDanglingLinks(["a"], "| [a](./a) | x |\n| [ghost](./ghost) | y |\n").includes("ghost")) {
+  console.error("FAIL the dangling-link check misses a row with no page, refusing to trust this run");
+  process.exit(1);
+}
+
+const indexFile = join(root, "index.mdx");
+if (!existsSync(indexFile)) {
+  console.error(`FAIL ${relative(root, indexFile)} is absent, so no guide is reachable from the index`);
+  failed = 1;
+} else {
+  const gaps = indexGaps(
+    files.map((f) => basename(f, ".mdx")).filter((n) => n !== "index"),
+    readFileSync(indexFile, "utf8"),
+  );
+  const dangling = indexDanglingLinks(
+    files.map((f) => basename(f, ".mdx")).filter((n) => n !== "index"),
+    readFileSync(indexFile, "utf8"),
+  );
+  if (dangling.length > 0) {
+    failed = 1;
+    for (const name of dangling) {
+      console.error(
+        `FAIL docs/guides/index.mdx links ./${name}, and there is no docs/guides/${name}.mdx. remove the row or add the guide.`,
+      );
+    }
+  }
+  if (gaps.length > 0) {
+    failed = 1;
+    for (const name of gaps) {
+      console.error(
+        `FAIL docs/guides/${name}.mdx is not listed in docs/guides/index.mdx, so it is unreachable from the guides index. add a row: | [${name}](./${name}) | when to read it |`,
+      );
+    }
+  } else {
+    const total = files.filter((f) => basename(f) !== "index.mdx").length;
+    console.log(`index  ${total} guide(s) listed in docs/guides/index.mdx`);
+  }
+}
+
 if (surface) catalogCountDrift(bodies);
 process.exit(failed);
