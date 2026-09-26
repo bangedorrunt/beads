@@ -10,6 +10,23 @@ br init          # creates .beads/ in the workspace
 br where         # confirm the workspace
 ```
 
+```text
+$ br where
+/Users/you/workspace/project/.beads
+  prefix: beads_rust
+  database: /Users/you/workspace/project/.beads/beads.db
+  jsonl: /Users/you/workspace/project/.beads/issues.jsonl
+```
+
+The `prefix` is what every id in this workspace starts with (`<prefix>-<short>`),
+so a br workspace's ids are self-describing. A `where` that finds no `.beads/`
+walks up the tree and reports the workspace it settled on.
+
+If it fails: `br init` on a workspace that already has `.beads/` is idempotent,
+not destructive — it will not clear an existing ledger. If `where` reports a
+parent directory you did not expect, that is the auto-discovery walking up; run
+from the repo you meant, or pass `--db`.
+
 ## Find work
 
 ```bash
@@ -19,12 +36,56 @@ br next --json       # the single top claimable pick, fail-closed
 br triage --json     # scored recommendations when the queue is messy
 ```
 
+```text
+$ br ready --json
+{"issues":[],"total":0,"limit":0,"offset":0,"has_more":false}
+
+$ br next --json
+{
+  "actionable": false,
+  "degraded": [ { "code": "no_actionable_recommendation",
+                  "message": "No open, unblocked, unassigned non-epic recommendation passed the robot-next claimability filter.",
+                  "repair": "Use br ready --json or scripts/br_retry.sh actionable --json for authoritative claim candidates." } ],
+  "message": "No proven actionable item available"
+}
+
+$ br triage --json
+{ "triage": { "project_health": { "counts": { "total": 1049, "open": 0, "closed": 1049 },
+                                 "graph": { "node_count": 1049, "has_cycles": false },
+                                 "velocity": { "closed_last_30_days": 40, "avg_days_to_close": 3.66 } },
+              "quick_ref": { "open_count": 0, "actionable_count": 0, "top_picks": [] } } }
+```
+
+These numbers are from this repo's own ledger, which is 1049 closed / 0 open, so
+`ready` is legitimately empty. `next` still answers: `actionable: false` plus a
+`degraded` entry naming the reason and the repair is a complete answer, not a
+failure. Read `br triage`'s `project_health` when a queue looks odd — `has_cycles:
+false` with zero open beads is a finished ledger.
+
+If it fails: an empty `ready` with open beads in `br list` is the dispatchability
+gate, not a bug (see [lifecycle](./lifecycle)); the repair is to give the bead
+its VERIFY fence. `br next` exiting with `actionable: false` is not an error code
+to retry on — it means nobody should claim anything right now.
+
 ## Claim and work
 
 ```bash
 ACTOR="${BR_ACTOR:-assistant}"
 br update --actor "$ACTOR" <id> --status in_progress --assignee "flywheel-toron-coder"
 ```
+
+```text
+$ br update beads_rust-5c02u --status in_progress
+Updated beads_rust-5c02u: Rewrite the br guides to the walkthrough standard and fix verified command-surface drift
+  status: open → in_progress
+```
+
+The `Updated <id>: <title>` line plus the `status:` transition is the confirmation.
+`--actor` lands in the audit trail; the `--assignee` is a herdr slug.
+
+If it fails: a claim that reports the same status it already had is a no-op, not
+a stolen claim — br does not arbitrate between two live workers, so read
+`br coordination status` before claiming something a peer may hold.
 
 The assignee is the herdr slug, never a pin. Pins belong to mail. Announce the claim on the bead thread: `toron mail send --to captain --thread <id> --subject "[<id>] starting"`.
 
@@ -33,10 +94,28 @@ The assignee is the herdr slug, never a pin. Pins belong to mail. Announce the c
 Two fields make a bead dispatchable, and `ready` enforces both:
 
 ```bash
-br create --actor "$ACTOR" "Add retry to uploader" -t task -p 1 --json
+br create --actor "$ACTOR" "Add retry to uploader" -t task -p 1 --json \
+  -d "why + scope + acceptance" --verify 'cargo test -p uploader retry' \
+  --principle 'prove-it-works — the fence runs the real command'
 br update --actor "$ACTOR" <id> --verify 'cargo test -p uploader retry'
 br update --actor "$ACTOR" <id> --principle 'prove-it-works — the VERIFY fence runs the real command'
 ```
+
+```text
+$ br create "Rewrite the br guides ..." -p 2 -t docs -d "why + scope + AC" \
+    --verify 'node docs/guides/check.mjs' \
+    --principle 'prove-it-works — every shown output is a real capture'
+✓ Created beads_rust-5c02u: Rewrite the br guides to the walkthrough standard and fix verified command-surface drift
+```
+
+One call dresses the bead: description, VERIFY and (for P<=2) at least one
+principle. `br update --verify/--principle` is the repair path for a bead that
+already exists.
+
+If it fails: `br create` refuses a title-only bead — the error names the missing
+field (`description`, `verify`, or `principle`), so a refused create is the gate
+working. `br q` still exists for quick capture, but it is not dispatchable until
+`br update --verify` dresses it, and `ready` will not surface it in the meantime.
 
 Priority <= 2 requires a principles citation (`name — decision it changed`, names from `flywheel principles list`). The VERIFY fence holds exactly one command line.
 
@@ -48,3 +127,16 @@ Work, then the ceremony: gate row, work commit citing the id, close with that sh
 br sync --flush-only
 git add .beads/ && git commit -m "chore(beads): close <id>"
 ```
+
+```text
+$ br sync --flush-only
+Nothing to export (no dirty issues)
+```
+
+`Nothing to export` is the healthy no-op: the DB had no rows the JSONL did not
+already carry. `br sync` without a flag does nothing at all, by design.
+
+If it fails: a flush that reports exported rows means the JSONL changed —
+commit `.beads/` in the same breath, because an unflushed ledger is invisible to
+every other clone. Never hand-edit `issues.jsonl`: it is a full snapshot, so a
+hand-splice drops whatever the other side closed.

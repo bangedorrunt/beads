@@ -33,11 +33,45 @@ description: Anti-patterns, named failures, and diagnostics.
 ## Diagnostics
 
 ```bash
-br doctor              # full diagnostics
-br lint --json         # missing template sections
-br orphans             # referenced in commits, still open
-br coordination        # swarm claims, no mutation
+br doctor                    # full diagnostics
+br lint --json               # missing template sections
+br orphans                   # referenced in commits, still open
+br coordination status        # swarm claims, no mutation
 which br && br version
 ```
 
-Verbose: `br -v list`, `br -vv list`, `RUST_LOG=debug br list`.
+```text
+$ br doctor
+br doctor
+HEALTH workspace: degraded
+OK jsonl.merge_artifacts
+WARN base_jsonl: Merge anchor .beads/beads.base.jsonl is older than the live JSONL — 3-way merges will diff against stale state
+OK doctor.runs_dir
+OK permissions.write_lock
+OK permissions.root_gitignore
+WARN br_path_dupes: Found 2 `br` executables on $PATH — operator may be confused which one runs
+OK tmp_files_orphan
+WARN br_history.size: 148 snapshot file(s) accumulated in .beads/.br_history; consider pruning
+
+$ br lint --json
+{"total":0,"issues":0,"results":[]}
+
+$ br orphans
+✓ No orphaned issues found
+
+$ which br && br version
+/Users/you/.local/share/mise/shims/br
+br version 0.4.1 (release) (main@ec6075e)
+```
+
+`HEALTH workspace: degraded` is not an error state: it means at least one `WARN`
+line needs attention, and the warnings above are real ones from a real workspace
+(a stale merge anchor, two `br` binaries on `$PATH`, a grown snapshot history).
+`br lint --json` reporting `total: 0` is the healthy read for a ledger whose
+beads all carry their template sections.
+
+If it fails: the two-`br`-on-`PATH` warning is the one to take seriously when
+versions disagree between shells — `which -a br` shows both, and `br version`
+as the last line of the output above is the version the shim resolved. `br -v
+list`, `br -vv list`, and `RUST_LOG=debug br list` go deeper without changing
+anything.

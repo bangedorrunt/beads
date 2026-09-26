@@ -14,6 +14,21 @@ br dep tree <id> --json
 br dep cycles --json                            # MUST be empty
 ```
 
+```text
+$ br dep cycles --json
+{"cycles":[],"count":0,"active_count":0,"archived_closed_count":0,"total_count":0,
+ "blocking_only":false,"include_closed":false,"scope":"active"}
+```
+
+`count: 0` with `scope: active` is the healthy read. `archived_closed_count` is
+separate on purpose: closed history may contain a cycle nobody can act on, and
+that is not a reason to fail the check.
+
+If it fails: any non-zero `count` breaks `ready` ordering for every lane, so drop
+the edge that closes the loop rather than deferring the issue. A cross-repo dep
+whose sibling `.beads` cannot be read stays blocked by design (fail-visible); fix
+the path in the `external_projects` mapping instead of deleting the dependency.
+
 Circular dependencies break `ready` and are forbidden: keep `dep cycles` empty. Cross-repo `external:` deps are leaves for local cycle detection; the foreign tracker owns foreign cycles, and an unreadable sibling `.beads` stays blocked (fail-visible, not silent).
 
 Captain holds ring once when a foreign bead closes: `br hold --kind captain --corr external:<proj>:<bead> <your-bead>`. You still resolve the hold; the hold is the wake, not the resolution.
@@ -28,6 +43,32 @@ br insights --json   # PageRank, betweenness, cycles, k-core, slack, velocity
 br graph <id>        # what this issue unblocks
 br scheduler         # ranked ready work with explainable evidence
 ```
+
+```text
+$ br graph beads_rust-migrate-17-18-7jduh
+Dependents of beads_rust-migrate-17-18-7jduh by depth (5 total):
+
+  beads_rust-migrate-17-18-7jduh: Missing 17->18 reviewed migration path ... [P0] [closed] (root)
+    ← beads_rust-gates-jsonl-ea54: gates.jsonl sidecar: flush/import gate rows with sync [P1] [closed] depends on: beads_rust-migrate-17-18-7jduh
+      ← beads_rust-wave1-gate-phz8: Wave-1 gate receipt: ADR-0001 §9 checkbox battery [P1] [closed] depends on: ...
+    ← beads_rust-ready-predicate-9n4c: Unified ready predicate (ADR §5.5) in br ready [P1] [closed] depends on: beads_rust-migrate-17-18-7jduh
+
+$ br scheduler
+Scheduler recommendations (0 of 0 ready candidates):
+
+$ br insights --json
+['Articulation','Authorities','Bottlenecks','ClusterDensity','Cores','Cycles', ...]
+```
+
+`graph` prints the dependent tree by depth with `(root)` on the node you asked
+about, and `depends on:` names each child's own edges. `scheduler` reporting `0
+of 0 ready candidates` is the same fact as an empty `ready` — read the pair
+together before deciding the ledger is broken.
+
+If it fails: `insights --json` is a graph computation, so on a small or closed
+ledger most sections are legitimately empty; read `status` for which phases ran
+and which were skipped. A slow `triage` on a large ledger is the analysis
+running, not a hang.
 
 Robot parity: `--robot-triage`, `--robot-next`, `--robot-plan`, `--robot-insights` are 1:1 aliases; `argv[0] == bv` maps the same way (busybox style). An unknown `--robot-*` fails closed with a JSON error and exit 2.
 
