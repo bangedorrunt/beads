@@ -1379,6 +1379,16 @@ pub struct UpdateArgs {
     )]
     pub principle: Vec<String>,
 
+    /// Drop every principle citation before appending any from --principle.
+    ///
+    /// `--principle` is append-only, so a mistyped or retired principle name
+    /// could previously never be removed: adding the correct one left the wrong
+    /// one in place, and one unknown name fails the whole bead's readiness
+    /// forever. `verify` and `wave` both document "empty clears"; this closes
+    /// the same gap for the one field that had no way out.
+    #[arg(long = "clear-principles")]
+    pub clear_principles: bool,
+
     /// Set the wave index (empty clears).
     #[arg(long = "wave", value_name = "N")]
     pub wave: Option<String>,

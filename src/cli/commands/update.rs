@@ -1358,6 +1358,7 @@ fn build_update(args: &UpdateArgs, actor: &str, claim_exclusive: bool) -> Result
         agent_context: agent_context_update_from_arg(args.agent_context.as_deref())?,
         verify: optional_string_field(args.verify.as_deref()),
         principles_append: parse_principle_args(&args.principle)?,
+        principles_clear: args.clear_principles,
         wave: optional_u32_field(args.wave.as_deref())?,
         pin: optional_string_field(args.pin.as_deref()),
         commit_sha: optional_string_field(args.commit_sha.as_deref()),
@@ -2602,5 +2603,75 @@ mod tests {
         info!(
             "test_execute_prepared_route_repairs_blocked_cache_after_late_update_error: assertions passed"
         );
+    }
+}
+
+#[cfg(test)]
+mod bd_clear_principles {
+    use super::*;
+
+    /// `--principle` is append-only, so a mistyped name used to be permanent.
+    /// The readiness check rejects a bead whose citations name an unknown
+    /// principle, which meant one typo made a bead permanently undispatchable
+    /// with no documented way back. This pins the escape hatch: clear, then set
+    /// exactly what the operator meant.
+    #[test]
+    fn clearing_then_appending_leaves_exactly_the_new_citations() {
+        let mut issue = crate::model::Issue {
+            principles: vec![crate::model::PrincipleCitation {
+                name: "fail-closed".into(),
+                decision: "invented name".into(),
+            }],
+            ..Default::default()
+        };
+        let updates = IssueUpdate {
+            principles_clear: true,
+            principles_append: vec![crate::model::PrincipleCitation {
+                name: "prove-it-works".into(),
+                decision: "real decision".into(),
+            }],
+            ..Default::default()
+        };
+        crate::model::apply_principle_citations(&mut issue.principles, updates.principles_clear, &updates.principles_append);
+        assert_eq!(issue.principles.len(), 1, "the invented name must be gone");
+        assert_eq!(issue.principles[0].name, "prove-it-works");
+    }
+
+    /// Clearing with nothing to replace must empty the set, not leave it alone.
+    /// A flag that silently did nothing would be worse than the original bug,
+    /// because it would look like the fix worked.
+    #[test]
+    fn clearing_alone_empties_the_set() {
+        let mut issue = crate::model::Issue {
+            principles: vec![crate::model::PrincipleCitation {
+                name: "fail-closed".into(),
+                decision: "invented".into(),
+            }],
+            ..Default::default()
+        };
+        crate::model::apply_principle_citations(&mut issue.principles, true, &[]);
+        assert!(issue.principles.is_empty(), "clear alone must empty the set");
+    }
+
+    /// The default must stay append-only. Existing callers rely on it, and
+    /// silently switching to replace would rewrite unrelated beads.
+    #[test]
+    fn without_clear_it_still_appends() {
+        let mut issue = crate::model::Issue {
+            principles: vec![crate::model::PrincipleCitation {
+                name: "fix-root-causes".into(),
+                decision: "kept".into(),
+            }],
+            ..Default::default()
+        };
+        crate::model::apply_principle_citations(
+            &mut issue.principles,
+            false,
+            &[crate::model::PrincipleCitation {
+                name: "prove-it-works".into(),
+                decision: "added".into(),
+            }],
+        );
+        assert_eq!(issue.principles.len(), 2, "default must remain append-only");
     }
 }

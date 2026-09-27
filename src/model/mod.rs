@@ -503,6 +503,32 @@ pub struct PrincipleCitation {
     pub decision: String,
 }
 
+/// Apply principle citations: clear-then-append, or append-only.
+///
+/// ONE definition, called by both the CLI write path and the storage apply
+/// path. Those were separate inline implementations, which is exactly how a
+/// clear semantic lands in one and not the other.
+///
+/// `--principle` is append-only by design, so a mistyped or retired principle
+/// name used to be PERMANENT: the documented flag could add a correct citation
+/// but never remove a wrong one, and the readiness check rejects a bead whose
+/// citations name an unknown principle. One typo made a bead permanently
+/// undispatchable with no documented way back. `clear_first` is that way back.
+///
+/// The ordering is the whole point: the clear must land BEFORE the append, or
+/// `--clear-principles --principle X` means "X plus whatever was already there"
+/// and the flag appears to work while changing nothing.
+pub fn apply_principle_citations(
+    citations: &mut Vec<PrincipleCitation>,
+    clear_first: bool,
+    append: &[PrincipleCitation],
+) {
+    if clear_first {
+        citations.clear();
+    }
+    citations.extend(append.iter().cloned());
+}
+
 /// ADR-0001 §5.2: blast-radius band. `high` forces the P0/P1 priority band
 /// at lint time (lint/flags bead consumes this).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

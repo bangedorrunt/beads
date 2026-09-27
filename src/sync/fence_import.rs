@@ -173,6 +173,8 @@ pub fn sync_fences_into_typed_fields(
             let updates = crate::storage::IssueUpdate {
                 verify: issue.verify.clone().map(Some),
                 principles_append: issue.principles.clone(),
+                // Import REPLACES the set, it does not extend an existing one.
+                principles_clear: true,
                 skip_cache_rebuild: true,
                 ..crate::storage::IssueUpdate::default()
             };

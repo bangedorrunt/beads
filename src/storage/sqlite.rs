@@ -7726,10 +7726,15 @@ impl SqliteStorage {
                 val.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
             );
         }
-        if !updates.principles_append.is_empty() {
-            issue
-                .principles
-                .extend(updates.principles_append.iter().cloned());
+        if updates.principles_clear || !updates.principles_append.is_empty() {
+            if updates.principles_clear {
+                add_update("principles", SqliteValue::from("[]"));
+            }
+            crate::model::apply_principle_citations(
+                &mut issue.principles,
+                updates.principles_clear,
+                &updates.principles_append,
+            );
             add_update(
                 "principles",
                 SqliteValue::from(
@@ -17228,6 +17233,11 @@ pub struct IssueUpdate {
     /// replacing them (`br update --principle` is append-only).
     pub verify: Option<Option<String>>,
     pub principles_append: Vec<crate::model::PrincipleCitation>,
+    /// When true, `principles_append` REPLACES the citation set instead of
+    /// extending it. Without this, a bad citation is permanent: the readiness
+    /// check rejects the whole bead on one unknown name and the documented
+    /// `--principle` flag can only ever add.
+    pub principles_clear: bool,
     pub wave: Option<Option<u32>>,
     pub pin: Option<Option<String>>,
     pub commit_sha: Option<Option<String>>,
