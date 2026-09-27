@@ -532,6 +532,23 @@ for (const f of files) {
   else { failed = 1; for (const e of errors) console.error(`FAIL ${rel}: ${e}`); }
   bodies.push({ rel, body: readFileSync(f, "utf8") });
 }
+
+// --- title case ---
+//
+// A lowercase frontmatter title is published verbatim, so it reaches the site
+// sidebar, the page heading, and the Markdown the MCP tools serve. The
+// projection is hash-pinned, so nothing downstream can correct it.
+{
+  const titled = files.map((f) => {
+    const src = readFileSync(f, "utf8");
+    const m = src.slice(0, 400).match(/^title:\s*(.+)$/m);
+    return { name: basename(f), title: m ? m[1].trim().replace(/^['"]|['"]$/g, "") : undefined };
+  });
+  const bad = lowercaseTitles(titled);
+  for (const e of bad) console.error(`FAIL ${e}`);
+  if (bad.length > 0) failed = 1;
+  else console.log(`title ${titled.length} guide(s) start with a capital letter (self-test ok)`);
+}
 // ---------------------------------------------------------------- index coverage
 //
 // A guide nobody can reach is a guide nobody reads. `index.mdx` is this
@@ -583,6 +600,39 @@ if (indexDanglingLinks(["a", "b"], "| [a](./a) | x |\n| [b](./b) | y |\n").lengt
 }
 if (!indexDanglingLinks(["a"], "| [a](./a) | x |\n| [ghost](./ghost) | y |\n").includes("ghost")) {
   console.error("FAIL the dangling-link check misses a row with no page, refusing to trust this run");
+  process.exit(1);
+}
+
+// A frontmatter title that starts lowercase reaches a reader as a lowercase
+// sidebar entry, a lowercase page heading, and lowercase Markdown in the
+// published projection, where nothing can be capitalised downstream because
+// the published copy is a byte-for-byte mirror of this file. The projection
+// pins the hash, so a wrong title here is a wrong title everywhere, and the
+// site cannot correct it.
+//
+// The index page is exempt. `index.mdx` is named after the product because it
+// is navigation rather than prose, and a capitalised product name there would
+// be a different claim, not a correction.
+//
+// Pure function over plain data so the self-test can prove it bites.
+function lowercaseTitles(files) {
+  return files
+    .filter((f) => f.name !== "index.mdx")
+    .filter((f) => typeof f.title === "string" && /^[a-z]/.test(f.title))
+    .map((f) => `${f.name}: title "${f.title}" starts lowercase`)
+    .sort();
+}
+
+if (lowercaseTitles([{ name: "quick-start.mdx", title: "Quick start" }]).length !== 0) {
+  console.error("FAIL the title-case check rejects a capitalised title, refusing to trust this run");
+  process.exit(1);
+}
+if (!lowercaseTitles([{ name: "quick-start.mdx", title: "toron quick start" }]).some((e) => e.includes("toron quick start"))) {
+  console.error("FAIL the title-case check misses a lowercase title, refusing to trust this run");
+  process.exit(1);
+}
+if (lowercaseTitles([{ name: "index.mdx", title: "toron" }]).length !== 0) {
+  console.error("FAIL the title-case check fails on the index page, refusing to trust this run");
   process.exit(1);
 }
 
