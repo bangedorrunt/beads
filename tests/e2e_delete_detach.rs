@@ -11,7 +11,24 @@ use common::cli::{BrWorkspace, extract_json_payload, run_br};
 use serde_json::Value;
 
 fn create_id(workspace: &BrWorkspace, title: &str, label: &str) -> String {
-    let create = run_br(workspace, ["create", title, "--json"], label);
+    // bd-lt77 follow-on: create is fail-closed, so this fixture must satisfy the
+    // same contract a real caller does. It predates that contract.
+    let brief = format!("fixture brief for {title}: create is fail-closed");
+    let create = run_br(
+        workspace,
+        [
+            "create",
+            title,
+            "-d",
+            brief.as_str(),
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+            "--json",
+        ],
+        label,
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue: Value =
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");

@@ -33,6 +33,11 @@ fn setup_workspace_with_issue() -> (BrWorkspace, String) {
         [
             "create",
             "Test issue for defer",
+            // bd-lt77 follow-on: create is fail-closed, so a fixture must satisfy
+            // the same contract a real caller does. This test predates that
+            // contract and was failing for exactly this reason.
+            "-d",
+            "fixture brief: create is fail-closed, so title alone is not a brief",
             "-p",
             "2",
             "-t",
@@ -63,6 +68,10 @@ fn setup_workspace_with_multiple_issues() -> (BrWorkspace, Vec<String>) {
             [
                 "create",
                 &format!("Issue {i}"),
+                // bd-lt77 follow-on: same fail-closed create contract as the
+                // single-issue helper above.
+                "-d",
+                "fixture brief: create is fail-closed, so title alone is not a brief",
                 "-p",
                 "2",
                 "-t",

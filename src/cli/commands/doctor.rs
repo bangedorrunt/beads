@@ -3183,6 +3183,77 @@ fn repeated_jsonl_rebuild_refusal_reason(
         .map(repeated_jsonl_rebuild_refusal_message))
 }
 
+/// How many gate verdict rows the JSONL rebuild would DESTROY.
+///
+/// bd-lt77: `doctor --repair` rebuilds the database from the JSONL, and the
+/// JSONL is PARTIAL — it is the source of truth for ISSUES only. Gate verdict
+/// rows live in the database (`gate_results` / `gate_result_history`) and in
+/// `.beads/gates.jsonl`, and NEITHER is in the issues JSONL. So the rebuild
+/// silently discards every verdict while reporting `imported N, skipped 0`.
+///
+/// The repair already preserves tombstones, dirty issues and FK integrity.
+/// Gate rows were simply missing from that list, which is why the loss looked
+/// like success. Counted here so the caller can REFUSE rather than describe the
+/// wrong outcome as a completed repair.
+fn gate_verdict_row_count(db_path: &Path) -> usize {
+    if !db_path.exists() {
+        return 0;
+    }
+    let Ok(conn) = Connection::open(db_path.to_string_lossy().into_owned()) else {
+        // An unopenable database is the other checks' problem, not a reason to
+        // invent a verdict count and block a repair that might fix it.
+        return 0;
+    };
+    let _ = conn.execute("PRAGMA busy_timeout=5000");
+    let mut total = 0usize;
+    for table in ["gate_results", "gate_result_history"] {
+        // A missing or unreadable table is not an error: older schemas have no
+        // gate history, and there is nothing to lose that does not exist.
+        let sql = format!("SELECT count(*) FROM {table}");
+        let Ok(row) = conn.query_row(&sql) else {
+            continue;
+        };
+        // Checked, not `as usize`: clippy is right that an i64 -> usize cast can
+        // truncate on 32-bit and silently drop a negative. A count is never
+        // negative, so anything else means the query returned something that is
+        // not a count, and clamping to 0 is the honest reading.
+        let n = row.get(0).and_then(SqliteValue::as_integer).unwrap_or(0);
+        total += usize::try_from(n).unwrap_or(0);
+    }
+    total
+}
+
+/// Should a JSONL rebuild be refused because it would drop gate verdicts?
+///
+/// Pure, so the rule is directly testable. The CLI wiring is a three-line `if`
+/// around this, and a test of the helpers alone proved nothing: disabling the
+/// call site left every test green. The decision is the part worth protecting,
+/// so it lives here; [`bd_lt77_the_repair_path_consults_this_decision`] pins the
+/// wiring separately and is honestly the weaker of the two guards.
+#[must_use]
+pub fn gate_verdict_rebuild_refusal(
+    gate_rows: usize,
+    allow_repeated_repair: bool,
+) -> Option<String> {
+    if allow_repeated_repair || gate_rows == 0 {
+        return None;
+    }
+    Some(gate_verdict_loss_refusal_message(gate_rows))
+}
+
+/// Refusal text for a rebuild that would drop gate verdicts.
+fn gate_verdict_loss_refusal_message(count: usize) -> String {
+    format!(
+        "refusing to rebuild the database from JSONL: it would DESTROY {count} gate verdict \
+         row(s). The issues JSONL is a PARTIAL source of truth - it carries issues, not gate \
+         verdicts - so a rebuild empties the verdict store and a later sync persists the \
+         emptiness over .beads/gates.jsonl. Every closed bead then reports 'no legal verdict'. \
+         Preserve the rows first (copy .beads/gates.jsonl and the gate tables out of the \
+         database), or re-gate the affected beads afterwards. This repair will not silently \
+         discard a class of record it cannot restore."
+    )
+}
+
 fn push_inspection_error(
     checks: &mut Vec<CheckResult>,
     name: &str,
@@ -13902,6 +13973,24 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         ));
         emit_recovery_audit_record(&recovery_audit);
         return Err(BeadsError::Config(reason));
+    }
+
+    // bd-lt77: refuse BEFORE rebuilding when gate verdicts exist, because the
+    // JSONL cannot carry them. Reporting `imported N, skipped 0` while
+    // discarding every verdict is a success message describing the wrong
+    // outcome.
+    {
+        let gate_rows = gate_verdict_row_count(&paths.db_path);
+        if let Some(reason) = gate_verdict_rebuild_refusal(gate_rows, args.allow_repeated_repair) {
+            let recovery_audit = early_repair.prepend_actions_to_audit(jsonl_rebuild_audit_record(
+                "doctor.jsonl_rebuild",
+                "refused",
+                None,
+                Some(reason.clone()),
+            ));
+            emit_recovery_audit_record(&recovery_audit);
+            return Err(BeadsError::Config(reason));
+        }
     }
 
     if !ctx.is_json() {
@@ -25777,4 +25866,131 @@ version = "2026-05-11-abc123"
 
         assert_eq!(checks[0].details, Some(original));
     }
+}
+
+#[cfg(test)]
+mod bd_lt77_gate_verdict_loss {
+    use super::*;
+
+    fn tmp_db(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("lt77-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        dir.join("beads.db")
+    }
+
+    fn seed_gate_rows(db: &std::path::Path, n: usize) {
+        let conn = Connection::open(db.to_string_lossy().into_owned()).expect("open");
+        conn.execute("CREATE TABLE IF NOT EXISTS gate_results (issue_id TEXT)")
+            .expect("create gate_results");
+        for i in 0..n {
+            conn.execute(&format!(
+                // NOT bead-id shaped: a fixture named like a bead trips the
+                // commit guard on every future change to this file.
+                "INSERT INTO gate_results (issue_id) VALUES ('sample-gate-row-{i}')"
+            ))
+            .expect("insert");
+        }
+    }
+
+    /// bd-lt77: a rebuild from the issues JSONL would DESTROY these rows,
+    /// because the JSONL carries issues and not verdicts. The repair must be
+    /// able to SEE that, because the whole defect is that it reported
+    /// `imported N, skipped 0` while emptying the verdict store.
+    #[test]
+    fn gate_verdict_rows_are_counted_not_ignored() {
+        let db = tmp_db("count");
+        seed_gate_rows(&db, 3);
+        assert_eq!(
+            gate_verdict_row_count(&db),
+            3,
+            "the guard is blind: it cannot see the rows it would destroy, so it cannot refuse"
+        );
+        let _ = std::fs::remove_dir_all(db.parent().expect("parent"));
+    }
+
+    /// No gate rows means nothing to lose, so the repair must NOT be blocked.
+    /// A guard that refuses unconditionally is not fail-closed, it is broken.
+    #[test]
+    fn zero_gate_rows_does_not_block() {
+        let db = tmp_db("zero");
+        let conn = Connection::open(db.to_string_lossy().into_owned()).expect("open");
+        conn.execute("CREATE TABLE gate_results (issue_id TEXT)")
+            .expect("create");
+        assert_eq!(gate_verdict_row_count(&db), 0);
+        let _ = std::fs::remove_dir_all(db.parent().expect("parent"));
+    }
+
+    /// A database with NO gate tables at all (an older schema) must not be
+    /// treated as a failure — there is nothing there to lose.
+    #[test]
+    fn a_schema_without_gate_tables_counts_zero() {
+        let db = tmp_db("old");
+        let conn = Connection::open(db.to_string_lossy().into_owned()).expect("open");
+        conn.execute("CREATE TABLE issues (id TEXT)").expect("create");
+        assert_eq!(
+            gate_verdict_row_count(&db),
+            0,
+            "a missing table is not an error and must not invent a count"
+        );
+        let _ = std::fs::remove_dir_all(db.parent().expect("parent"));
+    }
+
+    /// A missing database file must count zero rather than error, so the repair
+    /// path that CREATES a database is not blocked by this guard.
+    #[test]
+    fn a_missing_database_counts_zero() {
+        let db = tmp_db("missing");
+        assert_eq!(gate_verdict_row_count(&db), 0);
+    }
+
+    /// The RULE, mutation-tested. Rows present and no operator override means
+    /// refuse. This is the assertion that fails if someone inverts the rule.
+    #[test]
+    fn the_repair_refuses_when_verdicts_would_be_dropped() {
+        assert!(
+            gate_verdict_rebuild_refusal(7, false).is_some(),
+            "7 gate verdicts with no --allow-repeated-repair MUST refuse — this is bd-lt77"
+        );
+        assert!(
+            gate_verdict_rebuild_refusal(0, false).is_none(),
+            "nothing to lose must not block the repair; a guard that always fires is broken"
+        );
+        assert!(
+            gate_verdict_rebuild_refusal(7, true).is_none(),
+            "an explicit operator override must win, or the escape hatch is a lie"
+        );
+    }
+
+    /// The WIRING. Weaker than the rule test and honestly so: it pins that the
+    /// repair path consults the decision at all. The helpers-only version of
+    /// this suite passed with the call site disabled, which is exactly the
+    /// vacuous-test failure this line exists to prevent.
+    #[test]
+    fn bd_lt77_the_repair_path_consults_this_decision() {
+        let src = include_str!("doctor.rs");
+        let call = src
+            .find("gate_verdict_rebuild_refusal(gate_rows, args.allow_repeated_repair)")
+            .expect("the repair path must consult gate_verdict_rebuild_refusal");
+        let rebuild = src
+            .find("Repairing: rebuilding DB from JSONL")
+            .expect("the rebuild site");
+        assert!(
+            call < rebuild,
+            "the gate-verdict refusal must be consulted BEFORE the rebuild, not after it"
+        );
+    }
+
+    /// The refusal must NAME the count. "something was lost" is unactionable;
+    /// "7 gate verdict rows" tells the operator what to preserve.
+    #[test]
+    fn the_refusal_names_the_count_and_the_cause() {
+        let msg = gate_verdict_loss_refusal_message(7);
+        assert!(msg.contains('7'), "must name the count: {msg}");
+        assert!(
+            msg.contains("JSONL") && msg.contains("gates.jsonl"),
+            "must name the cause and both surfaces it lands in: {msg}"
+        );
+    }
+
 }
