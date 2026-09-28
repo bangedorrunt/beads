@@ -249,6 +249,15 @@ fn validate_close_sha(sha: &str, bead_id: &str, search_dirs: &[PathBuf]) -> Resu
     for dir in search_dirs {
         if let Some(message) = lookup_commit_message(dir, sha) {
             if sha_message_cites_bead(&message, bead_id) {
+                if commit_changes_nothing(dir, sha) {
+                    return Err(BeadsError::validation(
+                        "commit-sha",
+                        format!(
+                            "commit {sha} is empty: it changes no files, so it cannot contain \
+                             the work for {bead_id}. Close against the commit that carries it"
+                        ),
+                    ));
+                }
                 return Ok(ShaVerdict::Cited { repo: dir.clone() });
             }
             return Err(BeadsError::validation(
@@ -260,6 +269,50 @@ fn validate_close_sha(sha: &str, bead_id: &str, search_dirs: &[PathBuf]) -> Resu
         }
     }
     Ok(ShaVerdict::Unresolvable)
+}
+
+/// Run `git <args>` in `dir`; `Some(trimmed stdout)` on success, else `None`.
+fn git_stdout(dir: &Path, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Does `sha` change no files at all?
+///
+/// A commit's MESSAGE is the only thing the close path used to read, so
+/// `git commit --allow-empty -m "... <a bead id>"` was a free LEGAL close for a
+/// bead nobody worked (2026-09-28: an empty commit closed a doorbell fix and
+/// the ledger check called it legal). A commit that contains nothing is not a
+/// proof of anything.
+///
+/// Merges are never reported empty: `git diff-tree` prints nothing for a merge
+/// without `-m`, so the answer would be a false positive.
+fn commit_changes_nothing(repo_dir: &Path, sha: &str) -> bool {
+    let Some(parents) = git_stdout(repo_dir, &["rev-list", "--parents", "-n", "1", sha]) else {
+        return false;
+    };
+    if parents.split_whitespace().count() > 2 {
+        return false;
+    }
+    git_stdout(
+        repo_dir,
+        &[
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "--root",
+            sha,
+        ],
+    )
+    .is_some_and(|files| files.is_empty())
 }
 
 /// Resolve attribution values for the close. CLI flags take precedence over
@@ -3570,6 +3623,40 @@ mod tests {
         assert!(
             verdict.to_string().contains("bd-2qu9"),
             "error must name the expected bead id, got: {verdict:?}"
+        );
+    }
+
+    /// An empty commit is the cheapest possible false proof: it can cite the
+    /// bead, satisfy every message-based check, and contain nothing. It made a
+    /// close read LEGAL on 2026-09-28 (a concurrent `git reset` unstaged the
+    /// index between staging and committing, so the commit landed with no
+    /// files) while no fix was in it at all.
+    #[test]
+    fn close_sha_rejects_an_empty_commit() {
+        let _lock = crate::util::test_helpers::TEST_DIR_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = TempDir::new().expect("tempdir");
+        git_repo_with_commit(temp.path(), "the real work");
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(temp.path())
+                .output()
+                .expect("git runs");
+            assert!(out.status.success(), "git {args:?} failed: {out:?}");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        // Fixture ids avoid the tracker's own id shape: a real-looking bead id
+        // in a test reads as a citation to the commit-message attribution guard.
+        run(&["commit", "--allow-empty", "-m", "fix test-empty-proof done"]);
+        let sha = run(&["rev-parse", "HEAD"]);
+
+        let err = validate_close_sha(&sha, "test-empty-proof", &[temp.path().to_path_buf()])
+            .expect_err("a commit that changes nothing cannot prove a bead");
+        assert!(
+            err.to_string().contains("empty"),
+            "the refusal must name the empty commit as the reason, got: {err:?}"
         );
     }
 
