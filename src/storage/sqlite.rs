@@ -4059,6 +4059,48 @@ impl SqliteStorage {
         })
     }
 
+    /// ADR-0001 §5.4: require a PASS gate row for `verdict` before a closed
+    /// issue is allowed to record it.
+    ///
+    /// Scoped by issue + gate + `to_status = 'closed'`, which is the same
+    /// invariant `br doctor`'s `gate.verdict_orphans` check reads back out of
+    /// `gates.jsonl`. Deliberately not scoped by `status_revision`: the row is
+    /// recorded at the transition attempt and the verdict is copied from it
+    /// moments later, so a matching row is proof regardless of which revision
+    /// the proof was filed under.
+    fn assert_close_verdict_proven_in_tx(conn: &Connection, id: &str, verdict: &str) -> Result<()> {
+        if !crate::storage::schema::table_exists(conn, "gate_result_history") {
+            // Pre-migration database: no row can exist yet, and refusing here
+            // would make legacy closes unrecordable rather than safe.
+            return Ok(());
+        }
+        let rows = conn.query_with_params(
+            "SELECT gate, passed FROM gate_result_history
+             WHERE issue_id = ? AND to_status = 'closed'",
+            &[SqliteValue::from(id)],
+        )?;
+        let proven = rows.iter().any(|row| {
+            let gate = row.get(0).and_then(SqliteValue::as_text).unwrap_or("");
+            let passed = row
+                .get(1)
+                .and_then(SqliteValue::as_integer)
+                .unwrap_or_default()
+                != 0;
+            passed && gate.eq_ignore_ascii_case(verdict)
+        });
+        if !proven {
+            return Err(BeadsError::validation(
+                "close_verdict",
+                format!(
+                    "issue {id}: refusing to record close verdict '{verdict}' with no proving gate row. \
+                     Record one first: `br gate report {id} --gate {verdict} --provider <p> \
+                     --status pass --to closed`"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn status_revision_in_tx(conn: &Connection, issue_id: &str) -> Result<i64> {
         let rows = conn.query_with_params(
             "SELECT id FROM events
@@ -7769,6 +7811,18 @@ impl SqliteStorage {
             );
         }
         if let Some(ref val) = updates.close_verdict {
+            // ADR-0001 §5.4: a close that records a verdict must leave the
+            // PASS row that proves it, and it must do so in this transaction.
+            // The row is written by a *different* command (`br gate report`),
+            // so nothing structurally stopped a verdict landing without one
+            // (twice in one day in a sibling ledger); the only detector was a
+            // hand-read `br doctor`. Refuse the write instead of repairing the
+            // orphan afterwards.
+            if issue.status == Status::Closed
+                && let Some(verdict) = val.as_deref().map(str::trim).filter(|v| !v.is_empty())
+            {
+                Self::assert_close_verdict_proven_in_tx(conn, id, verdict)?;
+            }
             issue.close_verdict.clone_from(val);
             add_update(
                 "close_verdict",
