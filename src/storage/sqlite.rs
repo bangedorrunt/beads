@@ -16329,7 +16329,7 @@ impl SqliteStorage {
             notes: get_non_empty_str(6),
             status: parse_status(row.get(7).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(8).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(9).and_then(SqliteValue::as_text))?,
+            issue_type: parse_issue_type(row.get(9).and_then(SqliteValue::as_text)),
             assignee: get_non_empty_str(10),
             owner: get_non_empty_str(11),
             estimated_minutes: get_opt_i32(12),
@@ -16432,7 +16432,7 @@ impl SqliteStorage {
             notes: get_non_empty_str(4),
             status: parse_status(row.get(5).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(6).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(7).and_then(SqliteValue::as_text))?,
+            issue_type: parse_issue_type(row.get(7).and_then(SqliteValue::as_text)),
             assignee: get_non_empty_str(8),
             owner: get_non_empty_str(9),
             estimated_minutes: get_opt_i32(10),
@@ -16537,7 +16537,7 @@ impl SqliteStorage {
             notes: None,
             status: parse_status(row.get(3).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(4).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text))?,
+            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text)),
             assignee: None,
             owner: None,
             estimated_minutes: None,
@@ -16617,7 +16617,7 @@ impl SqliteStorage {
             notes: None,
             status: parse_status(row.get(2).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(3).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(4).and_then(SqliteValue::as_text))?,
+            issue_type: parse_issue_type(row.get(4).and_then(SqliteValue::as_text)),
             assignee: get_non_empty_str(5),
             owner: None,
             estimated_minutes: None,
@@ -16697,7 +16697,7 @@ impl SqliteStorage {
             notes: None,
             status: parse_status(row.get(3).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(4).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text))?,
+            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text)),
             assignee: None,
             owner: None,
             estimated_minutes: None,
@@ -16777,7 +16777,7 @@ impl SqliteStorage {
             notes: None,
             status: parse_status(row.get(3).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(4).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text))?,
+            issue_type: parse_issue_type(row.get(5).and_then(SqliteValue::as_text)),
             assignee: get_non_empty_str(6),
             owner: None,
             estimated_minutes: None,
@@ -16851,7 +16851,7 @@ impl SqliteStorage {
             notes: None,
             status: parse_status(row.get(2).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(3).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(4).and_then(SqliteValue::as_text))?,
+            issue_type: parse_issue_type(row.get(4).and_then(SqliteValue::as_text)),
             assignee: None,
             owner: None,
             estimated_minutes: None,
@@ -16926,7 +16926,7 @@ impl SqliteStorage {
             id: get_str(0),
             status: parse_status(row.get(1).and_then(SqliteValue::as_text))?,
             priority: Priority(get_opt_i32(2).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(3).and_then(SqliteValue::as_text))?,
+            issue_type: parse_issue_type(row.get(3).and_then(SqliteValue::as_text)),
             assignee: get_non_empty_str(4),
             created_at: parse_datetime_value(row.get(5))?,
             closed_at: get_opt_datetime(6)?,
@@ -16955,7 +16955,7 @@ impl SqliteStorage {
             id: get_str(0),
             status: parse_status(row.get(1).and_then(SqliteValue::as_text))?,
             priority: Priority::default(),
-            issue_type: parse_issue_type(row.get(2).and_then(SqliteValue::as_text))?,
+            issue_type: parse_issue_type(row.get(2).and_then(SqliteValue::as_text)),
             assignee: None,
             created_at: parse_datetime_value(row.get(3))?,
             closed_at: get_opt_datetime(4)?,
@@ -16985,7 +16985,7 @@ impl SqliteStorage {
             id: get_str(0),
             title: get_str(1),
             priority: Priority(get_opt_i32(2).unwrap_or_else(|| Priority::default().0)),
-            issue_type: parse_issue_type(row.get(3).and_then(SqliteValue::as_text))?,
+            issue_type: parse_issue_type(row.get(3).and_then(SqliteValue::as_text)),
             created_at: parse_datetime_value(row.get(4))?,
             closed_at: parse_opt_datetime_value(row.get(5))?,
         })
@@ -17621,10 +17621,19 @@ fn parse_status(s: Option<&str>) -> Result<Status> {
     }
 }
 
-fn parse_issue_type(s: Option<&str>) -> Result<IssueType> {
+/// Read the stored type, tolerating a spelling the current enum no longer has.
+///
+/// This is a read, so refusing here protects nothing: it only makes the row
+/// unreadable, and with it unrepairable. `br update -t` could not load the row
+/// it was asked to retype, and the export validator re-parses every line it
+/// writes, so a single legacy spelling failed every flush in the ledger, for
+/// every lane. Writes keep the strict check, which is where an unknown value
+/// can still be refused before it lands. The legacy text is not lost by
+/// reading it as the default; it stays in the ledger's own git history.
+fn parse_issue_type(s: Option<&str>) -> IssueType {
     match s {
-        None => Ok(IssueType::default()),
-        Some(val) => val.parse(),
+        None => IssueType::default(),
+        Some(val) => val.parse().unwrap_or_default(),
     }
 }
 
