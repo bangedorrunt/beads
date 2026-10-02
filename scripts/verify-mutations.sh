@@ -467,8 +467,28 @@ main() {
         # -0 slurps the file so a needle spanning lines still matches; /e
         # evaluates the replacement as a string, so a $ or \ in it is literal
         # rather than a backreference.
+        #
+        # bd-lki: the grep above is a WEAK pre-check. grep ORs the lines of a
+        # multi-line pattern, so a needle passes when any one of its lines
+        # appears anywhere — including as a SUBSTRING of a longer line. perl
+        # needs the whole needle contiguously, so such a needle substitutes
+        # nothing, the suite runs unmodified, goes green, and the verdict
+        # blamed the TEST ("this test cannot fail") for what was a needle that
+        # never landed. So confirm the substitution happened. Checksum, not
+        # mtime: the file is about to be touched anyway, and a needle that
+        # replaces text with itself would be indistinguishable by content.
+        local before after
+        before="$(cksum <"$REPO/${M_FILE[$i]}")"
         NEEDLE="${M_FIND[$i]}" REPLACEMENT="${M_REPLACE[$i]}" \
             perl -0pi -e 's/\Q$ENV{NEEDLE}\E/$ENV{REPLACEMENT}/e' "$REPO/${M_FILE[$i]}"
+        after="$(cksum <"$REPO/${M_FILE[$i]}")"
+        if [ "$before" = "$after" ]; then
+            printf '%-52s %s\n' "${M_LABEL[$i]}" "$VERDICT_MISS"
+            echo "       the needle matched the grep pre-check but perl substituted nothing;" >&2
+            echo "       a multi-line needle whose first line is only a substring of a real" >&2
+            echo "       line lands here. Fix the needle — this is not evidence about the test." >&2
+            continue
+        fi
         touch "$REPO/${M_FILE[$i]}"
         verdict="$(classify "$(run_tests)" "${M_EXPECT[$i]}")"
         # A green-expected mutation asks the opposite question: this guard is
