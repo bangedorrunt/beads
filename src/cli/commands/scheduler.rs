@@ -405,7 +405,7 @@ fn score_candidate(
     );
 
     let priority_contribution =
-        i64::from(4_i32.saturating_sub(issue.priority.0.clamp(0, 4))) * PRIORITY_WEIGHT;
+        i64::from(4 - issue.priority.0.clamp(0, 4)) * PRIORITY_WEIGHT;
     let dependency_contribution = usize_to_i64(dependent_count)
         .saturating_mul(DEPENDENT_WEIGHT)
         .min(MAX_DEPENDENT_CONTRIBUTION);
@@ -642,11 +642,13 @@ fn print_scheduler_text(output: &SchedulerOutput) {
 #[cfg(test)]
 mod tests {
     use super::{
-        primary_domain, project_scheduler_relation_metadata, should_refill_scheduler_candidates,
-        stale_threshold_minutes, usize_to_i64,
+        primary_domain, project_scheduler_relation_metadata, score_candidate,
+        should_refill_scheduler_candidates, stale_threshold_minutes, usize_to_i64,
+        ScoringInputs,
     };
-    use crate::model::{Issue, IssueType};
+    use crate::model::{Issue, IssueType, Priority};
     use crate::storage::sqlite::ListRelationMetadata;
+    use chrono::DateTime;
     use std::collections::HashMap;
 
     #[test]
@@ -675,6 +677,52 @@ mod tests {
     #[test]
     fn usize_to_i64_saturates_on_overflow() {
         assert_eq!(usize_to_i64(42), 42);
+    }
+
+    /// A priority outside 0..=4 is what a row written by another tool carries:
+    /// validation rejects it, but `issues.jsonl` is a partial source of truth
+    /// and the scheduler reads what is there. The clamp is what keeps that from
+    /// becoming a huge score, and it had no test -- the `saturating_sub` next to
+    /// it is provably dead, so nothing here was ever watching the clamp.
+    #[test]
+    fn an_out_of_range_priority_scores_as_the_nearest_legal_one() {
+        let now = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let score_of = |priority: i32| {
+            let issue = Issue {
+                issue_type: IssueType::Task,
+                priority: Priority(priority),
+                updated_at: now,
+                ..Issue::default()
+            };
+            let empty: HashMap<String, usize> = HashMap::new();
+            let labels: HashMap<String, Vec<String>> = HashMap::new();
+            let domains: HashMap<String, usize> = HashMap::new();
+            let inputs = ScoringInputs {
+                dependency_counts: &empty,
+                dependent_counts: &empty,
+                labels_by_issue: &labels,
+                domain_counts: &domains,
+                stale_threshold_minutes: 60,
+                now: &now,
+            };
+            score_candidate(issue, 0, &inputs).evidence.priority.contribution
+        };
+
+        assert_eq!(score_of(9), score_of(4), "above the range reads as P4");
+        assert_eq!(score_of(99), score_of(4));
+        assert_eq!(score_of(-3), score_of(0), "below the range reads as P0");
+        // The whole point of the clamp: unbounded, 99 would outscore every legal
+        // issue by an order of magnitude and take the head of the queue.
+        assert!(
+            score_of(99) <= score_of(4),
+            "an out-of-range priority must not outrank the top legal one"
+        );
+        // P0 is the most urgent, so it contributes the most: the contribution
+        // is `4 - priority`, not `priority`.
+        assert!(
+            score_of(0) > score_of(4),
+            "the legal range must still order, P0 above P4"
+        );
     }
 
     #[test]
