@@ -18,7 +18,7 @@
 # The spec is a shell file of `mutation` calls, so there is no parser layer and
 # the needles stay greppable:
 #
-#   CARGO_ARGS=(-p chiebukuro --lib)
+#   CARGO_ARGS=(-p beads --lib)
 #   TEST_FILTER=(cli::services_cmd::tests)
 #   mutation "M1  threshold inverted" \
 #     file=src/cli/services_cmd.rs \
@@ -37,7 +37,8 @@
 #     reported a verdict about code that was not on disk. Every write and every
 #     restore touches the file.
 #   * It was killed mid-run and left a mutation applied to the tree. Restore
-#     runs from a signal trap and from a final trap.
+#     runs from a signal trap (INT/TERM/HUP) and from a final trap. HUP was
+#     missing until a `nohup ... &` run died with its mutation still applied.
 #
 # Bash 3.2 compatible: /bin/bash on a stock macOS box is 3.2 even where a newer
 # one is first on PATH, and no other script in this repo needs bash 4.
@@ -150,7 +151,7 @@ load_spec() {
     # overwrote it with its own default and ran the wrong package, which fails
     # with no `test result:` line and therefore read as a passing control.
     if [ -z "${CARGO_ARGS+set}" ]; then
-        CARGO_ARGS=(-p chiebukuro --lib)
+        CARGO_ARGS=(-p beads --lib)
     fi
     [ -n "${TEST_FILTER+set}" ] || {
         echo "the spec needs TEST_FILTER: a mutation with no filter runs the whole" >&2
@@ -436,7 +437,10 @@ main() {
 
     load_spec "$spec"
 
-    trap on_signal INT TERM
+    # HUP too: `nohup verify-mutations.sh ... &` from a shell that then exits
+    # delivers SIGHUP, and nohup has already set it to SIG_IGN — so the INT/TERM
+    # trap never fired and a killed run left its mutation applied to the tree.
+    trap on_signal INT TERM HUP
     snapshot_save
     trap on_signal EXIT
 
