@@ -120,6 +120,13 @@ name = "storage_perf"
 path = "benches/storage_perf.rs"
 harness = false
 
+# Dependency debuginfo is the dominant cost of a cold dev build and of every
+# relink, and none of it is read: a panic in a dependency still resolves to a
+# line table, which is all a backtrace needs. Full debuginfo for deps was the
+# default here because no repo set a `[profile.dev.package]` override.
+[profile.dev.package."*"]
+debug = "line-tables-only"
+
 [profile.release]
 opt-level = "z"
 lto = true
