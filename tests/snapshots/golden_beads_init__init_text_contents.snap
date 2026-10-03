@@ -67,8 +67,14 @@ redirect
 allow_bypass: true
 workflow:
   strict: true
-  statuses: [open, in_progress, closed, deferred]
+  statuses: [open, in_progress, closed, deferred, draft]
   transitions:
+    # ADR-0035: `br q` quick-capture creates status=draft, so the default
+    # policy MUST give draft a way out. Without this entry a quick-captured
+    # bead was a dead end -- every transition reported that the valid next
+    # statuses from draft were none. It mirrors `open`'s targets plus `open`
+    # itself, so accepting a capture into the queue is one step.
+    draft: [open, in_progress, closed, deferred]
     open: [in_progress, closed, deferred]
     in_progress: [open, closed, deferred]
     deferred: [open]
