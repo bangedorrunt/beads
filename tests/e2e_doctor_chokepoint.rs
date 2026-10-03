@@ -1490,6 +1490,10 @@ fn legacy_op_audit_for_vacuum_via_page_corruption() {
             "page corrupt seed",
             "--description",
             "rebuild me",
+            "--verify",
+            "true",
+            "--principle",
+            "seed-for-page-corruption — the row exists only to give the DB a user page to corrupt",
             "--priority",
             "2",
             "--no-auto-flush",
@@ -1664,7 +1668,19 @@ fn seed_dirty_issue_and_corrupt_db(root: &Path) -> String {
     br_init(root);
 
     let flushed = br_cmd(root)
-        .args(["create", "--title", "flushed fine", "--priority", "2"])
+        .args([
+            "create",
+            "--title",
+            "flushed fine",
+            "--description",
+            "flushed then synced",
+            "--verify",
+            "true",
+            "--principle",
+            "flushed-seed — the row must reach both the DB and the JSONL export",
+            "--priority",
+            "2",
+        ])
         .output()
         .expect("br create spawned");
     assert!(flushed.status.success(), "br create (flushed) failed");
@@ -1679,6 +1695,12 @@ fn seed_dirty_issue_and_corrupt_db(root: &Path) -> String {
             "create",
             "--title",
             "db-only issue",
+            "--description",
+            "stays dirty in the db only",
+            "--verify",
+            "true",
+            "--principle",
+            "dirty-seed — the row must stay unflushed so recovery has something to preserve",
             "--priority",
             "2",
             "--no-auto-flush",
