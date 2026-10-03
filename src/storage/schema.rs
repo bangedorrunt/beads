@@ -1688,9 +1688,7 @@ fn rebuild_issues_table_inner(conn: &Connection, existing_columns: &[String]) ->
     let mut extension_index_sql = Vec::new();
     for row in &index_rows {
         if let Some(name) = row.get(0).and_then(SqliteValue::as_text) {
-            let is_canonical = REQUIRED_RUNTIME_INDEXES
-                .iter()
-                .any(|expected| *expected == name);
+            let is_canonical = REQUIRED_RUNTIME_INDEXES.contains(&name);
             if !is_canonical {
                 let sql = row.get(1).and_then(SqliteValue::as_text).ok_or_else(|| {
                     BeadsError::Config(format!(
