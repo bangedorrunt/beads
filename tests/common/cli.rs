@@ -377,7 +377,7 @@ const HARNESS_PRINCIPLE: &str = "prove-it-works — e2e seed; harness-supplied \
 /// seed it did not set itself. Nothing asserts the refusal itself either —
 /// every e2e that mentions the message already passes `--description` — so
 /// there is no caller that needs to opt out.
-pub(crate) fn gate_create_args<I, S>(args: I) -> Vec<String>
+pub fn gate_create_args<I, S>(args: I) -> Vec<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,

@@ -30,7 +30,19 @@ const FIXTURE_ISSUES: &str = include_str!("fixtures/bv_parity/fixture_issues.jso
 /// BR_ANALYSIS_NOW so time-derived scoring matches the goldens deterministically.
 const GOLDEN_NOW: &str = include_str!("fixtures/bv_parity/GOLDEN_NOW.txt");
 
-const VOLATILE_FIELDS: &[&str] = &["generated_at", "data_hash", "version", "ms"];
+// Exact keys, so naming a new one is a deliberate act rather than a suffix
+// sweep. `compute_time_ms` is the measured wall clock of the graph build: the
+// golden recorded 0 and a loaded machine reports 1, which is a real 1.0 float
+// drift against a 1e-4 tolerance. The filter never matched it because "ms" is
+// not "compute_time_ms", so the timing leaked into the parity check and the
+// test failed on machine load rather than on behaviour.
+const VOLATILE_FIELDS: &[&str] = &[
+    "generated_at",
+    "data_hash",
+    "version",
+    "ms",
+    "compute_time_ms",
+];
 
 /// Base-score component weights (ADR-0003 §4.1 / research doc §4.1).
 const BASE_WEIGHTS: &[(&str, f64)] = &[
