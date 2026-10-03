@@ -1486,10 +1486,21 @@ fn e2e_lint_honors_toon_env_mode() {
 
     let create = run_br(
         &workspace,
-        ["create", "Lint TOON bug", "--type", "bug"],
+        ["create", "Lint TOON bug", "--type", "bug", "--json"],
         "create_lint_toon",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
+    let created: Value =
+        serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
+    let issue_id = created["id"].as_str().expect("issue id").to_string();
+    // The lint total this test asserts on IS the incomplete-brief finding, so
+    // strip the harness-supplied verify/principles back off the issue.
+    let strip = run_br(
+        &workspace,
+        ["update", &issue_id, "--verify", "", "--clear-principles"],
+        "strip_brief_lint_toon",
+    );
+    assert!(strip.status.success(), "strip failed: {}", strip.stderr);
 
     let lint = run_br_with_env(
         &workspace,

@@ -2247,6 +2247,14 @@ fn e2e_routing_lint_external_issue_via_main_workspace() {
     let create_json: Value =
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let issue_id = create_json["id"].as_str().expect("issue id").to_string();
+    // `missing` below is the incomplete-brief finding, so strip the
+    // harness-supplied verify/principles back off the external issue.
+    let strip = run_br(
+        &external_workspace,
+        ["update", &issue_id, "--verify", "", "--clear-principles"],
+        "strip_brief_external_lint",
+    );
+    assert!(strip.status.success(), "strip failed: {}", strip.stderr);
 
     let routed_issue = routed_partial_id(&issue_id);
     let lint = run_br(

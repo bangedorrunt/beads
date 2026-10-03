@@ -139,29 +139,31 @@ fn e2e_stale_default_includes_custom_nonterminal_statuses() {
     let workspace = BrWorkspace::new();
     run_br(&workspace, ["init"], "init");
 
-    // The project workflow policy must permit the custom `review` status
-    // before `br update --status review` will accept it.
+    // The Status vocabulary is closed (ADR-0035): `blocked` is a real
+    // non-terminal status that the default [open] ready group excludes, so
+    // it stands in for the "custom" status this test is about. The project
+    // policy must permit it before `br update --status blocked` is accepted.
     fs::write(
         workspace.root.join(".beads/policy.yaml"),
-        "workflow:\n  strict: false\n  statuses: [open, in_progress, review, closed, deferred]\n",
+        "workflow:\n  strict: false\n  statuses: [open, in_progress, blocked, closed, deferred]\n",
     )
     .expect("write workflow policy");
 
-    let create = run_br(&workspace, ["create", "Review Issue"], "create_review");
+    let create = run_br(&workspace, ["create", "Blocked Issue"], "create_blocked");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
     let update = run_br(
         &workspace,
-        ["update", &issue_id, "--status", "review"],
-        "set_review_status",
+        ["update", &issue_id, "--status", "blocked"],
+        "set_blocked_status",
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
     let stale = run_br(
         &workspace,
         ["stale", "--days", "0", "--json"],
-        "stale_review",
+        "stale_blocked",
     );
     assert!(stale.status.success(), "stale failed: {}", stale.stderr);
 
@@ -169,7 +171,7 @@ fn e2e_stale_default_includes_custom_nonterminal_statuses() {
     let json: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
     assert!(
         json.iter()
-            .any(|issue| issue["id"] == issue_id && issue["status"] == "review"),
-        "custom nonterminal status should be included in default stale output"
+            .any(|issue| issue["id"] == issue_id && issue["status"] == "blocked"),
+        "nonterminal non-ready status should be included in default stale output"
     );
 }

@@ -18,6 +18,12 @@ fn test_create_deps_colon_title() {
     let create = cmd
         .arg("create")
         .arg("Task: With colon")
+        .arg("--description")
+        .arg("Blocker whose title contains a colon")
+        .arg("--verify")
+        .arg("true")
+        .arg("--principle")
+        .arg("colon-title-parses — a colon in a title must not be read as a dependency prefix")
         .arg("--json")
         .env("BEADS_DIR", &beads_dir)
         .output()

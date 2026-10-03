@@ -290,26 +290,28 @@ fn e2e_graph_all_includes_custom_status_issues() {
     let policy_path = workspace.root.join(".beads").join("policy.yaml");
     std::fs::write(
         &policy_path,
-        "workflow:\n  strict: false\n  statuses: [open, in_progress, review, closed, deferred]\n",
+        "workflow:\n  strict: false\n  statuses: [open, in_progress, blocked, closed, deferred]\n",
     )
     .expect("write workflow policy");
 
-    let review = run_br(&workspace, ["create", "Review issue"], "create_review");
+    // The Status vocabulary is closed (ADR-0035); `blocked` is the real
+    // non-terminal status outside the default ready group.
+    let review = run_br(&workspace, ["create", "Blocked issue"], "create_blocked");
     assert!(
         review.status.success(),
-        "create review failed: {}",
+        "create blocked issue failed: {}",
         review.stderr
     );
     let review_id = parse_created_id(&review.stdout);
 
     let update = run_br(
         &workspace,
-        ["update", &review_id, "--status", "review"],
-        "set_review_status",
+        ["update", &review_id, "--status", "blocked"],
+        "set_blocked_status",
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
-    let graph = run_br(&workspace, ["graph", "--all", "--json"], "graph_all_review");
+    let graph = run_br(&workspace, ["graph", "--all", "--json"], "graph_all_blocked");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
 
     let payload = extract_json_payload(&graph.stdout);
@@ -322,7 +324,7 @@ fn e2e_graph_all_includes_custom_status_issues() {
                 .as_array()
                 .is_some_and(|nodes| nodes.iter().any(|node| node["id"] == review_id))
         }),
-        "custom-status nonterminal issue should appear in graph --all output"
+        "nonterminal non-ready issue should appear in graph --all output"
     );
 }
 

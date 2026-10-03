@@ -2357,7 +2357,7 @@ fn e2e_transition_required_fields_are_structured_fresh_and_atomic() {
         r#"
 workflow:
   required_fields:
-    "in_progress -> in_review":
+    "in_progress -> deferred":
       - acceptance_criteria
       - transition_comment
 "#,
@@ -2370,7 +2370,7 @@ workflow:
             "update",
             &id,
             "--status",
-            "in_review",
+            "deferred",
             "--acceptance-criteria",
             "- [x] Exercised",
             "--json",
@@ -2399,7 +2399,7 @@ workflow:
             "update",
             &id,
             "--status",
-            "in_review",
+            "deferred",
             "--acceptance-criteria",
             "- [ ] Still pending",
             "--transition-comment",
@@ -2425,7 +2425,7 @@ workflow:
             "update",
             &id,
             "--status",
-            "in_review",
+            "deferred",
             "--acceptance-criteria",
             "- [x] Exercised",
             "--transition-comment",
@@ -2441,7 +2441,7 @@ workflow:
     let storage = SqliteStorage::open(&workspace.root.join(".beads").join("beads.db"))
         .expect("open storage after accepted transition");
     let transitioned = storage.get_issue(&id).unwrap().unwrap();
-    assert_eq!(transitioned.status.as_str(), "in_review");
+    assert_eq!(transitioned.status.as_str(), "deferred");
     assert_eq!(
         transitioned.acceptance_criteria.as_deref(),
         Some("- [x] Exercised")
@@ -3201,31 +3201,35 @@ fn e2e_sync_flush_refuses_to_overwrite_conflict_markers() {
 }
 
 #[test]
-fn e2e_custom_type_accepted() {
-    let _log = common::test_log("e2e_custom_type_accepted");
+fn e2e_custom_type_rejected() {
+    let _log = common::test_log("e2e_custom_type_rejected");
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Custom types are accepted (not rejected as invalid)
+    // The IssueType vocabulary is closed (ADR-0035): an undeclared type is a
+    // typed refusal, not a silently-created Custom row.
     let result = run_br(
         &workspace,
         ["create", "Test issue", "--type", "custom_type", "--json"],
         "create_custom_type_json",
     );
     assert!(
-        result.status.success(),
-        "custom types should be accepted: {}",
+        !result.status.success(),
+        "custom types must be rejected: stdout={} stderr={}",
+        result.stdout,
         result.stderr
     );
+    assert_eq!(result.status.code(), Some(4));
 
-    // Verify the custom type is stored correctly
     let json: serde_json::Value =
-        serde_json::from_str(&result.stdout).expect("should be valid JSON");
-    assert_eq!(
-        json["issue_type"], "custom_type",
-        "custom type should be preserved"
+        serde_json::from_str(&result.stdout).expect("structured error is valid JSON");
+    assert_eq!(json["error"]["code"], "VALIDATION_FAILED");
+    let combined = format!("{}{}", json["error"]["message"], json["error"]["hint"]);
+    assert!(
+        combined.contains("custom_type"),
+        "refusal must name the offending type: {combined}"
     );
 }
 

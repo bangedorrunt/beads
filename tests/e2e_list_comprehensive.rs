@@ -15,7 +15,10 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, parse_list_issues, parse_list_page, run_br, run_br_with_env};
+use common::cli::{
+    BrWorkspace, extract_json_payload, parse_list_issues, parse_list_page, run_br,
+    run_br_with_env,
+};
 
 fn parse_created_id(stdout: &str) -> String {
     let line = stdout.lines().next().unwrap_or("");
@@ -1232,14 +1235,15 @@ fn e2e_list_custom_status() {
     );
     let combined = format!("{}{}", unknown.stdout, unknown.stderr);
     assert!(
-        combined.contains("unknown status"),
-        "rejection should name the unknown status: {combined}"
+        combined.contains("Invalid status") && combined.contains("invalid_status"),
+        "rejection should name the offending status: {combined}"
     );
 }
 
 #[test]
 fn e2e_list_custom_type() {
-    // Custom types are allowed (see IssueType::from_str which accepts any string as Custom variant)
+    // The IssueType vocabulary is closed (ADR-0035): an undeclared type is a
+    // typed refusal, distinguishable from a genuinely empty filter result.
     let _log = common::test_log("e2e_list_custom_type");
     let (workspace, _ids) = setup_diverse_workspace();
 
@@ -1249,14 +1253,19 @@ fn e2e_list_custom_type() {
         "list_custom_type",
     );
     assert!(
-        list.status.success(),
-        "list with custom type should succeed (custom types are allowed)"
+        !list.status.success(),
+        "unknown type must be rejected; stdout: {} stderr: {}",
+        list.stdout,
+        list.stderr
     );
+    assert_eq!(list.status.code(), Some(4));
 
-    // Since no issues have type "custom_type", result should be empty
-    let issues = parse_list_issues(&list.stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&extract_json_payload(&list.stdout)).expect("structured error json");
+    assert_eq!(json["error"]["code"], "VALIDATION_FAILED");
+    let combined = format!("{}{}", json["error"]["message"], json["error"]["hint"]);
     assert!(
-        issues.is_empty(),
-        "no issues should match custom type filter"
+        combined.contains("custom_type"),
+        "refusal must name the offending type: {combined}"
     );
 }

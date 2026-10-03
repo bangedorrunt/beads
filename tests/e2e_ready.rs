@@ -1262,31 +1262,31 @@ fn ready_default_group_is_open_only_e2e() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // The default policy.yaml installed by `init` is strict and excludes
-    // `rework` from its status vocabulary; this test only needs a rework
-    // STATUS to exist (unconfigured ready group must default to [open]), so
-    // grant the status + transition without configuring a ready group.
+    // The default policy.yaml installed by `init` is strict; this test only
+    // needs a real non-terminal status OUTSIDE [open] (unconfigured ready
+    // group must default to [open]), so grant `blocked` + its transition
+    // without configuring a ready group.
     write_policy(
         &workspace,
-        "workflow:\n  statuses: [open, in_progress, closed, deferred, rework]\n  transitions:\n    open: [in_progress, closed, deferred, rework]\n    rework: [open, closed]\n",
+        "workflow:\n  statuses: [open, in_progress, closed, deferred, blocked]\n  transitions:\n    open: [in_progress, closed, deferred, blocked]\n    blocked: [open, closed]\n",
     );
 
     let open = run_br(&workspace, ["create", "Open work", "-t", "task"], "c_open");
     let open_id = parse_created_id(&open.stdout);
     let rework = run_br(
         &workspace,
-        ["create", "Rework work", "-t", "task"],
-        "c_rework",
+        ["create", "Blocked work", "-t", "task"],
+        "c_blocked",
     );
     let rework_id = parse_created_id(&rework.stdout);
     let set = run_br(
         &workspace,
-        ["update", &rework_id, "--status", "rework"],
-        "to_rework",
+        ["update", &rework_id, "--status", "blocked"],
+        "to_blocked",
     );
     assert!(
         set.status.success(),
-        "update to rework failed: {}",
+        "update to blocked failed: {}",
         set.stderr
     );
     stamp_dispatchable(&workspace);
@@ -1303,37 +1303,37 @@ fn ready_default_group_is_open_only_e2e() {
     );
     assert!(
         !issue_list_contains_id(&issues, &rework_id),
-        "rework issue must NOT be ready under the default [open] group"
+        "blocked issue must NOT be ready under the default [open] group"
     );
 }
 
 #[test]
-fn ready_configured_group_surfaces_rework_e2e() {
-    let _log = common::test_log("ready_configured_group_surfaces_rework_e2e");
+fn ready_configured_group_surfaces_blocked_e2e() {
+    let _log = common::test_log("ready_configured_group_surfaces_blocked_e2e");
     let workspace = BrWorkspace::new();
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // The default strict policy excludes `rework`; the custom policy must be
-    // installed BEFORE the status flip and carry both the rework vocabulary
+    // The default strict policy excludes `blocked`; the custom policy must be
+    // installed BEFORE the status flip and carry both the status vocabulary
     // and the configured ready group under test.
     write_policy(
         &workspace,
-        "workflow:\n  statuses: [open, in_progress, closed, deferred, rework]\n  transitions:\n    open: [in_progress, closed, deferred, rework]\n    rework: [open, closed]\n  status_groups:\n    ready: [open, rework]\n",
+        "workflow:\n  statuses: [open, in_progress, closed, deferred, blocked]\n  transitions:\n    open: [in_progress, closed, deferred, blocked]\n    blocked: [open, closed]\n  status_groups:\n    ready: [open, blocked]\n",
     );
 
     let open = run_br(&workspace, ["create", "Open work", "-t", "task"], "c_open");
     let open_id = parse_created_id(&open.stdout);
     let rework = run_br(
         &workspace,
-        ["create", "Rework work", "-t", "task"],
-        "c_rework",
+        ["create", "Blocked work", "-t", "task"],
+        "c_blocked",
     );
     let rework_id = parse_created_id(&rework.stdout);
     run_br(
         &workspace,
-        ["update", &rework_id, "--status", "rework"],
-        "to_rework",
+        ["update", &rework_id, "--status", "blocked"],
+        "to_blocked",
     );
     stamp_dispatchable(&workspace);
 
@@ -1348,16 +1348,16 @@ fn ready_configured_group_surfaces_rework_e2e() {
     );
     assert!(
         issue_list_contains_id(&issues, &rework_id),
-        "rework issue must surface under the configured [open, rework] group"
+        "blocked issue must surface under the configured [open, blocked] group"
     );
-    // Status parity: the rework issue keeps its real status in JSON output.
+    // Status parity: the blocked issue keeps its real status in JSON output.
     let rework_issue = issues
         .iter()
         .find(|i| i["id"].as_str() == Some(rework_id.as_str()))
-        .expect("rework issue present");
+        .expect("blocked issue present");
     assert_eq!(
         rework_issue["status"].as_str(),
-        Some("rework"),
+        Some("blocked"),
         "returned issue must preserve its real status"
     );
 }
@@ -1371,10 +1371,11 @@ fn ready_strict_rejects_out_of_vocab_group_e2e() {
 
     run_br(&workspace, ["create", "Open work", "-t", "task"], "c_open");
 
-    // strict statuses do NOT include `rework`, but the ready group lists it.
+    // strict statuses do NOT include `blocked`, but the ready group lists it:
+    // the model vocabulary is closed, the POLICY vocabulary is narrower still.
     write_policy(
         &workspace,
-        "workflow:\n  strict: true\n  statuses: [open, in_progress, closed]\n  status_groups:\n    ready: [open, rework]\n",
+        "workflow:\n  strict: true\n  statuses: [open, in_progress, closed]\n  status_groups:\n    ready: [open, blocked]\n",
     );
 
     let result = run_br(&workspace, ["ready", "--json"], "ready_strict_reject");
@@ -1388,7 +1389,7 @@ fn ready_strict_rejects_out_of_vocab_group_e2e() {
     // human mode it goes to stderr. Accept either so the assertion is robust.
     let combined = format!("{}{}", result.stdout, result.stderr);
     assert!(
-        combined.contains("rework") && combined.contains("workflow.status_groups.ready"),
+        combined.contains("blocked") && combined.contains("workflow.status_groups.ready"),
         "error must name the offending status and config key; stdout: {} stderr: {}",
         result.stdout,
         result.stderr
@@ -1495,6 +1496,15 @@ fn e2e_ready_json_carries_s55_fields_and_enforces_predicate() {
     );
     let p1_id = parse_created_id(&created.stdout);
     assert!(!p1_id.is_empty(), "could not parse created id");
+
+    // The whole test is "P1 with verify but NO principles", so strip the
+    // brief the harness supplies at create time before hand-editing verify.
+    let strip = run_br(
+        &workspace,
+        ["update", &p1_id, "--verify", "", "--clear-principles"],
+        "strip_brief_p1_uncited",
+    );
+    assert!(strip.status.success(), "strip failed: {}", strip.stderr);
 
     let mut p1 = issue_from_jsonl(&workspace, &p1_id);
     set_issue_jsonl_string(&mut p1, "verify", "cargo test --offline ready_");
