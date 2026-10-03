@@ -37,6 +37,38 @@ fn create_issue_with_description(
     parse_created_id(&create.stdout)
 }
 
+/// A "bare" bead: created through the normal fail-closed path, then stepped
+/// back out to no VERIFY and no principles citation.
+///
+/// `br lint` findings are ABOUT the brief schema (ADR-0001 §5.2), and
+/// fail-closed `br create` can no longer produce a non-dispatchable bead
+/// through the CLI at all — every field it demands is present the moment the
+/// row exists, so omitting the flag is no longer a way to express the case.
+/// The fixture is therefore built the only way the product allows: create a
+/// complete bead, then leave through the two recovery flags the help text
+/// already documents.
+fn create_bare_issue(
+    workspace: &BrWorkspace,
+    title: &str,
+    issue_type: Option<&str>,
+    description: Option<&str>,
+    label: &str,
+) -> String {
+    let id = create_issue_with_description(workspace, title, issue_type, description, label);
+    let clear_label = format!("{label}_strip_brief");
+    let clear = run_br(
+        workspace,
+        ["update", id.as_str(), "--verify", "", "--clear-principles"],
+        &clear_label,
+    );
+    assert!(
+        clear.status.success(),
+        "stripping the brief failed for {label}: {}",
+        clear.stderr
+    );
+    id
+}
+
 fn run_lint_json(workspace: &BrWorkspace, mut args: Vec<String>, label: &str) -> Value {
     args.push("--json".to_string());
     let lint = run_br(workspace, args, label);
@@ -1874,7 +1906,7 @@ fn e2e_lint_bug_missing_sections_json() {
     let init = run_br(&workspace, ["init"], "lint_bug_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    create_issue_with_description(
+    create_bare_issue(
         &workspace,
         "Bug with missing sections",
         Some("bug"),
@@ -1904,14 +1936,14 @@ fn e2e_lint_multiple_issues_aggregate_warnings() {
     let init = run_br(&workspace, ["init"], "lint_multi_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    create_issue_with_description(
+    create_bare_issue(
         &workspace,
         "Bug missing sections",
         Some("bug"),
         Some("Bug report"),
         "lint_multi_bug",
     );
-    create_issue_with_description(
+    create_bare_issue(
         &workspace,
         "Task missing criteria",
         Some("task"),
@@ -1932,7 +1964,7 @@ fn e2e_lint_text_output_exit_code() {
     let init = run_br(&workspace, ["init"], "lint_text_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    create_issue_with_description(
+    create_bare_issue(
         &workspace,
         "Bug missing sections",
         Some("bug"),
@@ -1952,7 +1984,7 @@ fn e2e_lint_status_all_includes_closed() {
     let init = run_br(&workspace, ["init"], "lint_closed_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let id = create_issue_with_description(
+    let id = create_bare_issue(
         &workspace,
         "Closed bug",
         Some("bug"),
@@ -2008,14 +2040,14 @@ fn e2e_lint_type_filter_limits_results() {
     let init = run_br(&workspace, ["init"], "lint_type_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    create_issue_with_description(
+    create_bare_issue(
         &workspace,
         "Bug missing sections",
         Some("bug"),
         Some("Bug report"),
         "lint_type_bug",
     );
-    create_issue_with_description(
+    create_bare_issue(
         &workspace,
         "Task with criteria",
         Some("task"),
@@ -2039,14 +2071,14 @@ fn e2e_lint_ids_only_lints_selected() {
     let init = run_br(&workspace, ["init"], "lint_ids_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let bug_id = create_issue_with_description(
+    let bug_id = create_bare_issue(
         &workspace,
         "Bug missing sections",
         Some("bug"),
         Some("Bug report"),
         "lint_ids_bug",
     );
-    create_issue_with_description(
+    create_bare_issue(
         &workspace,
         "Task missing criteria",
         Some("task"),
@@ -2072,7 +2104,7 @@ fn e2e_lint_chore_lints_under_one_brief_schema() {
     let init = run_br(&workspace, ["init"], "lint_skip_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    create_issue_with_description(
+    create_bare_issue(
         &workspace,
         "Chore without requirements",
         Some("chore"),
