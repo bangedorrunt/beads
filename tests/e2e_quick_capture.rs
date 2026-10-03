@@ -452,9 +452,14 @@ fn q_rejects_overlong_title_without_persisting() {
 }
 
 #[test]
-fn q_with_custom_type_succeeds() {
-    let _log = common::test_log("q_with_custom_type_succeeds");
-    // br (unlike bd) allows custom issue types for flexibility
+fn q_with_custom_type_is_rejected() {
+    let _log = common::test_log("q_with_custom_type_is_rejected");
+    // `IssueType` is a CLOSED enum (`FromStr` goes through `known_value`), so
+    // a type outside the known set cannot be named on the command line. Custom
+    // types may still exist in imported data — `br lint --type` says exactly
+    // that — they just cannot be created here. This test used to assert the
+    // opposite ("br unlike bd allows custom issue types"), which was the old
+    // design.
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -466,17 +471,21 @@ fn q_with_custom_type_succeeds() {
         "quick_custom_type",
     );
     assert!(
-        quick.status.success(),
-        "q with custom type should succeed: {}",
+        !quick.status.success(),
+        "q must refuse a type outside the closed enum"
+    );
+    assert!(
+        quick.stderr.contains("issue_type") || quick.stderr.contains("Invalid issue type"),
+        "refusal must name the type field, got: {}",
         quick.stderr
     );
 
-    // Verify the issue was created with the custom type
+    // Fail-closed: nothing was written.
     let list = run_br(&workspace, ["list", "--json"], "list_check");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
-        list.stdout.contains("my_custom_type"),
-        "custom type should be preserved in the issue"
+        !list.stdout.contains("my_custom_type"),
+        "a refused create must not persist the issue"
     );
 }
 
@@ -709,14 +718,16 @@ fn q_default_values() {
     assert_eq!(json["issue_type"], "task", "default type should be task");
     // Default priority is 2 (medium)
     assert_eq!(json["priority"], 2, "default priority should be 2");
-    // Status should be open
-    assert_eq!(json["status"], "open", "status should be open");
+    // ADR-0035: `br q` is quick capture, so the default status is draft.
+    assert_eq!(json["status"], "draft", "status should be draft");
 }
 
 #[test]
-fn q_status_is_always_open() {
-    let _log = common::test_log("q_status_is_always_open");
-    // q command always creates with status=open (no status flag)
+fn q_status_is_always_draft() {
+    let _log = common::test_log("q_status_is_always_draft");
+    // ADR-0035: `br q` is quick capture, so it always creates status=draft
+    // (no status flag). The point of this test is that --type and --priority
+    // do not move the status.
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -739,13 +750,16 @@ fn q_status_is_always_open() {
 
     assert_eq!(ids.len(), 3, "all creates should succeed");
 
-    // All should have status=open
+    // All should have status=draft
     for id in ids {
         let show = run_br(&workspace, ["show", &id, "--json"], &format!("show_{id}"));
         assert!(show.status.success(), "show failed: {}", show.stderr);
 
         let payload = extract_json_payload(&show.stdout);
         let json: Value = serde_json::from_str(&payload).expect("parse json");
-        assert_eq!(json["status"], "open", "issue {id} status should be open");
+        assert_eq!(
+            json["status"], "draft",
+            "issue {id} status should be draft"
+        );
     }
 }

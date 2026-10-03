@@ -772,8 +772,14 @@ unless BR_OPERATOR=1.
 allow_bypass: true
 workflow:
   strict: true
-  statuses: [open, in_progress, closed, deferred]
+  statuses: [open, in_progress, closed, deferred, draft]
   transitions:
+    # ADR-0035: `br q` quick-capture creates status=draft, so the default
+    # policy MUST give draft a way out. Without this entry a quick-captured
+    # bead was a dead end -- every transition reported that the valid next
+    # statuses from draft were none. It mirrors `open`'s targets plus `open`
+    # itself, so accepting a capture into the queue is one step.
+    draft: [open, in_progress, closed, deferred]
     open: [in_progress, closed, deferred]
     in_progress: [open, closed, deferred]
     deferred: [open]
@@ -4874,6 +4880,27 @@ capacity:
                 .validate_transition(Some("open"), "blocked")
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn default_policy_lets_a_quick_capture_leave_draft() {
+        // `br q` creates status=draft (ADR-0035) and `br init` writes
+        // DEFAULT_FAIL_CLOSED_POLICY_YAML, so if that default omits draft the
+        // quick-capture feature is a dead end in every fresh workspace: every
+        // transition out of draft reports "Valid next statuses from 'draft':
+        // (none)". Parsed from the shipped constant, not a fixture, so this
+        // fails if the default ever drifts again.
+        let workflow = default_fail_closed_workflow();
+        assert!(
+            workflow.transitions_enforced(),
+            "the default policy is meant to be strict"
+        );
+        for target in ["open", "in_progress", "closed", "deferred"] {
+            assert!(
+                workflow.allows_transition("draft", target),
+                "draft -> {target} must be permitted by the default policy"
+            );
+        }
     }
 
     #[test]
