@@ -43,6 +43,74 @@ fn br_cmd() -> Command {
     Command::new(assert_cmd::cargo::cargo_bin!("br"))
 }
 
+fn run_git(root: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .env("HOME", root)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Close a fixture bead the way the product actually requires.
+///
+/// `br close` is policy-enforced: it wants a pass gate row bound to a commit
+/// that both CHANGES FILES and cites the bead id, and `br update --status
+/// closed` refuses to route around that ("terminal-state transitions must go
+/// through `br close`"). The fixture therefore stands up a real one-commit
+/// repository and performs the real ceremony, rather than citing the
+/// abbreviated placeholder sha that no longer resolves. The file has to
+/// change, so the content carries the id — an empty commit is refused for
+/// exactly that reason.
+fn close_issue_for_fixture(root: &Path, id: &str) {
+    run_git(root, &["init", "-q", "."]);
+    run_git(root, &["config", "user.email", "fixture@example.invalid"]);
+    run_git(root, &["config", "user.name", "golden panel fixture"]);
+    std::fs::write(root.join("fixture_work.txt"), format!("work for {id}\n"))
+        .expect("write fixture work file");
+    run_git(root, &["add", "fixture_work.txt"]);
+    run_git(root, &["commit", "-q", "-m", &format!("fixture: work for {id}")]);
+    let sha = run_git(root, &["rev-parse", "HEAD"]);
+    run_setup_br(
+        root,
+        &[
+            "gate",
+            "report",
+            id,
+            "--gate",
+            // The workspace policy created by `br init` admits only
+            // `command-verified` for this bead; any other gate name is
+            // refused with "no legal PASS gate row is recorded".
+            "command-verified",
+            "--provider",
+            "beads",
+            "--status",
+            "pass",
+            "--to",
+            "closed",
+            "--note",
+            &format!("sha={sha} — golden panel fixture"),
+        ],
+    );
+    run_setup_br(
+        root,
+        &[
+            "close",
+            id,
+            "--commit-sha",
+            &sha,
+            "--reason",
+            "Completed for golden snapshot coverage",
+        ],
+    );
+}
+
 fn run_setup_br(root: &Path, args: &[&str]) -> String {
     let mut cmd = br_cmd();
     cmd.current_dir(root);
@@ -93,6 +161,14 @@ fn create_issue(
             description,
             "--labels",
             labels,
+            // `br create` is fail-closed: without these two the seed is
+            // refused outright and the panel assertions below never run. This
+            // file keeps its own runner rather than going through
+            // `common::cli`, so it does not inherit the harness create gate.
+            "--verify",
+            "cargo test --test golden_rich_panels",
+            "--principle",
+            "prove-it-works — a rich panel fixture is a fully-briefed bead",
             "--json",
         ],
     );
@@ -161,17 +237,7 @@ fn init_fixture() -> RichFixture {
             "closed",
         ],
     );
-    run_setup_br(
-        &root,
-        &[
-            "close",
-            &closed_id,
-            "--commit-sha",
-            "abc1234",
-            "--reason",
-            "Completed for golden snapshot coverage",
-        ],
-    );
+    close_issue_for_fixture(&root, &closed_id);
 
     RichFixture {
         _temp_dir: temp_dir,
