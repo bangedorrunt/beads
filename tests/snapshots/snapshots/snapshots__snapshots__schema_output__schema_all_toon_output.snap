@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots/schema_output.rs
-assertion_line: 879
 expression: normalized_toon
 ---
 tool: br
@@ -526,20 +525,16 @@ schemas:
     "$defs":
       IssueType:
         description: Issue type category.
-        anyOf[2]:
-          - type: string
-            enum[7]: task,bug,feature,epic,chore,docs,question
-          - type: string
+        type: string
+        enum[7]: task,bug,feature,epic,chore,docs,question
       Priority:
         description: "Issue priority (0=Critical, 4=Backlog)."
         type: integer
         format: int32
       Status:
         description: Issue lifecycle status.
-        anyOf[2]:
-          - type: string
-            enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
-          - type: string
+        type: string
+        enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
   CoordinationClaimRow:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: CoordinationClaimRow
@@ -592,20 +587,16 @@ schemas:
         required[9]: id,title,status,priority,issue_type,labels,dependency_count,dependent_count,latest_comments
       Status:
         description: Issue lifecycle status.
-        anyOf[2]:
-          - type: string
-            enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
-          - type: string
+        type: string
+        enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
       Priority:
         description: "Issue priority (0=Critical, 4=Backlog)."
         type: integer
         format: int32
       IssueType:
         description: Issue type category.
-        anyOf[2]:
-          - type: string
-            enum[7]: task,bug,feature,epic,chore,docs,question
-          - type: string
+        type: string
+        enum[7]: task,bug,feature,epic,chore,docs,question
       CoordinationComment:
         description: Bounded comment excerpt included with a coordination claim row.
         type: object
@@ -928,20 +919,16 @@ schemas:
         required[9]: id,title,status,priority,issue_type,labels,dependency_count,dependent_count,latest_comments
       Status:
         description: Issue lifecycle status.
-        anyOf[2]:
-          - type: string
-            enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
-          - type: string
+        type: string
+        enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
       Priority:
         description: "Issue priority (0=Critical, 4=Backlog)."
         type: integer
         format: int32
       IssueType:
         description: Issue type category.
-        anyOf[2]:
-          - type: string
-            enum[7]: task,bug,feature,epic,chore,docs,question
-          - type: string
+        type: string
+        enum[7]: task,bug,feature,epic,chore,docs,question
       CoordinationComment:
         description: Bounded comment excerpt included with a coordination claim row.
         type: object
@@ -1416,20 +1403,16 @@ schemas:
           "The bead ships knowledge (ADR, survey, diagnosis, decision).",string,report
       Status:
         description: Issue lifecycle status.
-        anyOf[2]:
-          - type: string
-            enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
-          - type: string
+        type: string
+        enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
       Priority:
         description: "Issue priority (0=Critical, 4=Backlog)."
         type: integer
         format: int32
       IssueType:
         description: Issue type category.
-        anyOf[2]:
-          - type: string
-            enum[7]: task,bug,feature,epic,chore,docs,question
-          - type: string
+        type: string
+        enum[7]: task,bug,feature,epic,chore,docs,question
       Dependency:
         description: Relationship between two issues.
         type: object
@@ -1459,10 +1442,8 @@ schemas:
         required[4]: issue_id,depends_on_id,type,created_at
       DependencyType:
         description: Dependency relationship type.
-        anyOf[2]:
-          - type: string
-            enum[11]: blocks,parent-child,conditional-blocks,waits-for,related,discovered-from,replies-to,relates-to,duplicates,supersedes,caused-by
-          - type: string
+        type: string
+        enum[11]: blocks,parent-child,conditional-blocks,waits-for,related,discovered-from,replies-to,relates-to,duplicates,supersedes,caused-by
       Comment:
         description: A comment on an issue.
         type: object
@@ -1696,20 +1677,16 @@ schemas:
           "The bead ships knowledge (ADR, survey, diagnosis, decision).",string,report
       Status:
         description: Issue lifecycle status.
-        anyOf[2]:
-          - type: string
-            enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
-          - type: string
+        type: string
+        enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
       Priority:
         description: "Issue priority (0=Critical, 4=Backlog)."
         type: integer
         format: int32
       IssueType:
         description: Issue type category.
-        anyOf[2]:
-          - type: string
-            enum[7]: task,bug,feature,epic,chore,docs,question
-          - type: string
+        type: string
+        enum[7]: task,bug,feature,epic,chore,docs,question
       Dependency:
         description: Relationship between two issues.
         type: object
@@ -1739,10 +1716,8 @@ schemas:
         required[4]: issue_id,depends_on_id,type,created_at
       DependencyType:
         description: Dependency relationship type.
-        anyOf[2]:
-          - type: string
-            enum[11]: blocks,parent-child,conditional-blocks,waits-for,related,discovered-from,replies-to,relates-to,duplicates,supersedes,caused-by
-          - type: string
+        type: string
+        enum[11]: blocks,parent-child,conditional-blocks,waits-for,related,discovered-from,replies-to,relates-to,duplicates,supersedes,caused-by
       Comment:
         description: A comment on an issue.
         type: object
@@ -2061,20 +2036,16 @@ schemas:
           "The bead ships knowledge (ADR, survey, diagnosis, decision).",string,report
       Status:
         description: Issue lifecycle status.
-        anyOf[2]:
-          - type: string
-            enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
-          - type: string
+        type: string
+        enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
       Priority:
         description: "Issue priority (0=Critical, 4=Backlog)."
         type: integer
         format: int32
       IssueType:
         description: Issue type category.
-        anyOf[2]:
-          - type: string
-            enum[7]: task,bug,feature,epic,chore,docs,question
-          - type: string
+        type: string
+        enum[7]: task,bug,feature,epic,chore,docs,question
       Dependency:
         description: Relationship between two issues.
         type: object
@@ -2104,10 +2075,8 @@ schemas:
         required[4]: issue_id,depends_on_id,type,created_at
       DependencyType:
         description: Dependency relationship type.
-        anyOf[2]:
-          - type: string
-            enum[11]: blocks,parent-child,conditional-blocks,waits-for,related,discovered-from,replies-to,relates-to,duplicates,supersedes,caused-by
-          - type: string
+        type: string
+        enum[11]: blocks,parent-child,conditional-blocks,waits-for,related,discovered-from,replies-to,relates-to,duplicates,supersedes,caused-by
       Comment:
         description: A comment on an issue.
         type: object
@@ -2175,10 +2144,8 @@ schemas:
     "$defs":
       IssueType:
         description: Issue type category.
-        anyOf[2]:
-          - type: string
-            enum[7]: task,bug,feature,epic,chore,docs,question
-          - type: string
+        type: string
+        enum[7]: task,bug,feature,epic,chore,docs,question
       Priority:
         description: "Issue priority (0=Critical, 4=Backlog)."
         type: integer
@@ -2196,10 +2163,8 @@ schemas:
         required[2]: name,decision
       Status:
         description: Issue lifecycle status.
-        anyOf[2]:
-          - type: string
-            enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
-          - type: string
+        type: string
+        enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
   StaleIssue:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: StaleIssue
@@ -2225,20 +2190,16 @@ schemas:
     "$defs":
       IssueType:
         description: Issue type category.
-        anyOf[2]:
-          - type: string
-            enum[7]: task,bug,feature,epic,chore,docs,question
-          - type: string
+        type: string
+        enum[7]: task,bug,feature,epic,chore,docs,question
       Priority:
         description: "Issue priority (0=Critical, 4=Backlog)."
         type: integer
         format: int32
       Status:
         description: Issue lifecycle status.
-        anyOf[2]:
-          - type: string
-            enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
-          - type: string
+        type: string
+        enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
   Statistics:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: Statistics

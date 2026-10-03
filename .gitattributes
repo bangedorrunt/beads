@@ -1,1 +1,24 @@
 /fuzz/corpus/** binary
+
+# Generated output. These paths are re-captured from the binary, not authored,
+# so any issue ids inside them are quoted product data, not this commit's work.
+#
+# The insta goldens are the sharp case: the Issue schema embeds its own doc
+# example for the id field on the same single physical line a vocabulary
+# change rewrites, so re-capturing one puts that example on an added diff
+# line and the attribution guard reads documentation prose as an agent
+# marker. The id belongs to the ledger that documented it, not to whichever
+# commit happened to re-emit the bytes.
+#
+# Do not name the example id in these comments. This file is itself staged
+# on the commit that adds it, so a literal here is an added line carrying the
+# token and the guard blocks the very declaration meant to stop that.
+#
+# Patterns carry no leading slash: toron's matcher compares them against
+# repo-relative paths, and git's own anchoring is not what it does.
+#
+# This exempts a path from the bead-hunk ATTRIBUTION scan only. A projected
+# path still needs a lease: the question here is whose work the id describes,
+# not who may write the file.
+tests/snapshots/snapshots/** linguist-generated=true
+tests/snapshots/agent_baseline/** linguist-generated=true
