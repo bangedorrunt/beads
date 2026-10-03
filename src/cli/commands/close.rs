@@ -142,10 +142,9 @@ fn is_bead_id_glue(c: char) -> bool {
 fn after_char_is_glue(msg: &str, after_idx: usize) -> bool {
     let mut chars = msg[after_idx..].chars();
     match chars.next() {
-        None => false,
         Some(c) if is_bead_id_glue(c) => true,
         Some('.') => chars.next().is_some_and(|n| n.is_ascii_alphanumeric()),
-        Some(_) => false,
+        _ => false,
     }
 }
 

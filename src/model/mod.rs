@@ -974,11 +974,7 @@ impl Issue {
         self_comments.sort_by(Self::cmp_comment);
         let mut other_comments = other.comments.clone();
         other_comments.sort_by(Self::cmp_comment);
-        if self_comments != other_comments {
-            return false;
-        }
-
-        true
+        self_comments == other_comments
     }
 
     /// Order-independent comparison key for a dependency edge.
