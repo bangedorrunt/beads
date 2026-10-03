@@ -11,7 +11,9 @@
 #
 # Env:
 #   TOOL_BIN  — path to the `br` binary (default: $CARGO_BIN_EXE_br, or
-#               `cargo run --quiet --bin br --`)
+#               `cargo run --quiet --bin br --`). Fixtures always see the
+#               gated wrapper (see below), never the raw binary.
+#   BEADS_UNDER_TEST_BIN — the raw binary, when TOOL_BIN is already a wrapper
 #   FIXTURES_ROOT — override the fixtures directory
 #   SKIP — space-separated fixture names to skip
 #   ONLY — space-separated allowlist of fixture names; everything else skipped
@@ -41,10 +43,26 @@ if [ -z "${TOOL_BIN:-}" ]; then
         exit 2
     fi
 fi
+if [ ! -x "$TOOL_BIN" ]; then
+    echo "run_all.sh: TOOL_BIN=$TOOL_BIN is not executable" >&2
+    exit 2
+fi
+
+# Every fixture reaches the binary through TOOL_BIN, so wrapping it here is
+# the one place the fail-closed create brief has to be supplied. `br create`
+# refuses a seed with no description, no VERIFY, or — at P<=2 — no principles
+# citation, and the 59 seed creates across these fixtures all predate that
+# gate: without the wrapper every one of them aborts at the plant step with
+# exit 4 and the fixture reports "corrupt stage failed" instead of the
+# condition it means to plant. The wrapper passes every non-create argv
+# through byte-for-byte, so `doctor`, `sync`, `dep`, `list`, `gate`, and
+# `close` still exercise the real binary.
+export BEADS_UNDER_TEST_BIN="$TOOL_BIN"
+TOOL_BIN="$SCRIPT_DIR/br_fixture_wrapper.sh"
 export TOOL_BIN
 
 if [ ! -x "$TOOL_BIN" ]; then
-    echo "run_all.sh: TOOL_BIN=$TOOL_BIN is not executable" >&2
+    echo "run_all.sh: fixture wrapper $TOOL_BIN is not executable" >&2
     exit 2
 fi
 
