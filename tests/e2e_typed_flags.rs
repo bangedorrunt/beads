@@ -132,6 +132,16 @@ fn e2e_update_principle_appends_citation() {
 
     let id = create_issue(&workspace, &["Citation bead"], "create_plain");
 
+    // Start from an empty citation set so the two appends below are the only
+    // ones counted. The harness create gate pre-seeds one otherwise, and this
+    // test is about append semantics from empty.
+    let clear = run_br(
+        &workspace,
+        ["update", &id, "--clear-principles"],
+        "clear_seed_principles",
+    );
+    assert!(clear.status.success(), "clear failed: {}", clear.stderr);
+
     let first = run_br(
         &workspace,
         [
@@ -234,6 +244,15 @@ fn e2e_lint_does_not_require_acceptance_criteria_heading() {
         &["Bare bug", "--type", "bug", "--priority", "3"],
         "create_bare",
     );
+    // This bead exists precisely to be the one that warns on a missing
+    // VERIFY, and the harness create gate would supply one. Step back out
+    // through the documented clearing flag.
+    let strip = run_br(
+        &workspace,
+        ["update", &bare, "--verify", ""],
+        "strip_bare_verify",
+    );
+    assert!(strip.status.success(), "strip failed: {}", strip.stderr);
     let lint = run_br(&workspace, ["lint", "--json"], "lint_bare");
     let payload: serde_json::Value =
         serde_json::from_str(&extract_json_payload(&lint.stdout)).expect("lint JSON");

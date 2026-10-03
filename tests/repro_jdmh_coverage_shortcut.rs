@@ -39,7 +39,10 @@ fn br_cmd(cwd: &Path) -> Command {
 }
 
 fn run_ok(cwd: &Path, args: &[&str]) -> String {
-    let out = br_cmd(cwd).args(args).output().expect("spawn br");
+    let out = br_cmd(cwd)
+        .args(common::cli::gate_create_args(args.iter().copied()))
+        .output()
+        .expect("spawn br");
     assert!(
         out.status.success(),
         "br {args:?} failed: stdout={} stderr={}",

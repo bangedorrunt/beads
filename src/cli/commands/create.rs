@@ -480,7 +480,15 @@ pub fn create_issue_impl(
             "create requires -d/--description or --description-file (title alone is not a brief)",
         ));
     }
-    if args.verify.as_deref().is_none_or(|v| v.trim().is_empty()) {
+    // `--ac judgment` declares that acceptance is a human judgement rather than a
+    // runnable command, so such a bead has NO VERIFY by design. Demanding one
+    // anyway makes the flag unreachable: fail-closed create refuses the exact
+    // bead the caller is declaring. It satisfies the brief the same way
+    // `--verify` does. Parsed here so the gate below can consult it, and reused
+    // below so the value is only parsed once.
+    let declared_ac_shape = super::update::parse_ac_arg(args.ac.as_deref())?;
+    let declares_judgment_shape = declared_ac_shape == Some(crate::model::AcShape::Judgment);
+    if args.verify.as_deref().is_none_or(|v| v.trim().is_empty()) && !declares_judgment_shape {
         return Err(BeadsError::validation(
             "verify",
             "create requires --verify '<cmd>' (one runnable command that proves this bead done)",
@@ -497,7 +505,7 @@ pub fn create_issue_impl(
     }
     let ac_shape = super::update::resolve_ac_shape(
         args.verify.as_deref().is_some_and(|v| !v.trim().is_empty()),
-        super::update::parse_ac_arg(args.ac.as_deref())?,
+        declared_ac_shape,
     )?;
     // Parse/validate the governing agent context BEFORE any mutation so
     // invalid context leaves no issue row, event, dirty marker, or JSONL

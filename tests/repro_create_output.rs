@@ -25,8 +25,7 @@ fn test_create_json_output_is_single_object() {
     // Create issue
     let output = Command::new(bin)
         .current_dir(path)
-        .arg("create")
-        .arg("Single Object Check")
+        .args(common::cli::gate_create_args(["create", "Single Object Check"]))
         .arg("--json")
         .output()
         .expect("create issue");
@@ -64,13 +63,15 @@ fn test_create_dry_run_plain_output_is_line_oriented() {
     let output = Command::new(bin)
         .current_dir(path)
         .env("NO_COLOR", "1")
-        .arg("create")
-        .arg("Dry run output check")
-        .arg("--dry-run")
-        .arg("--type")
-        .arg("task")
-        .arg("--priority")
-        .arg("2")
+        .args(common::cli::gate_create_args([
+            "create",
+            "Dry run output check",
+            "--dry-run",
+            "--type",
+            "task",
+            "--priority",
+            "2",
+        ]))
         .output()
         .expect("create dry run");
 

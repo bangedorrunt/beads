@@ -794,10 +794,15 @@ impl TestWorkspace {
         let mut cmd = Command::new(&bin_path);
         cmd.current_dir(&self.root);
 
-        let args_vec: Vec<String> = args
+        let raw_args: Vec<String> = args
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
+        // Same create gate the `common::cli` runners apply. This harness is a
+        // second, independent funnel (TestWorkspace methods rather than the
+        // free functions), so without this its seeds are refused by
+        // fail-closed `br create` exactly as the other harness's were.
+        let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
         clear_inherited_br_env(&mut cmd);
@@ -865,10 +870,15 @@ impl TestWorkspace {
         let mut cmd = std::process::Command::new(binary);
         cmd.current_dir(&self.root);
 
-        let args_vec: Vec<String> = args
+        let raw_args: Vec<String> = args
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
+        // Same create gate the `common::cli` runners apply. This harness is a
+        // second, independent funnel (TestWorkspace methods rather than the
+        // free functions), so without this its seeds are refused by
+        // fail-closed `br create` exactly as the other harness's were.
+        let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
         cmd.env("NO_COLOR", "1");
@@ -1084,10 +1094,15 @@ impl ConformanceWorkspace {
         let mut cmd = Command::new(&bin_path);
         cmd.current_dir(cwd);
 
-        let args_vec: Vec<String> = args
+        let raw_args: Vec<String> = args
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
+        // Same create gate the `common::cli` runners apply. This harness is a
+        // second, independent funnel (TestWorkspace methods rather than the
+        // free functions), so without this its seeds are refused by
+        // fail-closed `br create` exactly as the other harness's were.
+        let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
         clear_inherited_br_env(&mut cmd);
@@ -1160,10 +1175,15 @@ impl ConformanceWorkspace {
         let mut cmd = Command::new(&bin_path);
         cmd.current_dir(cwd);
 
-        let args_vec: Vec<String> = args
+        let raw_args: Vec<String> = args
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
+        // Same create gate the `common::cli` runners apply. This harness is a
+        // second, independent funnel (TestWorkspace methods rather than the
+        // free functions), so without this its seeds are refused by
+        // fail-closed `br create` exactly as the other harness's were.
+        let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
         clear_inherited_br_env(&mut cmd);
@@ -1235,10 +1255,15 @@ impl ConformanceWorkspace {
         let mut cmd = std::process::Command::new(binary);
         cmd.current_dir(cwd);
 
-        let args_vec: Vec<String> = args
+        let raw_args: Vec<String> = args
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
+        // Same create gate the `common::cli` runners apply. This harness is a
+        // second, independent funnel (TestWorkspace methods rather than the
+        // free functions), so without this its seeds are refused by
+        // fail-closed `br create` exactly as the other harness's were.
+        let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
         cmd.env("NO_COLOR", "1");
@@ -1304,10 +1329,15 @@ impl ConformanceWorkspace {
         let mut cmd = std::process::Command::new(binary);
         cmd.current_dir(cwd);
 
-        let args_vec: Vec<String> = args
+        let raw_args: Vec<String> = args
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
+        // Same create gate the `common::cli` runners apply. This harness is a
+        // second, independent funnel (TestWorkspace methods rather than the
+        // free functions), so without this its seeds are refused by
+        // fail-closed `br create` exactly as the other harness's were.
+        let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
         cmd.envs(env_vars);

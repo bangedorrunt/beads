@@ -335,6 +335,31 @@ fn create_priority(args: &[OsString]) -> u8 {
 const HARNESS_BRIEF: &str =
     "e2e seed: harness-supplied brief, because br create is fail-closed";
 const HARNESS_VERIFY: &str = "br list";
+
+/// `--ac judgment` IS the declaration that this bead has no VERIFY command:
+/// the two are mutually exclusive by design (`--ac judgment conflicts with
+/// --verify`), and `resolve_ac_shape` derives the shape from verify presence.
+/// A caller that passes it is specifying the verify slot deliberately, so the
+/// gate must not fill it in.
+fn ac_shape_is_judgment(args: &[OsString]) -> bool {
+    let mut expect_value = false;
+    for arg in args {
+        let text = arg.as_os_str();
+        if expect_value {
+            expect_value = false;
+            if text == OsStr::new("judgment") {
+                return true;
+            }
+            continue;
+        }
+        if text == OsStr::new("--ac") {
+            expect_value = true;
+        } else if text == OsStr::new("--ac=judgment") {
+            return true;
+        }
+    }
+    false
+}
 const HARNESS_PRINCIPLE: &str = "prove-it-works — e2e seed; harness-supplied \
      citation, because br create is fail-closed at P<=2";
 
@@ -352,7 +377,20 @@ const HARNESS_PRINCIPLE: &str = "prove-it-works — e2e seed; harness-supplied \
 /// seed it did not set itself. Nothing asserts the refusal itself either —
 /// every e2e that mentions the message already passes `--description` — so
 /// there is no caller that needs to opt out.
-fn gate_create_args<I, S>(args: I) -> Vec<OsString>
+pub(crate) fn gate_create_args<I, S>(args: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    // Returned as String because `common::harness` logs the argv it ran and
+    // `log_command` takes `&[String]`; `Command::args` accepts either.
+    gate_create_args_os(args)
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect()
+}
+
+fn gate_create_args_os<I, S>(args: I) -> Vec<OsString>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -371,7 +409,7 @@ where
         args.push("--description".into());
         args.push(HARNESS_BRIEF.into());
     }
-    if !has_flag(&args, &["--verify"]) {
+    if !has_flag(&args, &["--verify"]) && !ac_shape_is_judgment(&args) {
         args.push("--verify".into());
         args.push(HARNESS_VERIFY.into());
     }

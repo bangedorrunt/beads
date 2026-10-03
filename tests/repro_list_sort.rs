@@ -20,16 +20,14 @@ fn test_list_sort_title_case_insensitive() {
     // "apple" (lowercase 'a')
     Command::new(assert_cmd::cargo::cargo_bin!("br"))
         .current_dir(path)
-        .arg("create")
-        .arg("apple")
+        .args(common::cli::gate_create_args(["create", "apple"]))
         .assert()
         .success();
 
     // "Banana" (uppercase 'B')
     Command::new(assert_cmd::cargo::cargo_bin!("br"))
         .current_dir(path)
-        .arg("create")
-        .arg("Banana")
+        .args(common::cli::gate_create_args(["create", "Banana"]))
         .assert()
         .success();
 
