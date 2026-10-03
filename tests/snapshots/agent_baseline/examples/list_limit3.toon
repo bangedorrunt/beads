@@ -1,59 +1,7 @@
-issues[3]:
-  - id: <ISSUE_ID>
-    ac_shape: checkable
-    blast: normal
-    deliverable: diff
-    revision: 1
-    title: Two
-    status: open
-    priority: 0
-    issue_type: bug
-    created_at: <TIMESTAMP>
-    created_by: <ACTOR>
-    updated_at: <TIMESTAMP>
-    source_repo: <SOURCE_REPO>
-    source_repo_path: <SOURCE_REPO>
-    compaction_level: 0
-    original_size: 0
-    dependency_count: 0
-    dependent_count: 0
-  - id: <ISSUE_ID>
-    ac_shape: checkable
-    blast: normal
-    deliverable: diff
-    revision: 1
-    title: Three
-    status: open
-    priority: 1
-    issue_type: feature
-    created_at: <TIMESTAMP>
-    created_by: <ACTOR>
-    updated_at: <TIMESTAMP>
-    source_repo: <SOURCE_REPO>
-    source_repo_path: <SOURCE_REPO>
-    compaction_level: 0
-    original_size: 0
-    dependency_count: 0
-    dependent_count: 0
-  - id: <ISSUE_ID>
-    ac_shape: checkable
-    blast: normal
-    deliverable: diff
-    revision: 1
-    title: One
-    description: Short desc
-    status: open
-    priority: 2
-    issue_type: task
-    created_at: <TIMESTAMP>
-    created_by: <ACTOR>
-    updated_at: <TIMESTAMP>
-    source_repo: <SOURCE_REPO>
-    source_repo_path: <SOURCE_REPO>
-    compaction_level: 0
-    original_size: 0
-    dependency_count: 0
-    dependent_count: 0
+issues[3]{id,verify,principles,ac_shape,blast,deliverable,revision,title,description,status,priority,issue_type,created_at,created_by,updated_at,source_repo,source_repo_path,compaction_level,original_size,dependency_count,dependent_count}:
+  <ISSUE_ID>,br list,"[{\"name\":\"prove-it-works\",\"decision\":\"e2e seed; harness-supplied citation, because br create is fail-closed at P<=2\"}]",checkable,normal,diff,1,Two,"e2e seed: harness-supplied brief, because br create is fail-closed",open,0,bug,<TIMESTAMP>,<ACTOR>,<TIMESTAMP>,<SOURCE_REPO>,<SOURCE_REPO>,0,0,0,0
+  <ISSUE_ID>,br list,"[{\"name\":\"prove-it-works\",\"decision\":\"e2e seed; harness-supplied citation, because br create is fail-closed at P<=2\"}]",checkable,normal,diff,1,Three,"e2e seed: harness-supplied brief, because br create is fail-closed",open,1,feature,<TIMESTAMP>,<ACTOR>,<TIMESTAMP>,<SOURCE_REPO>,<SOURCE_REPO>,0,0,0,0
+  <ISSUE_ID>,br list,"[{\"name\":\"prove-it-works\",\"decision\":\"e2e seed; harness-supplied citation, because br create is fail-closed at P<=2\"}]",checkable,normal,diff,1,One,Short desc,open,2,task,<TIMESTAMP>,<ACTOR>,<TIMESTAMP>,<SOURCE_REPO>,<SOURCE_REPO>,0,0,0,0
 total: 3
 limit: 3
 offset: 0

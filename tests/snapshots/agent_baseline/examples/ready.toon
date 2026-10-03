@@ -1,5 +1,50 @@
-issues[0]:
-total: 0
+issues[3]:
+  - created_at: <TIMESTAMP>
+    created_by: <ACTOR>
+    description: "e2e seed: harness-supplied brief, because br create is fail-closed"
+    id: <ISSUE_ID>
+    issue_type: bug
+    labels[0]:
+    pin: null
+    priority: 0
+    principles[1]{name,decision}:
+      prove-it-works,"e2e seed; harness-supplied citation, because br create is fail-closed at P<=2"
+    status: open
+    verify: br list
+    wave: null
+    title: Two
+    updated_at: <TIMESTAMP>
+  - created_at: <TIMESTAMP>
+    created_by: <ACTOR>
+    description: "e2e seed: harness-supplied brief, because br create is fail-closed"
+    id: <ISSUE_ID>
+    issue_type: feature
+    labels[0]:
+    pin: null
+    priority: 1
+    principles[1]{name,decision}:
+      prove-it-works,"e2e seed; harness-supplied citation, because br create is fail-closed at P<=2"
+    status: open
+    verify: br list
+    wave: null
+    title: Three
+    updated_at: <TIMESTAMP>
+  - created_at: <TIMESTAMP>
+    created_by: <ACTOR>
+    description: Short desc
+    id: <ISSUE_ID>
+    issue_type: task
+    labels[0]:
+    pin: null
+    priority: 2
+    principles[1]{name,decision}:
+      prove-it-works,"e2e seed; harness-supplied citation, because br create is fail-closed at P<=2"
+    status: open
+    verify: br list
+    wave: null
+    title: One
+    updated_at: <TIMESTAMP>
+total: 3
 limit: 0
 offset: 0
 has_more: false

@@ -1,10 +1,18 @@
 {
   "id": "<ISSUE_ID>",
+  "verify": "br list",
+  "principles": [
+    {
+      "name": "prove-it-works",
+      "decision": "e2e seed; harness-supplied citation, because br create is fail-closed at P<=2"
+    }
+  ],
   "ac_shape": "checkable",
   "blast": "normal",
   "deliverable": "diff",
   "revision": 1,
   "title": "Two",
+  "description": "e2e seed: harness-supplied brief, because br create is fail-closed",
   "status": "open",
   "priority": 0,
   "issue_type": "bug",

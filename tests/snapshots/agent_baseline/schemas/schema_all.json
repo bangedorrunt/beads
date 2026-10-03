@@ -1162,22 +1162,15 @@
       "$defs": {
         "IssueType": {
           "description": "Issue type category.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "task",
-                "bug",
-                "feature",
-                "epic",
-                "chore",
-                "docs",
-                "question"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "task",
+            "bug",
+            "feature",
+            "epic",
+            "chore",
+            "docs",
+            "question"
           ]
         },
         "Priority": {
@@ -1187,23 +1180,16 @@
         },
         "Status": {
           "description": "Issue lifecycle status.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "open",
-                "in_progress",
-                "blocked",
-                "deferred",
-                "draft",
-                "closed",
-                "tombstone",
-                "pinned"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "open",
+            "in_progress",
+            "blocked",
+            "deferred",
+            "draft",
+            "closed",
+            "tombstone",
+            "pinned"
           ]
         }
       }
@@ -1311,23 +1297,16 @@
         },
         "Status": {
           "description": "Issue lifecycle status.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "open",
-                "in_progress",
-                "blocked",
-                "deferred",
-                "draft",
-                "closed",
-                "tombstone",
-                "pinned"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "open",
+            "in_progress",
+            "blocked",
+            "deferred",
+            "draft",
+            "closed",
+            "tombstone",
+            "pinned"
           ]
         },
         "Priority": {
@@ -1337,22 +1316,15 @@
         },
         "IssueType": {
           "description": "Issue type category.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "task",
-                "bug",
-                "feature",
-                "epic",
-                "chore",
-                "docs",
-                "question"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "task",
+            "bug",
+            "feature",
+            "epic",
+            "chore",
+            "docs",
+            "question"
           ]
         },
         "CoordinationComment": {
@@ -2055,23 +2027,16 @@
         },
         "Status": {
           "description": "Issue lifecycle status.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "open",
-                "in_progress",
-                "blocked",
-                "deferred",
-                "draft",
-                "closed",
-                "tombstone",
-                "pinned"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "open",
+            "in_progress",
+            "blocked",
+            "deferred",
+            "draft",
+            "closed",
+            "tombstone",
+            "pinned"
           ]
         },
         "Priority": {
@@ -2081,22 +2046,15 @@
         },
         "IssueType": {
           "description": "Issue type category.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "task",
-                "bug",
-                "feature",
-                "epic",
-                "chore",
-                "docs",
-                "question"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "task",
+            "bug",
+            "feature",
+            "epic",
+            "chore",
+            "docs",
+            "question"
           ]
         },
         "CoordinationComment": {
@@ -3134,23 +3092,16 @@
         },
         "Status": {
           "description": "Issue lifecycle status.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "open",
-                "in_progress",
-                "blocked",
-                "deferred",
-                "draft",
-                "closed",
-                "tombstone",
-                "pinned"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "open",
+            "in_progress",
+            "blocked",
+            "deferred",
+            "draft",
+            "closed",
+            "tombstone",
+            "pinned"
           ]
         },
         "Priority": {
@@ -3160,22 +3111,15 @@
         },
         "IssueType": {
           "description": "Issue type category.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "task",
-                "bug",
-                "feature",
-                "epic",
-                "chore",
-                "docs",
-                "question"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "task",
+            "bug",
+            "feature",
+            "epic",
+            "chore",
+            "docs",
+            "question"
           ]
         },
         "Dependency": {
@@ -3230,26 +3174,19 @@
         },
         "DependencyType": {
           "description": "Dependency relationship type.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "blocks",
-                "parent-child",
-                "conditional-blocks",
-                "waits-for",
-                "related",
-                "discovered-from",
-                "replies-to",
-                "relates-to",
-                "duplicates",
-                "supersedes",
-                "caused-by"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "blocks",
+            "parent-child",
+            "conditional-blocks",
+            "waits-for",
+            "related",
+            "discovered-from",
+            "replies-to",
+            "relates-to",
+            "duplicates",
+            "supersedes",
+            "caused-by"
           ]
         },
         "Comment": {
@@ -3740,23 +3677,16 @@
         },
         "Status": {
           "description": "Issue lifecycle status.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "open",
-                "in_progress",
-                "blocked",
-                "deferred",
-                "draft",
-                "closed",
-                "tombstone",
-                "pinned"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "open",
+            "in_progress",
+            "blocked",
+            "deferred",
+            "draft",
+            "closed",
+            "tombstone",
+            "pinned"
           ]
         },
         "Priority": {
@@ -3766,22 +3696,15 @@
         },
         "IssueType": {
           "description": "Issue type category.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "task",
-                "bug",
-                "feature",
-                "epic",
-                "chore",
-                "docs",
-                "question"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "task",
+            "bug",
+            "feature",
+            "epic",
+            "chore",
+            "docs",
+            "question"
           ]
         },
         "Dependency": {
@@ -3836,26 +3759,19 @@
         },
         "DependencyType": {
           "description": "Dependency relationship type.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "blocks",
-                "parent-child",
-                "conditional-blocks",
-                "waits-for",
-                "related",
-                "discovered-from",
-                "replies-to",
-                "relates-to",
-                "duplicates",
-                "supersedes",
-                "caused-by"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "blocks",
+            "parent-child",
+            "conditional-blocks",
+            "waits-for",
+            "related",
+            "discovered-from",
+            "replies-to",
+            "relates-to",
+            "duplicates",
+            "supersedes",
+            "caused-by"
           ]
         },
         "Comment": {
@@ -4517,23 +4433,16 @@
         },
         "Status": {
           "description": "Issue lifecycle status.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "open",
-                "in_progress",
-                "blocked",
-                "deferred",
-                "draft",
-                "closed",
-                "tombstone",
-                "pinned"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "open",
+            "in_progress",
+            "blocked",
+            "deferred",
+            "draft",
+            "closed",
+            "tombstone",
+            "pinned"
           ]
         },
         "Priority": {
@@ -4543,22 +4452,15 @@
         },
         "IssueType": {
           "description": "Issue type category.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "task",
-                "bug",
-                "feature",
-                "epic",
-                "chore",
-                "docs",
-                "question"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "task",
+            "bug",
+            "feature",
+            "epic",
+            "chore",
+            "docs",
+            "question"
           ]
         },
         "Dependency": {
@@ -4613,26 +4515,19 @@
         },
         "DependencyType": {
           "description": "Dependency relationship type.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "blocks",
-                "parent-child",
-                "conditional-blocks",
-                "waits-for",
-                "related",
-                "discovered-from",
-                "replies-to",
-                "relates-to",
-                "duplicates",
-                "supersedes",
-                "caused-by"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "blocks",
+            "parent-child",
+            "conditional-blocks",
+            "waits-for",
+            "related",
+            "discovered-from",
+            "replies-to",
+            "relates-to",
+            "duplicates",
+            "supersedes",
+            "caused-by"
           ]
         },
         "Comment": {
@@ -4794,22 +4689,15 @@
       "$defs": {
         "IssueType": {
           "description": "Issue type category.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "task",
-                "bug",
-                "feature",
-                "epic",
-                "chore",
-                "docs",
-                "question"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "task",
+            "bug",
+            "feature",
+            "epic",
+            "chore",
+            "docs",
+            "question"
           ]
         },
         "Priority": {
@@ -4837,23 +4725,16 @@
         },
         "Status": {
           "description": "Issue lifecycle status.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "open",
-                "in_progress",
-                "blocked",
-                "deferred",
-                "draft",
-                "closed",
-                "tombstone",
-                "pinned"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "open",
+            "in_progress",
+            "blocked",
+            "deferred",
+            "draft",
+            "closed",
+            "tombstone",
+            "pinned"
           ]
         }
       }
@@ -4906,22 +4787,15 @@
       "$defs": {
         "IssueType": {
           "description": "Issue type category.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "task",
-                "bug",
-                "feature",
-                "epic",
-                "chore",
-                "docs",
-                "question"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "task",
+            "bug",
+            "feature",
+            "epic",
+            "chore",
+            "docs",
+            "question"
           ]
         },
         "Priority": {
@@ -4931,23 +4805,16 @@
         },
         "Status": {
           "description": "Issue lifecycle status.",
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "open",
-                "in_progress",
-                "blocked",
-                "deferred",
-                "draft",
-                "closed",
-                "tombstone",
-                "pinned"
-              ]
-            },
-            {
-              "type": "string"
-            }
+          "type": "string",
+          "enum": [
+            "open",
+            "in_progress",
+            "blocked",
+            "deferred",
+            "draft",
+            "closed",
+            "tombstone",
+            "pinned"
           ]
         }
       }
