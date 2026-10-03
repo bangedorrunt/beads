@@ -11,7 +11,7 @@
 
 #![allow(dead_code, clippy::similar_names)]
 
-use super::binary_discovery::{check_bd_version, discover_binaries};
+use super::binary_discovery::discover_binaries;
 use super::dataset_registry::{DatasetOverride, IsolatedDataset, KnownDataset};
 use super::harness::{
     CommandResult, ConformanceWorkspace as HarnessConformanceWorkspace, TestWorkspace,
@@ -915,7 +915,6 @@ impl BenchmarkRunner {
         let started_at = Utc::now().to_rfc3339();
         let mut all_runs: Vec<BenchmarkMetrics> = Vec::new();
         let mut notes: Vec<String> = Vec::new();
-        let include_bd = self.resolve_include_bd(&mut notes);
 
         let total_iterations = self.config.warmup_iterations + self.config.measured_iterations;
 
@@ -924,14 +923,8 @@ impl BenchmarkRunner {
             let is_warmup = i < self.config.warmup_iterations;
             let iteration = i + 1;
 
-            // Create fresh workspace(s) for each iteration
-            if include_bd {
-                if let Some(metrics) =
-                    self.run_benchmark_iteration_with_bd(scenario, iteration, is_warmup, &mut notes)
-                {
-                    all_runs.push(metrics);
-                }
-            } else if let Some(metrics) =
+            // Create a fresh workspace for each iteration
+            if let Some(metrics) =
                 self.run_benchmark_iteration_br_only(scenario, iteration, is_warmup, &mut notes)
             {
                 all_runs.push(metrics);
@@ -945,121 +938,10 @@ impl BenchmarkRunner {
             started_at,
             completed_at,
             total_iterations,
-            include_bd,
+            false,
             all_runs,
             notes,
         )
-    }
-
-    fn resolve_include_bd(&self, notes: &mut Vec<String>) -> bool {
-        if !self.config.include_bd {
-            return false;
-        }
-
-        match discover_binaries() {
-            Ok(binaries) => {
-                if let Some(bd) = binaries.bd {
-                    if let Err(err) = check_bd_version(&bd) {
-                        notes.push(format!("bd benchmarks disabled: {err}"));
-                        false
-                    } else {
-                        true
-                    }
-                } else {
-                    notes.push("bd benchmarks disabled: bd binary not found".to_string());
-                    false
-                }
-            }
-            Err(err) => {
-                notes.push(format!("bd benchmarks disabled: {err}"));
-                false
-            }
-        }
-    }
-
-    fn run_benchmark_iteration_with_bd(
-        &self,
-        scenario: &Scenario,
-        iteration: u32,
-        is_warmup: bool,
-        notes: &mut Vec<String>,
-    ) -> Option<BenchmarkMetrics> {
-        let mut workspace = HarnessConformanceWorkspace::new(
-            "benchmark",
-            &format!("{}_{}", scenario.name, iteration),
-        );
-
-        if let ScenarioSetup::Dataset(dataset) = scenario.setup
-            && let Err(err) = populate_conformance_with_dataset(&workspace, dataset)
-        {
-            notes.push(format!(
-                "Dataset setup failed for iteration {iteration}: {err}"
-            ));
-            return None;
-        }
-
-        if matches!(scenario.setup, ScenarioSetup::Fresh) {
-            let _ = workspace.init_both();
-        }
-
-        let setup_commands = collect_setup_commands(scenario);
-        for cmd in &setup_commands {
-            let label = format!("setup_{}", cmd.label);
-            run_conformance_command(&mut workspace, cmd, &label, BinaryTarget::Br);
-            run_conformance_command(&mut workspace, cmd, &label, BinaryTarget::Bd);
-        }
-
-        let br_result = run_conformance_command(
-            &mut workspace,
-            &scenario.test_command,
-            &scenario.test_command.label,
-            BinaryTarget::Br,
-        );
-        let br_duration_ms = br_result.duration.as_millis();
-
-        let bd_result = run_conformance_command(
-            &mut workspace,
-            &scenario.test_command,
-            &scenario.test_command.label,
-            BinaryTarget::Bd,
-        );
-        let bd_duration_ms = bd_result.duration.as_millis();
-
-        if !bd_result.success {
-            notes.push(format!(
-                "bd benchmark failed for iteration {iteration} (exit {})",
-                bd_result.exit_code
-            ));
-        }
-
-        let (db_size, jsonl_size) = if self.config.measure_io {
-            measure_io_sizes(&workspace.br_workspace)
-        } else {
-            (None, None)
-        };
-
-        let speedup_ratio = if br_duration_ms > 0 {
-            Some(bd_duration_ms as f64 / br_duration_ms as f64)
-        } else {
-            None
-        };
-
-        let metrics = BenchmarkMetrics {
-            br_duration_ms,
-            bd_duration_ms: Some(bd_duration_ms),
-            speedup_ratio,
-            br_peak_rss_bytes: None,
-            bd_peak_rss_bytes: None,
-            br_cpu_time_ms: None,
-            bd_cpu_time_ms: None,
-            db_size_bytes: db_size,
-            jsonl_size_bytes: jsonl_size,
-            iteration: Some(iteration),
-            is_warmup,
-        };
-
-        workspace.finish(br_result.success && bd_result.success);
-        Some(metrics)
     }
 
     fn run_benchmark_iteration_br_only(
@@ -1675,18 +1557,24 @@ impl ScenarioRunner {
     }
 
     #[allow(clippy::too_many_lines)]
+    /// oracle-retired: was a paired br-vs-bd conformance run that diffed the two
+    /// outputs through `compare_outputs`. With bd retired there is no second
+    /// binary to diff against, so a scenario is now judged purely on br's own
+    /// result and invariants. `ScenarioResult::bd_result` and
+    /// `comparison_result` stay in the struct and read `None`: they are part of
+    /// the public shape that scenario consumers match on, and removing them
+    /// would churn every reader for no coverage gain.
     fn run_conformance(&self, scenario: &Scenario) -> ScenarioResult {
-        let mut workspace = HarnessConformanceWorkspace::new("conformance", &scenario.name);
+        let mut workspace = HarnessConformanceWorkspace::new("scenario", &scenario.name);
 
-        // Initialize both (unless using a dataset)
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
-            let (br_init, bd_init) = workspace.init_both();
-            if !br_init.success || !bd_init.success {
+            let init = workspace.init();
+            if !init.success {
                 return ScenarioResult {
                     passed: false,
                     mode: self.mode,
-                    br_result: Some(br_init),
-                    bd_result: Some(bd_init),
+                    br_result: Some(init),
+                    bd_result: None,
                     comparison_result: None,
                     invariant_failures: vec!["Init failed".to_string()],
                     normalization_log: Vec::new(),
@@ -1714,27 +1602,16 @@ impl ScenarioRunner {
             None
         };
 
-        // Run setup commands on both
         let setup_commands = collect_setup_commands(scenario);
         for cmd in &setup_commands {
-            let br_setup = run_conformance_command(
-                &mut workspace,
-                cmd,
-                &format!("{}_setup", cmd.label),
-                BinaryTarget::Br,
-            );
-            let bd_setup = run_conformance_command(
-                &mut workspace,
-                cmd,
-                &format!("{}_setup", cmd.label),
-                BinaryTarget::Bd,
-            );
-            if !br_setup.success || !bd_setup.success {
+            let br_setup =
+                run_conformance_command(&mut workspace, cmd, &format!("{}_setup", cmd.label));
+            if !br_setup.success {
                 return ScenarioResult {
                     passed: false,
                     mode: self.mode,
                     br_result: Some(br_setup),
-                    bd_result: Some(bd_setup),
+                    bd_result: None,
                     comparison_result: None,
                     invariant_failures: vec![format!("Setup command {} failed", cmd.label)],
                     normalization_log: Vec::new(),
@@ -1743,44 +1620,17 @@ impl ScenarioRunner {
             }
         }
 
-        // Run test command on both
         let br_result = run_conformance_command(
             &mut workspace,
             &scenario.test_command,
             &scenario.test_command.label,
-            BinaryTarget::Br,
-        );
-        let bd_result = run_conformance_command(
-            &mut workspace,
-            &scenario.test_command,
-            &scenario.test_command.label,
-            BinaryTarget::Bd,
         );
 
-        // Compare outputs
-        let (comparison_result, normalization_log) = compare_outputs(
-            &br_result,
-            &bd_result,
-            &scenario.compare_mode,
-            &scenario.normalization,
-        );
-
-        // Check invariants (on br only)
         let mut invariant_failures = check_invariants(&scenario.invariants, &br_result);
         if let (true, Some(before)) = (scenario.invariants.path_confinement, baseline_snapshot) {
             let after = snapshot_workspace(&workspace.br_workspace);
             let violations = detect_path_confinement_violations(&before, &after);
             invariant_failures.extend(violations);
-        }
-
-        // Add comparison failure if any
-        if !comparison_result.matched {
-            invariant_failures.push(
-                comparison_result
-                    .diff_description
-                    .clone()
-                    .unwrap_or_else(|| "Output mismatch".to_string()),
-            );
         }
 
         let passed = invariant_failures.is_empty();
@@ -1790,10 +1640,10 @@ impl ScenarioRunner {
             passed,
             mode: self.mode,
             br_result: Some(br_result),
-            bd_result: Some(bd_result),
-            comparison_result: Some(comparison_result),
+            bd_result: None,
+            comparison_result: None,
             invariant_failures,
-            normalization_log,
+            normalization_log: Vec::new(),
             benchmark_metrics: None,
         }
     }
@@ -2600,38 +2450,17 @@ fn remap_workspace_evolution_logs(
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum BinaryTarget {
-    Br,
-    Bd,
-}
-
 fn run_conformance_command(
     workspace: &mut HarnessConformanceWorkspace,
     command: &ScenarioCommand,
     label: &str,
-    target: BinaryTarget,
 ) -> CommandResult {
-    match (target, command.env.is_empty(), command.stdin.as_ref()) {
-        (BinaryTarget::Br, true, None) => workspace.run_br(&command.args, label),
-        (BinaryTarget::Br, false, None) => {
-            workspace.run_br_env(&command.args, command.env.clone(), label)
-        }
-        (BinaryTarget::Br, true, Some(input)) => {
-            workspace.run_br_stdin(&command.args, input, label)
-        }
-        (BinaryTarget::Br, false, Some(input)) => {
+    match (command.env.is_empty(), command.stdin.as_ref()) {
+        (true, None) => workspace.run_br(&command.args, label),
+        (false, None) => workspace.run_br_env(&command.args, command.env.clone(), label),
+        (true, Some(input)) => workspace.run_br_stdin(&command.args, input, label),
+        (false, Some(input)) => {
             workspace.run_br_env_stdin(&command.args, command.env.clone(), input, label)
-        }
-        (BinaryTarget::Bd, true, None) => workspace.run_bd(&command.args, label),
-        (BinaryTarget::Bd, false, None) => {
-            workspace.run_bd_env(&command.args, command.env.clone(), label)
-        }
-        (BinaryTarget::Bd, true, Some(input)) => {
-            workspace.run_bd_stdin(&command.args, input, label)
-        }
-        (BinaryTarget::Bd, false, Some(input)) => {
-            workspace.run_bd_env_stdin(&command.args, command.env.clone(), input, label)
         }
     }
 }
@@ -2658,14 +2487,6 @@ fn populate_conformance_with_dataset(
     copy_dir_contents(
         isolated.root.join(".git"),
         workspace.br_workspace.join(".git"),
-    )?;
-    copy_dir_contents(
-        isolated.root.join(".beads"),
-        workspace.bd_workspace.join(".beads"),
-    )?;
-    copy_dir_contents(
-        isolated.root.join(".git"),
-        workspace.bd_workspace.join(".git"),
     )?;
     Ok(())
 }

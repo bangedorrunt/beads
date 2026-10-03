@@ -41,12 +41,6 @@ fn clear_inherited_br_env(cmd: &mut Command) {
     }
 }
 
-/// Get the path to the bd (Go beads) binary.
-/// Checks `BD_BINARY` environment variable first, falls back to "bd" for PATH lookup.
-fn bd_binary_path() -> String {
-    super::binary_discovery::bd_binary_name()
-}
-
 /// Global mutex for artifact logging to prevent interleaving
 fn artifact_mutex() -> &'static Mutex<()> {
     static MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
@@ -635,8 +629,8 @@ pub struct TestWorkspace {
 impl TestWorkspace {
     /// Create a new test workspace
     pub fn new(suite: &str, test: &str) -> Self {
-        let temp_dir = TempDir::new_in(super::cli::isolated_temp_root())
-            .expect("create isolated temp dir");
+        let temp_dir =
+            TempDir::new_in(super::cli::isolated_temp_root()).expect("create isolated temp dir");
         let root = temp_dir.path().to_path_buf();
         let beads_dir = root.join(".beads");
         let logger = ArtifactLogger::new(suite, test);
@@ -727,16 +721,6 @@ impl TestWorkspace {
         V: AsRef<OsStr>,
     {
         self.run_binary_full("br", args, env_vars, Some(input), label)
-    }
-
-    /// Run bd (Go beads) command
-    /// Respects `BD_BINARY` environment variable for custom binary path
-    pub fn run_bd<I, S>(&mut self, args: I, label: &str) -> CommandResult
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        self.run_system_binary(&bd_binary_path(), args, label)
     }
 
     /// Run any binary from the cargo build
@@ -982,7 +966,6 @@ impl TestWorkspace {
 pub struct ConformanceWorkspace {
     pub temp_dir: TempDir,
     pub br_workspace: PathBuf,
-    pub bd_workspace: PathBuf,
     pub log_dir: PathBuf,
     logger: ArtifactLogger,
 }
@@ -992,28 +975,23 @@ impl ConformanceWorkspace {
         let temp_dir = TempDir::new().expect("create temp dir");
         let root = temp_dir.path().to_path_buf();
         let br_workspace = root.join("br_workspace");
-        let bd_workspace = root.join("bd_workspace");
         let log_dir = root.join("logs");
         let logger = ArtifactLogger::new(suite, test);
 
         fs::create_dir_all(&br_workspace).expect("create br workspace");
-        fs::create_dir_all(&bd_workspace).expect("create bd workspace");
         fs::create_dir_all(&log_dir).expect("create log dir");
 
         Self {
             temp_dir,
             br_workspace,
-            bd_workspace,
             log_dir,
             logger,
         }
     }
 
-    /// Initialize both workspaces
-    pub fn init_both(&mut self) -> (CommandResult, CommandResult) {
-        let br_result = self.run_br(["init"], "init");
-        let bd_result = self.run_bd(["init"], "init");
-        (br_result, bd_result)
+    /// Initialize the workspace.
+    pub fn init(&mut self) -> CommandResult {
+        self.run_br(["init"], "init")
     }
 
     /// Run br command
@@ -1027,21 +1005,6 @@ impl ConformanceWorkspace {
             &self.br_workspace.clone(),
             args,
             &format!("br_{label}"),
-        )
-    }
-
-    /// Run bd command
-    /// Respects `BD_BINARY` environment variable for custom binary path
-    pub fn run_bd<I, S>(&mut self, args: I, label: &str) -> CommandResult
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        self.run_in_workspace_system(
-            &bd_binary_path(),
-            &self.bd_workspace.clone(),
-            args,
-            &format!("bd_{label}"),
         )
     }
 
@@ -1102,69 +1065,6 @@ impl ConformanceWorkspace {
             env_vars,
             Some(input),
             &format!("br_{label}"),
-        )
-    }
-
-    /// Run bd command with environment variables
-    /// Respects `BD_BINARY` environment variable for custom binary path
-    pub fn run_bd_env<I, S, E, K, V>(&mut self, args: I, env_vars: E, label: &str) -> CommandResult
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-        E: IntoIterator<Item = (K, V)>,
-        K: AsRef<OsStr>,
-        V: AsRef<OsStr>,
-    {
-        self.run_in_workspace_system_env(
-            &bd_binary_path(),
-            &self.bd_workspace.clone(),
-            args,
-            env_vars,
-            None,
-            &format!("bd_{label}"),
-        )
-    }
-
-    /// Run bd command with stdin input
-    /// Respects `BD_BINARY` environment variable for custom binary path
-    pub fn run_bd_stdin<I, S>(&mut self, args: I, input: &str, label: &str) -> CommandResult
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        self.run_in_workspace_system_env(
-            &bd_binary_path(),
-            &self.bd_workspace.clone(),
-            args,
-            std::iter::empty::<(String, String)>(),
-            Some(input),
-            &format!("bd_{label}"),
-        )
-    }
-
-    /// Run bd command with env vars and stdin
-    /// Respects `BD_BINARY` environment variable for custom binary path
-    pub fn run_bd_env_stdin<I, S, E, K, V>(
-        &mut self,
-        args: I,
-        env_vars: E,
-        input: &str,
-        label: &str,
-    ) -> CommandResult
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-        E: IntoIterator<Item = (K, V)>,
-        K: AsRef<OsStr>,
-        V: AsRef<OsStr>,
-    {
-        self.run_in_workspace_system_env(
-            &bd_binary_path(),
-            &self.bd_workspace.clone(),
-            args,
-            env_vars,
-            Some(input),
-            &format!("bd_{label}"),
         )
     }
 
