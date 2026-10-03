@@ -1,6 +1,6 @@
 use assert_cmd::Command;
 use serde_json::Value;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -271,6 +271,117 @@ where
     cmd.env("PATH", deduplicated_br_path());
 }
 
+/// Value-taking global flags. They precede the subcommand on the command
+/// line, so without this list their values would be read as the subcommand.
+const VALUE_TAKING_GLOBALS: [&str; 3] = ["--db", "--actor", "--lock-timeout"];
+
+/// The subcommand token: the first argument that is neither a flag nor the
+/// value of a value-taking global. `None` after a bare `--`.
+fn subcommand_token(args: &[OsString]) -> Option<String> {
+    let mut i = 0;
+    while i < args.len() {
+        let token = args[i].to_string_lossy().into_owned();
+        if token == "--" {
+            return None;
+        }
+        if VALUE_TAKING_GLOBALS.contains(&token.as_str()) {
+            i += 2;
+            continue;
+        }
+        if token.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        return Some(token);
+    }
+    None
+}
+
+/// Flag presence, comparing the `head` of `--flag=value` and `--flag`.
+fn has_flag(args: &[OsString], names: &[&str]) -> bool {
+    args.iter().any(|arg| {
+        let text = arg.to_string_lossy();
+        let head = text.split('=').next().unwrap_or("");
+        names.contains(&head)
+    })
+}
+
+/// Priority as a number. Absent means `Priority::default()`, which is
+/// `MEDIUM` (2) — the value that makes `--principle` mandatory.
+fn create_priority(args: &[OsString]) -> u8 {
+    let mut i = 0;
+    while i < args.len() {
+        let token = args[i].to_string_lossy().into_owned();
+        let raw = if token == "-p" || token == "--priority" {
+            i += 1;
+            args.get(i).map(|v| v.to_string_lossy().into_owned())
+        } else {
+            token
+                .strip_prefix("--priority=")
+                .map(str::to_string)
+        };
+        if let Some(raw) = raw {
+            // `-p` accepts `0`-`4` and `P0`-`P4`.
+            let digits = raw.trim().trim_start_matches(['P', 'p']);
+            if let Ok(priority) = digits.parse::<u8>() {
+                return priority;
+            }
+        }
+        i += 1;
+    }
+    2
+}
+
+const HARNESS_BRIEF: &str =
+    "e2e seed: harness-supplied brief, because br create is fail-closed";
+const HARNESS_VERIFY: &str = "br list";
+const HARNESS_PRINCIPLE: &str = "prove-it-works — e2e seed; harness-supplied \
+     citation, because br create is fail-closed at P<=2";
+
+/// Fill in whatever a `create` argv omits from the fail-closed brief schema.
+///
+/// `br create` refuses a bead with no `--description`, no `--verify`, or — at
+/// P<=2, the default priority — no `--principle`
+/// (`src/cli/commands/create.rs`). Several hundred test seeds predate that
+/// gate, and hand-maintaining three flags at every call site means the next
+/// change to the schema breaks all of them in the same way again. So the
+/// harness supplies the omissions and a seed states only the fields its own
+/// test cares about.
+///
+/// The values are inert: no test runs `verify` or reads `principles` off a
+/// seed it did not set itself. Nothing asserts the refusal itself either —
+/// every e2e that mentions the message already passes `--description` — so
+/// there is no caller that needs to opt out.
+fn gate_create_args<I, S>(args: I) -> Vec<OsString>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut args: Vec<OsString> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_os_string())
+        .collect();
+    if subcommand_token(&args).as_deref() != Some("create") {
+        return args;
+    }
+    if !has_flag(
+        &args,
+        &["--description", "-d", "--body", "--description-file"],
+    ) {
+        args.push("--description".into());
+        args.push(HARNESS_BRIEF.into());
+    }
+    if !has_flag(&args, &["--verify"]) {
+        args.push("--verify".into());
+        args.push(HARNESS_VERIFY.into());
+    }
+    if create_priority(&args) <= 2 && !has_flag(&args, &["--principle"]) {
+        args.push("--principle".into());
+        args.push(HARNESS_PRINCIPLE.into());
+    }
+    args
+}
+
 fn run_br_full_in_root<I, S, E, K, V>(
     root: &Path,
     log_dir: &Path,
@@ -291,7 +402,7 @@ where
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("br"));
     cmd.current_dir(root);
-    cmd.args(args);
+    cmd.args(gate_create_args(args));
     if preserve_smoke_env {
         clear_inherited_br_env_except(&mut cmd, SMOKE_PRESERVED_ENV_KEYS);
     } else {
