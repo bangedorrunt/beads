@@ -17351,6 +17351,13 @@ impl IssueUpdate {
             && self.workflow_policy_bypass_reason.is_none()
             && self.verify.is_none()
             && self.principles_append.is_empty()
+            // A clear with nothing to replace is still a real mutation: it
+            // empties the citation set. Omitting it here made
+            // `br update --clear-principles` read as "no updates specified",
+            // so the update never reached storage and the flag exited 0 having
+            // done nothing — the exact failure `bd_clear_principles` warns
+            // about in its own comments.
+            && !self.principles_clear
             && self.wave.is_none()
             && self.pin.is_none()
             && self.commit_sha.is_none()
@@ -17360,6 +17367,42 @@ impl IssueUpdate {
             && self.ac_shape.is_none()
             && self.expected_revision.is_none()
             && !self.expect_unassigned
+    }
+}
+
+#[cfg(test)]
+mod issue_update_is_empty_covers_principles_clear {
+    use super::IssueUpdate;
+
+    /// A clear with nothing to replace is a real mutation, so it must not read
+    /// as an empty update. `bd_clear_principles` exercises the model function
+    /// and stays green either way; this is the gate that actually dropped the
+    /// request, so it needs its own test that CAN go red.
+    #[test]
+    fn clearing_principles_alone_is_not_an_empty_update() {
+        let clear_only = IssueUpdate {
+            principles_clear: true,
+            ..IssueUpdate::default()
+        };
+        assert!(
+            !clear_only.is_empty(),
+            "--clear-principles alone must count as an update, or br update drops it and exits 0 having cleared nothing"
+        );
+    }
+
+    /// The guard is the new clause, not a blanket "always non-empty": an
+    /// update that touches nothing is still empty.
+    #[test]
+    fn a_genuinely_empty_update_is_still_empty() {
+        assert!(IssueUpdate::default().is_empty());
+        assert!(
+            IssueUpdate {
+                principles_clear: false,
+                ..IssueUpdate::default()
+            }
+            .is_empty(),
+            "principles_clear: false must not by itself make an update non-empty"
+        );
     }
 }
 
