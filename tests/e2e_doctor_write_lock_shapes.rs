@@ -41,6 +41,18 @@ fn doctor_fails_loudly_when_write_lock_is_a_directory() {
     let out = br_cmd(ws).arg("init").output().expect("br init spawned");
     assert!(out.status.success(), "br init failed: {out:?}");
 
+    // Control arm, same workspace: doctor succeeds while the lock node is
+    // still an ordinary file, so the failure below is attributable to the
+    // planted node alone. Without it the assertion pins only "doctor exited
+    // non-zero", which any unrelated breakage would also satisfy.
+    let healthy = br_cmd(ws).arg("doctor").output().expect("br doctor spawned");
+    assert!(
+        healthy.status.success(),
+        "control: doctor must succeed on a healthy workspace; stdout={} stderr={}",
+        String::from_utf8_lossy(&healthy.stdout),
+        String::from_utf8_lossy(&healthy.stderr),
+    );
+
     let lock = ws.join(".beads/.write.lock");
     if lock.exists() {
         fs::remove_file(&lock).expect("clear seeded lock file");
@@ -65,12 +77,50 @@ fn doctor_fails_loudly_when_write_lock_is_a_directory() {
     );
 }
 
+/// A create that clears every fail-closed create gate: description, verify,
+/// and a principles citation because the seed is P≤2 (`src/cli/commands/
+/// create.rs` refuses all three). `br create` became fail-closed after these
+/// e2e were written, so the seeds now carry their own gates.
+fn gated_create_args() -> Vec<&'static str> {
+    vec![
+        "create",
+        "should not land",
+        "--type",
+        "task",
+        "--priority",
+        "2",
+        "--description",
+        "e2e seed: this create must be refused by the lock node, not by validation",
+        "--verify",
+        "br doctor",
+        "--principle",
+        "prove-it-works — this seed must be refused by the lock node, not by the create gate",
+    ]
+}
+
 #[test]
 fn mutating_command_fails_loudly_when_write_lock_is_a_directory() {
     let tmp = TempDir::new().expect("tempdir");
     let ws = tmp.path();
     let out = br_cmd(ws).arg("init").output().expect("br init spawned");
     assert!(out.status.success(), "br init failed: {out:?}");
+
+    // Control arm, same workspace and same argv: the create succeeds while
+    // the lock node is still an ordinary file. This is what makes the
+    // assertion below non-vacuous — validation would refuse the very same
+    // command, so without this arm the test passed with the lock guard
+    // deleted and proved nothing about the lock at all.
+    let control = br_cmd(ws)
+        .args(gated_create_args())
+        .output()
+        .expect("br create spawned");
+    assert!(
+        control.status.success(),
+        "control: the gated create must succeed before the lock node is planted; \
+         stdout={} stderr={}",
+        String::from_utf8_lossy(&control.stdout),
+        String::from_utf8_lossy(&control.stderr),
+    );
 
     let lock = ws.join(".beads/.write.lock");
     if lock.exists() {
@@ -79,14 +129,7 @@ fn mutating_command_fails_loudly_when_write_lock_is_a_directory() {
     fs::create_dir(&lock).expect("plant directory lock node");
 
     let out = br_cmd(ws)
-        .args([
-            "create",
-            "should not land",
-            "--type",
-            "task",
-            "--priority",
-            "2",
-        ])
+        .args(gated_create_args())
         .output()
         .expect("br create spawned");
     assert!(
