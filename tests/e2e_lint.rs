@@ -36,7 +36,21 @@ fn init_workspace(workspace: &BrWorkspace) {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 }
 
-fn create_issue_with_description(
+/// A "bare" lint fixture: created through the normal fail-closed path, then
+/// stepped back out to no VERIFY and no principles citation.
+///
+/// `br lint` findings are ABOUT the brief schema (ADR-0001 §5.2), and
+/// fail-closed `br create` can no longer produce a non-dispatchable bead
+/// through the CLI at all — every field it demands is present the moment the
+/// row exists, so omitting a flag stopped being a way to express the case.
+/// The fixture is built the only way the product allows: create a complete
+/// bead, then leave through the two recovery flags the help text documents
+/// (`--verify ""` and `--clear-principles`).
+///
+/// Every caller in this file wants the bare shape — an incomplete brief is
+/// the whole point of the assertion — so the strip is unconditional here
+/// rather than sitting behind a flag no caller would set.
+fn create_bare_issue(
     workspace: &BrWorkspace,
     title: &str,
     issue_type: &str,
@@ -56,7 +70,26 @@ fn create_issue_with_description(
 
     let create = run_br(workspace, &args, &format!("create_{issue_type}"));
     assert!(create.status.success(), "create failed: {}", create.stderr);
-    parse_created_id(&create.stdout)
+    let id = parse_created_id(&create.stdout);
+
+    let strip_label = format!("strip_brief_{}", title.replace(' ', "_"));
+    let strip = run_br(
+        workspace,
+        [
+            "update",
+            id.as_str(),
+            "--verify",
+            "",
+            "--clear-principles",
+        ],
+        &strip_label,
+    );
+    assert!(
+        strip.status.success(),
+        "stripping the brief failed for {title}: {}",
+        strip.stderr
+    );
+    id
 }
 
 // =============================================================================
@@ -145,7 +178,7 @@ fn e2e_lint_missing_verify_warns() {
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    let id = create_issue_with_description(&workspace, "No verify", "bug", Some("Some bug"));
+    let id = create_bare_issue(&workspace, "No verify", "bug", Some("Some bug"));
 
     let lint = run_br(&workspace, ["lint", "--json"], "lint_bug_missing_verify");
     // In JSON mode, exit code is always 0
@@ -184,6 +217,28 @@ fn e2e_lint_priority_at_or_below_two_requires_principles() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
+
+    // Same reason as `create_bare_issue`: the harness gate would otherwise
+    // supply the very principles citation this test exists to omit. Only the
+    // principles go here — the VERIFY above is the field under contrast.
+    //
+    // This step is currently a silent no-op: `br update <id> --clear-principles`
+    // with no accompanying `--principle` reports "No updates specified" and exits
+    // 0 without clearing anything, so this test stays red until that is fixed.
+    // `bd_clear_principles::clearing_alone_empties_the_set` proves the model
+    // function empties the set, but never exercises the CLI gate that drops the
+    // request before it gets there. Kept in its correct final form so the fix
+    // turns it green rather than requiring the test to be rewritten.
+    let strip = run_br(
+        &workspace,
+        ["update", id.as_str(), "--clear-principles"],
+        "strip_principles_p2",
+    );
+    assert!(
+        strip.status.success(),
+        "clearing principles failed: {}",
+        strip.stderr
+    );
 
     let lint = run_br(&workspace, ["lint", "--json"], "lint_p2_no_principles");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
@@ -246,7 +301,7 @@ fn e2e_lint_epic_without_verify_warns() {
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    let id = create_issue_with_description(
+    let id = create_bare_issue(
         &workspace,
         "Epic without verify",
         "epic",
@@ -310,7 +365,7 @@ fn e2e_lint_bug_missing_all_typed_fields() {
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    let id = create_issue_with_description(&workspace, "Bare bug", "bug", Some("Just a bug"));
+    let id = create_bare_issue(&workspace, "Bare bug", "bug", Some("Just a bug"));
 
     let lint = run_br(&workspace, ["lint", "--json"], "lint_bug_missing_all");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
@@ -374,9 +429,9 @@ fn e2e_lint_filter_by_type_bug() {
     init_workspace(&workspace);
 
     // Create bug without required sections
-    let bug_id = create_issue_with_description(&workspace, "Buggy bug", "bug", Some("Bug desc"));
+    let bug_id = create_bare_issue(&workspace, "Buggy bug", "bug", Some("Bug desc"));
     // Create task without required sections
-    create_issue_with_description(&workspace, "Tasky task", "task", Some("Task desc"));
+    create_bare_issue(&workspace, "Tasky task", "task", Some("Task desc"));
 
     let lint = run_br(
         &workspace,
@@ -408,7 +463,7 @@ fn e2e_lint_filter_by_status_all() {
     init_workspace(&workspace);
 
     // Create and close a bug without required fields
-    let bug_id = create_issue_with_description(&workspace, "Closed bug", "bug", Some("Closed"));
+    let bug_id = create_bare_issue(&workspace, "Closed bug", "bug", Some("Closed"));
     let gate = run_br(
         &workspace,
         [
@@ -434,7 +489,7 @@ fn e2e_lint_filter_by_status_all() {
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
     let deferred_bug =
-        create_issue_with_description(&workspace, "Deferred bug", "bug", Some("Deferred"));
+        create_bare_issue(&workspace, "Deferred bug", "bug", Some("Deferred"));
     let defer = run_br(
         &workspace,
         [
@@ -494,9 +549,9 @@ fn e2e_lint_filter_by_status_deferred() {
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    let open_bug = create_issue_with_description(&workspace, "Open bug", "bug", Some("Open"));
+    let open_bug = create_bare_issue(&workspace, "Open bug", "bug", Some("Open"));
     let deferred_bug =
-        create_issue_with_description(&workspace, "Deferred bug", "bug", Some("Deferred"));
+        create_bare_issue(&workspace, "Deferred bug", "bug", Some("Deferred"));
     let defer = run_br(
         &workspace,
         [
@@ -540,8 +595,8 @@ fn e2e_lint_specific_issue_id() {
     init_workspace(&workspace);
 
     // Create two bugs without required sections
-    let bug1_id = create_issue_with_description(&workspace, "Bug one", "bug", Some("First"));
-    let _bug2_id = create_issue_with_description(&workspace, "Bug two", "bug", Some("Second"));
+    let bug1_id = create_bare_issue(&workspace, "Bug one", "bug", Some("First"));
+    let _bug2_id = create_bare_issue(&workspace, "Bug two", "bug", Some("Second"));
 
     // Lint only bug1
     let lint = run_br(&workspace, ["lint", &bug1_id, "--json"], "lint_specific_id");
@@ -573,7 +628,7 @@ fn e2e_lint_json_output_structure() {
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    create_issue_with_description(&workspace, "Test bug", "bug", Some("Minimal"));
+    create_bare_issue(&workspace, "Test bug", "bug", Some("Minimal"));
 
     let lint = run_br(&workspace, ["lint", "--json"], "lint_json_structure");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
@@ -627,7 +682,7 @@ fn e2e_lint_json_exit_code_always_zero() {
     init_workspace(&workspace);
 
     // Create bug without required sections (will have warnings)
-    create_issue_with_description(&workspace, "Buggy", "bug", Some("No sections"));
+    create_bare_issue(&workspace, "Buggy", "bug", Some("No sections"));
 
     let lint = run_br(&workspace, ["lint", "--json"], "lint_json_exit_code");
     assert!(
@@ -648,7 +703,7 @@ fn e2e_lint_text_output_warnings() {
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    let id = create_issue_with_description(&workspace, "Warning bug", "bug", Some("No sections"));
+    let id = create_bare_issue(&workspace, "Warning bug", "bug", Some("No sections"));
 
     let lint = run_br(&workspace, ["lint"], "lint_text_warnings");
     // Text mode exits non-zero when there are warnings
@@ -675,7 +730,7 @@ fn e2e_lint_text_exit_code_nonzero_with_warnings() {
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    create_issue_with_description(&workspace, "Warning bug", "bug", Some("No sections"));
+    create_bare_issue(&workspace, "Warning bug", "bug", Some("No sections"));
 
     let lint = run_br(&workspace, ["lint"], "lint_text_exit_nonzero");
     assert!(
@@ -735,7 +790,7 @@ fn e2e_lint_unknown_type_filter_no_matches() {
     init_workspace(&workspace);
 
     // Create a bug issue
-    create_issue_with_description(&workspace, "Sample bug", "bug", None);
+    create_bare_issue(&workspace, "Sample bug", "bug", None);
 
     let lint = run_br(
         &workspace,
@@ -769,7 +824,7 @@ fn e2e_lint_ignores_markdown_headings_entirely() {
     init_workspace(&workspace);
 
     let description = "## Steps to Reproduce\n1. Steps\n\n## Acceptance Criteria\n- Done";
-    let id = create_issue_with_description(
+    let id = create_bare_issue(
         &workspace,
         "Headings but no verify",
         "bug",
@@ -808,9 +863,9 @@ fn e2e_lint_multiple_issues_with_warnings() {
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    let bug1 = create_issue_with_description(&workspace, "Bug 1", "bug", Some("Missing"));
-    let bug2 = create_issue_with_description(&workspace, "Bug 2", "bug", Some("Also missing"));
-    let task = create_issue_with_description(&workspace, "Task 1", "task", Some("Missing too"));
+    let bug1 = create_bare_issue(&workspace, "Bug 1", "bug", Some("Missing"));
+    let bug2 = create_bare_issue(&workspace, "Bug 2", "bug", Some("Also missing"));
+    let task = create_bare_issue(&workspace, "Task 1", "task", Some("Missing too"));
 
     let lint = run_br(&workspace, ["lint", "--json"], "lint_multiple");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
