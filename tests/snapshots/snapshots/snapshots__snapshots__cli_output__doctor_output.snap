@@ -27,6 +27,7 @@ OK routes.targets: No local or town routes.jsonl present (route targets are opti
 OK startup_cache.health
 OK sync.merge_pending: No pending sync merge requires artifact reconciliation
 OK gate.verdict_orphans: All 0 ID-REDACTED issue(s) have a matching gates.jsonl PASS row
+OK draft.stale: No stale drafts (nothing untouched 7+ days)
 OK permissions.jsonl_world_writable
 OK jsonl_crlf
 OK jsonl_bom

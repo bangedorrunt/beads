@@ -1,16 +1,23 @@
 ---
 source: tests/snapshots/json_output.rs
-assertion_line: 814
 expression: SnapshotJson(&normalized)
 ---
 [
   {
     "id": "ISSUE_ID",
+    "verify": "br list",
+    "principles": [
+      {
+        "name": "prove-it-works",
+        "decision": "e2e seed; harness-supplied citation, because br create is fail-closed at P<=2"
+      }
+    ],
     "ac_shape": "checkable",
     "blast": "normal",
     "deliverable": "diff",
     "revision": 1,
     "title": "First detailed issue",
+    "description": "e2e seed: harness-supplied brief, because br create is fail-closed",
     "status": "open",
     "priority": 2,
     "issue_type": "task",
@@ -24,11 +31,19 @@ expression: SnapshotJson(&normalized)
   },
   {
     "id": "ISSUE_ID",
+    "verify": "br list",
+    "principles": [
+      {
+        "name": "prove-it-works",
+        "decision": "e2e seed; harness-supplied citation, because br create is fail-closed at P<=2"
+      }
+    ],
     "ac_shape": "checkable",
     "blast": "normal",
     "deliverable": "diff",
     "revision": 1,
     "title": "Second detailed issue",
+    "description": "e2e seed: harness-supplied brief, because br create is fail-closed",
     "status": "open",
     "priority": 2,
     "issue_type": "task",

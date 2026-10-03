@@ -1,17 +1,24 @@
 ---
 source: tests/snapshots/json_output.rs
-assertion_line: 351
 expression: SnapshotJson(&normalize_json(&json))
 ---
 {
   "issues": [
     {
       "id": "ISSUE_ID",
+      "verify": "br list",
+      "principles": [
+        {
+          "name": "prove-it-works",
+          "decision": "e2e seed; harness-supplied citation, because br create is fail-closed at P<=2"
+        }
+      ],
       "ac_shape": "checkable",
       "blast": "normal",
       "deliverable": "diff",
       "revision": 1,
       "title": "Search target",
+      "description": "e2e seed: harness-supplied brief, because br create is fail-closed",
       "status": "open",
       "priority": 2,
       "issue_type": "task",
@@ -29,5 +36,6 @@ expression: SnapshotJson(&normalize_json(&json))
   "total": 1,
   "limit": 50,
   "offset": 0,
-  "has_more": false
+  "has_more": false,
+  "hidden_closed_count": 0
 }

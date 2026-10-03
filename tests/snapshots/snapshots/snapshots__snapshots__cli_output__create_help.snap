@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots/cli_output.rs
-assertion_line: 49
 expression: normalize_output(&output.stdout)
 ---
 Create a new issue
@@ -25,7 +24,7 @@ Options:
           Priority (0-4 or P0-P4)
 
   -d, --description <DESCRIPTION>
-          Description
+          Description (required — title alone is not a brief)
 
           [alias: --body]
 
@@ -47,7 +46,7 @@ Options:
           Parent issue ID (creates ID-REDACTED dep)
 
       --deps <DEPS>
-          Dependencies (format: type:id,type:id)
+          Dependencies (format: type:id,type:id; `depends`, `depends-on`, and `blocked-by` are aliases for `blocks`)
 
   -e, --estimate <ESTIMATE>
           Time estimate in minutes
@@ -78,10 +77,10 @@ Options:
           Accepts the same forms as `br update --ID-REDACTED`: inline JSON, `@path/to/file.json`, or `@path/to/file.yaml` (normalized to JSON). An empty string leaves the field unset. Invalid context is rejected before any issue, event, or JSONL record is created.
 
       --verify <CMD>
-          VERIFY command that proves this bead done (single line)
+          VERIFY command that proves this bead done (required; single line)
 
       --principle <NAME — DECISION>
-          Cite an engineering principle: 'name — decision' (repeatable). The name must be ID-REDACTED; the decision is the concrete choice it changed on this bead
+          Cite an engineering principle: 'name — decision' (required when priority ≤ 2; repeatable). The name must be ID-REDACTED; the decision is the concrete choice it changed on this bead
 
       --wave <N>
           Wave index this bead belongs to
@@ -129,7 +128,7 @@ Options:
           [env: BR_MODEL=]
 
       --db <DB>
-          Database path (ID-REDACTED .beads/*.db if not set)
+          Database path (ID-REDACTED .beads/*.db if not set; env: BEADS_DB)
 
       --actor <ACTOR>
           Actor name for audit trail

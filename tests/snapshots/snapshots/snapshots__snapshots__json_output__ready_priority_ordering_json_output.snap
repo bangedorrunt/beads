@@ -1,11 +1,74 @@
 ---
 source: tests/snapshots/json_output.rs
-assertion_line: 766
 expression: SnapshotJson(&normalized)
 ---
 {
-  "issues": [],
-  "total": 0,
+  "issues": [
+    {
+      "created_at": "TIMESTAMP",
+      "created_by": "ACTOR",
+      "description": "e2e seed: harness-supplied brief, because br create is fail-closed",
+      "id": "ISSUE_ID",
+      "issue_type": "task",
+      "labels": [],
+      "pin": null,
+      "priority": 1,
+      "principles": [
+        {
+          "name": "prove-it-works",
+          "decision": "e2e seed; harness-supplied citation, because br create is fail-closed at P<=2"
+        }
+      ],
+      "status": "open",
+      "verify": "br list",
+      "wave": null,
+      "title": "Urgent ready task",
+      "updated_at": "TIMESTAMP"
+    },
+    {
+      "created_at": "TIMESTAMP",
+      "created_by": "ACTOR",
+      "description": "e2e seed: harness-supplied brief, because br create is fail-closed",
+      "id": "ISSUE_ID",
+      "issue_type": "task",
+      "labels": [],
+      "pin": null,
+      "priority": 3,
+      "principles": [
+        {
+          "name": "prove-it-works",
+          "decision": "e2e seed; harness-supplied citation, because br create is fail-closed at P<=2"
+        }
+      ],
+      "status": "open",
+      "verify": "br list",
+      "wave": null,
+      "title": "Backlog ready task",
+      "updated_at": "TIMESTAMP"
+    },
+    {
+      "created_at": "TIMESTAMP",
+      "created_by": "ACTOR",
+      "description": "e2e seed: harness-supplied brief, because br create is fail-closed",
+      "id": "ISSUE_ID",
+      "issue_type": "task",
+      "labels": [],
+      "pin": null,
+      "priority": 2,
+      "principles": [
+        {
+          "name": "prove-it-works",
+          "decision": "e2e seed; harness-supplied citation, because br create is fail-closed at P<=2"
+        }
+      ],
+      "status": "open",
+      "verify": "br list",
+      "wave": null,
+      "title": "Normal ready task",
+      "updated_at": "TIMESTAMP"
+    }
+  ],
+  "total": 3,
   "limit": 0,
   "offset": 0,
   "has_more": false
