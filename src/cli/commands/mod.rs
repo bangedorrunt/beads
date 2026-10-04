@@ -34,6 +34,7 @@ pub mod hold;
 pub mod info;
 pub mod init;
 pub mod label;
+pub mod land;
 pub mod lint;
 pub mod list;
 pub mod orphans;

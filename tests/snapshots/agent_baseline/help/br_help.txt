@@ -25,6 +25,7 @@ Commands:
   info          Show diagnostic metadata about the workspace
   init          Initialize a beads workspace
   label         Manage labels
+  land          Land a bead: record the verdict gate, close it, and name the remaining ceremony steps (or run them behind --release-leases / --sync)
   lint          Check issues for missing template sections
   list          List issues
   orphans       List orphan issues (referenced in commits but open)

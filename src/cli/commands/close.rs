@@ -55,6 +55,9 @@ pub struct CloseArgs {
     pub repo: Option<String>,
     /// Expected issue revision for optimistic-concurrency protection.
     pub expected_revision: Option<u64>,
+    /// Report what a close would need (gate row, sha citation, bindings)
+    /// without mutating anything (`br close --dry-run`).
+    pub dry_run: bool,
 }
 
 impl From<&CliCloseArgs> for CloseArgs {
@@ -74,6 +77,7 @@ impl From<&CliCloseArgs> for CloseArgs {
             commit_sha: cli.commit_sha.clone(),
             repo: cli.repo.clone(),
             expected_revision: cli.expected_revision,
+            dry_run: cli.dry_run,
         }
     }
 }
@@ -906,6 +910,12 @@ pub fn execute_with_args(
     // a misuse of the bypass flag never silently slips past policy gates.
     validate_bypass_args(args)?;
 
+    // `--dry-run` is a read-only report of the same preconditions the live
+    // close evaluates: no writes, no lock, no gate rows.
+    if args.dry_run {
+        return preview_close(args, use_json || ctx.is_json(), cli, ctx);
+    }
+
     let beads_dir = config::discover_beads_dir_with_cli(cli)?;
     let mut target_inputs = args.ids.clone();
     if target_inputs.is_empty() {
@@ -1113,6 +1123,17 @@ pub fn execute_with_storage_ctx(
     let use_structured_output = use_json || ctx.is_json() || ctx.is_toon();
     validate_bypass_args(args)?;
 
+    if args.dry_run {
+        return preview_close_with_storage(
+            args,
+            use_json || ctx.is_json(),
+            cli,
+            ctx,
+            beads_dir,
+            storage_ctx,
+        );
+    }
+
     let mut target_inputs = args.ids.clone();
     if target_inputs.is_empty() {
         let last_touched = crate::util::get_last_touched_id(beads_dir);
@@ -1137,6 +1158,276 @@ pub fn execute_with_storage_ctx(
     };
     let execution = run_close_core(&local_args, cli, ctx, beads_dir, storage_ctx, true)?;
     finish_close_execution(args, use_structured_output, ctx, beads_dir, execution)
+}
+
+/// Read-only close preview (`br close --dry-run`): name every missing
+/// precondition using the SAME resolvers and evaluators the live close uses,
+/// so the preview cannot bless what the close will refuse.
+fn preview_close(
+    args: &CloseArgs,
+    use_json: bool,
+    cli: &config::CliOverrides,
+    ctx: &OutputContext,
+) -> Result<()> {
+    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+    let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+    preview_close_with_storage(args, use_json, cli, ctx, &beads_dir, &storage_ctx)
+}
+
+/// One issue's read-only close preview row.
+#[derive(Debug, Serialize)]
+pub(crate) struct CloseDryRunIssue {
+    pub(crate) id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) from: Option<String>,
+    pub(crate) to: String,
+    pub(crate) would_close: bool,
+    pub(crate) missing: Vec<String>,
+    pub(crate) notes: Vec<String>,
+}
+
+/// Whole-command preview payload (`br close --dry-run --json`).
+#[derive(Debug, Serialize)]
+pub(crate) struct CloseDryRunReport {
+    pub(crate) dry_run: bool,
+    pub(crate) would_close: bool,
+    pub(crate) issues: Vec<CloseDryRunIssue>,
+}
+
+fn preview_close_with_storage(
+    args: &CloseArgs,
+    use_json: bool,
+    cli: &config::CliOverrides,
+    ctx: &OutputContext,
+    beads_dir: &Path,
+    storage_ctx: &config::OpenStorageResult,
+) -> Result<()> {
+    let report = preview_close_report(args, cli, beads_dir, storage_ctx)?;
+    render_close_preview(ctx, use_json, &report);
+    Ok(())
+}
+
+fn render_close_preview(ctx: &OutputContext, use_json: bool, report: &CloseDryRunReport) {
+    if ctx.is_toon() {
+        ctx.toon(report);
+    } else if use_json {
+        ctx.json_pretty(report);
+    } else {
+        for issue in &report.issues {
+            let from = issue.from.as_deref().unwrap_or("<unknown>");
+            let verdict = if issue.would_close {
+                "would close"
+            } else {
+                "would refuse"
+            };
+            ctx.print_line(&format!(
+                "close --dry-run {} ({from} -> {}): {verdict}",
+                sanitize_terminal_inline(&issue.id),
+                sanitize_terminal_inline(&issue.to),
+            ));
+            for item in &issue.missing {
+                ctx.print_line(&format!("  missing: {}", sanitize_terminal_inline(item)));
+            }
+            for note in &issue.notes {
+                ctx.print_line(&format!("  note: {}", sanitize_terminal_inline(note)));
+            }
+        }
+    }
+}
+
+/// Build the read-only close preview without rendering it, for callers that
+/// compose the report into their own output (`br land --dry-run`).
+pub(crate) fn preview_close_report(
+    args: &CloseArgs,
+    cli: &config::CliOverrides,
+    beads_dir: &Path,
+    storage_ctx: &config::OpenStorageResult,
+) -> Result<CloseDryRunReport> {
+    let config_layer = storage_ctx.load_config(cli)?;
+    let actor = config::resolve_actor(&config_layer);
+    let id_config = config::id_config_from_layer(&config_layer);
+    let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
+
+    let mut target_inputs = args.ids.clone();
+    if target_inputs.is_empty() {
+        let last_touched = crate::util::get_last_touched_id(beads_dir);
+        if !last_touched.is_empty() {
+            target_inputs.push(last_touched);
+        }
+    }
+    if target_inputs.is_empty() {
+        return Err(BeadsError::validation(
+            "ids",
+            "no issue IDs provided and no last-touched issue",
+        ));
+    }
+    let resolved_ids = resolve_issue_ids(&storage_ctx.storage, &resolver, &target_inputs)?;
+
+    let policy_doc = close_policy::load_for_beads_dir(beads_dir)?;
+    let fail_closed_default = !beads_dir.join(close_policy::POLICY_FILE_NAME).exists()
+        || close_policy::workflow_gating_unconfigured(&policy_doc.workflow);
+    let search_dirs = sha_search_dirs(
+        args.repo.as_deref().map(Path::new),
+        beads_dir,
+        &config_layer,
+    );
+    let sha_arg = args
+        .commit_sha
+        .as_deref()
+        .map(str::trim)
+        .filter(|sha| !sha.is_empty());
+
+    let preview_ctx = ClosePreviewContext {
+        args,
+        policy: &policy_doc.close_policy,
+        workflow: &policy_doc.workflow,
+        fail_closed_default,
+        search_dirs: &search_dirs,
+        sha_arg,
+        actor: &actor,
+    };
+    let mut issues: Vec<CloseDryRunIssue> = Vec::with_capacity(resolved_ids.len());
+    for id in resolved_ids {
+        issues.push(preview_one_issue(
+            &preview_ctx,
+            &storage_ctx.storage,
+            id,
+        )?);
+    }
+
+    Ok(CloseDryRunReport {
+        dry_run: true,
+        would_close: issues.iter().all(|issue| issue.would_close),
+        issues,
+    })
+}
+
+/// Shared, read-only inputs to one issue's close preview.
+struct ClosePreviewContext<'a> {
+    args: &'a CloseArgs,
+    policy: &'a ClosePolicy,
+    workflow: &'a crate::close_policy::Workflow,
+    fail_closed_default: bool,
+    search_dirs: &'a [PathBuf],
+    sha_arg: Option<&'a str>,
+    actor: &'a str,
+}
+
+/// Preview one issue: status, sha citation, and the exact policy evaluator
+/// the live close runs (read-only by construction).
+fn preview_one_issue(
+    ctx: &ClosePreviewContext<'_>,
+    storage: &SqliteStorage,
+    id: String,
+) -> Result<CloseDryRunIssue> {
+    let mut missing: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    let Some(issue) = storage.get_issue(&id)? else {
+        return Ok(CloseDryRunIssue {
+            id,
+            from: None,
+            to: "closed".to_string(),
+            would_close: false,
+            missing: vec!["issue not found".to_string()],
+            notes,
+        });
+    };
+    let from = issue.status.as_str().to_string();
+    if issue.status.is_terminal() {
+        missing.push(format!("already {from}"));
+    }
+    if ctx.args.bypass_policy {
+        notes.push("bypass: policy gates skipped".to_string());
+        if std::env::var("BR_OPERATOR").as_deref() != Ok("1") {
+            missing.push(
+                "bypass: --bypass-policy requires BR_OPERATOR=1 in the environment \
+                 (ADR-0001 §5.3)"
+                    .to_string(),
+            );
+        }
+    } else if let Some(sha) = ctx.sha_arg {
+        match validate_close_sha(sha, &id, ctx.search_dirs) {
+            Ok(ShaVerdict::Cited { repo }) => notes.push(format!(
+                "sha citation: {sha} cites {id} in {}",
+                repo.display()
+            )),
+            Ok(ShaVerdict::Unresolvable) => missing.push(format!(
+                "sha citation: {sha} resolves in no searched repo citing {id} (the live \
+                 close warns rather than fails; pass --repo <path> when the work repo \
+                 lives elsewhere)"
+            )),
+            Err(error) => missing.push(format!("sha citation: {error}")),
+        }
+    } else {
+        missing.push(
+            "--commit-sha <bare full 40-hex sha> (the commit message must cite the bead)"
+                .to_string(),
+        );
+    }
+
+    let evaluated = evaluate_close_policy(
+        &CloseGateInputs {
+            policy: ctx.policy,
+            workflow: ctx.workflow,
+            fail_closed_default: ctx.fail_closed_default,
+        },
+        storage,
+        &id,
+        &issue,
+        ctx.args,
+        ctx.actor,
+    )?;
+    if let Some(verdict) = &evaluated.close_verdict {
+        notes.push(format!("binding: verdict '{verdict}' authorizes the close"));
+    }
+    if !evaluated.report_artifacts.is_empty() {
+        notes.push(format!(
+            "report close: cited artifacts bind ({})",
+            evaluated.report_artifacts.join(", ")
+        ));
+    }
+    for violation in &evaluated.violations {
+        missing.push(violation.message.clone());
+    }
+
+    let would_close = missing.is_empty();
+    Ok(CloseDryRunIssue {
+        id,
+        from: Some(from),
+        to: "closed".to_string(),
+        would_close,
+        missing,
+        notes,
+    })
+}
+
+/// Outcome of a close performed for the land ceremony: no rendering, just
+/// the closed/skipped rows, so `br land` can print one document.
+pub(crate) struct LandCloseOutcome {
+    pub(crate) closed: Vec<ClosedIssue>,
+    pub(crate) skipped: Vec<SkippedIssue>,
+}
+
+/// Run the close core for `br land` without rendering (and without auto-flush
+/// of its own: main's mutating-command flush still publishes the change).
+pub(crate) fn execute_land_close(
+    args: &CloseArgs,
+    cli: &config::CliOverrides,
+    ctx: &OutputContext,
+    beads_dir: &Path,
+) -> Result<LandCloseOutcome> {
+    let routed_write_lock =
+        acquire_routed_workspace_write_lock(beads_dir, false, cli.lock_timeout)?;
+    let mut route_cli = cli.clone();
+    routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
+    let cli = &route_cli;
+    let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
+    let execution = run_close_core(args, cli, ctx, beads_dir, &mut storage_ctx, false)?;
+    Ok(LandCloseOutcome {
+        closed: execution.closed,
+        skipped: execution.skipped,
+    })
 }
 
 /// Render the per-issue skip reasons for the terminal `NothingToDo` error.
@@ -1837,6 +2128,7 @@ mod tests {
             commit_sha: None,
             repo: Some("/tmp/repo".to_string()),
             expected_revision: None,
+            dry_run: false,
         };
         assert_eq!(args.ids.len(), 2);
         assert_eq!(args.ids[0], "bd-abc");
@@ -2275,6 +2567,7 @@ mod tests {
             commit_sha: None,
             repo: None,
             expected_revision: None,
+            dry_run: false,
         };
         let cloned = args.clone();
         assert_eq!(cloned.ids, args.ids);

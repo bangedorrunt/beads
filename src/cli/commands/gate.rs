@@ -26,19 +26,20 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// JSON payload for `br gate report`.
+/// JSON payload for `br gate report`. Also returned to composing callers
+/// (`br land`), which render the recorded row themselves.
 #[derive(Debug, Serialize)]
-struct GateReportOutput {
-    id: i64,
-    issue_id: String,
-    from_status: String,
-    to_status: String,
-    status_revision: i64,
-    gate: String,
-    provider: String,
-    passed: bool,
+pub(crate) struct GateReportOutput {
+    pub(crate) id: i64,
+    pub(crate) issue_id: String,
+    pub(crate) from_status: String,
+    pub(crate) to_status: String,
+    pub(crate) status_revision: i64,
+    pub(crate) gate: String,
+    pub(crate) provider: String,
+    pub(crate) passed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    note: Option<String>,
+    pub(crate) note: Option<String>,
 }
 
 /// Computed status of one required gate for a guarded transition.
@@ -161,6 +162,38 @@ fn execute_report(
     ctx: &OutputContext,
     beads_dir: &Path,
 ) -> Result<()> {
+    let output = record_verdict(args, cli, beads_dir)?;
+    if ctx.is_toon() {
+        ctx.toon(&output);
+    } else if args.robot || ctx.is_json() {
+        ctx.json_pretty(&output);
+    } else {
+        let verdict = if output.passed { "pass" } else { "fail" };
+        ctx.success(&format!(
+            "Recorded gate '{}' = {} (provider {}) for {} [{} -> {}, revision {}]",
+            sanitize_terminal_inline(&output.gate),
+            verdict,
+            sanitize_terminal_inline(&output.provider),
+            sanitize_terminal_inline(&output.issue_id),
+            sanitize_terminal_inline(&output.from_status),
+            sanitize_terminal_inline(&output.to_status),
+            output.status_revision,
+        ));
+    }
+    Ok(())
+}
+
+/// Record one scoped gate verdict and publish the sidecar, WITHOUT rendering.
+///
+/// This is the same write path `br gate report` uses (same legality and
+/// unbound-note previews on stderr, same sidecar publish, same
+/// last-touched update), exposed for `br land`, which folds the recorded row
+/// into its own single output instead of printing two documents.
+pub(crate) fn record_verdict(
+    args: &GateReportArgs,
+    cli: &config::CliOverrides,
+    beads_dir: &Path,
+) -> Result<GateReportOutput> {
     let gate = args.gate.trim();
     let provider = args.provider.trim();
     if gate.is_empty() {
@@ -245,7 +278,7 @@ fn execute_report(
 
     publish_gate_sidecar(&storage_ctx.storage, beads_dir, cli)?;
 
-    let output = GateReportOutput {
+    Ok(GateReportOutput {
         id: record.id,
         issue_id: issue_id.clone(),
         from_status: record.from_status,
@@ -255,26 +288,7 @@ fn execute_report(
         provider: provider.to_string(),
         passed,
         note: note.map(str::to_string),
-    };
-
-    if ctx.is_toon() {
-        ctx.toon(&output);
-    } else if args.robot || ctx.is_json() {
-        ctx.json_pretty(&output);
-    } else {
-        let verdict = if passed { "pass" } else { "fail" };
-        ctx.success(&format!(
-            "Recorded gate '{}' = {} (provider {}) for {} [{} -> {}, revision {}]",
-            sanitize_terminal_inline(gate),
-            verdict,
-            sanitize_terminal_inline(provider),
-            sanitize_terminal_inline(&issue_id),
-            sanitize_terminal_inline(&output.from_status),
-            sanitize_terminal_inline(&output.to_status),
-            output.status_revision,
-        ));
-    }
-    Ok(())
+    })
 }
 
 fn publish_gate_sidecar(

@@ -658,6 +658,7 @@ fn main() {
         Commands::Close(args) => {
             commands::close::execute_cli(&args, cli.json || args.robot, &overrides, &output_ctx)
         }
+        Commands::Land(args) => commands::land::execute(&args, &overrides, &output_ctx),
         Commands::Reopen(args) => {
             commands::reopen::execute(&args, cli.json || args.robot, &overrides, &output_ctx)
         }
@@ -1210,6 +1211,7 @@ const fn is_mutating_command(cmd: &Commands) -> bool {
         | Commands::Update(_)
         | Commands::Delete(_)
         | Commands::Close(_)
+        | Commands::Land(_)
         | Commands::Reopen(_)
         | Commands::Q(_)
         | Commands::Defer(_)
@@ -1577,6 +1579,7 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::Update(_)
         | Commands::Delete(_)
         | Commands::Close(_)
+        | Commands::Land(_)
         | Commands::Reopen(_)
         | Commands::Q(_)
         | Commands::Defer(_)

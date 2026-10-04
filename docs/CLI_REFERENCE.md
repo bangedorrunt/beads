@@ -438,6 +438,7 @@ br close [OPTIONS] [IDS]...
 | `-f, --force` | Close even if blocked by open dependencies |
 | `--suggest-next` | Return newly unblocked issues |
 | `--session <ID>` | Session ID for tracking |
+| `--dry-run` | Report what a close would need (gate row, sha citation, bindings) without mutating |
 | `--robot` | Machine-readable output |
 
 **Examples:**
@@ -453,6 +454,49 @@ br close bd-abc123 --force
 
 # Close and get next work
 br close bd-abc123 --suggest-next --json
+```
+
+---
+
+### land
+
+Land a bead: the paved close ceremony. One call validates the
+`--commit-sha` token, records the verdict gate (`br gate report` semantics),
+then closes the bead (`br close` semantics), then prints the remaining
+operator steps in order — lease release, sync, tracker bookkeeping commit,
+and captain mail. `--sync` and `--release-leases` perform the automatable
+steps. Land is a composition, not a second policy authority: the raw verbs
+stay available and are byte-for-byte the paths land uses.
+
+```bash
+br land <ID> --commit-sha <SHA> [OPTIONS]
+```
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `--commit-sha <SHA>` | Bare full 40-hex sha of the commit whose message cites the bead. A token glued to punctuation (`<sha>;`) is refused up front: it reads UNBOUND in the ledger's exact-token check |
+| `--gate <KIND>` | Verdict gate to record. Omitted: derived when the bead admits exactly one legal close gate; an illegal or ambiguous gate is refused naming the options |
+| `--provider <NAME>` | Reporting provider for the gate row (default: the resolved actor) |
+| `--receipt <PATH>` | Receipt path recorded in the gate note (`receipt=<path>`) |
+| `-r, --reason <TEXT>` | Close reason |
+| `--repo <PATH>` | Repo to verify `--commit-sha` in |
+| `--release-leases` | Release the bead's toron leases (`toron reserve release-by-reason`); needs `--project` or `TORON_PROJECT`, and `TORON_AGENT` / `AGENT_NAME` / `FLYWHEEL_MAIL_AS` |
+| `--project <SLUG>` | Toron project slug for `--release-leases` |
+| `--sync` | Run `sync --flush-only` after the close |
+| `--dry-run` | Report the plan (gate row, sha citation, remaining steps) without mutating |
+| `--robot` | Machine-readable JSON output |
+
+**Examples:**
+```bash
+# Land: record the verdict + close in one call
+br land bd-abc123 --commit-sha 0b6452b0b51590171d15123d2f6bdbcc96421691 --receipt .flywheel/receipts/x.txt
+
+# Preview the plan without writing anything
+br land bd-abc123 --commit-sha 0b6452b0b51590171d15123d2f6bdbcc96421691 --dry-run --json
+
+# Land and perform the automatable tail steps
+br land bd-abc123 --commit-sha 0b6452b0b51590171d15123d2f6bdbcc96421691 --sync --release-leases --project myproj
 ```
 
 ---

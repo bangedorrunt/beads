@@ -848,6 +848,10 @@ pub enum Commands {
         command: LabelCommands,
     },
 
+    /// Land a bead: record the verdict gate, close it, and name the remaining
+    /// ceremony steps (or run them behind --release-leases / --sync)
+    Land(LandArgs),
+
     /// Check issues for missing template sections
     Lint(LintArgs),
 
@@ -2863,6 +2867,93 @@ pub struct CloseArgs {
     /// then the beads parent, then `external_projects` roots.
     #[arg(long, value_name = "PATH")]
     pub repo: Option<String>,
+
+    /// Report exactly what a close would need (gate row, sha citation,
+    /// bindings) without mutating anything.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// Arguments for `br land` — the paved close ceremony.
+///
+/// One call validates the `--commit-sha` token, records the verdict gate
+/// (`br gate report` semantics, including the legality/unbound previews),
+/// then closes the bead (`br close` semantics, including every close-policy
+/// gate). The remaining operator steps are printed in order; `--sync` and
+/// `--release-leases` perform the ones that can be automated here. The raw
+/// verbs stay available — land never forks their policy.
+#[derive(Args, Debug, Clone, Default)]
+pub struct LandArgs {
+    /// Issue ID to land (gate + close)
+    #[arg(add = ArgValueCompleter::new(open_issue_id_completer))]
+    pub id: String,
+
+    /// SHA of the commit whose message cites the bead id. Must be the bare
+    /// full 40-char hex token: a glued `sha=<sha>;` reads UNBOUND in the
+    /// ledger's exact-token match, so land refuses it up front.
+    #[arg(long, value_name = "SHA")]
+    pub commit_sha: String,
+
+    /// Verdict gate to record before the close (e.g. command-verified).
+    /// Omitted: derived when the bead admits exactly one legal close gate;
+    /// otherwise land refuses and names the options.
+    #[arg(long, value_name = "KIND")]
+    pub gate: Option<String>,
+
+    /// Reporting provider for the gate row (default: the resolved actor)
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Receipt path recorded in the gate note (`receipt=<path>`)
+    #[arg(long, value_name = "PATH")]
+    pub receipt: Option<String>,
+
+    /// Close reason
+    #[arg(long, short = 'r', allow_hyphen_values = true)]
+    pub reason: Option<String>,
+
+    /// Repo to verify `--commit-sha` in. Defaults to the cwd repo, then the
+    /// beads parent, then `external_projects` roots (same resolution as the
+    /// `--repo` flag on `br close`).
+    #[arg(long, value_name = "PATH")]
+    pub repo: Option<String>,
+
+    /// Tier 1 attribution: agent name (env: BR_AGENT_NAME).
+    #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
+    pub agent_name: Option<String>,
+
+    /// Tier 1 attribution: harness identifier (env: BR_HARNESS).
+    #[arg(long, value_name = "HARNESS", env = "BR_HARNESS")]
+    pub harness: Option<String>,
+
+    /// Tier 1 attribution: model identifier (env: BR_MODEL).
+    #[arg(long, value_name = "MODEL", env = "BR_MODEL")]
+    pub model: Option<String>,
+
+    /// Release the bead's toron leases after the close
+    /// (`toron reserve release-by-reason`). Needs the project slug
+    /// (--project or TORON_PROJECT) and the acting pin (TORON_AGENT /
+    /// AGENT_NAME / FLYWHEEL_MAIL_AS). Best-effort: a failure reports the
+    /// retry command and exits nonzero, stating the close already landed.
+    #[arg(long)]
+    pub release_leases: bool,
+
+    /// Toron project slug for --release-leases (default: TORON_PROJECT)
+    #[arg(long, value_name = "SLUG")]
+    pub project: Option<String>,
+
+    /// Run `sync --flush-only` after the close
+    #[arg(long)]
+    pub sync: bool,
+
+    /// Report the plan (gate row, sha citation, remaining steps) without
+    /// mutating anything.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Emit machine-readable JSON
+    #[arg(long)]
+    pub robot: bool,
 }
 
 /// Arguments for the reopen command.
