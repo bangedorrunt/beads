@@ -230,10 +230,16 @@ fn execute_routed(
 
         let ctx = OutputContext::from_output_format(output_format, quiet, !*use_color);
         if matches!(ctx.mode(), OutputMode::Rich) {
-            let panel = IssuePanel::from_details(details, ctx.theme());
+            let panel = IssuePanel::from_details(details, ctx.theme())
+                .with_assignee_resolution(assignee_resolution(assignee_registry.as_ref(), details));
             panel.print(&ctx, !args.no_wrap);
         } else {
-            print_issue_details(details, *use_color, !args.no_wrap, assignee_registry.as_ref());
+            print_issue_details(
+                details,
+                *use_color,
+                !args.no_wrap,
+                assignee_registry.as_ref(),
+            );
         }
     }
 
@@ -516,10 +522,18 @@ fn execute_inner(
                     }
                 }
                 if matches!(ctx.mode(), OutputMode::Rich) {
-                    let panel = IssuePanel::from_details(details, ctx.theme());
+                    let panel =
+                        IssuePanel::from_details(details, ctx.theme()).with_assignee_resolution(
+                            assignee_resolution(assignee_registry.as_ref(), details),
+                        );
                     panel.print(&ctx, !args.no_wrap);
                 } else {
-                    print_issue_details(details, use_color, !args.no_wrap, assignee_registry.as_ref());
+                    print_issue_details(
+                        details,
+                        use_color,
+                        !args.no_wrap,
+                        assignee_registry.as_ref(),
+                    );
                 }
             }
         }
@@ -1284,6 +1298,22 @@ fn print_issue_details(
 ) {
     let output = format_issue_details(details, use_color, wrap, registry);
     print!("{output}");
+}
+
+/// How `details`' stored assignee resolves in the other planes, for the rich
+/// panel's `Assignee:` line. Mirror of `format_issue_details`' lookup so both
+/// renderers show the same resolution (or none).
+fn assignee_resolution(
+    registry: Option<&crate::agent_registry::SpawnRegistry>,
+    details: &IssueDetails,
+) -> Option<String> {
+    registry.and_then(|registry| {
+        details
+            .issue
+            .assignee
+            .as_deref()
+            .and_then(|assignee| registry.describe(assignee))
+    })
 }
 
 /// Width used to soft-wrap free-text bodies in the non-Rich (piped / no-TTY)

@@ -14,6 +14,10 @@ pub struct IssuePanel<'a> {
     show_dependencies: bool,
     show_dependents: bool,
     show_comments: bool,
+    /// How the stored assignee resolves in the other planes (pin to herdr
+    /// pane), shown parenthetically. Display-only; `None` renders the stored
+    /// value alone.
+    assignee_resolution: Option<String>,
 }
 
 impl<'a> IssuePanel<'a> {
@@ -26,6 +30,7 @@ impl<'a> IssuePanel<'a> {
             show_dependencies: true,
             show_dependents: true,
             show_comments: true,
+            assignee_resolution: None,
         }
     }
 
@@ -38,7 +43,16 @@ impl<'a> IssuePanel<'a> {
             show_dependencies: true,
             show_dependents: true,
             show_comments: true,
+            assignee_resolution: None,
         }
+    }
+
+    /// Attach how the stored assignee resolves (`herdr <pane>, pane <id>` or
+    /// `pin <pin>`), so the rich panel matches the plain renderer's line.
+    #[must_use]
+    pub fn with_assignee_resolution(mut self, resolution: Option<String>) -> Self {
+        self.assignee_resolution = resolution;
+        self
     }
 
     #[must_use]
@@ -105,12 +119,9 @@ impl<'a> IssuePanel<'a> {
         );
 
         // Assignee
-        if let Some(ref assignee) = self.issue.assignee {
+        if let Some(line) = self.assignee_line() {
             content.append_styled("Assignee: ", self.theme.dimmed.clone());
-            content.append_styled(
-                &format!("{}\n", sanitize_terminal_inline(assignee)),
-                self.theme.username.clone(),
-            );
+            content.append_styled(&format!("{line}\n"), self.theme.username.clone());
         }
 
         // Labels
@@ -170,6 +181,21 @@ impl<'a> IssuePanel<'a> {
             .border_style(self.theme.panel_border.clone());
 
         ctx.render(&panel);
+    }
+
+    /// The content of the `Assignee:` line: the stored value, plus how it
+    /// resolves when a registry answered. Both halves are sanitized: pane
+    /// names and pins come from a file the panel does not control.
+    fn assignee_line(&self) -> Option<String> {
+        let assignee = self.issue.assignee.as_deref()?;
+        Some(match self.assignee_resolution.as_deref() {
+            Some(resolution) => format!(
+                "{} ({})",
+                sanitize_terminal_inline(assignee),
+                sanitize_terminal_inline(resolution)
+            ),
+            None => sanitize_terminal_inline(assignee).into_owned(),
+        })
     }
 
     /// Render the derived parent-child subtree rollup (GitHub #384 phase 3).
@@ -331,12 +357,56 @@ fn render_dependency_refs(deps: &[Dependency], content: &mut Text, theme: &Theme
 
 #[cfg(test)]
 mod tests {
-    use super::{dependency_arrow, render_dependency_list, render_dependency_refs};
+    use super::{IssuePanel, dependency_arrow, render_dependency_list, render_dependency_refs};
     use crate::format::IssueWithDependencyMetadata;
-    use crate::model::{Dependency, DependencyType, Priority, Status};
+    use crate::model::{Dependency, DependencyType, Issue, Priority, Status};
     use crate::output::Theme;
     use chrono::Utc;
     use rich_rust::prelude::Text;
+
+    #[test]
+    fn assignee_pin_normalized_panel_line_carries_resolution() {
+        let theme = Theme::default();
+        let issue = Issue {
+            id: "panel-fixture".to_string(),
+            assignee: Some("AmberFox".to_string()),
+            ..Default::default()
+        };
+
+        let bare = IssuePanel::new(&issue, &theme);
+        assert_eq!(bare.assignee_line().as_deref(), Some("AmberFox"));
+
+        let resolved = IssuePanel::new(&issue, &theme)
+            .with_assignee_resolution(Some("herdr flywheel-demo-oc, pane w1:p1".to_string()));
+        assert_eq!(
+            resolved.assignee_line().as_deref(),
+            Some("AmberFox (herdr flywheel-demo-oc, pane w1:p1)")
+        );
+
+        // No assignee: the line is absent regardless of resolution.
+        let unassigned = Issue::default();
+        assert_eq!(
+            IssuePanel::new(&unassigned, &theme)
+                .with_assignee_resolution(Some("unused".to_string()))
+                .assignee_line(),
+            None
+        );
+
+        // Both halves are sanitized: pins and pane names come from a file.
+        let hostile = Issue {
+            id: "hostile-fixture".to_string(),
+            assignee: Some("pin\u{1b}[2J".to_string()),
+            ..Default::default()
+        };
+        let line = IssuePanel::new(&hostile, &theme)
+            .with_assignee_resolution(Some("res\u{7}".to_string()))
+            .assignee_line()
+            .expect("assignee line");
+        assert!(
+            !line.contains('\u{1b}') && !line.contains('\u{7}'),
+            "{line}"
+        );
+    }
 
     #[test]
     fn test_dependency_arrow_tracks_direction() {

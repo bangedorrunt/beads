@@ -33,7 +33,7 @@ struct RegistryEntry {
 /// The project's spawn registry, loaded from `.flywheel/agent-names.json`
 /// next to the beads directory.
 #[derive(Debug, Clone)]
-pub(crate) struct SpawnRegistry {
+pub struct SpawnRegistry {
     entries: Vec<RegistryEntry>,
 }
 
@@ -53,7 +53,7 @@ impl SpawnRegistry {
     /// Load the registry for `beads_dir`, if the project has one. A missing
     /// file is normal (plain projects); a malformed one degrades to `None`
     /// so a corrupt registry never blocks ordinary assigns.
-    pub(crate) fn load(beads_dir: &Path) -> Option<Self> {
+    pub fn load(beads_dir: &Path) -> Option<Self> {
         let path = registry_path(beads_dir)?;
         let contents = std::fs::read_to_string(&path).ok()?;
         match serde_json::from_str::<Vec<RegistryEntry>>(&contents) {
@@ -100,7 +100,7 @@ impl SpawnRegistry {
     /// Render how a stored assignee resolves, for `br show`: both directions
     /// (`pin -> pane` and legacy `name -> pin`) so an operator can see why a
     /// stored value might read wrong to the orchestrator.
-    pub(crate) fn describe(&self, stored: &str) -> Option<String> {
+    pub fn describe(&self, stored: &str) -> Option<String> {
         if let Some(entry) = self
             .entries
             .iter()
@@ -119,7 +119,12 @@ impl SpawnRegistry {
 }
 
 fn registry_path(beads_dir: &Path) -> Option<PathBuf> {
-    Some(beads_dir.parent()?.join(".flywheel").join("agent-names.json"))
+    Some(
+        beads_dir
+            .parent()?
+            .join(".flywheel")
+            .join("agent-names.json"),
+    )
 }
 
 /// Fold an assignee input for `beads_dir` to the value the update stores.
@@ -135,7 +140,7 @@ fn registry_path(beads_dir: &Path) -> Option<PathBuf> {
 /// Refuses an explicit herdr-name-shaped input the project has no
 /// registration for, naming the fix (use the pin / register the pane) so a
 /// claim never lands under an identity the orchestrator cannot resolve.
-pub(crate) fn fold_assignee_for_store(
+pub fn fold_assignee_for_store(
     beads_dir: &Path,
     input: &str,
     explicit: bool,
@@ -170,8 +175,12 @@ fn is_herdr_name_shaped(value: &str) -> bool {
     let Some(first) = segments.next() else {
         return false;
     };
-    let shaped_segment =
-        |segment: &str| !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit());
+    let shaped_segment = |segment: &str| {
+        !segment.is_empty()
+            && segment
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    };
     if !shaped_segment(first) {
         return false;
     }

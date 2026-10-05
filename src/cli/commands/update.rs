@@ -491,6 +491,15 @@ fn prepare_single_route(
             args.assignee.is_some(),
         )?));
     }
+    if args.claim {
+        // The claim guard compares the stored assignee against `claim_actor`
+        // (its `current == claim_actor` branch is the idempotent re-claim), so
+        // both sides must speak the stored dialect: a registered herdr actor
+        // folds to its pin, and an explicit `--assignee` is the claim identity.
+        // A raw actor compared against a stored pin refuses a same-agent
+        // re-claim that the guard exists to allow.
+        update.claim_actor = update.assignee.clone().flatten();
+    }
 
     // Strict status-workflow enforcement (issue #311) + transition rules
     // (issue #312, layer 1). When the project's `.beads/policy.yaml` configures

@@ -161,6 +161,83 @@ fn assignee_pin_normalized_pin_stored_verbatim() {
 }
 
 #[test]
+fn assignee_pin_normalized_reclaim_stays_idempotent() {
+    let workspace = init_workspace_with_registry();
+    let id = seed_issue(&workspace, "Reclaim target", "create_reclaim_target");
+
+    // First claim: the actor is a registered herdr pane name, so the fold
+    // stores the pin.
+    let claim_args = [
+        "update",
+        &id,
+        "--claim",
+        "--actor",
+        "flywheel-demo-oc",
+        "--status",
+        "in_progress",
+    ];
+    let first = run_br(&workspace, claim_args, "claim_first");
+    assert!(
+        first.status.success(),
+        "first claim failed: {}{}",
+        first.stdout,
+        first.stderr
+    );
+    assert_eq!(
+        stored_assignee(&workspace, &id, "show_after_first_claim").as_deref(),
+        Some("AmberFox")
+    );
+
+    // The same agent re-claiming must be an idempotent no-op: the guard's
+    // `current == claim_actor` branch compares the stored assignee against
+    // `claim_actor`, so `claim_actor` must speak the stored dialect (the pin),
+    // not the raw pane name.
+    let second = run_br(&workspace, claim_args, "claim_second");
+    assert!(
+        second.status.success(),
+        "same-agent re-claim must stay idempotent: {}{}",
+        second.stdout,
+        second.stderr
+    );
+    assert_eq!(
+        stored_assignee(&workspace, &id, "show_after_reclaim").as_deref(),
+        Some("AmberFox")
+    );
+
+    // The explicit-pin form of the recipe must re-run the same way.
+    let pin_id = seed_issue(&workspace, "Pin claim target", "create_pin_claim_target");
+    let pin_claim_args = [
+        "update",
+        &pin_id,
+        "--claim",
+        "--actor",
+        "flywheel-demo-qa",
+        "--assignee",
+        "AmberFox",
+        "--status",
+        "in_progress",
+    ];
+    let first_pin = run_br(&workspace, pin_claim_args, "claim_pin_first");
+    assert!(
+        first_pin.status.success(),
+        "first pin claim failed: {}{}",
+        first_pin.stdout,
+        first_pin.stderr
+    );
+    let second_pin = run_br(&workspace, pin_claim_args, "claim_pin_second");
+    assert!(
+        second_pin.status.success(),
+        "re-running the explicit-pin claim must stay idempotent: {}{}",
+        second_pin.stdout,
+        second_pin.stderr
+    );
+    assert_eq!(
+        stored_assignee(&workspace, &pin_id, "show_after_pin_reclaim").as_deref(),
+        Some("AmberFox")
+    );
+}
+
+#[test]
 fn assignee_pin_normalized_show_describes_resolution() {
     let workspace = init_workspace_with_registry();
     let id = seed_issue(&workspace, "Describe target", "create_describe_target");
