@@ -219,6 +219,10 @@ fn execute_routed(
         return Ok(());
     }
 
+    // Display-only resolution aid: shows a stored assignee's identity in the
+    // other planes (pin -> pane) so an operator can see why an orchestrator
+    // might misread it. Best-effort; absent registry reads unchanged.
+    let assignee_registry = crate::agent_registry::SpawnRegistry::load(beads_dir);
     for (index, (details, use_color)) in ordered_details.iter().enumerate() {
         if index > 0 {
             println!();
@@ -229,7 +233,7 @@ fn execute_routed(
             let panel = IssuePanel::from_details(details, ctx.theme());
             panel.print(&ctx, !args.no_wrap);
         } else {
-            print_issue_details(details, *use_color, !args.no_wrap);
+            print_issue_details(details, *use_color, !args.no_wrap, assignee_registry.as_ref());
         }
     }
 
@@ -475,6 +479,7 @@ fn execute_inner(
             // Failure to open is non-fatal — the alternative would be
             // failing the entire show over an optional feature.
             let inheritance_enabled = crate::inheritance::is_enabled(beads_dir);
+            let assignee_registry = crate::agent_registry::SpawnRegistry::load(beads_dir);
             let transient_ctx = if inheritance_enabled
                 && preloaded_storage.is_none()
                 && preloaded_storage_ctx.is_none()
@@ -514,7 +519,7 @@ fn execute_inner(
                     let panel = IssuePanel::from_details(details, ctx.theme());
                     panel.print(&ctx, !args.no_wrap);
                 } else {
-                    print_issue_details(details, use_color, !args.no_wrap);
+                    print_issue_details(details, use_color, !args.no_wrap, assignee_registry.as_ref());
                 }
             }
         }
@@ -1271,8 +1276,13 @@ fn parse_external_dep_id(dep_id: &str) -> Option<(String, String)> {
     Some((project, capability))
 }
 
-fn print_issue_details(details: &IssueDetails, use_color: bool, wrap: bool) {
-    let output = format_issue_details(details, use_color, wrap);
+fn print_issue_details(
+    details: &IssueDetails,
+    use_color: bool,
+    wrap: bool,
+    registry: Option<&crate::agent_registry::SpawnRegistry>,
+) {
+    let output = format_issue_details(details, use_color, wrap, registry);
     print!("{output}");
 }
 
@@ -1332,7 +1342,12 @@ fn wrap_body(text: &str, width: usize) -> String {
 }
 
 #[allow(clippy::too_many_lines)]
-fn format_issue_details(details: &IssueDetails, use_color: bool, wrap: bool) -> String {
+fn format_issue_details(
+    details: &IssueDetails,
+    use_color: bool,
+    wrap: bool,
+    registry: Option<&crate::agent_registry::SpawnRegistry>,
+) -> String {
     let mut output = String::new();
     // `usize::MAX` makes `wrap_body` a no-op, so `--no-wrap` (or any caller that
     // opts out) keeps the exact pre-#370 unwrapped output.
@@ -1383,7 +1398,20 @@ fn format_issue_details(details: &IssueDetails, use_color: bool, wrap: bool) -> 
     }
 
     if let Some(assignee) = &issue.assignee {
-        let _ = writeln!(output, "Assignee: {}", sanitize_terminal_inline(assignee));
+        let sanitized = sanitize_terminal_inline(assignee);
+        match registry.and_then(|registry| registry.describe(assignee)) {
+            Some(resolution) => {
+                let _ = writeln!(
+                    output,
+                    "Assignee: {} ({})",
+                    sanitized,
+                    sanitize_terminal_inline(&resolution)
+                );
+            }
+            None => {
+                let _ = writeln!(output, "Assignee: {}", sanitized);
+            }
+        }
     }
 
     if !details.labels.is_empty() {
@@ -1810,7 +1838,7 @@ mod tests {
             inherited_context: Vec::new(),
             reservation: None,
         };
-        let output = format_issue_details(&details, false, false);
+        let output = format_issue_details(&details, false, false, None);
         assert!(output.contains("Dependencies:"));
         assert!(output.contains("-> bd-002 (blocks) - Dep"));
         assert!(output.contains("Comments:"));
@@ -1849,7 +1877,7 @@ mod tests {
             reservation: None,
         };
 
-        let output = format_issue_details(&details, false, false);
+        let output = format_issue_details(&details, false, false, None);
 
         assert!(!output.contains('\x1b'));
         assert!(!output.contains('\x07'));

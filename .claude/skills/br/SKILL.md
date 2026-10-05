@@ -40,6 +40,7 @@ metadata:
 | **Git is YOUR job** | br only touches `.beads/` -- you must `git add .beads/ && git commit` |
 | **No cycles allowed** | `br dep cycles` must return empty |
 | **Resolve actor at runtime** | Use `ACTOR="${BR_ACTOR:-assistant}"` and pass `--actor "$ACTOR"` |
+| **Claims store the pin** | `--assignee <pin>` (mail identity). A registered herdr pane name folds to its pin; an unregistered herdr-shaped name is refused with the fix. `--assignee` wins over `--claim`'s actor default |
 
 ## Quick Workflow
 
@@ -49,8 +50,9 @@ ACTOR="${BR_ACTOR:-assistant}"
 # 1. Find work
 br ready --json
 
-# 2. Claim it
-br update --actor "$ACTOR" <id> --status in_progress
+# 2. Claim it (the pin is your mail identity; a registered herdr
+#    pane name folds to it)
+br update --actor "$ACTOR" <id> --status in_progress --assignee <pin>
 
 # 3. Do work...
 

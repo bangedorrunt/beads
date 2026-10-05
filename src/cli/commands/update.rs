@@ -480,7 +480,17 @@ fn prepare_single_route(
     let resolved_ids = resolve_target_ids(args, beads_dir, &resolver, &storage_ctx.storage)?;
 
     let claim_exclusive = config::claim_exclusive_from_layer(&config_layer);
-    let update = build_update(args, &actor, claim_exclusive)?;
+    let mut update = build_update(args, &actor, claim_exclusive)?;
+    // One assignee dialect: fold a registered herdr pane name to its pin, and
+    // refuse an unregistered one the caller passed explicitly (a claim-derived
+    // actor passes through untouched so unregistered harnesses keep claiming).
+    if let Some(Some(input)) = update.assignee.as_ref() {
+        update.assignee = Some(Some(crate::agent_registry::fold_assignee_for_store(
+            beads_dir,
+            input,
+            args.assignee.is_some(),
+        )?));
+    }
 
     // Strict status-workflow enforcement (issue #311) + transition rules
     // (issue #312, layer 1). When the project's `.beads/policy.yaml` configures
@@ -1315,10 +1325,13 @@ fn build_update(args: &UpdateArgs, actor: &str, claim_exclusive: bool) -> Result
 
     let issue_type = args.type_.as_ref().map(|t| t.parse()).transpose()?;
 
-    let assignee = if args.claim {
-        Some(Some(actor.to_string()))
-    } else {
-        optional_string_field(args.assignee.as_deref())
+    // An explicit `--assignee` wins over `--claim`'s actor default: the claim
+    // recipe passes both (`--claim --assignee <pin>`) so the stored assignee
+    // is the pin, not the pane name.
+    let assignee = match optional_string_field(args.assignee.as_deref()) {
+        Some(explicit) => Some(explicit),
+        None if args.claim => Some(Some(actor.to_string())),
+        None => None,
     };
 
     let owner = optional_string_field(args.owner.as_deref());
@@ -2632,7 +2645,11 @@ mod bd_clear_principles {
             }],
             ..Default::default()
         };
-        crate::model::apply_principle_citations(&mut issue.principles, updates.principles_clear, &updates.principles_append);
+        crate::model::apply_principle_citations(
+            &mut issue.principles,
+            updates.principles_clear,
+            &updates.principles_append,
+        );
         assert_eq!(issue.principles.len(), 1, "the invented name must be gone");
         assert_eq!(issue.principles[0].name, "prove-it-works");
     }
@@ -2650,7 +2667,10 @@ mod bd_clear_principles {
             ..Default::default()
         };
         crate::model::apply_principle_citations(&mut issue.principles, true, &[]);
-        assert!(issue.principles.is_empty(), "clear alone must empty the set");
+        assert!(
+            issue.principles.is_empty(),
+            "clear alone must empty the set"
+        );
     }
 
     /// The default must stay append-only. Existing callers rely on it, and

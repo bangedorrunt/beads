@@ -415,9 +415,9 @@ br update [OPTIONS] [IDS]...
 | `-s, --status <STATUS>` | Change status |
 | `-p, --priority <N>` | Change priority |
 | `-t, --type <TYPE>` | Change issue type |
-| `--assignee <NAME>` | Assign (empty string clears) |
+| `--assignee <NAME>` | Assign (empty string clears); in a project with a spawn registry it **stores the pin** (see [Assignee dialect](#assignee-dialect)) |
 | `--owner <EMAIL>` | Set owner (empty string clears) |
-| `--claim` | Atomic claim (assignee=actor + status=in_progress) |
+| `--claim` | Atomic claim (assignee=actor + status=in_progress); an explicit `--assignee` wins over the actor default |
 | `--force` | Force update even if issue is blocked |
 | `--due <DATE>` | Set due date (empty string clears) |
 | `--defer <DATE>` | Set defer date (empty string clears) |
@@ -443,6 +443,23 @@ br update bd-abc123 bd-def456 -p 1
 # Add labels
 br update bd-abc123 --add-label "urgent,reviewed"
 ```
+
+**Assignee dialect.** When the project has a spawn registry
+(`.flywheel/agent-names.json`, written by flywheel at spawn time), `--assignee`
+stores the **pin** (mail identity), because that is the identity every other
+plane agrees on:
+
+- a registered herdr pane name (`flywheel-demo-oc`) folds to its pin
+  (`AmberFox`);
+- an unregistered herdr-shaped name is refused, naming the fix (claim with the
+  pin, or register the pane) — a typo never lands as a stranger identity;
+- pins and non-herdr free strings (human names, emails) store verbatim;
+- `--assignee` wins over `--claim`'s actor default, so
+  `br update <id> --claim --assignee <pin>` stores the pin;
+- without a registry (plain `br init` projects) every input passes through.
+
+`br show` renders the stored value plus how it resolves, e.g.
+`Assignee: AmberFox (herdr flywheel-demo-oc, pane w1:p1)`.
 
 ---
 
