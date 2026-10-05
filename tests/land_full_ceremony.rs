@@ -109,12 +109,11 @@ fn step<'a>(payload: &'a serde_json::Value, name: &str) -> &'a serde_json::Value
 }
 
 #[test]
-fn land_full_ceremony() {
-    let _log = common::test_log("land_full_ceremony");
-    let (workspace, id) = setup_workspace_with_issue("Land ceremony e2e");
+fn land_full_ceremony_dry_run_names_missing_preconditions() {
+    let _log = common::test_log("land_full_ceremony_dry_run_names_missing_preconditions");
+    let (workspace, id) = setup_workspace_with_issue("Land ceremony preconditions");
     let sha = commit_citing(&workspace, &id, &format!("feat: land ceremony ({id})"));
 
-    // ---- dry-run names each missing precondition --------------------------
     // No sha, no gate row yet: both are named, and the close refuses.
     let dry_no_sha = run_br(
         &workspace,
@@ -169,6 +168,13 @@ fn land_full_ceremony() {
         missing.contains("no legal PASS gate row"),
         "the remaining item must be the gate row: {missing}"
     );
+}
+
+#[test]
+fn land_full_ceremony_dry_run_plan_writes_nothing() {
+    let _log = common::test_log("land_full_ceremony_dry_run_plan_writes_nothing");
+    let (workspace, id) = setup_workspace_with_issue("Land ceremony dry plan");
+    let sha = commit_citing(&workspace, &id, &format!("feat: land ceremony ({id})"));
 
     // land --dry-run names the plan: derived gate, note, and the steps.
     let land_dry = run_br(
@@ -214,6 +220,13 @@ fn land_full_ceremony() {
         payload["status"], "open",
         "a dry-run must not close the bead: {payload}"
     );
+}
+
+#[test]
+fn land_full_ceremony_refuses_glued_sha() {
+    let _log = common::test_log("land_full_ceremony_refuses_glued_sha");
+    let (workspace, id) = setup_workspace_with_issue("Land ceremony glued sha");
+    let sha = commit_citing(&workspace, &id, &format!("feat: land ceremony ({id})"));
 
     // ---- sha-token validation refuses a glued `;` -------------------------
     let glued = format!("{sha};");
@@ -238,6 +251,13 @@ fn land_full_ceremony() {
         payload["status"], "open",
         "the bead must stay open: {payload}"
     );
+}
+
+#[test]
+fn land_full_ceremony_live_close_binds_sha_and_receipt() {
+    let _log = common::test_log("land_full_ceremony_live_close_binds_sha_and_receipt");
+    let (workspace, id) = setup_workspace_with_issue("Land ceremony live close");
+    let sha = commit_citing(&workspace, &id, &format!("feat: land ceremony ({id})"));
 
     // ---- gate + close in one call ----------------------------------------
     let landed = run_br(

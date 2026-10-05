@@ -670,11 +670,23 @@ fn load_issue_details_from_storage(
     let mut details_list = Vec::with_capacity(target_ids.len());
 
     for id_input in target_ids {
-        let resolution = resolver.resolve_fallible(
+        // Mirror `super::resolve_issue_id`: the derived-alias fallback runs
+        // only on `IssueNotFound`, so aliases never shadow a real match.
+        let resolution = match resolver.resolve_fallible(
             id_input,
             |id| storage.id_exists(id),
             |hash| storage.find_ids_by_hash(hash),
-        )?;
+        ) {
+            Ok(resolution) => resolution,
+            Err(err @ BeadsError::IssueNotFound { .. }) => {
+                let all_ids = storage.get_all_ids()?;
+                match resolver.resolve_alias(id_input, &all_ids)? {
+                    Some(resolution) => resolution,
+                    None => return Err(err),
+                }
+            }
+            Err(err) => return Err(err),
+        };
 
         let Some(mut details) = storage.get_issue_details(&resolution.id, true, false, 10)? else {
             return Err(BeadsError::IssueNotFound { id: resolution.id });
@@ -724,13 +736,23 @@ fn load_issue_details_from_jsonl_materialized(
         issues_by_id.insert(issue.id.clone(), issue);
     }
 
+    let all_ids: Vec<String> = issues_by_id.keys().cloned().collect();
     let mut details_list = Vec::with_capacity(target_ids.len());
     for id_input in target_ids {
-        let resolution = resolver.resolve_fallible(
+        let resolution = match resolver.resolve_fallible(
             id_input,
             |id| Ok(issues_by_id.contains_key(id)),
             |hash| Ok(find_ids_by_hash_in_memory(&issues_by_id, hash)),
-        )?;
+        ) {
+            Ok(resolution) => resolution,
+            Err(err @ BeadsError::IssueNotFound { .. }) => {
+                match resolver.resolve_alias(id_input, &all_ids)? {
+                    Some(resolution) => resolution,
+                    None => return Err(err),
+                }
+            }
+            Err(err) => return Err(err),
+        };
         let issue = issues_by_id
             .get(&resolution.id)
             .ok_or_else(|| BeadsError::IssueNotFound {

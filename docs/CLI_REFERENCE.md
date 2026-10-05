@@ -161,6 +161,11 @@ br init --prefix myproj
 br init --force
 ```
 
+When `--prefix` is omitted, init derives the prefix from the directory name and
+prints a tip: keep IDs short for agent dispatch with
+`br config set id.prefix <short>`, which changes the prefix of newly created
+IDs without re-initializing.
+
 ---
 
 ### create
@@ -199,6 +204,11 @@ br create [OPTIONS] [TITLE]
 | `-f, --file <PATH>` | Create issues from markdown file (bulk import) |
 
 Fail-closed: title-only create refuses. P3/P4 may omit `--principle`. `br q` is quick-capture and skips this gate until you `br update --verify` / `--principle`.
+
+**Dispatch-budget warning.** A standard flywheel dispatch brief embeds the
+issue ID ~11 times (≈2816-byte base against a 4096-byte cap). Once the generated
+ID reaches 24 characters, `br create` warns on stderr — and in the `--json`
+envelope as `budget_warning` — naming the fix: `br config set id.prefix <short>`.
 
 **Examples:**
 ```bash
@@ -368,6 +378,20 @@ br show bd-abc123 bd-def456
 # JSON output
 br show bd-abc123 --json
 ```
+
+**Short ID aliases.** Every ID-taking verb (show, update, close, dep, gate, …)
+resolves a derived alias in addition to the usual exact, prefix, and
+hash-substring forms, without storing anything on the issue:
+
+- a contiguous run of complete hyphen-delimited segments of the canonical ID —
+  `land-ceremony-de6fu` resolves `beads_rust-br-land-ceremony-de6fu`;
+- the abbreviated-prefix child handle — `eer-7` resolves child 7 of an
+  `elm-effect-rs-…` ID, where `eer` is `abbreviate_prefix`'s abbreviation of
+  the configured prefix.
+
+An alias resolves only when unique: a slice matching several IDs is refused
+with the candidate list, and an alias never shadows an exact or substring
+match.
 
 ---
 
@@ -1675,6 +1699,10 @@ br config <COMMAND>
 | `delete <KEY>` | Delete a config value; `unset` is an alias |
 | `edit` | Open the user config file in `$EDITOR` |
 | `path` | Show config file paths |
+
+`id.prefix` is the canonical ID-prefix key (the flat `issue_prefix` / `prefix`
+entries remain compatible aliases); it takes precedence when both are set, so
+changing it changes the prefix of newly created IDs.
 
 **Examples:**
 ```bash

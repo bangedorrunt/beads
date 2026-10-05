@@ -5607,7 +5607,11 @@ pub(crate) fn configured_issue_prefix_from_map(
 /// Build ID generation config from a merged config layer.
 #[must_use]
 pub fn id_config_from_layer(layer: &ConfigLayer) -> IdConfig {
-    let prefix = get_value(layer, &["issue_prefix", "issue-prefix", "prefix"])
+    // `id.prefix` is the documented knob (`br config set id.prefix`, `br config
+    // get id.prefix`); the flat aliases stay for compatibility. Checking it
+    // first keeps a stale `issue_prefix`/`prefix` entry from shadowing it.
+    let prefix = get_value(layer, &["id.prefix", "id-prefix"])
+        .or_else(|| get_value(layer, &["issue_prefix", "issue-prefix", "prefix"]))
         .cloned()
         .filter(|p| !p.trim().is_empty())
         .map_or_else(|| "br".to_string(), |prefix| normalize_prefix(&prefix));

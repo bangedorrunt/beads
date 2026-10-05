@@ -144,6 +144,8 @@ pub fn execute(
     // Initialize DB (creates file and applies schema)
     let mut storage = SqliteStorage::open(&effective_db_path)?;
 
+    let prefix_was_provided = prefix.is_some();
+
     // Set prefix in config table if provided, otherwise derive from directory name
     // Normalize to lowercase since ID validation requires lowercase prefixes
     let actual_prefix = prefix.unwrap_or_else(|| {
@@ -280,12 +282,18 @@ redirect
             jsonl_existed,
             prefix_set.as_deref(),
         );
-        render_init_rich(&beads_dir, &steps, prefix_set.as_deref(), ctx);
+        render_init_rich(&beads_dir, &steps, prefix_was_provided, ctx);
     } else {
         if let Some(p) = prefix_set.as_deref() {
             println!("Prefix set to: {p}");
         }
         println!("Initialized beads workspace in {}", beads_dir.display());
+        if !prefix_was_provided {
+            println!(
+                "Tip: ids embed the prefix, and every dispatch brief repeats them — keep ids \
+                 short with `br config set id.prefix <short>`."
+            );
+        }
     }
 
     Ok(())
@@ -386,7 +394,7 @@ fn build_init_steps(
 fn render_init_rich(
     beads_dir: &Path,
     steps: &[InitStep],
-    prefix: Option<&str>,
+    prefix_was_provided: bool,
     ctx: &OutputContext,
 ) {
     let theme = ctx.theme();
@@ -418,10 +426,11 @@ fn render_init_rich(
     content.append("  br create \"My first issue\"\n");
     content.append("  br list\n");
 
-    if prefix.is_none() {
+    if !prefix_was_provided {
         content.append("\n");
         content.append_styled(
-            "Tip: Set a custom prefix with `br init --prefix <name>`\n",
+            "Tip: ids embed the prefix and every dispatch brief repeats them — keep ids short \
+             with `br config set id.prefix <short>`\n",
             theme.dimmed.clone(),
         );
     }

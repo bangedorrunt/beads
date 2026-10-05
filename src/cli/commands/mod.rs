@@ -152,18 +152,30 @@ pub fn report_auto_flush_failure_with_exit(
 }
 
 /// Resolve an issue ID from a potentially partial input.
+///
+/// The derived-alias fallback runs only when normal resolution reports
+/// `IssueNotFound`, so no existing input changes meaning and an alias can
+/// never shadow a real match.
 pub(super) fn resolve_issue_id(
     storage: &SqliteStorage,
     resolver: &IdResolver,
     input: &str,
 ) -> crate::Result<String> {
-    resolver
-        .resolve_fallible(
-            input,
-            |id| storage.id_exists(id),
-            |hash| storage.find_ids_by_hash(hash),
-        )
-        .map(|resolved| resolved.id)
+    match resolver.resolve_fallible(
+        input,
+        |id| storage.id_exists(id),
+        |hash| storage.find_ids_by_hash(hash),
+    ) {
+        Ok(resolved) => Ok(resolved.id),
+        Err(err @ crate::error::BeadsError::IssueNotFound { .. }) => {
+            let all_ids = storage.get_all_ids()?;
+            match resolver.resolve_alias(input, &all_ids)? {
+                Some(resolved) => Ok(resolved.id),
+                None => Err(err),
+            }
+        }
+        Err(err) => Err(err),
+    }
 }
 
 pub(super) fn resolve_issue_ids(
@@ -171,13 +183,10 @@ pub(super) fn resolve_issue_ids(
     resolver: &IdResolver,
     inputs: &[String],
 ) -> crate::Result<Vec<String>> {
-    resolver
-        .resolve_all_fallible(
-            inputs,
-            |id| storage.id_exists(id),
-            |hash| storage.find_ids_by_hash(hash),
-        )
-        .map(|resolved| resolved.into_iter().map(|entry| entry.id).collect())
+    inputs
+        .iter()
+        .map(|input| resolve_issue_id(storage, resolver, input))
+        .collect()
 }
 
 pub(super) fn rebuild_blocked_cache_after_partial_mutation(

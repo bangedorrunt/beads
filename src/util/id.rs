@@ -784,6 +784,9 @@ pub enum MatchType {
     PrefixNormalized,
     /// Matched via substring on hash portion.
     Substring,
+    /// Matched via the derived alias rule: a hyphen-boundary slice or the
+    /// abbreviated-prefix child handle.
+    Alias,
 }
 
 /// ID resolver that resolves partial IDs to full IDs.
@@ -1050,6 +1053,105 @@ impl IdResolver {
             .map(|input| self.resolve_fallible(input, &exists_fn, &substring_match_fn))
             .collect()
     }
+
+    /// Resolve a derived alias for `input` against the full ID universe.
+    ///
+    /// Callers run this only as a fallback after [`IdResolver::resolve_fallible`]
+    /// reports `IssueNotFound`, so it may be deliberately broad (see
+    /// [`find_alias_matches`]). A slice that matches more than one ID is an
+    /// `AmbiguousId` error naming its candidates, never a guess.
+    ///
+    /// # Errors
+    ///
+    /// - `InvalidId` if the input is empty.
+    /// - `AmbiguousId` if more than one ID matches.
+    pub fn resolve_alias(&self, input: &str, all_ids: &[String]) -> Result<Option<ResolvedId>> {
+        let input = input.trim();
+        if input.is_empty() {
+            return Err(BeadsError::InvalidId { id: String::new() });
+        }
+
+        let normalized = normalize_id(input);
+        let matches = find_alias_matches(all_ids, &normalized, &self.config.default_prefix);
+        match matches.len() {
+            0 => Ok(None),
+            1 => Ok(Some(ResolvedId {
+                id: matches.into_iter().next().unwrap_or_default(),
+                match_type: MatchType::Alias,
+                original_input: input.to_string(),
+            })),
+            _ => Err(BeadsError::AmbiguousId {
+                partial: input.to_string(),
+                matches,
+            }),
+        }
+    }
+}
+
+/// Match `input` against `all_ids` by the derived-alias rule.
+///
+/// Two forms resolve, and neither stores anything on the issue:
+/// 1. a contiguous run of complete hyphen-delimited segments of a canonical
+///    ID — `land-ceremony-de6fu` or `0c6.7` — provided the run is unique; and
+/// 2. the abbreviated-prefix child handle — `eer-7` for a child of an
+///    `elm-effect-rs-...` ID, where the tail is a numeric child path and the
+///    prefix abbreviation is [`abbreviate_prefix`]'s own output.
+///
+/// Callers gate on uniqueness; this function returns every match.
+#[must_use]
+pub fn find_alias_matches(all_ids: &[String], input: &str, configured_prefix: &str) -> Vec<String> {
+    if input.is_empty() {
+        return Vec::new();
+    }
+
+    let input_segments = split_segments(input);
+    if input_segments.is_empty() {
+        return Vec::new();
+    }
+
+    let abbrev = abbreviate_prefix(configured_prefix);
+    let abbrev_child_tail = input
+        .strip_prefix(&format!("{abbrev}-"))
+        .filter(|tail| is_numeric_child_path(tail));
+    let project_prefix = format!("{configured_prefix}-");
+
+    all_ids
+        .iter()
+        .filter(|id| {
+            if contains_contiguous_segments(id, &input_segments) {
+                return true;
+            }
+            match abbrev_child_tail {
+                Some(tail) => id.starts_with(&project_prefix) && id.ends_with(&format!(".{tail}")),
+                None => false,
+            }
+        })
+        .cloned()
+        .collect()
+}
+
+fn split_segments(value: &str) -> Vec<&str> {
+    value
+        .split('-')
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+fn contains_contiguous_segments(id: &str, needle: &[&str]) -> bool {
+    let segments = split_segments(id);
+    if needle.len() > segments.len() {
+        return false;
+    }
+    segments
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+fn is_numeric_child_path(tail: &str) -> bool {
+    !tail.is_empty()
+        && tail
+            .split('.')
+            .all(|segment| !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 /// Find all issue IDs that contain the given substring in their hash portion.

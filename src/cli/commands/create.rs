@@ -112,6 +112,10 @@ enum ImportReferenceResolution {
 struct CreateWithCapacityWarnings<'a, T> {
     created: &'a T,
     warnings: &'a [crate::close_policy::WorkflowCapacityWarning],
+    /// Present only when the generated id crosses the flywheel dispatch
+    /// brief budget (`dispatch_brief_budget_warning`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    budget_warning: Option<&'a str>,
 }
 
 /// Execute the create command.
@@ -186,6 +190,7 @@ pub fn execute_with_storage(
         })?;
     let capacity_warnings = storage_ctx.storage.take_capacity_warnings();
     let created_id = issue.id.clone();
+    let budget_warning = dispatch_brief_budget_warning(&created_id);
     let last_touched_dir = storage_ctx.paths.beads_dir.clone();
     let update_last_touched_after_flush = storage_ctx.no_db;
     if !args.dry_run && !update_last_touched_after_flush {
@@ -209,7 +214,12 @@ pub fn execute_with_storage(
                 .ok_or_else(|| BeadsError::IssueNotFound {
                     id: issue.id.clone(),
                 })?;
-            emit_created_with_capacity_warnings(&full_issue, &capacity_warnings, ctx);
+            emit_created_with_capacity_warnings(
+                &full_issue,
+                &capacity_warnings,
+                budget_warning.as_deref(),
+                ctx,
+            );
         }
     } else if ctx.is_json() {
         if args.dry_run {
@@ -221,7 +231,12 @@ pub fn execute_with_storage(
                 .ok_or_else(|| BeadsError::IssueNotFound {
                     id: issue.id.clone(),
                 })?;
-            emit_created_with_capacity_warnings(&full_issue, &capacity_warnings, ctx);
+            emit_created_with_capacity_warnings(
+                &full_issue,
+                &capacity_warnings,
+                budget_warning.as_deref(),
+                ctx,
+            );
         }
     } else if args.dry_run {
         ctx.info(&format!(
@@ -261,6 +276,9 @@ pub fn execute_with_storage(
     if !ctx.is_json() && !ctx.is_toon() {
         for warning in &capacity_warnings {
             ctx.warning(&warning.to_string());
+        }
+        if let Some(warning) = budget_warning.as_deref() {
+            ctx.warning(warning);
         }
     }
     auto_flush_after_create(&mut storage_ctx, ctx);
@@ -319,19 +337,52 @@ fn create_display_text(value: &str) -> String {
     sanitize_terminal_inline(value).into_owned()
 }
 
+/// Estimated size of the standard flywheel dispatch brief template, in bytes,
+/// before the issue id (repeated once per reference) is embedded.
+const DISPATCH_BRIEF_BASE_BYTES: usize = 2816;
+/// How many times that template repeats the issue id.
+const DISPATCH_BRIEF_ID_REPETITIONS: usize = 11;
+/// The flywheel orchestrator refuses dispatch briefs above this size.
+const DISPATCH_BRIEF_CAP_BYTES: usize = 4096;
+/// Warn once the estimate crosses this share of the cap: the remainder
+/// absorbs briefs that add their own text around the standard body.
+const DISPATCH_BRIEF_WARN_RATIO_PERCENT: usize = 75;
+
+/// Warn at create time when the generated id threatens the dispatch-brief
+/// budget. The id is the one part of a brief an operator can still shrink, so
+/// the warning names the knob that changes it (`id.prefix`).
+fn dispatch_brief_budget_warning(issue_id: &str) -> Option<String> {
+    let estimated = DISPATCH_BRIEF_BASE_BYTES + DISPATCH_BRIEF_ID_REPETITIONS * issue_id.len();
+    let threshold = DISPATCH_BRIEF_CAP_BYTES * DISPATCH_BRIEF_WARN_RATIO_PERCENT / 100;
+    if estimated <= threshold {
+        return None;
+    }
+    Some(format!(
+        "id '{issue_id}' ({} chars) puts a standard dispatch brief at an estimated {estimated} bytes, \
+         past the {threshold}-byte safety margin of the {DISPATCH_BRIEF_CAP_BYTES}-byte cap. \
+         Shorten the prefix: `br config set id.prefix <short>`.",
+        issue_id.len()
+    ))
+}
+
 fn emit_created_with_capacity_warnings<T: Serialize>(
     created: &T,
     warnings: &[crate::close_policy::WorkflowCapacityWarning],
+    budget_warning: Option<&str>,
     ctx: &OutputContext,
 ) {
-    if warnings.is_empty() {
+    if warnings.is_empty() && budget_warning.is_none() {
         if ctx.is_toon() {
             ctx.toon(created);
         } else {
             ctx.json_pretty(created);
         }
     } else {
-        let payload = CreateWithCapacityWarnings { created, warnings };
+        let payload = CreateWithCapacityWarnings {
+            created,
+            warnings,
+            budget_warning,
+        };
         if ctx.is_toon() {
             ctx.toon(&payload);
         } else {
@@ -1582,7 +1633,7 @@ fn execute_import(
             println!("{id}");
         }
     } else if ctx.is_toon() || ctx.is_json() {
-        emit_created_with_capacity_warnings(&created_issues, &capacity_warnings, ctx);
+        emit_created_with_capacity_warnings(&created_issues, &capacity_warnings, None, ctx);
     } else if !created_ids.is_empty() {
         if args.dry_run {
             ctx.info(&format!(

@@ -75,15 +75,7 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
     let resolved_parent_id = args
         .parent
         .as_deref()
-        .map(|parent_input| {
-            resolver
-                .resolve_fallible(
-                    parent_input,
-                    |id| storage.id_exists(id),
-                    |hash| storage.find_ids_by_hash(hash),
-                )
-                .map(|resolved| resolved.id)
-        })
+        .map(|parent_input| super::resolve_issue_id(storage, &resolver, parent_input))
         .transpose()?;
 
     // When a parent is specified, generate a child ID (parent.1, parent.2, etc.)
