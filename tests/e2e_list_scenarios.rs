@@ -212,8 +212,7 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
             &id8,
             "--status",
             "deferred",
-            "--defer",
-            "2100-01-01T00:00:00Z",
+            "--defer=2100-01-01T00:00:00Z",
         ],
         "update_feature_deferred",
     );

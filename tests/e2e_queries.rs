@@ -148,8 +148,7 @@ fn e2e_queries_ready_stale_count_search() {
             &deferred_id,
             "--status",
             "deferred",
-            "--defer",
-            "2100-01-01T00:00:00Z",
+            "--defer=2100-01-01T00:00:00Z",
         ],
         "defer_issue",
     );

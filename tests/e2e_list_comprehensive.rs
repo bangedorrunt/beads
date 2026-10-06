@@ -163,8 +163,7 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
             &id5,
             "--status",
             "deferred",
-            "--defer",
-            "2100-01-01T00:00:00Z",
+            "--defer=2100-01-01T00:00:00Z",
         ],
         "defer_epic1",
     );

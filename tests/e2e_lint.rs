@@ -497,8 +497,7 @@ fn e2e_lint_filter_by_status_all() {
             &deferred_bug,
             "--status",
             "deferred",
-            "--defer",
-            "2100-01-01T00:00:00Z",
+            "--defer=2100-01-01T00:00:00Z",
         ],
         "defer_bug_for_status_all",
     );
@@ -559,8 +558,7 @@ fn e2e_lint_filter_by_status_deferred() {
             &deferred_bug,
             "--status",
             "deferred",
-            "--defer",
-            "2100-01-01T00:00:00Z",
+            "--defer=2100-01-01T00:00:00Z",
         ],
         "defer_bug",
     );

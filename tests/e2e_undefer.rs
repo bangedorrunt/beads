@@ -18,7 +18,7 @@ fn test_soft_defer_behavior() {
 
     // Soft defer using update (sets date but not status)
     // Note: status remains 'open' by default if not specified
-    let update = run_br(&workspace, ["update", id, "--defer", "+1d"], "update");
+    let update = run_br(&workspace, ["update", id, "--defer=+1d"], "update");
     assert!(update.status.success());
 
     // Check status is still open?
@@ -89,7 +89,7 @@ fn test_soft_defer_preserves_in_progress_status() {
 
     let update = run_br(
         &workspace,
-        ["update", id, "--status", "in_progress", "--defer", "+1d"],
+        ["update", id, "--status", "in_progress", "--defer=+1d"],
         "update_soft_defer_in_progress",
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);

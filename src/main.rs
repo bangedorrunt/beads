@@ -77,6 +77,49 @@ fn maybe_rewrite_robot_args() -> Option<Vec<OsString>> {
     Some(rewritten)
 }
 
+/// Optional-value flags whose space form must refuse loudly
+/// (beads_rust-optional-value-flags-refuse-loud-38jgj). Each documents "empty
+/// clears" and carries a single structured token (a wave number, a date) that
+/// reads exactly like a positional issue id, so a bare `--flag value` silently
+/// ate the token or cleared the field. `--flag=value` sets, `--flag=` clears;
+/// `--flag value` refuses naming both forms. Extend the list only when the
+/// space form is genuinely ambiguous with a positional — free-text values
+/// (`--title`, `--verify`) keep the space form.
+fn space_form_optional_value_refusal(
+    args: &[OsString],
+    command: &Commands,
+) -> std::result::Result<(), String> {
+    let guarded: &[&str] = match command {
+        Commands::Update(_) => &["--wave", "--defer"],
+        _ => return Ok(()),
+    };
+    // `--` ends flag parsing; later tokens are positional values that may
+    // legitimately spell a flag name.
+    let mut flags = true;
+    for (index, arg) in args.iter().enumerate() {
+        let Some(token) = arg.to_str() else { continue };
+        if token == "--" {
+            flags = false;
+            continue;
+        }
+        if !flags || token.contains('=') || !guarded.contains(&token) {
+            continue;
+        }
+        // A following flag (or nothing) is the bare form; clap already refuses
+        // a missing value loudly, so only a bare token needs this guard.
+        let Some(value) = args.get(index + 1).and_then(|next| next.to_str()) else {
+            continue;
+        };
+        if value.starts_with('-') {
+            continue;
+        }
+        return Err(format!(
+            "error: {token} takes its value by equals; `{token} {value}` would clear the field and read `{value}` as an issue id\n  set:   {token}={value}\n  clear: {token}=\nFor more information, try '--help'."
+        ));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 fn main() {
     CompleteEnv::with_factory(Cli::command).complete();
@@ -107,6 +150,15 @@ fn main() {
         }
         Cli::parse()
     };
+    // Fail-loud space-form guard: clap has already resolved shapes, so the raw
+    // argv is the only place the `--wave 6` / `--defer <ts>` ambiguity is
+    // still visible; refuse before any dispatch can mutate state.
+    if let Err(refusal) =
+        space_form_optional_value_refusal(&std::env::args_os().collect::<Vec<_>>(), &cli.command)
+    {
+        eprintln!("{refusal}");
+        beads::shutdown::exit_process(2);
+    }
     let json_error_mode = should_render_errors_as_json(&cli);
     let color_error_mode = should_color_human_errors_for_cli(&cli);
     let output_ctx = OutputContext::from_args(&cli);
@@ -2268,6 +2320,58 @@ mod tests {
         assert_eq!(cli.verbose, 2);
         assert!(!cli.quiet);
         assert!(matches!(cli.command, Commands::List(_)));
+    }
+
+    #[test]
+    fn space_form_optional_value_refusal_names_both_legal_forms() {
+        let cli = Cli::parse_from(["br", "update", "abc-1", "--wave", "6"]);
+        let args: Vec<OsString> = ["br", "update", "abc-1", "--wave", "6"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        let refusal = space_form_optional_value_refusal(&args, &cli.command)
+            .expect_err("space form must refuse");
+        assert!(
+            refusal.contains("--wave=6"),
+            "names the set form: {refusal}"
+        );
+        assert!(
+            refusal.contains("--wave="),
+            "names the clear form: {refusal}"
+        );
+
+        let deferred =
+            Cli::parse_from(["br", "update", "abc-1", "--defer", "2100-01-01T00:00:00Z"]);
+        let deferred_args: Vec<OsString> =
+            ["br", "update", "abc-1", "--defer", "2100-01-01T00:00:00Z"]
+                .iter()
+                .map(OsString::from)
+                .collect();
+        let defer_refusal = space_form_optional_value_refusal(&deferred_args, &deferred.command)
+            .expect_err("defer space form must refuse");
+        assert!(defer_refusal.contains("--defer=2100-01-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn space_form_optional_value_refusal_leaves_legal_forms_alone() {
+        for argv in [
+            vec!["br", "update", "abc-1", "--wave=6"],
+            vec!["br", "update", "abc-1", "--wave="],
+            vec!["br", "update", "abc-1", "--defer=2100-01-01T00:00:00Z"],
+            // `--` ends flag parsing: `--wave` is a positional id there.
+            vec!["br", "update", "--", "--wave", "6"],
+            // The guard is scoped to the command that owns the optional-value
+            // flag; create's typed `--wave` keeps its required-value space form.
+            vec!["br", "create", "Title", "--wave", "6"],
+        ] {
+            let cli = Cli::try_parse_from(&argv)
+                .unwrap_or_else(|error| panic!("fixture {argv:?} must parse: {error}"));
+            let args: Vec<OsString> = argv.iter().map(OsString::from).collect();
+            assert!(
+                space_form_optional_value_refusal(&args, &cli.command).is_ok(),
+                "{argv:?} is a legal shape and must not be refused"
+            );
+        }
     }
 
     #[test]

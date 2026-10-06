@@ -999,8 +999,7 @@ fn ready_cli_excludes_deferred_by_default() {
             &ids[2],
             "--status",
             "deferred",
-            "--defer",
-            "2100-01-01T00:00:00Z",
+            "--defer=2100-01-01T00:00:00Z",
         ],
         "defer_issue",
     );
@@ -1040,8 +1039,7 @@ fn ready_cli_includes_deferred_with_flag() {
             &ids[2],
             "--status",
             "deferred",
-            "--defer",
-            "2100-01-01T00:00:00Z",
+            "--defer=2100-01-01T00:00:00Z",
         ],
         "defer_issue",
     );

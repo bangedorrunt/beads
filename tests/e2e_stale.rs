@@ -108,8 +108,7 @@ fn e2e_stale_with_deferred_status_filter() {
             &deferred_id,
             "--status",
             "deferred",
-            "--defer",
-            "2100-01-01T00:00:00Z",
+            "--defer=2100-01-01T00:00:00Z",
         ],
         "defer_issue",
     );
