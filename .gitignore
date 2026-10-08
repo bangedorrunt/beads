@@ -45,6 +45,11 @@ Thumbs.db
 .beads/*.lock
 .beads/.br_history/
 
+# Bead-close verification evidence written under .flywheel/receipts/ by
+# `br gate report` is local proof, never tracked — same policy as the
+# flywheel repo. .flywheel/agent-names.json stays tracked.
+.flywheel/receipts/
+
 # Multi-agent swarm coordination scratch state
 .swarm/
 .swarm_marching_orders.md
@@ -118,6 +123,9 @@ cursor.mcp.json
 gemini.mcp.json
 opencode.json
 windsurf.mcp.json
+# Same class: the agent-harness MCP config points at a machine-local tailnet
+# endpoint, so it stays out of the repo.
+.agents/mcp.json
 *.mcp.json.*.bak
 .opencode.json.*.bak
 .windsurf.mcp.json.*.bak
