@@ -284,6 +284,13 @@ impl DoctorRepairSession {
         self.ctx.fixer_id = fixer_id.to_string();
     }
 
+    /// True when this session only plans actions. Every chokepoint call then
+    /// reports success without touching disk, so its result must never be
+    /// counted as a repair.
+    fn is_dry_run(&self) -> bool {
+        self.ctx.dry_run
+    }
+
     /// Wrap a legacy `repair_*` call that mutates one or more files
     /// directly (e.g., VACUUM, REINDEX, blocked-cache rebuild). The
     /// helper snapshots each target verbatim into the run-dir BEFORE
@@ -2408,6 +2415,19 @@ fn is_offending_root_gitignore_pattern(line: &str) -> bool {
         && ROOT_GITIGNORE_OFFENDING_PATTERNS.contains(&trimmed)
 }
 
+/// A dry run writes nothing, so its message must read as a plan. The action
+/// labels are reused verbatim, so the plan names the same work a real run would
+/// do without making a past-tense claim about it.
+fn dry_run_plan_message(planned_actions: &[String]) -> String {
+    if planned_actions.is_empty() {
+        return "Dry run: nothing to repair.".to_string();
+    }
+    format!(
+        "Dry run: no changes written. Would: {}.",
+        planned_actions.join(", ")
+    )
+}
+
 fn repair_outcome_message_from_parts(
     mut messages: Vec<String>,
     local_repair: Option<&LocalRepairResult>,
@@ -2452,10 +2472,18 @@ struct EarlyRepairSummary {
     null_defaults: bool,
     db_bloat_vacuum: bool,
     fence_import: bool,
+    /// True when this run only planned actions (`--dry-run`). A plan is not a
+    /// repair, so `applied()` must stay false and the audit must say so.
+    dry_run: bool,
 }
 
 impl EarlyRepairSummary {
     fn applied(self) -> bool {
+        if self.dry_run {
+            // `chokepoint::mutate` reports success for a dry-run no-op, so every
+            // `*_repaired` flag below is set either way. A plan is not a repair.
+            return false;
+        }
         self.gitignore
             || self.merge_artifacts
             || self.startup_cache
@@ -2478,6 +2506,11 @@ impl EarlyRepairSummary {
             || self.null_defaults
             || self.db_bloat_vacuum
             || self.fence_import
+    }
+
+    /// True when this run only planned actions; nothing was written to disk.
+    fn dry_run(self) -> bool {
+        self.dry_run
     }
 
     fn action_labels(self) -> Vec<String> {
@@ -2552,6 +2585,13 @@ impl EarlyRepairSummary {
     }
 
     fn messages(self) -> Vec<String> {
+        if self.dry_run {
+            // A dry run performs no write, so every sentence below would be a
+            // false past-tense claim. Name the planned work through the same
+            // labels the recovery audit uses, so the two channels cannot
+            // disagree about what the plan is.
+            return vec![dry_run_plan_message(&self.action_labels())];
+        }
         let mut messages = Vec::new();
         if self.gitignore {
             messages.push(ROOT_GITIGNORE_REPAIR_MESSAGE.to_string());
@@ -2638,14 +2678,21 @@ impl EarlyRepairSummary {
     }
 
     fn audit_record(self) -> RecoveryAuditRecord {
+        let dry_run = self.dry_run;
         let applied_actions = self.action_labels();
-        let outcome = match applied_actions.as_slice() {
-            [] => "nothing_to_repair".to_string(),
-            [action] => action.clone(),
-            _ => "repairs_applied".to_string(),
+        let outcome = if dry_run && !applied_actions.is_empty() {
+            "dry_run".to_string()
+        } else {
+            match applied_actions.as_slice() {
+                [] => "nothing_to_repair".to_string(),
+                [action] => action.clone(),
+                _ => "repairs_applied".to_string(),
+            }
         };
         let phase = if applied_actions.is_empty() {
             "doctor.noop"
+        } else if dry_run {
+            "doctor.dry_run"
         } else {
             "doctor.early_repair"
         };
@@ -4095,7 +4142,9 @@ fn quarantine_anomalous_sidecars(
                     .join(name);
 
                 match chokepoint::mutate(&session.ctx, source, Op::Rename { to: dest.clone() }) {
-                    Ok(result) if result.ok => {
+                    // A dry run's `mutate` reports success for a no-op, so
+                    // counting it would claim a quarantine that never happened.
+                    Ok(result) if result.ok && !session.is_dry_run() => {
                         quarantined.push(dest.display().to_string());
                     }
                     Ok(_) => tracing::warn!(
@@ -13566,6 +13615,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         null_defaults: null_defaults_repaired,
         db_bloat_vacuum: db_bloat_vacuum_repaired,
         fence_import: fence_import_repaired,
+        dry_run: args.dry_run,
     };
 
     if !args.repair {
@@ -13708,6 +13758,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
                     ctx.json(&serde_json::json!({
                         "report": initial.report,
                         "repaired": early_repair.applied() || local_repair.applied(),
+                        "dry_run": early_repair.dry_run(),
                         "local_repair": local_repair,
                         "recovery_audit": recovery_audit,
                         "message": repair_message,
@@ -13748,6 +13799,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
                 ctx.json(&serde_json::json!({
                     "report": initial.report,
                     "repaired": early_repair.applied(),
+                    "dry_run": early_repair.dry_run(),
                     "recovery_audit": recovery_audit,
                     "message": repair_outcome_message_from_parts(early_repair.messages(), None, None),
                     "post_repair": initial.report,
@@ -20244,6 +20296,88 @@ mod tests {
         assert!(message.contains(REINDEX_INCOMPLETE_MESSAGE));
     }
 
+    /// Every flag false; `dry_run` decides whether the run acts or plans.
+    fn repair_summary(dry_run: bool) -> EarlyRepairSummary {
+        EarlyRepairSummary {
+            gitignore: false,
+            merge_artifacts: false,
+            startup_cache: false,
+            recovery_aged: false,
+            export_hash: false,
+            base_jsonl_symlink: false,
+            base_jsonl_stale: false,
+            orphan_tmp: false,
+            jsonl_eof_newline: false,
+            jsonl_bom: false,
+            jsonl_crlf: false,
+            jsonl_world_writable: false,
+            config_yaml_secret_mode: false,
+            inner_gitignore: false,
+            dirty_bitmap_orphans: false,
+            comments_orphans: false,
+            labels_orphans: false,
+            dependencies_orphans: false,
+            wal_checkpoint: false,
+            null_defaults: false,
+            db_bloat_vacuum: false,
+            fence_import: false,
+            dry_run,
+        }
+    }
+
+    /// The three actions a real run on this dev host would take.
+    fn dry_run_plan() -> EarlyRepairSummary {
+        let mut summary = repair_summary(true);
+        summary.recovery_aged = true;
+        summary.orphan_tmp = true;
+        summary.fence_import = true;
+        summary
+    }
+
+    #[test]
+    fn dry_run_repair_reports_a_plan_not_an_applied_repair() {
+        // `chokepoint::mutate` reports a successful no-op under `--dry-run`, so
+        // every `*_repaired` flag is set exactly as in a real repair. `dry_run`
+        // is the only thing that can tell the plan from the repair; without it
+        // the envelope told the operator the quarantine had happened.
+        assert!(
+            !dry_run_plan().applied(),
+            "a dry run wrote nothing, so applied() must be false"
+        );
+        assert!(dry_run_plan().dry_run(), "dry_run must be observable");
+        assert!(
+            !repair_summary(false).dry_run(),
+            "a real repair is not a dry run"
+        );
+
+        let record = dry_run_plan().audit_record();
+        assert_eq!(
+            record.phase, "doctor.dry_run",
+            "the audit must not claim doctor.early_repair for planned work"
+        );
+        assert_eq!(
+            record.outcome, "dry_run",
+            "the audit must not report repairs_applied for planned work"
+        );
+        assert_eq!(
+            record.applied_actions,
+            vec![
+                "recovery_artifacts_aged_quarantined".to_string(),
+                "orphan_tmp_quarantined".to_string(),
+                "fence_import_applied".to_string(),
+            ],
+            "the plan must still name what it would do"
+        );
+
+        // The text channel reads the same `messages()` the JSON envelope does,
+        // so a past-tense sentence there would be the same lie at another door.
+        let message = repair_outcome_message_from_parts(dry_run_plan().messages(), None, None);
+        assert!(
+            message.starts_with("Dry run:") && !message.contains("Quarantined"),
+            "the message must describe a plan, not a past-tense repair: {message}"
+        );
+    }
+
     #[test]
     fn test_early_repair_summary_reports_export_hash_repairs() {
         let summary = EarlyRepairSummary {
@@ -20269,6 +20403,7 @@ mod tests {
             null_defaults: false,
             db_bloat_vacuum: false,
             fence_import: false,
+            dry_run: false,
         };
 
         assert!(summary.applied());
@@ -20332,6 +20467,7 @@ mod tests {
             null_defaults: false,
             db_bloat_vacuum: true,
             fence_import: true,
+            dry_run: false,
         };
 
         assert!(summary.applied());
@@ -20383,6 +20519,7 @@ mod tests {
             null_defaults: true,
             db_bloat_vacuum: false,
             fence_import: false,
+            dry_run: false,
         };
 
         assert!(summary.applied());
@@ -20428,6 +20565,7 @@ mod tests {
             null_defaults: false,
             db_bloat_vacuum: false,
             fence_import: false,
+            dry_run: false,
         };
 
         assert!(summary.applied());
@@ -20473,6 +20611,7 @@ mod tests {
             null_defaults: false,
             db_bloat_vacuum: false,
             fence_import: false,
+            dry_run: false,
         };
 
         assert!(summary.applied());
@@ -20518,6 +20657,7 @@ mod tests {
             null_defaults: false,
             db_bloat_vacuum: false,
             fence_import: false,
+            dry_run: false,
         };
 
         assert!(summary.applied());
@@ -21898,6 +22038,78 @@ mod tests {
         assert_eq!(
             action["rename_to"].as_str(),
             Some(quarantine_path.to_string_lossy().as_ref())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_dry_run_sidecar_quarantine_reports_no_repair() -> Result<()> {
+        // Same orphan sidecar as the test above, planned instead of performed.
+        // `chokepoint::mutate` reports success for a dry-run no-op, so counting
+        // that as a quarantine told the operator a repair had happened while
+        // the orphan bytes sat untouched.
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        fs::create_dir_all(&beads_dir)?;
+        let db_path = beads_dir.join("beads.db");
+        {
+            let _storage = SqliteStorage::open(&db_path)?;
+        }
+        let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
+        let shm_path = PathBuf::from(format!("{}-shm", db_path.to_string_lossy()));
+        let _ = fs::remove_file(&wal_path);
+        let _ = fs::remove_file(&shm_path);
+        fs::write(&shm_path, b"orphan shm")?;
+
+        let report = DoctorReport {
+            ok: false,
+            workspace_health: None,
+            reliability_audit: None,
+            checks: vec![CheckResult {
+                name: "db.sidecars".to_string(),
+                status: CheckStatus::Error,
+                message: Some("SHM sidecar exists without a matching WAL sidecar".to_string()),
+                details: None,
+            }],
+        };
+
+        let mut session =
+            DoctorRepairSession::new(temp.path(), /* dry_run = */ true).expect("session builds");
+
+        let repair = repair_recoverable_db_state(
+            &beads_dir,
+            &db_path,
+            &report,
+            Some(&mut session),
+            &FixerFilter::default(),
+        );
+        assert!(
+            repair.quarantined_artifacts.is_empty(),
+            "a dry run moves nothing, so it must report no quarantine: {:?}",
+            repair.quarantined_artifacts
+        );
+        assert!(
+            !repair.applied(),
+            "a dry run wrote nothing, so applied() must be false"
+        );
+        // The live sidecar bytes are deliberately not asserted: opening the
+        // database for inspection may recreate a fresh `-shm`. What must hold
+        // is that no quarantine destination was created.
+        let quarantine_path = session
+            .run
+            .root
+            .join("quarantine")
+            .join(".beads")
+            .join("beads.db-shm");
+        assert!(
+            !quarantine_path.exists(),
+            "the dry run must not create {}",
+            quarantine_path.display()
+        );
+        let actions = fs::read_to_string(&session.run.actions_file)?;
+        assert!(
+            actions.trim().is_empty(),
+            "a dry run appends no actions.jsonl lines: {actions}"
         );
         Ok(())
     }
