@@ -2088,7 +2088,7 @@ mod tests {
     #[test]
     fn inherited_descendant_output_descriptors_do_not_delay_return() {
         let temp = TempDir::new().expect("temp dir");
-        let marker = temp.path().join("descendant-finished");
+        let marker = temp.path().join("descendant-started");
         let marker_text = marker
             .to_str()
             .expect("temporary test path must be UTF-8 for shell fixture");
@@ -2096,8 +2096,15 @@ mod tests {
             !marker_text.contains('\''),
             "temporary test path must not require shell quote escaping"
         );
+        // The descendant holds its inherited descriptors far past the probe
+        // deadline, so "the capture waited for it" cannot be confused with "the
+        // machine was busy". The old fixture slept 0.8s against a 500ms bound,
+        // which a loaded full-suite run (147 targets at once) can cross on
+        // spawn overhead alone; it flaked exactly that way. A regression back to
+        // pipes now blocks past the 3s deadline (TimedOut, an explicit error) or
+        // returns at >= 5s, both unmistakably red against a 2s bound.
         let script_body = format!(
-            "#!/bin/sh\n(sleep 0.8; printf 'done' > '{marker_text}') &\nprintf 'direct child done'\nexit 0\n"
+            "#!/bin/sh\n(sleep 0.2; printf 'done' > '{marker_text}'; sleep 5) &\nprintf 'direct child done'\nexit 0\n"
         );
         let script = executable_script(temp.path(), "git-inherited-descriptors", &script_body);
 
@@ -2106,24 +2113,27 @@ mod tests {
             script.as_os_str(),
             temp.path(),
             &[],
-            started + Duration::from_secs(2),
+            started + Duration::from_secs(3),
         )
         .expect("direct child should complete successfully");
         let elapsed = started.elapsed();
         assert!(output.status.success(), "{output:?}");
         assert_eq!(output.stdout, b"direct child done");
         assert!(
-            elapsed < Duration::from_millis(500),
+            elapsed < Duration::from_secs(2),
             "capture waited for the descendant's inherited descriptors: {elapsed:?}"
         );
 
+        // The marker lands 0.2s into the descendant, long before its 5s hold
+        // ends: waiting for it proves the fixture actually ran and kept the
+        // descriptors open, so a fast return above is not vacuous.
         let marker_deadline = Instant::now() + Duration::from_secs(2);
         while !marker.is_file() && Instant::now() < marker_deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(
             marker.is_file(),
-            "background fixture did not self-terminate as expected"
+            "background fixture did not start as expected"
         );
     }
 
