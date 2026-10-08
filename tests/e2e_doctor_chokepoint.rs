@@ -2100,3 +2100,163 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
         "undo must retain exactly one displaced applied-state directory"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Dry-run honesty — `--repair --dry-run` must not expire stale drafts
+// ---------------------------------------------------------------------------
+//
+// The stale-draft expiry was the one legacy fixer still calling straight
+// through to `expire_stale_drafts`, so `--repair --dry-run` flipped a draft
+// to `tombstone` and rewrote the database while the flag promised it would
+// not (measured: db sha256 changed, `close_reason` stamped, envelope said
+// `repaired: true`). The unit fence next to the fixer cannot see a call site
+// that forgets to hand the fixer its session, so this test drives the real
+// binary and fences the CLI wiring end to end.
+
+/// Seed one draft, backdated past `STALE_DRAFT_DAYS`, and return its id.
+fn seed_backdated_draft(root: &Path) -> String {
+    br_init(root);
+    let created = br_cmd(root)
+        .args([
+            "create",
+            "--title",
+            "stale draft seed",
+            "--description",
+            "a draft abandoned 30 days ago",
+            "--verify",
+            "true",
+            "--principle",
+            "stale-draft-seed — a draft whose updated_at never moved is the stale-draft fixture",
+            "--priority",
+            "2",
+            "--no-auto-flush",
+        ])
+        .output()
+        .expect("br create spawned");
+    assert!(
+        created.status.success(),
+        "br create (stale draft) failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&created.stdout),
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let listed = br_cmd(root)
+        .args(["--no-auto-import", "--allow-stale", "list", "--json"])
+        .output()
+        .expect("br list spawned");
+    assert!(listed.status.success(), "br list --json failed");
+    let id = parse_trailing_json(&String::from_utf8_lossy(&listed.stdout))["issues"][0]["id"]
+        .as_str()
+        .expect("issue id")
+        .to_string();
+
+    // The CLI has no transition from `open` into `draft` (the workflow
+    // policy refuses it) and `q` is quick-capture only, so the fixture is
+    // written straight into the row.
+    let db_path = root.join(".beads/beads.db");
+    let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open database");
+    conn.execute(&format!(
+        "UPDATE issues SET status = 'draft', updated_at = '2020-01-01T00:00:00Z' \
+         WHERE id = '{id}'"
+    ))
+    .expect("flip the seed into a backdated draft");
+    let _ = conn.close();
+    id
+}
+
+fn issue_status(db_path: &Path, id: &str) -> String {
+    let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open database");
+    let status = conn
+        .query_row(&format!("SELECT status FROM issues WHERE id = '{id}'"))
+        .expect("read issue status")
+        .get(0)
+        .and_then(beads::storage::SqliteValue::as_text)
+        .expect("status text")
+        .to_string();
+    let _ = conn.close();
+    status
+}
+
+#[test]
+fn chokepoint_dry_run_does_not_expire_stale_drafts() {
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path().to_path_buf();
+    let id = seed_backdated_draft(&root);
+
+    // Precondition: the draft is visible to the check that gates the fixer.
+    let diagnose = br_cmd(&root)
+        .arg("doctor")
+        .output()
+        .expect("doctor spawned");
+    assert!(
+        String::from_utf8_lossy(&diagnose.stdout).contains("draft.stale"),
+        "the fixture must trip the stale-draft check: stdout={} stderr={}",
+        String::from_utf8_lossy(&diagnose.stdout),
+        String::from_utf8_lossy(&diagnose.stderr)
+    );
+
+    let db_path = root.join(".beads/beads.db");
+    let before = hash_workspace(&root);
+    let db_before = sha256_hex(&fs::read(&db_path).expect("read db before dry run"));
+
+    let dry = br_cmd(&root)
+        .args(["doctor", "--repair", "--dry-run", "--json"])
+        .output()
+        .expect("dry repair spawned");
+    assert!(
+        dry.status.success(),
+        "doctor --repair --dry-run failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&dry.stdout),
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    let envelope = parse_trailing_json(&String::from_utf8_lossy(&dry.stdout));
+    assert_eq!(envelope["dry_run"], true);
+    assert_eq!(
+        envelope["repaired"], false,
+        "a dry run must not report a repair: {envelope}"
+    );
+    assert_eq!(
+        envelope["local_repair"]["stale_drafts_expired"], 0,
+        "a dry run must not count a stale-draft expiry: {envelope}"
+    );
+    assert_eq!(
+        db_before,
+        sha256_hex(&fs::read(&db_path).expect("read db after dry run")),
+        "a dry run must not rewrite the database file"
+    );
+    let mut after = hash_workspace(&root);
+    // The pre-WP3 dry run still materializes the root `.gitignore` before the
+    // chokepoint preflight. That is a separate defect with its own fence (the
+    // ignored `chokepoint_dry_run_writes_no_files`), so exclude exactly that
+    // path and hold everything else to byte-equality.
+    after.remove(Path::new(".gitignore"));
+    assert_eq!(
+        before, after,
+        "doctor --repair --dry-run mutated the workspace"
+    );
+    assert_eq!(
+        issue_status(&db_path, &id),
+        "draft",
+        "a dry run must leave the stale draft alone"
+    );
+
+    // Vacuity guard: the same fixture under a real repair DOES expire the
+    // draft, so the dry run's no-op is the fixer being held back rather
+    // than a fixer that never runs at all.
+    let real = br_cmd(&root)
+        .args(["doctor", "--repair", "--json"])
+        .output()
+        .expect("real repair spawned");
+    assert!(
+        real.status.success(),
+        "doctor --repair failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&real.stdout),
+        String::from_utf8_lossy(&real.stderr)
+    );
+    let real_envelope = parse_trailing_json(&String::from_utf8_lossy(&real.stdout));
+    assert_eq!(real_envelope["dry_run"], false);
+    assert_eq!(
+        real_envelope["local_repair"]["stale_drafts_expired"], 1,
+        "a real repair must still expire the draft: {real_envelope}"
+    );
+    assert_eq!(issue_status(&db_path, &id), "tombstone");
+}

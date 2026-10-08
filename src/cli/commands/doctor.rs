@@ -1320,41 +1320,66 @@ fn report_has_stale_drafts_finding(report: &DoctorReport) -> bool {
 fn repair_stale_drafts_under_write_authority(
     db_path: &Path,
     repair: &mut LocalRepairResult,
+    session: Option<&mut DoctorRepairSession>,
     write_authority: &Arc<crate::sync::DatabaseFamilyWriteLock>,
 ) {
-    if let Err(err) = write_authority.verify_database_authority() {
-        tracing::warn!(
-            path = %db_path.display(),
-            error = %err,
-            "Skipping stale-draft expiry because database authority was lost"
-        );
-        return;
-    }
-    match open_doctor_storage_under_write_authority(db_path, write_authority) {
-        Ok(mut storage) => match storage.expire_stale_drafts(STALE_DRAFT_DAYS, "doctor") {
-            Ok(expired) => {
-                repair.stale_drafts_expired += expired.len() as u64;
-                tracing::info!(
-                    path = %db_path.display(),
-                    expired = expired.len(),
-                    "Expired stale drafts to Tombstone"
-                );
-            }
+    let do_expire = |repair: &mut LocalRepairResult| {
+        if let Err(err) = write_authority.verify_database_authority() {
+            tracing::warn!(
+                path = %db_path.display(),
+                error = %err,
+                "Skipping stale-draft expiry because database authority was lost"
+            );
+            return;
+        }
+        match open_doctor_storage_under_write_authority(db_path, write_authority) {
+            Ok(mut storage) => match storage.expire_stale_drafts(STALE_DRAFT_DAYS, "doctor") {
+                Ok(expired) => {
+                    repair.stale_drafts_expired += expired.len() as u64;
+                    tracing::info!(
+                        path = %db_path.display(),
+                        expired = expired.len(),
+                        "Expired stale drafts to Tombstone"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        path = %db_path.display(),
+                        error = %err,
+                        "Stale-draft expiry failed; drafts remain"
+                    );
+                }
+            },
             Err(err) => {
                 tracing::warn!(
                     path = %db_path.display(),
                     error = %err,
-                    "Stale-draft expiry failed; drafts remain"
+                    "Skipping stale-draft expiry because the database would not open"
                 );
             }
-        },
-        Err(err) => {
+        }
+    };
+    // The chokepoint is what keeps `--dry-run` honest: `record_legacy_op`
+    // prints `[dry-run] would mutate …` and returns without invoking the
+    // closure, so the expiry (and its `stale_drafts_expired` count) never
+    // happens. Calling straight through, as this fixer used to, is the one
+    // shape that lets a dry run write the database.
+    if let Some(session) = session {
+        let family_paths = existing_sqlite_family_paths_for_legacy_op(db_path);
+        let family_refs: Vec<&Path> = family_paths.iter().map(PathBuf::as_path).collect();
+        let result = session.record_legacy_mutation("repair_stale_drafts", &family_refs, || {
+            do_expire(repair);
+            Ok(())
+        });
+        if let Err(err) = result {
             tracing::warn!(
                 path = %db_path.display(),
                 error = %err,
-                "Skipping stale-draft expiry because the database would not open"
+                "Failed to record stale-draft expiry legacy-op audit; mutation still proceeded if possible"
             );
         }
+    } else {
+        do_expire(repair);
     }
 }
 
@@ -13718,6 +13743,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
                 repair_stale_drafts_under_write_authority(
                     &paths.db_path,
                     &mut local_repair,
+                    session.as_mut(),
                     repair_write_authority,
                 );
             }
@@ -16985,6 +17011,115 @@ mod tests {
         let details = check.details.as_ref().expect("details");
         assert_eq!(details["stale_count"], 1);
         assert_eq!(details["stale_ids"][0], "bd-old");
+    }
+
+    /// The stale-draft expiry was the one legacy doctor fixer still on the
+    /// pre-WP4 shape: it called `expire_stale_drafts` straight through and
+    /// ignored the session, so `--repair --dry-run` wrote the database while
+    /// promising it would not (measured: a draft flipped to `tombstone` and
+    /// the db sha changed). Routing it through the chokepoint is what makes
+    /// the flag true; the real-run twin keeps the expiry working.
+    #[test]
+    fn dry_run_session_does_not_expire_stale_drafts() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        fs::create_dir_all(&beads_dir).unwrap();
+        let db_path = beads_dir.join("beads.db");
+        seed_stale_draft(&db_path, "ws-stale-draft");
+
+        {
+            let write_authority =
+                acquire_doctor_database_write_authority(&beads_dir, &db_path, Some(5_000))
+                    .expect("write authority");
+            let mut session =
+                DoctorRepairSession::new(temp.path(), /* dry_run = */ true).expect("session");
+            let mut repair = LocalRepairResult::default();
+            repair_stale_drafts_under_write_authority(
+                &db_path,
+                &mut repair,
+                Some(&mut session),
+                &write_authority,
+            );
+
+            assert_eq!(
+                repair.stale_drafts_expired, 0,
+                "a dry run must not count a planned expiry as a repair"
+            );
+            assert!(
+                fs::read_to_string(&session.run.actions_file)
+                    .unwrap()
+                    .trim()
+                    .is_empty(),
+                "a dry run must append no actions.jsonl lines"
+            );
+        }
+
+        assert!(
+            matches!(
+                stale_draft_status(&db_path, "ws-stale-draft"),
+                Status::Draft
+            ),
+            "a dry run must leave the stale draft untouched"
+        );
+    }
+
+    #[test]
+    fn real_repair_session_expires_stale_drafts() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        fs::create_dir_all(&beads_dir).unwrap();
+        let db_path = beads_dir.join("beads.db");
+        seed_stale_draft(&db_path, "ws-stale-draft");
+
+        {
+            let write_authority =
+                acquire_doctor_database_write_authority(&beads_dir, &db_path, Some(5_000))
+                    .expect("write authority");
+            let mut session =
+                DoctorRepairSession::new(temp.path(), /* dry_run = */ false).expect("session");
+            let mut repair = LocalRepairResult::default();
+            repair_stale_drafts_under_write_authority(
+                &db_path,
+                &mut repair,
+                Some(&mut session),
+                &write_authority,
+            );
+            assert_eq!(
+                repair.stale_drafts_expired, 1,
+                "a real repair must still expire the stale draft"
+            );
+        }
+
+        assert!(
+            matches!(
+                stale_draft_status(&db_path, "ws-stale-draft"),
+                Status::Tombstone
+            ),
+            "a real repair must still expire the stale draft"
+        );
+    }
+
+    /// One draft, backdated past `STALE_DRAFT_DAYS` so `draft.stale` fires.
+    fn seed_stale_draft(db_path: &Path, id: &str) {
+        let mut storage = SqliteStorage::open(db_path).unwrap();
+        let mut draft = sample_issue(id, "Stale draft");
+        draft.status = Status::Draft;
+        storage.create_issue(&draft, "tester").unwrap();
+        let backdate = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        storage
+            .execute_test_sql(&format!(
+                "UPDATE issues SET updated_at = '{backdate}' WHERE id = '{id}'"
+            ))
+            .unwrap();
+    }
+
+    fn stale_draft_status(db_path: &Path, id: &str) -> Status {
+        SqliteStorage::open(db_path)
+            .unwrap()
+            .get_issue(id)
+            .unwrap()
+            .unwrap_or_else(|| panic!("issue {id} must exist"))
+            .status
     }
 
     #[test]
