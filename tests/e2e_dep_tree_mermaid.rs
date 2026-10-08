@@ -408,6 +408,7 @@ fn e2e_dep_tree_mermaid_diamond_shape() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_dep_tree_mermaid_max_depth_truncation() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_max_depth_truncation: starting");
@@ -792,6 +793,7 @@ fn e2e_dep_tree_mermaid_format_case_insensitive() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_dep_tree_mermaid_output_valid_mermaid_diagram() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_output_valid_mermaid_diagram: starting");

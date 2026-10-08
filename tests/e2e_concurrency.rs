@@ -555,6 +555,7 @@ fn configure_external_route(main_root: &Path, external_root: &Path) {
 /// ghost mutation or poison the advisory lock for subsequent writers.
 #[test]
 #[allow(clippy::incompatible_msrv)]
+#[allow(clippy::too_many_lines)]
 fn e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace() {
     let _log =
         common::test_log("e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace");
@@ -1719,6 +1720,7 @@ fn e2e_write_serialization() {
 /// 2. Has other threads doing reads
 /// 3. Verifies reads complete and writes eventually complete
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_mixed_read_write_concurrency() {
     let _log = common::test_log("e2e_mixed_read_write_concurrency");
 
@@ -3567,6 +3569,7 @@ fn overflow_page_description() -> String {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_parallel_writes_preserve_large_description_and_freelist() {
     let _log = common::test_log("e2e_parallel_writes_preserve_large_description_and_freelist");
 

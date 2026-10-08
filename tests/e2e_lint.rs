@@ -75,13 +75,7 @@ fn create_bare_issue(
     let strip_label = format!("strip_brief_{}", title.replace(' ', "_"));
     let strip = run_br(
         workspace,
-        [
-            "update",
-            id.as_str(),
-            "--verify",
-            "",
-            "--clear-principles",
-        ],
+        ["update", id.as_str(), "--verify", "", "--clear-principles"],
         &strip_label,
     );
     assert!(
@@ -488,8 +482,7 @@ fn e2e_lint_filter_by_status_all() {
         "close_bug",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
-    let deferred_bug =
-        create_bare_issue(&workspace, "Deferred bug", "bug", Some("Deferred"));
+    let deferred_bug = create_bare_issue(&workspace, "Deferred bug", "bug", Some("Deferred"));
     let defer = run_br(
         &workspace,
         [
@@ -549,8 +542,7 @@ fn e2e_lint_filter_by_status_deferred() {
     init_workspace(&workspace);
 
     let open_bug = create_bare_issue(&workspace, "Open bug", "bug", Some("Open"));
-    let deferred_bug =
-        create_bare_issue(&workspace, "Deferred bug", "bug", Some("Deferred"));
+    let deferred_bug = create_bare_issue(&workspace, "Deferred bug", "bug", Some("Deferred"));
     let defer = run_br(
         &workspace,
         [

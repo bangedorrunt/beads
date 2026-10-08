@@ -311,7 +311,11 @@ fn e2e_graph_all_includes_custom_status_issues() {
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
-    let graph = run_br(&workspace, ["graph", "--all", "--json"], "graph_all_blocked");
+    let graph = run_br(
+        &workspace,
+        ["graph", "--all", "--json"],
+        "graph_all_blocked",
+    );
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
 
     let payload = extract_json_payload(&graph.stdout);

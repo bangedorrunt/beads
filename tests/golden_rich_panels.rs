@@ -75,7 +75,10 @@ fn close_issue_for_fixture(root: &Path, id: &str) {
     std::fs::write(root.join("fixture_work.txt"), format!("work for {id}\n"))
         .expect("write fixture work file");
     run_git(root, &["add", "fixture_work.txt"]);
-    run_git(root, &["commit", "-q", "-m", &format!("fixture: work for {id}")]);
+    run_git(
+        root,
+        &["commit", "-q", "-m", &format!("fixture: work for {id}")],
+    );
     let sha = run_git(root, &["rev-parse", "HEAD"]);
     run_setup_br(
         root,

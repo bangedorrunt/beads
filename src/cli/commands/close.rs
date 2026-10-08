@@ -1288,11 +1288,7 @@ pub(crate) fn preview_close_report(
     };
     let mut issues: Vec<CloseDryRunIssue> = Vec::with_capacity(resolved_ids.len());
     for id in resolved_ids {
-        issues.push(preview_one_issue(
-            &preview_ctx,
-            &storage_ctx.storage,
-            id,
-        )?);
+        issues.push(preview_one_issue(&preview_ctx, &storage_ctx.storage, id)?);
     }
 
     Ok(CloseDryRunReport {

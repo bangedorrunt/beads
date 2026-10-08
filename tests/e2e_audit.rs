@@ -579,6 +579,7 @@ fn e2e_audit_record_via_stdin() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_audit_coordination_records_and_labels_incident() {
     common::init_test_logging();
     info!("e2e_audit_coordination_records_and_labels_incident: start");

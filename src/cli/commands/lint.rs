@@ -284,11 +284,9 @@ fn build_filters(args: &LintArgs) -> Result<ListFilters> {
         // below caught only the second, so `--type unknown_custom_type`
         // surfaced `Validation failed: issue_type: ...` and a caller had to
         // string-match prose instead of dispatching on INVALID_TYPE.
-        let issue_type: IssueType = type_str
-            .parse()
-            .map_err(|_| BeadsError::InvalidType {
-                issue_type: type_str.clone(),
-            })?;
+        let issue_type: IssueType = type_str.parse().map_err(|_| BeadsError::InvalidType {
+            issue_type: type_str.clone(),
+        })?;
         // bd conformance: CLI rejects custom/unknown types
         if !issue_type.is_standard() {
             return Err(BeadsError::InvalidType {

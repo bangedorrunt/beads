@@ -25,7 +25,10 @@ fn test_create_json_output_is_single_object() {
     // Create issue
     let output = Command::new(bin)
         .current_dir(path)
-        .args(common::cli::gate_create_args(["create", "Single Object Check"]))
+        .args(common::cli::gate_create_args([
+            "create",
+            "Single Object Check",
+        ]))
         .arg("--json")
         .output()
         .expect("create issue");

@@ -16,8 +16,7 @@
 mod common;
 
 use common::cli::{
-    BrWorkspace, extract_json_payload, parse_list_issues, parse_list_page, run_br,
-    run_br_with_env,
+    BrWorkspace, extract_json_payload, parse_list_issues, parse_list_page, run_br, run_br_with_env,
 };
 
 fn parse_created_id(stdout: &str) -> String {

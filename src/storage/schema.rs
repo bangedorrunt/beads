@@ -3070,7 +3070,7 @@ mod tests {
         let row = conn
             .query_row("SELECT generation FROM generation_manifest WHERE singleton = 1")
             .unwrap();
-        assert_eq!(row.get(0).and_then(|v| v.as_integer()), Some(0));
+        assert_eq!(row.get(0).and_then(SqliteValue::as_integer), Some(0));
 
         // Verify pragmas
         let row = conn.query_row("PRAGMA journal_mode").unwrap();

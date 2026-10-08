@@ -316,9 +316,7 @@ fn create_priority(args: &[OsString]) -> u8 {
             i += 1;
             args.get(i).map(|v| v.to_string_lossy().into_owned())
         } else {
-            token
-                .strip_prefix("--priority=")
-                .map(str::to_string)
+            token.strip_prefix("--priority=").map(str::to_string)
         };
         if let Some(raw) = raw {
             // `-p` accepts `0`-`4` and `P0`-`P4`.
@@ -332,8 +330,7 @@ fn create_priority(args: &[OsString]) -> u8 {
     2
 }
 
-const HARNESS_BRIEF: &str =
-    "e2e seed: harness-supplied brief, because br create is fail-closed";
+const HARNESS_BRIEF: &str = "e2e seed: harness-supplied brief, because br create is fail-closed";
 const HARNESS_VERIFY: &str = "br list";
 
 /// `--ac judgment` IS the declaration that this bead has no VERIFY command:

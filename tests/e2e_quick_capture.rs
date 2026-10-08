@@ -757,9 +757,6 @@ fn q_status_is_always_draft() {
 
         let payload = extract_json_payload(&show.stdout);
         let json: Value = serde_json::from_str(&payload).expect("parse json");
-        assert_eq!(
-            json["status"], "draft",
-            "issue {id} status should be draft"
-        );
+        assert_eq!(json["status"], "draft", "issue {id} status should be draft");
     }
 }

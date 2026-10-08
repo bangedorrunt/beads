@@ -152,7 +152,11 @@ fn optional_value_flags_refuse_space_separated() {
     );
 
     // ...and clear.
-    let clear_defer = run_br(&workspace, ["update", &id, "--defer="], "defer_equals_clear");
+    let clear_defer = run_br(
+        &workspace,
+        ["update", &id, "--defer="],
+        "defer_equals_clear",
+    );
     assert!(
         clear_defer.status.success(),
         "equals clear failed: {}",

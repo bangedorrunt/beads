@@ -1032,6 +1032,7 @@ fn e2e_non_hermetic_smoke_existing_workspace_preserves_env_sensitive_paths() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_update_claim_multiple_ids_is_all_or_nothing() {
     let _log = common::test_log("e2e_update_claim_multiple_ids_is_all_or_nothing");
     let workspace = BrWorkspace::new();
@@ -3649,6 +3650,7 @@ fn e2e_sync_additive_reconciliation_is_read_only_then_lossless_and_idempotent() 
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_sync_witness_json_is_deterministic_and_read_only() {
     let workspace = BrWorkspace::new();
 
@@ -3932,6 +3934,7 @@ fn e2e_sync_flush_export_parallelism_preserves_jsonl_bytes() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_sync_witness_reports_base_snapshot_drift() {
     let workspace = BrWorkspace::new();
 

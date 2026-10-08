@@ -45,7 +45,10 @@ fn doctor_fails_loudly_when_write_lock_is_a_directory() {
     // still an ordinary file, so the failure below is attributable to the
     // planted node alone. Without it the assertion pins only "doctor exited
     // non-zero", which any unrelated breakage would also satisfy.
-    let healthy = br_cmd(ws).arg("doctor").output().expect("br doctor spawned");
+    let healthy = br_cmd(ws)
+        .arg("doctor")
+        .output()
+        .expect("br doctor spawned");
     assert!(
         healthy.status.success(),
         "control: doctor must succeed on a healthy workspace; stdout={} stderr={}",
