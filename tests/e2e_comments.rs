@@ -34,7 +34,20 @@ fn e2e_comments_add_single_and_list() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create an issue
-    let create = run_br(&workspace, ["create", "Test issue for comments", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Test issue for comments",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
     assert!(!id.is_empty(), "missing created id");
@@ -69,7 +82,20 @@ fn e2e_comments_add_multiple_verify_order() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Multiple comments test", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Multiple comments test",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -164,7 +190,20 @@ fn e2e_comments_list_json_structure() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "JSON structure test", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "JSON structure test",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -215,7 +254,20 @@ fn e2e_comments_add_to_existing() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Existing comments test", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Existing comments test",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -295,7 +347,20 @@ fn e2e_comments_add_empty() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Empty comment test", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Empty comment test",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -341,7 +406,20 @@ fn e2e_comments_list_empty() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "No comments issue", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "No comments issue",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -371,7 +449,20 @@ fn e2e_comments_special_characters() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Special chars test", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Special chars test",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -418,7 +509,20 @@ fn e2e_comments_long_text() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Long comment test", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Long comment test",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -456,7 +560,20 @@ fn e2e_comments_on_closed_issue() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Closed issue test", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Closed issue test",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -528,7 +645,20 @@ fn e2e_comments_add_json_output() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "JSON add test", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "JSON add test",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -560,7 +690,20 @@ fn e2e_comments_shorthand() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Shorthand test", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Shorthand test",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -594,7 +737,20 @@ fn e2e_comments_sync_roundtrip() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Sync roundtrip test", "-d", "comments brief", "--verify", "true", "--principle", "prove-it-works \u{2014} comments brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Sync roundtrip test",
+            "-d",
+            "comments brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} comments brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 

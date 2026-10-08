@@ -467,7 +467,16 @@ fn e2e_create_normalizes_runtime_issue_prefix_from_project_config() {
 
     let create = run_br(
         &workspace,
-        ["create", "Normalize prefix", "-d", "prefix brief", "--verify", "true", "--principle", "prove-it-works — prefix brief"],
+        [
+            "create",
+            "Normalize prefix",
+            "-d",
+            "prefix brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works — prefix brief",
+        ],
         "create_with_mixed_prefix",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);

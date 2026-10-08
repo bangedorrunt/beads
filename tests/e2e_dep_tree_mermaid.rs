@@ -82,8 +82,20 @@ fn e2e_dep_tree_mermaid_single_node_no_deps() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Single issue", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Single issue",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
@@ -119,12 +131,48 @@ fn e2e_dep_tree_mermaid_linear_chain() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create chain: A -> B -> C (A depends on B, B depends on C)
-    let a = run_br(&workspace, ["create", "Issue A", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_a");
-    let b = run_br(&workspace, ["create", "Issue B", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_b");
-    let c = run_br(&workspace, ["create", "Issue C", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_c");
+    let a = run_br(
+        &workspace,
+        [
+            "create",
+            "Issue A",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_a",
+    );
+    let b = run_br(
+        &workspace,
+        [
+            "create",
+            "Issue B",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_b",
+    );
+    let c = run_br(
+        &workspace,
+        [
+            "create",
+            "Issue C",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_c",
+    );
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
@@ -184,12 +232,48 @@ fn e2e_dep_tree_mermaid_branching_deps() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create: A -> B and A -> C (A depends on both B and C)
-    let a = run_br(&workspace, ["create", "Root A", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_a");
-    let b = run_br(&workspace, ["create", "Branch B", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_b");
-    let c = run_br(&workspace, ["create", "Branch C", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_c");
+    let a = run_br(
+        &workspace,
+        [
+            "create",
+            "Root A",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_a",
+    );
+    let b = run_br(
+        &workspace,
+        [
+            "create",
+            "Branch B",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_b",
+    );
+    let c = run_br(
+        &workspace,
+        [
+            "create",
+            "Branch C",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_c",
+    );
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
@@ -226,14 +310,62 @@ fn e2e_dep_tree_mermaid_diamond_shape() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Diamond: A -> B -> D and A -> C -> D
-    let a = run_br(&workspace, ["create", "Top A", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_a");
-    let b = run_br(&workspace, ["create", "Left B", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_b");
-    let c = run_br(&workspace, ["create", "Right C", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_c");
-    let d = run_br(&workspace, ["create", "Bottom D", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_d");
+    let a = run_br(
+        &workspace,
+        [
+            "create",
+            "Top A",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_a",
+    );
+    let b = run_br(
+        &workspace,
+        [
+            "create",
+            "Left B",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_b",
+    );
+    let c = run_br(
+        &workspace,
+        [
+            "create",
+            "Right C",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_c",
+    );
+    let d = run_br(
+        &workspace,
+        [
+            "create",
+            "Bottom D",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_d",
+    );
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
@@ -285,16 +417,76 @@ fn e2e_dep_tree_mermaid_max_depth_truncation() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create deep chain: A -> B -> C -> D -> E
-    let a = run_br(&workspace, ["create", "Level 0", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_a");
-    let b = run_br(&workspace, ["create", "Level 1", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_b");
-    let c = run_br(&workspace, ["create", "Level 2", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_c");
-    let d = run_br(&workspace, ["create", "Level 3", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_d");
-    let e = run_br(&workspace, ["create", "Level 4", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_e");
+    let a = run_br(
+        &workspace,
+        [
+            "create",
+            "Level 0",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_a",
+    );
+    let b = run_br(
+        &workspace,
+        [
+            "create",
+            "Level 1",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_b",
+    );
+    let c = run_br(
+        &workspace,
+        [
+            "create",
+            "Level 2",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_c",
+    );
+    let d = run_br(
+        &workspace,
+        [
+            "create",
+            "Level 3",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_d",
+    );
+    let e = run_br(
+        &workspace,
+        [
+            "create",
+            "Level 4",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_e",
+    );
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
@@ -365,8 +557,16 @@ fn e2e_dep_tree_mermaid_title_with_quotes() {
     // Create issue with quotes in title that need escaping
     let create = run_br(
         &workspace,
-        ["create", "Issue with \"quotes\" in title", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"],
+        [
+            "create",
+            "Issue with \"quotes\" in title",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
         "create",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -401,8 +601,20 @@ fn e2e_dep_tree_mermaid_external_dependency_uses_safe_node_ids() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Root issue", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Root issue",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
@@ -465,10 +677,34 @@ fn e2e_dep_tree_mermaid_vs_json_consistency() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create simple tree
-    let a = run_br(&workspace, ["create", "Root", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_a");
-    let b = run_br(&workspace, ["create", "Child", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_b");
+    let a = run_br(
+        &workspace,
+        [
+            "create",
+            "Root",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_a",
+    );
+    let b = run_br(
+        &workspace,
+        [
+            "create",
+            "Child",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_b",
+    );
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
@@ -521,8 +757,20 @@ fn e2e_dep_tree_mermaid_format_case_insensitive() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Test issue", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Test issue",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create",
+    );
     let issue_id = parse_created_id(&create.stdout);
 
     // Test different cases
@@ -553,14 +801,62 @@ fn e2e_dep_tree_mermaid_output_valid_mermaid_diagram() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create a non-trivial tree
-    let epic = run_br(&workspace, ["create", "Epic", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_epic");
-    let task1 = run_br(&workspace, ["create", "Task 1", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_task1");
-    let task2 = run_br(&workspace, ["create", "Task 2", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_task2");
-    let subtask = run_br(&workspace, ["create", "Subtask", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_subtask");
+    let epic = run_br(
+        &workspace,
+        [
+            "create",
+            "Epic",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_epic",
+    );
+    let task1 = run_br(
+        &workspace,
+        [
+            "create",
+            "Task 1",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_task1",
+    );
+    let task2 = run_br(
+        &workspace,
+        [
+            "create",
+            "Task 2",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_task2",
+    );
+    let subtask = run_br(
+        &workspace,
+        [
+            "create",
+            "Subtask",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_subtask",
+    );
 
     let id_epic = parse_created_id(&epic.stdout);
     let id_task1 = parse_created_id(&task1.stdout);
@@ -631,10 +927,34 @@ fn e2e_dep_tree_mermaid_text_vs_mermaid_format() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let a = run_br(&workspace, ["create", "Root", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_a");
-    let b = run_br(&workspace, ["create", "Child", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create_b");
+    let a = run_br(
+        &workspace,
+        [
+            "create",
+            "Root",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_a",
+    );
+    let b = run_br(
+        &workspace,
+        [
+            "create",
+            "Child",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create_b",
+    );
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
@@ -681,15 +1001,35 @@ fn e2e_dep_tree_mermaid_with_different_priorities() {
     // P1 = high priority, P4 = low priority
     let high = run_br(
         &workspace,
-        ["create", "High Priority", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit", "--priority", "1"],
+        [
+            "create",
+            "High Priority",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+            "--priority",
+            "1",
+        ],
         "create_high",
     );
     assert!(high.status.success(), "create high failed: {}", high.stderr);
     let low = run_br(
         &workspace,
-        ["create", "Low Priority", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit", "--priority", "4"],
+        [
+            "create",
+            "Low Priority",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+            "--priority",
+            "4",
+        ],
         "create_low",
     );
     assert!(low.status.success(), "create low failed: {}", low.stderr);
@@ -729,8 +1069,20 @@ fn e2e_dep_tree_mermaid_quiet_mode() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Test issue", "-d", "e2e fixture brief: create is fail-closed, so title alone is not a brief", "--verify", "true",
-     "--principle", "laziness-protocol — fixture create: keep the create contract's required fields explicit"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Test issue",
+            "-d",
+            "e2e fixture brief: create is fail-closed, so title alone is not a brief",
+            "--verify",
+            "true",
+            "--principle",
+            "laziness-protocol — fixture create: keep the create contract's required fields explicit",
+        ],
+        "create",
+    );
     let issue_id = parse_created_id(&create.stdout);
 
     // Quiet mode should suppress output

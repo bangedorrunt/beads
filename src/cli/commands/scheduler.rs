@@ -404,8 +404,7 @@ fn score_candidate(
         inputs.stale_threshold_minutes,
     );
 
-    let priority_contribution =
-        i64::from(4 - issue.priority.0.clamp(0, 4)) * PRIORITY_WEIGHT;
+    let priority_contribution = i64::from(4 - issue.priority.0.clamp(0, 4)) * PRIORITY_WEIGHT;
     let dependency_contribution = usize_to_i64(dependent_count)
         .saturating_mul(DEPENDENT_WEIGHT)
         .min(MAX_DEPENDENT_CONTRIBUTION);
@@ -642,9 +641,8 @@ fn print_scheduler_text(output: &SchedulerOutput) {
 #[cfg(test)]
 mod tests {
     use super::{
-        primary_domain, project_scheduler_relation_metadata, score_candidate,
+        ScoringInputs, primary_domain, project_scheduler_relation_metadata, score_candidate,
         should_refill_scheduler_candidates, stale_threshold_minutes, usize_to_i64,
-        ScoringInputs,
     };
     use crate::model::{Issue, IssueType, Priority};
     use crate::storage::sqlite::ListRelationMetadata;
@@ -705,7 +703,10 @@ mod tests {
                 stale_threshold_minutes: 60,
                 now: &now,
             };
-            score_candidate(issue, 0, &inputs).evidence.priority.contribution
+            score_candidate(issue, 0, &inputs)
+                .evidence
+                .priority
+                .contribution
         };
 
         assert_eq!(score_of(9), score_of(4), "above the range reads as P4");

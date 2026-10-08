@@ -587,7 +587,20 @@ fn e2e_audit_coordination_records_and_labels_incident() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Coordination incident", "-d", "audit brief", "--verify", "true", "--principle", "prove-it-works \u{2014} audit brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Coordination incident",
+            "-d",
+            "audit brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} audit brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
     let snapshot = serde_json::json!({
@@ -781,7 +794,16 @@ fn e2e_audit_summary_quiet_suppresses_stdout() {
 
     let create = run_br(
         &workspace,
-        ["create", "Audit summary quiet", "-d", "audit brief", "--verify", "true", "--principle", "prove-it-works \u{2014} audit brief"],
+        [
+            "create",
+            "Audit summary quiet",
+            "-d",
+            "audit brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} audit brief",
+        ],
         "create_issue",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -937,7 +959,20 @@ fn e2e_audit_log_for_issue() {
     assert!(init.status.success());
 
     // Create an issue
-    let create = run_br(&workspace, ["create", "Test Issue", "-d", "audit brief", "--verify", "true", "--principle", "prove-it-works \u{2014} audit brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Test Issue",
+            "-d",
+            "audit brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} audit brief",
+        ],
+        "create",
+    );
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
@@ -1009,8 +1044,34 @@ fn e2e_audit_summary() {
     run_br(&workspace, ["init"], "init");
 
     // Generate activity
-    run_br(&workspace, ["create", "Issue 1", "-d", "audit brief", "--verify", "true", "--principle", "prove-it-works \u{2014} audit brief"], "create1");
-    run_br(&workspace, ["create", "Issue 2", "-d", "audit brief", "--verify", "true", "--principle", "prove-it-works \u{2014} audit brief"], "create2");
+    run_br(
+        &workspace,
+        [
+            "create",
+            "Issue 1",
+            "-d",
+            "audit brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} audit brief",
+        ],
+        "create1",
+    );
+    run_br(
+        &workspace,
+        [
+            "create",
+            "Issue 2",
+            "-d",
+            "audit brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} audit brief",
+        ],
+        "create2",
+    );
 
     // Get ID of Issue 1
     let list = run_br(&workspace, ["list", "--json"], "list");

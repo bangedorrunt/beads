@@ -57,7 +57,13 @@ fn e2e_create_with_acceptance_criteria_and_agent_context() {
             r#"{"workflow":"tdd","reviewer":"agent"}"#,
             "--json",
             "--no-auto-import",
-        "-d", "governance brief", "--verify", "true", "--principle", "prove-it-works \u{2014} governance brief"],
+            "-d",
+            "governance brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} governance brief",
+        ],
         "create_governed",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -114,7 +120,13 @@ fn e2e_create_acceptance_alias() {
             "- [ ] alias works",
             "--no-auto-flush",
             "--no-auto-import",
-        "-d", "governance brief", "--verify", "true", "--principle", "prove-it-works \u{2014} governance brief"],
+            "-d",
+            "governance brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} governance brief",
+        ],
         "create_alias",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -149,7 +161,13 @@ fn e2e_create_agent_context_file_forms() {
             &format!("@{}", json_path.display()),
             "--no-auto-flush",
             "--no-auto-import",
-        "-d", "governance brief", "--verify", "true", "--principle", "prove-it-works \u{2014} governance brief"],
+            "-d",
+            "governance brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} governance brief",
+        ],
         "create_ctx_json",
     );
     assert!(
@@ -175,7 +193,13 @@ fn e2e_create_agent_context_file_forms() {
             &format!("@{}", yaml_path.display()),
             "--no-auto-flush",
             "--no-auto-import",
-        "-d", "governance brief", "--verify", "true", "--principle", "prove-it-works \u{2014} governance brief"],
+            "-d",
+            "governance brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} governance brief",
+        ],
         "create_ctx_yaml",
     );
     assert!(
@@ -232,7 +256,13 @@ fn e2e_create_invalid_agent_context_leaves_no_trace() {
             "--agent-context",
             "{not json",
             "--no-auto-import",
-        "-d", "governance brief", "--verify", "true", "--principle", "prove-it-works \u{2014} governance brief"],
+            "-d",
+            "governance brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} governance brief",
+        ],
         "create_invalid_ctx",
     );
     assert!(
@@ -307,7 +337,13 @@ fn e2e_create_without_governance_flags_unchanged() {
             "Plain issue",
             "--no-auto-flush",
             "--no-auto-import",
-        "-d", "governance brief", "--verify", "true", "--principle", "prove-it-works \u{2014} governance brief"],
+            "-d",
+            "governance brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} governance brief",
+        ],
         "create_plain",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);

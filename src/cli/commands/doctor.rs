@@ -25927,7 +25927,8 @@ mod bd_lt77_gate_verdict_loss {
     fn a_schema_without_gate_tables_counts_zero() {
         let db = tmp_db("old");
         let conn = Connection::open(db.to_string_lossy().into_owned()).expect("open");
-        conn.execute("CREATE TABLE issues (id TEXT)").expect("create");
+        conn.execute("CREATE TABLE issues (id TEXT)")
+            .expect("create");
         assert_eq!(
             gate_verdict_row_count(&db),
             0,
@@ -25992,5 +25993,4 @@ mod bd_lt77_gate_verdict_loss {
             "must name the cause and both surfaces it lands in: {msg}"
         );
     }
-
 }

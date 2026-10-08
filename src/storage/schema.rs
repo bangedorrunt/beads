@@ -3634,11 +3634,13 @@ mod tests {
     fn test_reviewed_migration_to_current_creates_event_log() {
         // bd-hj1t: the reviewed path (doctor migrate-schema) must land the
         // v20 event tables, not just the auto-migrate ensure block.
-        let (_temp, conn) = reviewed_v14_with_gate_history_schema(GATE_RESULT_HISTORY_MIGRATION_SQL);
+        let (_temp, conn) =
+            reviewed_v14_with_gate_history_schema(GATE_RESULT_HISTORY_MIGRATION_SQL);
         // apply_schema already created the v20 tables: drop them so the
         // reviewed migration itself must recreate them.
         conn.execute("DROP TABLE event_log").expect("drop log");
-        conn.execute("DROP TABLE generation_manifest").expect("drop manifest");
+        conn.execute("DROP TABLE generation_manifest")
+            .expect("drop manifest");
         run_migrations_atomic(&conn, 14, 20).expect("reviewed 14->20 migrates");
         assert!(table_exists(&conn, "event_log"));
         assert!(table_exists(&conn, "generation_manifest"));
@@ -3646,10 +3648,7 @@ mod tests {
             .query_row("SELECT generation FROM generation_manifest WHERE singleton = 1")
             .expect("manifest row");
         assert_eq!(row.get(0).and_then(SqliteValue::as_integer), Some(0));
-        assert_eq!(
-            connection_user_version(&conn).expect("read version"),
-            20
-        );
+        assert_eq!(connection_user_version(&conn).expect("read version"), 20);
     }
 
     #[test]

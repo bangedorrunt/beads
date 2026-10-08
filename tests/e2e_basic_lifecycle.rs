@@ -157,7 +157,16 @@ fn prepare_merge_conflict_workspace() -> (BrWorkspace, String) {
 
     let create = run_br(
         &workspace,
-        ["create", "Merge conflict", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Merge conflict",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_merge_seed",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -241,7 +250,20 @@ fn e2e_dep_cycles_agrees_with_add_time_related_semantics() {
 
     let mut ids: Vec<String> = Vec::new();
     for title in ["epic E", "sub S", "grandchild E2", "H", "R", "A", "M"] {
-        let create = run_br(&workspace, ["create", title, "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "cyc_create");
+        let create = run_br(
+            &workspace,
+            [
+                "create",
+                title,
+                "-d",
+                "e2e brief",
+                "--verify",
+                "true",
+                "--principle",
+                "prove-it-works \u{2014} e2e brief",
+            ],
+            "cyc_create",
+        );
         assert!(create.status.success(), "create failed: {}", create.stderr);
         ids.push(parse_created_id(&create.stdout));
     }
@@ -320,7 +342,20 @@ fn e2e_list_and_count_status_all_matches_every_status() {
     // One open, one in_progress, one closed issue.
     let mut ids = Vec::new();
     for title in ["Open one", "Working one", "Closed one"] {
-        let create = run_br(&workspace, ["create", title, "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "status_all_create");
+        let create = run_br(
+            &workspace,
+            [
+                "create",
+                title,
+                "-d",
+                "e2e brief",
+                "--verify",
+                "true",
+                "--principle",
+                "prove-it-works \u{2014} e2e brief",
+            ],
+            "status_all_create",
+        );
         assert!(create.status.success(), "create failed: {}", create.stderr);
         ids.push(parse_created_id(&create.stdout));
     }
@@ -514,7 +549,20 @@ fn e2e_basic_lifecycle() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Test issue", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Test issue",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
     assert!(!id.is_empty(), "missing created id");
@@ -614,7 +662,16 @@ fn e2e_update_description_file_preserves_exact_content() {
 
     let create = run_br(
         &workspace,
-        ["create", "Description file target", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Description file target",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_update_description_file_target",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -781,7 +838,16 @@ fn json_stdout_write_failure_exits_with_io_error() {
 
     let create = run_br(
         &workspace,
-        ["create", "stdout failure probe", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "stdout failure probe",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_stdout_failure",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -975,7 +1041,17 @@ fn e2e_update_claim_multiple_ids_is_all_or_nothing() {
 
     let create_first = run_br(
         &workspace,
-        ["create", "First claim target", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--json"],
+        [
+            "create",
+            "First claim target",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--json",
+        ],
         "create_first_claim_target",
     );
     assert!(
@@ -992,7 +1068,17 @@ fn e2e_update_claim_multiple_ids_is_all_or_nothing() {
 
     let create_second = run_br(
         &workspace,
-        ["create", "Second claim target", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--json"],
+        [
+            "create",
+            "Second claim target",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--json",
+        ],
         "create_second_claim_target",
     );
     assert!(
@@ -1075,7 +1161,17 @@ fn e2e_update_claim_json_echo_reports_assignee() {
 
     let create = run_br(
         &workspace,
-        ["create", "Claim echo target", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--json"],
+        [
+            "create",
+            "Claim echo target",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--json",
+        ],
         "create_claim_echo_target",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -1105,7 +1201,17 @@ fn e2e_update_claim_json_echo_reports_assignee() {
     // an explicit null rather than an omitted field.
     let create_plain = run_br(
         &workspace,
-        ["create", "Unassigned target", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--json"],
+        [
+            "create",
+            "Unassigned target",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--json",
+        ],
         "create_unassigned_target",
     );
     assert!(
@@ -1146,7 +1252,17 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
 
     let create = run_br(
         &workspace,
-        ["create", "Closed claim target", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--json"],
+        [
+            "create",
+            "Closed claim target",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--json",
+        ],
         "create_closed_claim_target",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -1248,10 +1364,7 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
         serde_json::from_str(&extract_json_payload(&after.stdout)).expect("show json");
     assert_eq!(after["status"].as_str(), Some("closed"));
     assert!(after["assignee"].is_null(), "{after}");
-    assert_eq!(
-        after["close_reason"].as_str(),
-        Some("DONE: baseline close")
-    );
+    assert_eq!(after["close_reason"].as_str(), Some("DONE: baseline close"));
     assert_eq!(after["closed_at"], closed_at, "{after}");
 
     // The sanctioned path still works: reopen, then claim.
@@ -1279,7 +1392,16 @@ fn e2e_create_updates_last_touched_context() {
 
     let create = run_br(
         &workspace,
-        ["create", "Create updates last touched", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Create updates last touched",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_last_touched",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -1314,7 +1436,16 @@ fn e2e_create_dry_run_does_not_update_last_touched_context() {
 
     let seed = run_br(
         &workspace,
-        ["create", "Seed for dry-run last touched", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Seed for dry-run last touched",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "seed_create_dry_run_last_touched",
     );
     assert!(seed.status.success(), "seed create failed: {}", seed.stderr);
@@ -1325,7 +1456,13 @@ fn e2e_create_dry_run_does_not_update_last_touched_context() {
         &workspace,
         [
             "create",
-            "Dry-run should not move last touched", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief",
+            "Dry-run should not move last touched",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
             "--dry-run",
         ],
         "create_dry_run_last_touched",
@@ -1364,7 +1501,16 @@ fn e2e_no_db_create_updates_last_touched_after_flush() {
 
     let seed = run_br(
         &workspace,
-        ["create", "Seed issue", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Seed issue",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "seed_no_db_create_last_touched",
     );
     assert!(seed.status.success(), "seed create failed: {}", seed.stderr);
@@ -1378,7 +1524,17 @@ fn e2e_no_db_create_updates_last_touched_after_flush() {
 
     let create = run_br(
         &workspace,
-        ["--no-db", "create", "No DB create updates last touched", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "--no-db",
+            "create",
+            "No DB create updates last touched",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_no_db_last_touched",
     );
     assert!(
@@ -1433,7 +1589,17 @@ fn e2e_sync_roundtrip() {
 
     let create = run_br(
         &workspace,
-        ["create", "Original title", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--no-auto-flush"],
+        [
+            "create",
+            "Original title",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--no-auto-flush",
+        ],
         "create",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -1495,7 +1661,20 @@ fn e2e_sync_import_staleness_and_force() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Stale issue", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Stale issue",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush_stale");
@@ -1598,7 +1777,16 @@ fn e2e_sync_force_jsonl_merge_does_not_resurrect_local_tombstone() {
 
     let create = run_br(
         &workspace,
-        ["create", "Merge tombstone seed", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Merge tombstone seed",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_tombstone_merge",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -1926,7 +2114,16 @@ fn e2e_pending_merge_gate_refuses_file_only_mutations_without_changing_witnesses
 
     let create = run_br(
         &workspace,
-        ["create", "Database title before interrupted merge", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Database title before interrupted merge",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_pending_file_mutation_gate_issue",
     );
     assert_br_success(&create, "seed pending file-mutation gate issue");
@@ -2205,7 +2402,16 @@ fn e2e_sync_merge_capacity_warning_survives_receipt_resume_and_renders_human() {
 
     let first_create = run_br(
         &workspace,
-        ["create", "Receipt-bound soft-capacity transition", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Receipt-bound soft-capacity transition",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_receipt_bound_capacity_issue",
     );
     assert_br_success(&first_create, "create receipt-bound capacity issue");
@@ -2408,7 +2614,13 @@ workflow:
         &workspace,
         [
             "create",
-            "Human soft-capacity transition", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief",
+            "Human soft-capacity transition",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
             "--no-auto-import",
             "--no-auto-flush",
         ],
@@ -2485,7 +2697,20 @@ fn e2e_no_db_read_write() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Seed issue", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "create_seed");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Seed issue",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        "create_seed",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
@@ -2530,7 +2755,17 @@ fn e2e_no_db_read_write() {
 
     let create_no_db = run_br(
         &workspace,
-        ["--no-db", "create", "No DB create", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "--no-db",
+            "create",
+            "No DB create",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_no_db",
     );
     assert!(
@@ -2557,7 +2792,16 @@ fn e2e_no_db_sync_jsonl_rewriters_lock_before_loading_the_snapshot() {
     assert_br_success(&init, "init failed");
     let create = run_br(
         &workspace,
-        ["create", "No-DB sync lock seed", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "No-DB sync lock seed",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_no_db_sync_lock",
     );
     assert_br_success(&create, "seed create failed");
@@ -2810,7 +3054,16 @@ fn dep_import_auto_flushes_imported_edges_to_jsonl() {
 
     let source = run_br(
         &workspace,
-        ["create", "Bulk import source", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Bulk import source",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "dep_import_auto_flush_source",
     );
     assert_br_success(&source, "source create failed");
@@ -2818,7 +3071,16 @@ fn dep_import_auto_flushes_imported_edges_to_jsonl() {
 
     let target = run_br(
         &workspace,
-        ["create", "Bulk import target", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Bulk import target",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "dep_import_auto_flush_target",
     );
     assert_br_success(&target, "target create failed");
@@ -2885,7 +3147,17 @@ fn e2e_no_db_mutations_succeed_with_large_export_hash_batches() {
 
     let create = run_br(
         &workspace,
-        ["--no-db", "create", "Large no-db create", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "--no-db",
+            "create",
+            "Large no-db create",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_no_db_large_hash_batch",
     );
     assert!(
@@ -3011,7 +3283,17 @@ fn e2e_sync_manifest() {
 
     let create = run_br(
         &workspace,
-        ["create", "Manifest issue", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--no-auto-flush"],
+        [
+            "create",
+            "Manifest issue",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--no-auto-flush",
+        ],
         "create",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -3038,7 +3320,20 @@ fn e2e_sync_status_json() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Status issue", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Status issue",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let status = run_br(&workspace, ["sync", "--status", "--json"], "sync_status");
@@ -3061,14 +3356,34 @@ fn e2e_sync_additive_reconciliation_is_read_only_then_lossless_and_idempotent() 
 
     let create = run_br(
         &workspace,
-        ["create", "Database audit seed", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--no-auto-flush"],
+        [
+            "create",
+            "Database audit seed",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--no-auto-flush",
+        ],
         "create_additive_database_seed",
     );
     assert_br_success(&create, "create additive database seed");
     let database_seed_id = parse_created_id(&create.stdout);
     let create_db_only = run_br(
         &workspace,
-        ["create", "Database-only preserved row", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--no-auto-flush"],
+        [
+            "create",
+            "Database-only preserved row",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--no-auto-flush",
+        ],
         "create_additive_database_only_row",
     );
     assert_br_success(
@@ -3340,10 +3655,36 @@ fn e2e_sync_witness_json_is_deterministic_and_read_only() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let first = run_br(&workspace, ["create", "Witness issue A", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "create_a");
+    let first = run_br(
+        &workspace,
+        [
+            "create",
+            "Witness issue A",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        "create_a",
+    );
     assert!(first.status.success(), "create A failed: {}", first.stderr);
 
-    let second = run_br(&workspace, ["create", "Witness issue B", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "create_b");
+    let second = run_br(
+        &workspace,
+        [
+            "create",
+            "Witness issue B",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        "create_b",
+    );
     assert!(
         second.status.success(),
         "create B failed: {}",
@@ -3599,7 +3940,16 @@ fn e2e_sync_witness_reports_base_snapshot_drift() {
 
     let first = run_br(
         &workspace,
-        ["create", "Base witness issue A", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Base witness issue A",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_base_witness_a",
     );
     assert!(first.status.success(), "create A failed: {}", first.stderr);
@@ -3617,7 +3967,16 @@ fn e2e_sync_witness_reports_base_snapshot_drift() {
 
     let second = run_br(
         &workspace,
-        ["create", "Base witness issue B", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"],
+        [
+            "create",
+            "Base witness issue B",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
         "create_base_witness_b",
     );
     assert!(
@@ -3761,7 +4120,20 @@ fn e2e_sync_conflict_markers_aborts_import() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create initial issue and export
-    let create = run_br(&workspace, ["create", "Test issue", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Test issue",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
@@ -3808,7 +4180,20 @@ fn e2e_sync_tombstone_preservation() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create and then delete an issue (creates tombstone)
-    let create = run_br(&workspace, ["create", "Issue to delete", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Issue to delete",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -3889,7 +4274,20 @@ fn e2e_sync_tombstone_protection() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create and delete an issue
-    let create = run_br(&workspace, ["create", "Protected issue", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Protected issue",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -3961,7 +4359,17 @@ fn e2e_sync_content_hash_consistency() {
     // Create issues
     let create1 = run_br(
         &workspace,
-        ["create", "Issue A", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--no-auto-flush"],
+        [
+            "create",
+            "Issue A",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--no-auto-flush",
+        ],
         "create1",
     );
     assert!(
@@ -3971,7 +4379,17 @@ fn e2e_sync_content_hash_consistency() {
     );
     let create2 = run_br(
         &workspace,
-        ["create", "Issue B", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief", "--no-auto-flush"],
+        [
+            "create",
+            "Issue B",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+            "--no-auto-flush",
+        ],
         "create2",
     );
     assert!(
@@ -4039,7 +4457,20 @@ fn e2e_jsonl_discovery_prefers_issues() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create an issue and export
-    let create = run_br(&workspace, ["create", "Discovery test", "-d", "e2e brief", "--verify", "true", "--principle", "prove-it-works \u{2014} e2e brief"], "create");
+    let create = run_br(
+        &workspace,
+        [
+            "create",
+            "Discovery test",
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
