@@ -2,7 +2,7 @@
 target/
 target*/
 .rch-target/
-
+.zvec-grep/
 # Cargo.lock IS tracked — beads_rust is a binary CLI, so a committed
 # lockfile gives reproducible builds for `nix build`, `cargo install --git`,
 # and the flake input path used by Home Manager / NixOS configs.
