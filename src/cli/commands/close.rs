@@ -487,26 +487,22 @@ fn evaluate_close_policy(
                 .gate_rule_for(from, to)
                 .is_some_and(|rule| rule.require_legal_close))
     {
-        let results = storage.get_scoped_gate_results(issue_id, from, to)?;
-        // The bead's TYPED verify decides the band, so it must reach the table
+        // The fold owns this decision now: it reads the verdict rows through
+        // the ledger port and reuses the same pure evaluators this block used
+        // to call inline, so ADR-0001 §5.3 has one copy rather than two. The
+        // bead's TYPED verify decides the band, so it must reach the table
         // (bd-close-policy-empty-verify-1-zdz6): an empty VERIFY flips every
         // loop-runnable bead into the non-runnable band.
-        let verify = issue.verify.as_deref().unwrap_or("");
-        let input = close_policy::legal_close_input_for_issue_pub(issue.priority.0, verify);
-        close_verdict = results
-            .iter()
-            .filter(|result| result.passed)
-            .find_map(|result| {
-                let kind = crate::verify::VerdictKind::from_gate_name(&result.gate)?;
-                crate::verify::legal_close(kind, &input).then(|| kind.gate_name().to_string())
-            });
-        violations.extend(close_policy::evaluate_require_legal_close(
+        let decision = crate::elm::CloseFold::over_storage(storage).request(
             issue_id,
-            from,
-            issue.priority.0,
-            verify,
-            &results,
-        ));
+            crate::elm::IssueFacts {
+                status: issue.status.clone(),
+                priority: issue.priority.0,
+                verify: issue.verify.clone().unwrap_or_default(),
+            },
+        );
+        close_verdict = decision.verdict;
+        violations.extend(decision.violations);
     }
 
     Ok(EvaluatedGates {

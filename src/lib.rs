@@ -31,6 +31,7 @@ pub mod cli;
 pub mod close_policy;
 pub mod config;
 pub mod coordination;
+pub mod elm;
 pub mod error;
 pub mod format;
 // Vendored graph algorithms (ADR-0003 §3.2). Upstream wrote these for a

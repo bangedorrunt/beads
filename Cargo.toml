@@ -78,6 +78,13 @@ rich_rust = { version = "0.2.3", features = ["markdown", "json", "backtrace"] }
 # TOON format support (sibling project)
 toon_rust = { version = "0.2.3", package = "tru" }
 
+# elm-effect core (ADR-0002 sibling port, beads branch). The fold in
+# `src/elm/` is pure and this is the carrier that runs its commands at the
+# edge. The sibling's own feature set is used as-is; a sibling-side feature
+# change is not an application task.
+elm-effect = { path = "../elm-effect-rs/crates/elm-effect" }
+elm-effect-elm = { path = "../elm-effect-rs/crates/elm-effect-elm" }
+
 # Utilities
 regex = "1.13"
 shell-words = "1.1.1"
