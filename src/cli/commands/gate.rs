@@ -336,9 +336,7 @@ fn resolve_gate_target(
     // transition whose rule carries `require_legal_close`; `legal_close`
     // rejects illegal kinds at close time.
     let legal_close_transition = |to: &str| {
-        workflow
-            .gate_rule_for(from_status, to)
-            .is_some_and(|rule| rule.require_legal_close)
+        close_policy::transition_requires_legal_close(workflow, from_status, to)
             && crate::verify::VerdictKind::from_gate_name(gate).is_some()
     };
     let gate_is_required = |to: &str| {

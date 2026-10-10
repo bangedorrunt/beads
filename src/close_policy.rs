@@ -864,6 +864,21 @@ pub fn detect_illegal_require_all(workflow: &Workflow) -> Vec<String> {
     offenders
 }
 
+/// ADR-0001 §5.3: does `from -> to` carry a rule with `require_legal_close`?
+///
+/// Two doors open-coded this same lookup: `br close`'s fail-closed block and
+/// `br gate report`'s target resolution. They are different questions built on
+/// the same predicate, which is exactly the shape that drifts — a change to
+/// what the flag means would land in one door and not the other, and the
+/// symptom is a gate verdict `br close` accepts but `br gate` never offered to
+/// record. One copy here, read by both.
+#[must_use]
+pub fn transition_requires_legal_close(workflow: &Workflow, from: &str, to: &str) -> bool {
+    workflow
+        .gate_rule_for(from, to)
+        .is_some_and(|rule| rule.require_legal_close)
+}
+
 /// The gate names that would legally authorize closing `input` — the
 /// kebab-case kinds for which [`crate::verify::legal_close`] returns true.
 pub fn legal_close_gate_names(input: &crate::verify::LegalCloseInput<'_>) -> Vec<&'static str> {
@@ -5467,5 +5482,66 @@ workflow:
         let violations =
             report_close_violations("t-1", "open", &["gone.md".to_string()], &|_| false, true);
         assert_eq!(violations.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod legal_close_predicate_tests {
+    use super::*;
+
+    fn workflow_with_legal_close_rule() -> Workflow {
+        // open -> closed carries the flag; in_review -> closed has a gate rule
+        // WITHOUT it. The pair is the whole test: conflating the two is the
+        // drift this predicate exists to prevent.
+        let yaml = r"
+workflow:
+  gates:
+    'open -> closed':
+      require_legal_close: true
+    'in_review -> closed': {}
+";
+        serde_yml::from_str::<PolicyDocument>(yaml)
+            .expect("policy parses")
+            .workflow
+    }
+
+    #[test]
+    fn a_rule_carrying_require_legal_close_is_reported_for_that_exact_transition() {
+        let workflow = workflow_with_legal_close_rule();
+
+        assert!(
+            transition_requires_legal_close(&workflow, "open", "closed"),
+            "the rule names open -> closed, so that exact pair must answer true"
+        );
+        // Case-insensitive: the workflow map lowercases its keys, and a caller
+        // may hold a status in any case.
+        assert!(
+            transition_requires_legal_close(&workflow, "OPEN", "Closed"),
+            "the lookup is case-insensitive"
+        );
+    }
+
+    #[test]
+    fn a_transition_with_a_rule_that_lacks_the_flag_answers_false() {
+        let workflow = workflow_with_legal_close_rule();
+
+        assert!(
+            !transition_requires_legal_close(&workflow, "in_review", "closed"),
+            "a gate rule without require_legal_close is not a legal-close transition"
+        );
+    }
+
+    #[test]
+    fn a_transition_with_no_rule_at_all_answers_false() {
+        let workflow = workflow_with_legal_close_rule();
+
+        assert!(
+            !transition_requires_legal_close(&workflow, "deferred", "closed"),
+            "no gate rule means no legal-close requirement"
+        );
+        assert!(
+            !transition_requires_legal_close(&workflow, "open", "deferred"),
+            "a transition with no configured gate rule is not legal-close"
+        );
     }
 }

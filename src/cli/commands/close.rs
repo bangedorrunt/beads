@@ -483,9 +483,7 @@ fn evaluate_close_policy(
         && to == "closed"
         && !is_report_close
         && (fail_closed_default
-            || workflow
-                .gate_rule_for(from, to)
-                .is_some_and(|rule| rule.require_legal_close))
+            || close_policy::transition_requires_legal_close(workflow, from, to))
     {
         // The fold owns this decision now: it reads the verdict rows through
         // the ledger port and reuses the same pure evaluators this block used
