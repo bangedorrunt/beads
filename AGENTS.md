@@ -145,6 +145,7 @@ Provides lightweight issue tracking with dependency graphs, priority-based triag
 |------|----------|
 | CLI dispatch, output-mode detection | `src/main.rs`, `src/cli/mod.rs` |
 | Subcommands | `src/cli/commands/*.rs` |
+| **The elm-effect core** — pure fold + interpreter | `src/elm/{mod,world,tests}.rs` |
 | Types (`Issue`, `Dependency`, `Comment`, `Event`, `Label`), hashing | `src/model/mod.rs` |
 | SQLite engine, schema, audit log, queries | `src/storage/{sqlite,schema,events}.rs`, `src/storage/queries/` |
 | JSONL import/export, path discovery, history | `src/sync/{mod,path,history}.rs` |
@@ -155,6 +156,49 @@ Provides lightweight issue tracking with dependency graphs, priority-based triag
 | IDs, hashes, time, spinners, md import | `src/util/{id,hash,time,progress,markdown_import}.rs` |
 | TUI | `src/tui/{mod,app,ui,keys,theme}.rs` (`keys.rs:34` `REGISTRY` is the binding doc) |
 | Tests | inline `#[cfg(test)]` + `tests/` (e2e, conformance, storage, proptest, repro, jsonl, md import) |
+
+## The elm-effect core (`src/elm/`)
+
+The ledger is a long-lived fold, so beads' core is
+[elm-effect](https://github.com/bangedorrunt/elm-effect-rs)'s `Program`:
+`update(model, msg) -> Update<model, commands>`. The fold is **pure** — it
+reads no clock, no environment, and no database — which the sibling's fold
+lints police by scanning source for `SystemTime`, `std::env`, and
+`rand::thread_rng` inside `update`, and for a `HashMap` inside a `*Model`.
+Those are not style rules: a fold that reads the world cannot be replayed, so
+the same event log could never be guaranteed to fold twice into the same
+status. `src/elm/tests.rs` runs both lints over `src/elm/mod.rs` itself.
+
+Two streams live in the model and never cross:
+
+- **Issue rows** (`BeadsModel::issues`), written by `BeadsMsg::Event`.
+- **Gate verdicts** (`BeadsModel::gates`), written only by `BeadsMsg::GatesLoaded`.
+
+Folding an event log therefore cannot mint a verdict, and an issues-only
+import cannot rebuild the verdict table. They are separate logs, and that is
+what keeps `br sync --import-only` from manufacturing a PASS row.
+
+`src/elm/world.rs` is the edge — the one place a command meets the world. It
+turns each `BeadsCmd` into a message through a `LedgerPort`, and the close
+decision runs through it: `br close`'s fail-closed block calls
+`CloseFold::over_storage(storage).request(...)` instead of re-implementing
+ADR-0001 §5.3 inline. The re-used evaluators are the same ones the CLI block
+called, in the same order, so the refusal text is byte-identical either way
+(`sh scripts/e2e-elm-fold-close.sh` proves it end to end).
+
+**One-decision rule:** a command that the interpreter could not answer
+returns a refusal, never a pass. `CloseDecision::unanswered` exists because
+`unwrap_or_default()` on a decision type whose `Default` is permissive reads
+an unanswered close as authorized — that was a fail-open, and a test caught it.
+
+**The write stays in storage.** `run_close_core` owns the status write,
+because it is one `BEGIN IMMEDIATE` that also enforces the transition map,
+required fields, and scoped gate rules (`src/storage/sqlite.rs`). A `Persist`
+command in the fold would be a second journal beside SQLite — the exact
+double-record the sibling's migrate-beads rules forbid. See bead
+`beads_rust-pvmsz` for the amendment that settled this, and
+`docs/learnings/adopting-elm-effect-into-a-cli-whose-store-is-not-sync.md`
+for the `!Sync` store finding behind it.
 
 ### Fork semantics (what makes this not-upstream)
 

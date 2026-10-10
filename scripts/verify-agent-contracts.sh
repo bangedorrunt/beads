@@ -28,4 +28,10 @@ run_cargo test --test snapshots schema_document_golden_ -- --nocapture
 run_cargo test --test snapshots schema_command_shapes_match_live_json_outputs -- --nocapture
 run_cargo test --test snapshots agent_json_and_toon_outputs_match_semantically -- --nocapture
 run_cargo test --test e2e_schema agent_baseline_snapshots_match_current_binary -- --nocapture
-run_cargo test --lib --features mcp mcp_contract -- --nocapture
+
+# The MCP contract row was removed with the feature itself (ADR-0002 W1): the
+# `mcp` feature no longer exists, so `cargo test --features mcp` fails with
+# "the package 'beads' does not contain this feature" and `set -e` took the
+# whole verifier down at exit 101 — which meant the remaining rows above were
+# the only thing anyone ever saw, and a red row read as a red verifier.
+# Agents integrate through `br --json ...`; nothing here tests a socket.

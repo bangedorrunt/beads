@@ -803,6 +803,21 @@ This keeps successful commands readable by suppressing low-level dependency logg
                               │
                               ▼
 ┌──────────────────────────────────────────────────────────────┐
+│                    Elm Effect Fold (pure)                     │
+│  update(model, msg) -> (model, commands)                     │
+│  decides close legality; reads no clock/env/db              │
+│  commands are descriptions of work, run at the edge          │
+└──────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    Interpreter (the edge)                     │
+│  runs each command through an elm-effect LedgerPort;         │
+│  feeds every outcome back into the fold as a message         │
+└──────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
 │                      Storage Layer                            │
 │  ┌─────────────────┐              ┌─────────────────────┐    │
 │  │  SqliteStorage  │◄────────────►│  JSONL Export/Import │    │
@@ -817,6 +832,13 @@ This keeps successful commands readable by suppressing low-level dependency logg
      .beads/beads.db                    .beads/issues.jsonl
      (Primary storage)                  (Git-friendly export)
 ```
+
+The fold is pure and the interpreter is the only place that touches the
+world, so a close decision can be replayed from an event log and cannot be
+changed by a store that fails to answer. `br close`'s fail-closed rule runs
+through this fold; the status write itself still happens in the storage
+transaction that enforces the workflow gates, so there is one journal rather
+than two.
 
 ### Data Flow
 
