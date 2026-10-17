@@ -137,7 +137,7 @@ pub struct BeadsModel {
 /// The world's inputs ride inside these messages: an event carries its own
 /// timestamp, and the store's rows arrive as a reply. Nothing in the fold
 /// reaches out for them.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum BeadsMsg {
     /// A domain event folded into the model.
     Event(Event),
@@ -199,7 +199,7 @@ impl Cmd for BeadsCmd {
 ///
 /// Typed failures are domain data the fold handles by value. A defect or
 /// an interruption is not one of these and never becomes one.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 pub enum CoreError {
     /// The store refused the verdict read for an issue.
     #[error("gate verdict read failed for {issue_id}: {message}")]

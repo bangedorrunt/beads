@@ -2858,10 +2858,20 @@ pub struct CloseArgs {
 
     /// ADR-0001 §5.3: SHA of the commit whose message cites the bead id.
     /// Required to close unless policy is bypassed by an operator
-    /// (BR_OPERATOR=1). The caller supplies the SHA; br verifies it cites
+    /// (BR_OPERATOR=1), or both `--task-id` and `--verdict-id` are set.
+    /// The caller supplies the SHA; br verifies it cites
     /// the bead read-only via `git log` (bd-2qu9).
     #[arg(long, value_name = "SHA")]
     pub commit_sha: Option<String>,
+
+    /// Phase 5 proved binding. With `--verdict-id`, a close may omit
+    /// `--commit-sha`. A PASS gate note must lead with `task=<id> verdict=<id>`.
+    #[arg(long, value_name = "TASK")]
+    pub task_id: Option<String>,
+
+    /// Verdict id that pairs with `--task-id`. Neither flag alone is a binding.
+    #[arg(long, value_name = "VERDICT")]
+    pub verdict_id: Option<String>,
 
     /// Repo to verify `--commit-sha` in (bd-2qu9). Defaults to the cwd repo,
     /// then the beads parent, then `external_projects` roots.

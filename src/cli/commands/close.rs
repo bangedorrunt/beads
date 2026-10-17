@@ -58,6 +58,10 @@ pub struct CloseArgs {
     /// Report what a close would need (gate row, sha citation, bindings)
     /// without mutating anything (`br close --dry-run`).
     pub dry_run: bool,
+    /// Phase 5: task id of a Proved fact. Legal only together with `verdict_id`.
+    pub task_id: Option<String>,
+    /// Phase 5: verdict id paired with `task_id`.
+    pub verdict_id: Option<String>,
 }
 
 impl From<&CliCloseArgs> for CloseArgs {
@@ -78,7 +82,35 @@ impl From<&CliCloseArgs> for CloseArgs {
             repo: cli.repo.clone(),
             expected_revision: cli.expected_revision,
             dry_run: cli.dry_run,
+            task_id: cli.task_id.clone(),
+            verdict_id: cli.verdict_id.clone(),
         }
+    }
+}
+
+/// Both ids, or neither. One side alone is not a proved binding.
+fn proved_close_pair(
+    task_id: Option<&str>,
+    verdict_id: Option<&str>,
+) -> Result<Option<(String, String)>> {
+    let task = task_id.map(str::trim).filter(|s| !s.is_empty());
+    let verdict = verdict_id.map(str::trim).filter(|s| !s.is_empty());
+    match (task, verdict) {
+        (None, None) => Ok(None),
+        (Some(task), Some(verdict)) => {
+            let note = format!("task={task} verdict={verdict}");
+            let Some((t, v)) = crate::cli::commands::gate::proved_note_binding(&note) else {
+                return Err(BeadsError::validation(
+                    "task-id",
+                    "--task-id and --verdict-id must be binding ids (1..=128 of [A-Za-z0-9_.:@-])",
+                ));
+            };
+            Ok(Some((t.to_string(), v.to_string())))
+        }
+        _ => Err(BeadsError::validation(
+            "task-id",
+            "--task-id and --verdict-id are one binding: pass both, or neither and use --commit-sha",
+        )),
     }
 }
 
@@ -501,6 +533,34 @@ fn evaluate_close_policy(
         );
         close_verdict = decision.verdict;
         violations.extend(decision.violations);
+    }
+
+    // Phase 5: a proved close is legal only when a PASS note leads with the
+    // same task and verdict the caller named. The SHA path is unchanged.
+    if !args.bypass_policy && to == "closed" && !is_report_close {
+        if let Ok(Some((task, verdict))) =
+            proved_close_pair(args.task_id.as_deref(), args.verdict_id.as_deref())
+        {
+            let results = storage.get_scoped_gate_results(issue_id, from, to)?;
+            let bound = results.iter().any(|row| {
+                row.passed
+                    && row.note.as_deref().is_some_and(|note| {
+                        crate::cli::commands::gate::proved_note_binding(note)
+                            .is_some_and(|(t, v)| t == task && v == verdict)
+                    })
+            });
+            if !bound {
+                violations.push(PolicyViolation {
+                    gate: "gate_proved_binding".to_string(),
+                    message: format!(
+                        "close of {issue_id} named task={task} verdict={verdict}, but no PASS \
+                         gate note leads with that pair. Report one with \
+                         --note \"task={task} verdict={verdict}\" before closing."
+                    ),
+                    detail: None,
+                });
+            }
+        }
     }
 
     Ok(EvaluatedGates {
@@ -1565,7 +1625,9 @@ fn run_close_core(
     // ADR-0001 §5.3: a legal close carries the SHA of the commit whose
     // message cites the bead id (`br` never runs git; the caller supplies
     // it). Bypassed closes are exempt.
+    let proved = proved_close_pair(args.task_id.as_deref(), args.verdict_id.as_deref())?;
     if !args.bypass_policy
+        && proved.is_none()
         && args
             .commit_sha
             .as_deref()
@@ -1575,7 +1637,9 @@ fn run_close_core(
         return Err(BeadsError::validation(
             "commit-sha",
             "--commit-sha <sha> is required to close (the commit message must cite the bead \
-             id); use --bypass-policy with BR_OPERATOR=1 to skip, which requires --bypass-reason",
+             id), unless both --task-id and --verdict-id are set and a PASS gate note leads \
+             with `task=<id> verdict=<id>`; use --bypass-policy with BR_OPERATOR=1 to skip, \
+             which requires --bypass-reason",
         ));
     }
 
@@ -1843,6 +1907,12 @@ fn run_close_core(
             .filter(|sha| !sha.is_empty())
         {
             gates_fired.push(format!("commit_sha={sha}"));
+        }
+        if let Ok(Some((task, verdict))) =
+            proved_close_pair(args.task_id.as_deref(), args.verdict_id.as_deref())
+        {
+            gates_fired.push(format!("task_id={task}"));
+            gates_fired.push(format!("verdict_id={verdict}"));
         }
 
         let now = Utc::now();
@@ -2119,6 +2189,8 @@ mod tests {
             repo: Some("/tmp/repo".to_string()),
             expected_revision: None,
             dry_run: false,
+            task_id: None,
+            verdict_id: None,
         };
         assert_eq!(args.ids.len(), 2);
         assert_eq!(args.ids[0], "bd-abc");
@@ -2558,6 +2630,8 @@ mod tests {
             repo: None,
             expected_revision: None,
             dry_run: false,
+            task_id: None,
+            verdict_id: None,
         };
         let cloned = args.clone();
         assert_eq!(cloned.ids, args.ids);
@@ -3641,6 +3715,64 @@ mod tests {
             storage.get_issue("bd-1").unwrap().unwrap().status,
             Status::Closed
         );
+    }
+
+    #[test]
+    fn close_with_task_and_verdict_does_not_need_a_commit_sha() {
+        let _lock = crate::util::test_helpers::TEST_DIR_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = TempDir::new().expect("tempdir");
+        // Fixture id is not a bead token. The commit guard treats `bd-` as one.
+        let ctx = OutputContext::from_flags(false, false, true);
+        commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
+        let beads_dir = temp.path().join(".beads");
+        std::fs::write(beads_dir.join("policy.yaml"), GATE_POLICY_YAML).expect("write policy");
+        let db_path = beads_dir.join("beads.db");
+        {
+            let mut storage = SqliteStorage::open(&db_path).expect("storage");
+            storage
+                .create_issue(
+                    &make_issue_with_status("px1", "Gated", Status::InProgress),
+                    "tester",
+                )
+                .expect("create issue");
+            storage
+                .record_scoped_gate_result(
+                    "px1",
+                    "in_progress",
+                    0,
+                    "closed",
+                    "ci_green",
+                    "verifier",
+                    true,
+                    Some("task=run-1 verdict=v-9"),
+                    "verifier",
+                )
+                .expect("record pass");
+        }
+        let _guard = DirGuard::new(temp.path());
+        let args = CloseArgs {
+            ids: vec!["px1".to_string()],
+            reason: Some("done".to_string()),
+            task_id: Some("run-1".to_string()),
+            verdict_id: Some("v-9".to_string()),
+            ..CloseArgs::default()
+        };
+        execute_with_args(&args, false, &CliOverrides::default(), &ctx)
+            .expect("a matching proved note closes without a commit sha");
+        let storage = SqliteStorage::open(&db_path).expect("reopen");
+        assert_eq!(
+            storage.get_issue("px1").unwrap().unwrap().status,
+            Status::Closed
+        );
+    }
+
+    #[test]
+    fn close_with_only_one_proved_id_is_refused() {
+        let err = proved_close_pair(Some("run-1"), None).expect_err("one id is not a pair");
+        let msg = err.to_string();
+        assert!(msg.contains("both"), "{msg}");
     }
 
     #[test]

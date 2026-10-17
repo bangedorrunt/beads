@@ -135,6 +135,32 @@ fn illegal_verdict_warning(gate: &str, priority: i32, verify: &str) -> Option<St
 /// that authorizes no close has nothing to bind.
 pub const REVISION_BINDING_TOKEN: &str = "sha=";
 
+/// A Phase 5 proved binding: the note's leading pair is `task=<id> verdict=<id>`.
+///
+/// This is an additional binding beside `sha=`. A prose mention does not count,
+/// and a comma glued to either value does not count. Both ids are required.
+pub(crate) fn proved_note_binding(note: &str) -> Option<(&str, &str)> {
+    let mut tokens = note.split_whitespace();
+    let task = binding_value(tokens.next()?, "task")?;
+    let verdict = binding_value(tokens.next()?, "verdict")?;
+    Some((task, verdict))
+}
+
+fn binding_value<'a>(token: &'a str, key: &str) -> Option<&'a str> {
+    let (k, v) = token.split_once('=')?;
+    if k != key || !is_binding_id(v) {
+        return None;
+    }
+    Some(v)
+}
+
+fn is_binding_id(v: &str) -> bool {
+    !v.is_empty()
+        && v.len() <= 128
+        && v.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':' | b'@'))
+}
+
 fn unbound_close_verdict_warning(
     gate: &str,
     to_status: &str,
@@ -147,7 +173,7 @@ fn unbound_close_verdict_warning(
     // FAIL row authorizes nothing.
     crate::verify::VerdictKind::from_gate_name(gate)?;
     let note = note.unwrap_or("");
-    if note.contains(REVISION_BINDING_TOKEN) {
+    if note.contains(REVISION_BINDING_TOKEN) || proved_note_binding(note).is_some() {
         return None;
     }
     Some(format!(
@@ -930,6 +956,28 @@ mod tests {
         assert!(
             unbound_close_verdict_warning("live-verified", "closed", Some("   ")).is_some(),
             "a blank note binds nothing"
+        );
+        // Phase 5: a leading task/verdict pair binds. Prose and a glued comma do not.
+        assert!(
+            unbound_close_verdict_warning(
+                "live-verified",
+                "closed",
+                Some("task=run-1 verdict=v-9 receipt=/tmp/r.txt")
+            )
+            .is_none()
+        );
+        assert!(
+            unbound_close_verdict_warning(
+                "live-verified",
+                "closed",
+                Some("proved task=run-1 verdict=v-9")
+            )
+            .is_some()
+        );
+        assert_eq!(
+            proved_note_binding("task=run-1, verdict=v-9"),
+            None,
+            "a comma glued to the id is not a binding"
         );
     }
 
