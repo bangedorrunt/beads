@@ -167,6 +167,30 @@ pub fn fold_assignee_for_store(
     }
 }
 
+/// The assignee a `--claim` stores when the caller named no assignee.
+///
+/// `claimant` is the identity the caller named (`--actor`, `BD_ACTOR`, or a
+/// configured `actor:`). `None` means the only actor available was the
+/// host-username fallback: a username matches no live pane, so the
+/// orchestrator hands the bead to another lane while the first lane still
+/// holds it. The claim fails closed and names the remedy instead of storing
+/// the username.
+///
+/// # Errors
+///
+/// Refuses a claim with no named claimant.
+pub fn claim_assignee(claimant: Option<&str>) -> Result<String, BeadsError> {
+    claimant.map(str::to_string).ok_or_else(|| {
+        BeadsError::validation(
+            "assignee",
+            "a claim must name the claimant: pass `--actor <identity>` (or set \
+             `BD_ACTOR`, or configure `actor:`) — the host username is not an \
+             identity, it matches no live pane, so the orchestrator would hand \
+             the bead to another lane while this one still holds it",
+        )
+    })
+}
+
 /// A herdr pane name: lowercase alphanumeric segments joined by single
 /// hyphens (`flywheel-beads-oc`, `oc2-qa`). Pins (`GreenStream`) and free
 /// strings (`alice`, `team@example.com`) never match.
@@ -192,4 +216,27 @@ fn is_herdr_name_shaped(value: &str) -> bool {
         }
     }
     count >= 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::claim_assignee;
+
+    #[test]
+    fn claim_assignee_keeps_a_named_claimant() {
+        assert_eq!(
+            claim_assignee(Some("AmberFox")).expect("a named claimant"),
+            "AmberFox"
+        );
+    }
+
+    #[test]
+    fn claim_assignee_refuses_an_unnamed_claimant() {
+        let err = claim_assignee(None).expect_err("an unnamed claimant must be refused");
+        let text = err.to_string();
+        assert!(
+            text.contains("--actor"),
+            "the refusal must name the remedy: {text}"
+        );
+    }
 }

@@ -160,6 +160,58 @@ fn assignee_pin_normalized_pin_stored_verbatim() {
     );
 }
 
+/// A claim that names no claimant must fail closed instead of storing the
+/// host username. A username matches no live pane, so the orchestrator hands
+/// the bead to another lane while the first lane still holds it.
+#[test]
+fn assignee_pin_normalized_claim_without_a_named_claimant_is_refused() {
+    let workspace = BrWorkspace::new();
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success(), "init failed: {}", init.stderr);
+    let id = seed_issue(
+        &workspace,
+        "Unnamed claim target",
+        "create_unnamed_claim_target",
+    );
+
+    let claim = run_br(
+        &workspace,
+        ["update", &id, "--claim"],
+        "claim_without_actor",
+    );
+    assert!(
+        !claim.status.success(),
+        "a claim with no named claimant must be refused: {}",
+        claim.stdout
+    );
+    let transcript = format!("{}{}", claim.stdout, claim.stderr);
+    assert!(
+        transcript.contains("--actor") && transcript.contains("claim"),
+        "the refusal must name the remedy: {transcript}"
+    );
+    assert_eq!(
+        stored_assignee(&workspace, &id, "show_after_refusal"),
+        None,
+        "a refused claim must not store an assignee"
+    );
+
+    // The named-claimant recipe still claims, and stores the named identity.
+    let claim = run_br(
+        &workspace,
+        ["--actor", "AmberFox", "update", &id, "--claim"],
+        "claim_with_actor",
+    );
+    assert!(
+        claim.status.success(),
+        "a claim with a named claimant must succeed: {}",
+        claim.stderr
+    );
+    assert_eq!(
+        stored_assignee(&workspace, &id, "show_after_claim").as_deref(),
+        Some("AmberFox")
+    );
+}
+
 #[test]
 fn assignee_pin_normalized_reclaim_stays_idempotent() {
     let workspace = init_workspace_with_registry();

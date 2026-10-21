@@ -475,7 +475,15 @@ fn prepare_single_route(
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
 
     let config_layer = storage_ctx.load_config(cli)?;
-    let actor = config::resolve_actor(&config_layer);
+    // The audit trail may name `$USER`; the ASSIGNEE a claim stores may not:
+    // a host username matches no live pane, so the orchestrator hands the
+    // bead to another lane while the first lane still holds it. A claim that
+    // names no claimant fails closed and names the remedy.
+    let actor = if args.claim && args.assignee.is_none() {
+        crate::agent_registry::claim_assignee(config::actor_from_layer(&config_layer).as_deref())?
+    } else {
+        config::resolve_actor(&config_layer)
+    };
     let resolver = build_resolver(&config_layer, &storage_ctx.storage);
     let resolved_ids = resolve_target_ids(args, beads_dir, &resolver, &storage_ctx.storage)?;
 

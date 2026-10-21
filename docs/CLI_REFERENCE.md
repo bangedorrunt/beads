@@ -417,7 +417,7 @@ br update [OPTIONS] [IDS]...
 | `-t, --type <TYPE>` | Change issue type |
 | `--assignee <NAME>` | Assign (empty string clears); in a project with a spawn registry it **stores the pin** (see [Assignee dialect](#assignee-dialect)) |
 | `--owner <EMAIL>` | Set owner (empty string clears) |
-| `--claim` | Atomic claim (assignee=actor + status=in_progress); an explicit `--assignee` wins over the actor default |
+| `--claim` | Atomic claim (assignee=claimant + status=in_progress); an explicit `--assignee` wins over the claimant default; a claim with no named claimant is refused |
 | `--force` | Force update even if issue is blocked |
 | `--due <DATE>` | Set due date (empty string clears) |
 | `--defer <DATE>` | Set defer date (empty string clears) |
@@ -431,8 +431,8 @@ br update [OPTIONS] [IDS]...
 
 **Examples:**
 ```bash
-# Claim a task
-br update bd-abc123 --claim
+# Claim a task (name the claimant: --actor, BD_ACTOR, or a configured actor:)
+br --actor AmberFox update <id> --claim
 
 # Change status
 br update bd-abc123 -s in_progress
@@ -454,9 +454,15 @@ plane agrees on:
 - an unregistered herdr-shaped name is refused, naming the fix (claim with the
   pin, or register the pane) — a typo never lands as a stranger identity;
 - pins and non-herdr free strings (human names, emails) store verbatim;
-- `--assignee` wins over `--claim`'s actor default, so
+- `--assignee` wins over `--claim`'s claimant default, so
   `br update <id> --claim --assignee <pin>` stores the pin;
 - without a registry (plain `br init` projects) every input passes through.
+
+A `--claim` that names no claimant is **refused**: the assignee would be the
+host username (`$USER`), which matches no live pane, so the orchestrator would
+hand the bead to another lane while the first lane still holds it. Name the
+claimant with `--actor <identity>`, `BD_ACTOR`, a configured `actor:`, or an
+explicit `--assignee`.
 
 `br show` renders the stored value plus how it resolves, e.g.
 `Assignee: AmberFox (herdr flywheel-demo-oc, pane w1:p1)`.

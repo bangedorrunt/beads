@@ -71,7 +71,7 @@ if grep -En 'br (update|close|create|delete|reopen|defer|undefer|label add|label
 fi
 
 log "JSON: mutation commands parse via global --json"
-"$BR" --json update "$ID1" --status in_progress --claim | jq -e 'if type=="array" then (.[0].status == "in_progress") else (.status == "in_progress") end' >/dev/null
+"$BR" --json --actor smoke-agent update "$ID1" --status in_progress --claim | jq -e 'if type=="array" then (.[0].status == "in_progress") else (.status == "in_progress") end' >/dev/null
 "$BR" --json close "$ID1" --reason "agent smoke test" | jq -e 'if type=="array" then (.[0].status == "closed") else (.status == "closed") end' >/dev/null
 
 log "TOON: list/show decode+parse"

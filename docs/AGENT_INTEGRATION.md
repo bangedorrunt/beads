@@ -51,7 +51,8 @@ br init
 # Find work
 br ready --json --limit 5
 
-# Claim and work
+# Claim and work (a claim needs a named claimant: --actor or BD_ACTOR)
+export BD_ACTOR="my-agent"
 br update br-123 --claim --json
 # ... do the work ...
 br close br-123 --reason "Implemented feature X" --json
@@ -249,7 +250,7 @@ The verifier currently covers:
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  2. CLAIM                                                   │
-│     br update <id> --claim --json                           │
+│     br update <id> --actor "$BD_ACTOR" --claim --json       │
 │     → Sets assignee + status=in_progress atomically         │
 └─────────────────────────────────────────────────────────────┘
                               ↓
@@ -276,8 +277,8 @@ The verifier currently covers:
 ### Claiming Work
 
 ```bash
-# Atomic claim (recommended)
-br update br-123 --claim --json
+# Atomic claim (recommended; a claim needs a named claimant)
+br update br-123 --actor "$BD_ACTOR" --claim --json
 
 # Manual claim (equivalent)
 br update br-123 --status in_progress --assignee "$BD_ACTOR" --json
@@ -315,7 +316,7 @@ When reclaiming abandoned work, leave an audit comment before touching files:
 br comments add <id> --author "$BD_ACTOR" \
   --message "reclaim: previous in_progress claim appears abandoned; evidence: updated_at=<timestamp>, assignee=<name>, no active reservation or pane" \
   --json
-br update <id> --claim --json
+br update <id> --actor "$BD_ACTOR" --claim --json
 ```
 
 If Agent Mail is down, include the intended file scope in the same comment or a
@@ -381,7 +382,7 @@ br coordination status --reservations reservations.jsonl --agents agents.jsonl -
 br comments add <id> --author "$BD_ACTOR" \
   --message "reclaim: previous in_progress claim appears abandoned; evidence: updated_at=<timestamp>, assignee=<name>, no active reservation or pane" \
   --json
-br update <id> --claim --json
+br update <id> --actor "$BD_ACTOR" --claim --json
 ```
 
 Only run the final two commands when the advisory output and human policy allow
@@ -560,7 +561,7 @@ for issue in ready:
 
 # Claim first issue
 if ready:
-    br_command('update', ready[0]['id'], '--claim')
+    br_command('update', ready[0]['id'], '--actor', 'my-agent', '--claim')
 ```
 
 ### JavaScript/Node Example
@@ -627,7 +628,7 @@ console.log(`Found ${ready.length} ready issues`);
 
 // Claim and work
 if (ready.length > 0) {
-  br('update', ready[0].id, '--claim');
+  br('update', ready[0].id, '--actor', 'my-agent', '--claim');
 }
 ```
 
