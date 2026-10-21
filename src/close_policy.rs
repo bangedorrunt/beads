@@ -2952,12 +2952,27 @@ fn parse_unchecked_box(line: &str) -> Option<String> {
 /// # Errors
 ///
 /// Returns an error if the file exists but cannot be read or parsed.
-/// True when a project never configured workflow gating: `workflow.strict`
-/// unset AND no gates. ADR-0001 §5.3 — such a project runs the fail-closed
-/// default on BOTH the record side and the close side.
+/// True when a project never configured workflow gating: no gate rules.
+/// ADR-0001 §5.3 — such a project runs the fail-closed default on BOTH the
+/// record side and the close side.
+///
+/// `workflow.strict` does NOT enter this rule. `strict: true` with an empty
+/// `gates:` block used to read as "configured, and configured to require
+/// nothing", which turned the fail-closed close default OFF: the close
+/// stopped demanding a verdict AND `br gate report --to closed` stopped
+/// finding a rule to record one against, so the gate discipline was not
+/// merely unused - it was unreachable.
 #[must_use]
 pub fn workflow_gating_unconfigured(workflow: &Workflow) -> bool {
-    !workflow.strict && workflow.gates.is_empty()
+    // A workflow that declares NO gate rules has not configured gating, no
+    // matter what `strict` says. `strict: true` with an empty `gates:` block
+    // used to read as "configured, and configured to require nothing", which
+    // turned the fail-closed close default OFF: the close stopped demanding a
+    // verdict AND `br gate report --to closed` stopped finding a rule to
+    // record one against, so the gate discipline was not merely unused - it
+    // was unreachable. Both doors now read the same ladder: no rules means
+    // the fail-closed default is in force.
+    workflow.gates.is_empty()
 }
 
 /// The parsed [`DEFAULT_FAIL_CLOSED_POLICY_YAML`] workflow, computed once.
@@ -3172,6 +3187,34 @@ fn walk_policy_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR-0001 §5.3: `strict: true` with an EMPTY `gates:` block must not turn
+    /// the fail-closed close default OFF. It used to: the close stopped
+    /// demanding a verdict AND `br gate report --to closed` stopped finding a
+    /// rule to record one against, so the gate discipline was not merely
+    /// unused - it was unreachable.
+    #[test]
+    fn strict_without_gate_rules_is_still_unconfigured() {
+        let strict_no_gates: Workflow = serde_yml::from_str(
+            "strict: true\nstatuses: [open, in_progress, closed]\ntransitions:\n  open: [in_progress]\n",
+        )
+        .expect("parse the strict-without-gates workflow");
+        assert!(
+            workflow_gating_unconfigured(&strict_no_gates),
+            "strict with no gate rules must read as unconfigured, so the fail-closed default \
+             stays in force"
+        );
+
+        let with_gates: Workflow = serde_yml::from_str(
+            "strict: true\nstatuses: [open, in_progress, closed]\ngates:\n  \"open -> closed\":\n    \
+             require_legal_close: true\n",
+        )
+        .expect("parse the gated workflow");
+        assert!(
+            !workflow_gating_unconfigured(&with_gates),
+            "a workflow that configures gate rules is configured"
+        );
+    }
 
     fn evidence_with_reason<'a>(reason: &'a str, issue_id: &'a str) -> CloseEvidence<'a> {
         CloseEvidence {

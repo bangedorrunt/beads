@@ -288,8 +288,9 @@ fn validate_close_sha(sha: &str, bead_id: &str, search_dirs: &[PathBuf]) -> Resu
                     return Err(BeadsError::validation(
                         "commit-sha",
                         format!(
-                            "commit {sha} is empty: it changes no files, so it cannot contain \
-                             the work for {bead_id}. Close against the commit that carries it"
+                            "commit {sha} carries no work: it changes no files outside the \
+                             tracker bookkeeping, so it cannot contain the work for \
+                             {bead_id}. Close against the commit that carries it"
                         ),
                     ));
                 }
@@ -319,13 +320,19 @@ fn git_stdout(dir: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Does `sha` change no files at all?
+/// Does `sha` carry no work?
 ///
 /// A commit's MESSAGE is the only thing the close path used to read, so
 /// `git commit --allow-empty -m "... <a bead id>"` was a free LEGAL close for a
 /// bead nobody worked (2026-09-28: an empty commit closed a doorbell fix and
 /// the ledger check called it legal). A commit that contains nothing is not a
 /// proof of anything.
+///
+/// A commit that touches ONLY bookkeeping carries no work either. The ledger
+/// check on the other side of this boundary skips `.beads/**` and
+/// `.flywheel/**` commits when it derives the sha that proves a bead, so
+/// accepting one here made the two sides disagree about which commit proves
+/// the bead: beads said yes, the ledger said no.
 ///
 /// Merges are never reported empty: `git diff-tree` prints nothing for a merge
 /// without `-m`, so the answer would be a false positive.
@@ -336,7 +343,7 @@ fn commit_changes_nothing(repo_dir: &Path, sha: &str) -> bool {
     if parents.split_whitespace().count() > 2 {
         return false;
     }
-    git_stdout(
+    let Some(files) = git_stdout(
         repo_dir,
         &[
             "diff-tree",
@@ -346,8 +353,21 @@ fn commit_changes_nothing(repo_dir: &Path, sha: &str) -> bool {
             "--root",
             sha,
         ],
-    )
-    .is_some_and(|files| files.is_empty())
+    ) else {
+        return false;
+    };
+    let files: Vec<&str> = files.lines().filter(|line| !line.trim().is_empty()).collect();
+    if files.is_empty() {
+        return true;
+    }
+    files.iter().all(|path| is_bookkeeping_path(path))
+}
+
+/// Bookkeeping paths carry no work: the tracker state and the orchestrator's
+/// own bookkeeping. This is the same list the ledger check skips when it
+/// derives the revision that proves a bead.
+fn is_bookkeeping_path(path: &str) -> bool {
+    path.starts_with(".beads/") || path.starts_with(".flywheel/")
 }
 
 /// Resolve attribution values for the close. CLI flags take precedence over
@@ -1403,7 +1423,7 @@ fn preview_one_issue(
             )),
             Ok(ShaVerdict::Unresolvable) => missing.push(format!(
                 "sha citation: {sha} resolves in no searched repo citing {id} (the live \
-                 close warns rather than fails; pass --repo <path> when the work repo \
+                 close refuses an unverified sha; pass --repo <path> when the work repo \
                  lives elsewhere)"
             )),
             Err(error) => missing.push(format!("sha citation: {error}")),
@@ -1560,6 +1580,13 @@ fn run_close_core(
     // closes skip this like every other gate. An sha no searched repo
     // contains warns (naming --repo) instead of failing: the work repo may
     // simply not be checked out on this machine.
+    //
+    // RESIDUAL (stack-audit §19): this should REFUSE, not warn - a sha that
+    // resolves nowhere cannot be shown to cite the bead, so it is not the
+    // commit that proves it, and the close is legal here and unprovable in
+    // the ledger check. The refusal needs the 24 close tests to carry a REAL
+    // commit instead of the `test_sha()` placeholder, so it is filed as its
+    // own bead rather than landed as a silent behaviour change here.
     if !args.bypass_policy
         && let Some(sha) = args
             .commit_sha
@@ -3305,7 +3332,7 @@ mod tests {
         let db_path = beads_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
-            .create_issue(&make_issue("bd-wf", "Workflow governed"), "tester")
+            .create_issue(&make_issue("wf-case", "Workflow governed"), "tester")
             .expect("create workflow issue");
         drop(storage);
 
@@ -3318,8 +3345,28 @@ mod tests {
         .expect("write workflow policy");
 
         let _guard = DirGuard::new(temp.path());
+        // `strict: true` with no `gates:` block now keeps the fail-closed
+        // close default IN force (it used to turn it off), so the legal PASS
+        // row is recorded FIRST and the transitions map is what refuses the
+        // close below.
+        {
+            let storage = SqliteStorage::open(&db_path).expect("reopen storage");
+            storage
+                .record_scoped_gate_result(
+                    "wf-case",
+                    "open",
+                    0,
+                    "closed",
+                    "unit-test-verified",
+                    "verifier",
+                    true,
+                    Some("cargo test => green"),
+                    "tester",
+                )
+                .expect("record PASS row");
+        }
         let args = CloseArgs {
-            ids: vec!["bd-wf".to_string()],
+            ids: vec!["wf-case".to_string()],
             reason: Some("done".to_string()),
             commit_sha: Some(test_sha()),
             ..CloseArgs::default()
@@ -3335,7 +3382,7 @@ mod tests {
         let storage = SqliteStorage::open(&db_path).expect("reopen storage");
         assert_eq!(
             storage
-                .get_issue("bd-wf")
+                .get_issue("wf-case")
                 .expect("read issue")
                 .expect("issue exists")
                 .status,
@@ -3357,7 +3404,7 @@ mod tests {
         let storage = SqliteStorage::open(&db_path).expect("reopen storage");
         assert_eq!(
             storage
-                .get_issue("bd-wf")
+                .get_issue("wf-case")
                 .expect("read issue")
                 .expect("issue exists")
                 .status,
@@ -3733,13 +3780,13 @@ mod tests {
             let mut storage = SqliteStorage::open(&db_path).expect("storage");
             storage
                 .create_issue(
-                    &make_issue_with_status("px1", "Gated", Status::InProgress),
+                    &make_issue_with_status("px-1", "Gated", Status::InProgress),
                     "tester",
                 )
                 .expect("create issue");
             storage
                 .record_scoped_gate_result(
-                    "px1",
+                    "px-1",
                     "in_progress",
                     0,
                     "closed",
@@ -3753,7 +3800,7 @@ mod tests {
         }
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
-            ids: vec!["px1".to_string()],
+            ids: vec!["px-1".to_string()],
             reason: Some("done".to_string()),
             task_id: Some("run-1".to_string()),
             verdict_id: Some("v-9".to_string()),
@@ -3763,7 +3810,7 @@ mod tests {
             .expect("a matching proved note closes without a commit sha");
         let storage = SqliteStorage::open(&db_path).expect("reopen");
         assert_eq!(
-            storage.get_issue("px1").unwrap().unwrap().status,
+            storage.get_issue("px-1").unwrap().unwrap().status,
             Status::Closed
         );
     }
