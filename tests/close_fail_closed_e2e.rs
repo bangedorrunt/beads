@@ -345,13 +345,22 @@ fn gate_report_default_records_row_when_strict_unset() {
 
 /// uro91: an installed explicit policy wins — the ADR default must NOT leak
 /// into a project that configured its own (here: gate-less) workflow.
+///
+/// The GATE RULES are the one thing the default still supplies, because
+/// "strict: true" with no rules is otherwise a lie (ADR-0001 §5.3,
+/// stack-audit §18): the close demanded no verdict AND `br gate report --to
+/// closed` found no rule to record one against, so the gate discipline was
+/// unreachable. Strict means strict.
+///
+/// The project's own STATUSES and TRANSITIONS govern — the ADR default's
+/// transitions must not leak into it, and this is what proves that.
 #[test]
 fn gate_report_default_explicit_file_still_governs() {
     let _log = common::test_log("gate_report_default_explicit_file_still_governs");
     let (workspace, id) = setup_workspace_with_issue();
     std::fs::write(
         workspace.root.join(".beads").join("policy.yaml"),
-        "workflow:\n  strict: true\n  statuses: [open, closed]\n  transitions:\n    open: [closed]\n",
+        "workflow:\n  strict: true\n  statuses: [open, in_progress, closed]\n  transitions:\n    open: [closed]\n",
     )
     .expect("write explicit policy");
 
@@ -373,8 +382,34 @@ fn gate_report_default_explicit_file_still_governs() {
         "gate_report_explicit_refusal",
     );
     assert!(
-        !report.status.success(),
-        "explicit file without legal-close gating must still refuse: {report:?}"
+        report.status.success(),
+        "a strict policy with no gate rules still gets the default's gate rules: strict means \
+         strict, or the close would demand a verdict that nothing could record: {report:?}"
+    );
+
+    // The default's TRANSITIONS must not leak: the ADR default allows
+    // open -> in_progress, this policy does not.
+    let leaked = run_br(
+        &workspace,
+        [
+            "gate",
+            "report",
+            &id,
+            "--gate",
+            "unit-test-verified",
+            "--provider",
+            "verifier",
+            "--status",
+            "pass",
+            "--to",
+            "in_progress",
+        ],
+        "gate_report_transition_leak",
+    );
+    assert!(
+        !leaked.status.success(),
+        "the ADR default's transitions must not leak into a project that configured its own: \
+         {leaked:?}"
     );
 }
 

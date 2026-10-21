@@ -2952,26 +2952,20 @@ fn parse_unchecked_box(line: &str) -> Option<String> {
 /// # Errors
 ///
 /// Returns an error if the file exists but cannot be read or parsed.
-/// True when a project never configured workflow gating: no gate rules.
+/// True when a project configured no gate rules.
+///
 /// ADR-0001 §5.3 — such a project runs the fail-closed default on BOTH the
-/// record side and the close side.
+/// record side and the close side, and the default's GATE RULES apply to it
+/// (see `resolve_effective_workflow`).
 ///
 /// `workflow.strict` does NOT enter this rule. `strict: true` with an empty
 /// `gates:` block used to read as "configured, and configured to require
-/// nothing", which turned the fail-closed close default OFF: the close
-/// stopped demanding a verdict AND `br gate report --to closed` stopped
-/// finding a rule to record one against, so the gate discipline was not
-/// merely unused - it was unreachable.
+/// nothing": the fail-closed close default was turned OFF (the close stopped
+/// demanding a verdict) AND `br gate report --to closed` found no rule to
+/// record one against, so the gate discipline was not merely unused - it was
+/// unreachable. Strict means strict.
 #[must_use]
 pub fn workflow_gating_unconfigured(workflow: &Workflow) -> bool {
-    // A workflow that declares NO gate rules has not configured gating, no
-    // matter what `strict` says. `strict: true` with an empty `gates:` block
-    // used to read as "configured, and configured to require nothing", which
-    // turned the fail-closed close default OFF: the close stopped demanding a
-    // verdict AND `br gate report --to closed` stopped finding a rule to
-    // record one against, so the gate discipline was not merely unused - it
-    // was unreachable. Both doors now read the same ladder: no rules means
-    // the fail-closed default is in force.
     workflow.gates.is_empty()
 }
 
@@ -3004,10 +2998,17 @@ pub fn resolve_effective_workflow(beads_dir: &Path) -> Result<Workflow> {
         return Ok(default_fail_closed_workflow().clone());
     }
     let document = load_for_beads_dir(beads_dir)?;
-    if workflow_gating_unconfigured(&document.workflow) {
-        return Ok(default_fail_closed_workflow().clone());
+    let mut workflow = document.workflow;
+    if workflow_gating_unconfigured(&workflow) {
+        // The project configured its own workflow - its statuses, its
+        // transitions - but no gate rules. The ADR default's TRANSITIONS must
+        // not leak into it (the project governs its own workflow); its GATE
+        // RULES must, or "strict" is a lie: with no rule the close demanded
+        // no verdict AND `br gate report --to closed` found nothing to record
+        // one against (ADR-0001 §5.3).
+        workflow.gates = default_fail_closed_workflow().gates.clone();
     }
-    Ok(document.workflow)
+    Ok(workflow)
 }
 
 pub fn load_for_beads_dir(beads_dir: &Path) -> Result<PolicyDocument> {
@@ -3188,21 +3189,34 @@ fn walk_policy_node(
 mod tests {
     use super::*;
 
-    /// ADR-0001 §5.3: `strict: true` with an EMPTY `gates:` block must not turn
-    /// the fail-closed close default OFF. It used to: the close stopped
-    /// demanding a verdict AND `br gate report --to closed` stopped finding a
-    /// rule to record one against, so the gate discipline was not merely
-    /// unused - it was unreachable.
+    /// ADR-0001 §5.3: a project that never configured gating runs the
+    /// fail-closed default; a project that DID configure its own workflow
+    /// governs itself (the ADR default must not leak into it).
+    ///
+    /// `strict: true` with NO gate rules is neither: it used to read as
+    /// "configured, and configured to require nothing" - the fail-closed
+    /// close default OFF, and no rule for `br gate report --to closed` to
+    /// record a verdict against. The loader refuses that combination now
+    /// (`load_for_beads_dir`), so it cannot be reached.
     #[test]
-    fn strict_without_gate_rules_is_still_unconfigured() {
+    fn gating_is_unconfigured_when_the_project_declared_no_gate_rules() {
+        let unset_no_gates: Workflow = serde_yml::from_str(
+            "statuses: [open, in_progress, closed]\ntransitions:\n  open: [in_progress]\n",
+        )
+        .expect("parse the unconfigured workflow");
+        assert!(
+            workflow_gating_unconfigured(&unset_no_gates),
+            "a project that configured no gating runs the fail-closed default"
+        );
+
         let strict_no_gates: Workflow = serde_yml::from_str(
             "strict: true\nstatuses: [open, in_progress, closed]\ntransitions:\n  open: [in_progress]\n",
         )
         .expect("parse the strict-without-gates workflow");
         assert!(
             workflow_gating_unconfigured(&strict_no_gates),
-            "strict with no gate rules must read as unconfigured, so the fail-closed default \
-             stays in force"
+            "strict with no gate rules must read as unconfigured: strict means the fail-closed \
+             default applies, and the default's gate rules are what make it recordable"
         );
 
         let with_gates: Workflow = serde_yml::from_str(
