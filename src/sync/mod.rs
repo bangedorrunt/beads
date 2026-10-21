@@ -3157,10 +3157,10 @@ impl SyncMergePendingReceipt {
                     .to_string(),
             });
         }
-        if export_finalization.export_metadata.rows != 5 {
+        if export_finalization.export_metadata.rows != 6 {
             return Err(BeadsError::SyncConflict {
                 message: format!(
-                    "Pending sync merge finalization requires exactly five export metadata rows, found {}",
+                    "Pending sync merge finalization requires exactly six export metadata rows, found {}",
                     export_finalization.export_metadata.rows
                 ),
             });
@@ -3412,7 +3412,7 @@ impl SyncMergePendingReceipt {
                 Some(finalization),
             ) if raw_sha256 == &self.jsonl_after_raw_sha256
                 && finalization.export_hashes == self.jsonl_after_issue_hashes
-                && finalization.export_metadata.rows == 5
+                && finalization.export_metadata.rows == 6
                 && finalization.jsonl_content_hash.as_deref()
                     == Some(self.jsonl_after_content_sha256.as_str())
                 && finalization.jsonl_mtime.as_deref() == Some(mtime.as_str())
@@ -5688,6 +5688,7 @@ fn is_sync_merge_mutable_metadata_key(key: &str) -> bool {
             | METADATA_JSONL_CONTENT_HASH
             | METADATA_JSONL_MTIME
             | METADATA_JSONL_SIZE
+            | METADATA_JSONL_FILE_WITNESS
             | METADATA_LAST_EXPORT_TIME
             | "needs_flush"
             | "purged_ids_pending_export"
@@ -5700,6 +5701,7 @@ fn is_sync_merge_export_metadata_key(key: &str) -> bool {
         METADATA_JSONL_CONTENT_HASH
             | METADATA_JSONL_MTIME
             | METADATA_JSONL_SIZE
+            | METADATA_JSONL_FILE_WITNESS
             | METADATA_LAST_EXPORT_TIME
             | "needs_flush"
             | "purged_ids_pending_export"
@@ -7321,6 +7323,9 @@ fn plan_additive_reconcile_in_snapshot(
         METADATA_JSONL_SIZE.to_string(),
         source.witness.size.to_string(),
     );
+    // The merge re-records the JSONL witness from the source, which carries no
+    // change-time: the identity witness is written empty.
+    expected_metadata.insert(METADATA_JSONL_FILE_WITNESS.to_string(), String::new());
     expected_metadata.insert(
         "needs_flush".to_string(),
         if desired_needs_flush { "true" } else { "false" }.to_string(),
@@ -8099,6 +8104,7 @@ pub(crate) fn apply_additive_reconcile(
                 .mtime,
                 mtime_witness: plan.receipt.source_mtime.clone(),
                 size: plan.receipt.source_size,
+                identity_witness: None,
             },
         )?;
         let needs_flush = plan.receipt.db_only_preserved != 0;
@@ -10618,6 +10624,9 @@ pub const METADATA_JSONL_CONTENT_HASH: &str = "jsonl_content_hash";
 pub const METADATA_JSONL_MTIME: &str = "jsonl_mtime";
 /// Metadata key for the exact observed JSONL size at the last successful sync.
 pub const METADATA_JSONL_SIZE: &str = "jsonl_size";
+/// Metadata key for the JSONL file's identity witness (its change-time and
+/// the wall clock when the witness was taken).
+pub const METADATA_JSONL_FILE_WITNESS: &str = "jsonl_file_witness";
 /// Metadata key for the last export time.
 pub const METADATA_LAST_EXPORT_TIME: &str = "last_export_time";
 /// Metadata key for the last import time.
@@ -10628,6 +10637,9 @@ struct JsonlWitness {
     mtime: std::time::SystemTime,
     mtime_witness: String,
     size: u64,
+    /// The file's identity witness: its change-time and the wall clock when
+    /// the witness was taken. `None` when the platform has no change-time.
+    identity_witness: Option<String>,
 }
 
 /// Result of a staleness check between JSONL and DB.
@@ -10781,11 +10793,30 @@ fn compute_jsonl_newer_impl(storage: &SqliteStorage, jsonl_path: &Path) -> Resul
     let stored_mtime = storage.get_metadata(METADATA_JSONL_MTIME)?;
     let stored_size = storage.get_metadata(METADATA_JSONL_SIZE)?;
     let stored_hash = storage.get_metadata(METADATA_JSONL_CONTENT_HASH)?;
-    // Mtime and size are mutable filesystem metadata, not a content identity.
-    // In particular, external tooling can rewrite a file with the same length
-    // and restore its prior mtime. Only the canonical content hash proves that
-    // the JSONL still represents the state recorded by the database.
+    let stored_identity = storage.get_metadata(METADATA_JSONL_FILE_WITNESS)?;
+    // Mtime and size are mutable filesystem metadata, not a content identity:
+    // external tooling can rewrite a file with the same length and restore its
+    // prior mtime. The canonical content hash is the authority on the file's
+    // content, but computing it costs a full read plus SHA-256 on EVERY
+    // command, read-only ones included.
+    //
+    // The file's IDENTITY witness (the kernel's change-time, which no user can
+    // forge) settles the common case: a file whose witness still matches was
+    // not touched since the database recorded it, so its content is
+    // byte-identical and the hash cannot differ. The hash is computed
+    // whenever the witness moved.
+    let identity_unchanged = match (
+        stored_identity.as_deref(),
+        observed.identity_witness.as_deref(),
+    ) {
+        (Some(stored), Some(current)) => {
+            identity_change_time(stored) == identity_change_time(current)
+                && witness_is_settled(stored)
+        }
+        _ => false,
+    };
     let jsonl_newer = match stored_hash {
+        Some(_) if identity_unchanged => false,
         Some(stored_hash) => compute_jsonl_hash(jsonl_path)? != stored_hash,
         None => true,
     };
@@ -10816,7 +10847,64 @@ fn observed_jsonl_witness(jsonl_path: &Path) -> Result<JsonlWitness> {
         mtime: jsonl_mtime,
         mtime_witness: chrono::DateTime::<Utc>::from(jsonl_mtime).to_rfc3339(),
         size: metadata.len(),
+        identity_witness: file_identity_witness(&metadata),
     })
+}
+
+/// The file's identity witness: the kernel's change-time (which no user can
+/// forge) and the wall clock when the witness was taken.
+///
+/// The change-time moves on every write, so a file whose witness still
+/// matches was not touched since the witness was taken. The second field is
+/// the wall clock, used to leave the first second of a coarse-granularity
+/// filesystem untrusted (see [`witness_is_settled`]).
+fn file_identity_witness(metadata: &fs::Metadata) -> Option<String> {
+    let ctime = file_change_time_nanos(metadata)?;
+    let recorded_at = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let recorded_at = u64::try_from(recorded_at).ok()?;
+    Some(format!("{ctime}|{recorded_at}"))
+}
+
+/// The file's change-time in nanoseconds since the epoch.
+#[cfg(unix)]
+fn file_change_time_nanos(metadata: &fs::Metadata) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    let seconds = u64::try_from(metadata.ctime()).ok()?;
+    let nanos = u64::try_from(metadata.ctime_nsec()).ok()?;
+    seconds.checked_mul(1_000_000_000)?.checked_add(nanos)
+}
+
+/// The file's change-time in nanoseconds since the epoch.
+///
+/// Windows has no change-time, so the witness is unavailable there and the
+/// content hash stays the authority.
+#[cfg(not(unix))]
+fn file_change_time_nanos(_metadata: &fs::Metadata) -> Option<u64> {
+    None
+}
+
+/// The change-time part of an identity witness.
+fn identity_change_time(identity_witness: &str) -> Option<&str> {
+    identity_witness.split('|').next()
+}
+
+/// Whether a change-time witness may be trusted yet.
+///
+/// A filesystem whose change-time granularity is coarser than a second can
+/// hide a rewrite that lands in the same second as the witness and keeps the
+/// file length. The witness is therefore only trusted once the second it was
+/// taken in has passed.
+fn witness_is_settled(identity_witness: &str) -> bool {
+    let Some(recorded_at) = identity_witness
+        .rsplit('|')
+        .next()
+        .and_then(|value| value.parse::<u64>().ok())
+    else {
+        return false;
+    };
+    let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let now = u64::try_from(now).unwrap_or(0);
+    now.saturating_sub(recorded_at) > 1_000_000_000
 }
 
 fn observed_jsonl_snapshot_witness(source: &JsonlSourceSnapshot) -> JsonlWitness {
@@ -10825,6 +10913,7 @@ fn observed_jsonl_snapshot_witness(source: &JsonlSourceSnapshot) -> JsonlWitness
         mtime: modified,
         mtime_witness: chrono::DateTime::<Utc>::from(modified).to_rfc3339(),
         size: source.size(),
+        identity_witness: None,
     }
 }
 
@@ -10837,7 +10926,14 @@ fn record_observed_jsonl_witness_in_tx(
     observed: &JsonlWitness,
 ) -> Result<()> {
     storage.set_metadata_in_tx(METADATA_JSONL_MTIME, &observed.mtime_witness)?;
-    storage.set_metadata_in_tx(METADATA_JSONL_SIZE, &observed.size.to_string())
+    storage.set_metadata_in_tx(METADATA_JSONL_SIZE, &observed.size.to_string())?;
+    // An absent identity witness is stored as an empty value: the metadata
+    // read filters empty values out, so a stale witness cannot outlive the
+    // observation it came from.
+    storage.set_metadata_in_tx(
+        METADATA_JSONL_FILE_WITNESS,
+        observed.identity_witness.as_deref().unwrap_or(""),
+    )
 }
 
 fn maybe_refresh_jsonl_witness(
@@ -11676,12 +11772,84 @@ pub struct GateSidecarExport {
     pub content_hash: String,
 }
 
-/// Flush every recorded gate verdict to the `.beads/gates.jsonl` sidecar,
-/// atomically. One [`crate::close_policy::GateResultRecord`] per line; row
-/// order is deterministic (`recorded_at|issue_id|gate|provider`) so identical
-/// history yields byte-identical files across machines. The full history
-/// exports — FAIL and superseded rows included — because the ledger's proof
-/// value includes why transitions were refused.
+/// Metadata key for the highest gate-history id the published sidecar carries.
+const METADATA_GATES_SIDECAR_CURSOR: &str = "gates_sidecar_cursor";
+/// Metadata key for the number of rows the published sidecar carries.
+const METADATA_GATES_SIDECAR_COUNT: &str = "gates_sidecar_count";
+/// Metadata key for the published sidecar's content hash.
+const METADATA_GATES_SIDECAR_CONTENT_HASH: &str = "gates_sidecar_content_hash";
+/// Metadata key for the published sidecar's byte size.
+const METADATA_GATES_SIDECAR_SIZE: &str = "gates_sidecar_size";
+
+/// What the last sidecar publication wrote.
+struct PublishedGatesSidecar {
+    /// Highest gate-history id the published rows carry.
+    cursor: i64,
+    /// Rows in the published file.
+    count: usize,
+    /// Content hash of the published file.
+    content_hash: String,
+    /// Byte size of the published file.
+    size: u64,
+}
+
+fn published_gates_sidecar(storage: &SqliteStorage) -> Result<Option<PublishedGatesSidecar>> {
+    let cursor = storage.get_metadata(METADATA_GATES_SIDECAR_CURSOR)?;
+    let count = storage.get_metadata(METADATA_GATES_SIDECAR_COUNT)?;
+    let content_hash = storage.get_metadata(METADATA_GATES_SIDECAR_CONTENT_HASH)?;
+    let size = storage.get_metadata(METADATA_GATES_SIDECAR_SIZE)?;
+    Ok(match (cursor, count, content_hash, size) {
+        (Some(cursor), Some(count), Some(content_hash), Some(size)) => {
+            Some(PublishedGatesSidecar {
+                cursor: cursor.parse().unwrap_or(0),
+                count: count.parse().unwrap_or(0),
+                content_hash,
+                size: size.parse().unwrap_or(0),
+            })
+        }
+        _ => None,
+    })
+}
+
+fn record_published_gates_sidecar(
+    storage: &SqliteStorage,
+    cursor: i64,
+    count: usize,
+    content_hash: &str,
+    size: u64,
+) -> Result<()> {
+    storage.set_metadata_shared(METADATA_GATES_SIDECAR_CURSOR, &cursor.to_string())?;
+    storage.set_metadata_shared(METADATA_GATES_SIDECAR_COUNT, &count.to_string())?;
+    storage.set_metadata_shared(METADATA_GATES_SIDECAR_CONTENT_HASH, content_hash)?;
+    storage.set_metadata_shared(METADATA_GATES_SIDECAR_SIZE, &size.to_string())?;
+    Ok(())
+}
+
+/// The export key of a gate row: `recorded_at|issue_id|gate|provider`.
+fn gate_record_key(record: &crate::close_policy::GateResultRecord) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        record.recorded_at, record.issue_id, record.gate, record.provider
+    )
+}
+
+/// Publish the gate verdict sidecar.
+///
+/// The sidecar mirrors the append-only gate history: one
+/// [`crate::close_policy::GateResultRecord`] per line, row order
+/// deterministic (`recorded_at|issue_id|gate|provider`) so identical history
+/// yields byte-identical files across machines. FAIL and superseded rows
+/// export too, because the ledger's proof value includes why transitions were
+/// refused.
+///
+/// The history only grows, so a publication writes the rows recorded since the
+/// last one and leaves the published rows byte-identical: re-reading and
+/// re-serializing the whole history on every flush made the flush cost grow
+/// with the repo's life.
+///
+/// The publication stays atomic (temp + rename), so a crash cannot truncate
+/// the sidecar. A file whose size is not the size this database published is
+/// republished in full, because then the published rows cannot be trusted.
 ///
 /// # Errors
 ///
@@ -11691,13 +11859,28 @@ pub fn export_gates_to_jsonl(
     path: &Path,
     config: &ExportConfig,
 ) -> Result<GateSidecarExport> {
+    let published = published_gates_sidecar(storage)?;
+    let observed_size = fs::metadata(path).ok().map(|metadata| metadata.len());
+    let intact = match (published.as_ref(), observed_size) {
+        (Some(state), Some(size)) if state.size == size => Some(state),
+        _ => None,
+    };
+
+    if let Some(state) = intact {
+        let new_records = storage.get_gate_result_records_after_id(state.cursor)?;
+        if new_records.is_empty() {
+            return Ok(GateSidecarExport {
+                exported_count: state.count,
+                content_hash: state.content_hash.clone(),
+            });
+        }
+        return append_gates_to_jsonl(storage, path, config, state, &new_records);
+    }
+
     let records = storage.get_all_gate_result_records()?;
     let mut lines = BTreeMap::new();
     for record in &records {
-        let key = format!(
-            "{}|{}|{}|{}",
-            record.recorded_at, record.issue_id, record.gate, record.provider
-        );
+        let key = gate_record_key(record);
         let line = serde_json::to_string(record)
             .map_err(|err| BeadsError::Config(format!("gate row {key}: {err}")))?;
         lines.insert(key, line);
@@ -11720,9 +11903,72 @@ pub fn export_gates_to_jsonl(
     sync_jsonl_writer(writer)?;
     rename_jsonl_temp_output(&temp_path, temp_guard, path, config)?;
 
+    let content_hash = hex_encode(&hasher.finalize());
+    let cursor = records.iter().map(|record| record.id).max().unwrap_or(0);
+    let size = fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    record_published_gates_sidecar(storage, cursor, lines.len(), &content_hash, size)?;
+
     Ok(GateSidecarExport {
         exported_count: lines.len(),
-        content_hash: hex_encode(&hasher.finalize()),
+        content_hash,
+    })
+}
+
+/// Append the rows recorded since the last publication to the sidecar.
+///
+/// The published rows are copied byte-for-byte and the new rows are written
+/// after them, so the sidecar stays append-only and the publication stays
+/// atomic (temp + rename).
+fn append_gates_to_jsonl(
+    storage: &SqliteStorage,
+    path: &Path,
+    config: &ExportConfig,
+    published: &PublishedGatesSidecar,
+    new_records: &[crate::close_policy::GateResultRecord],
+) -> Result<GateSidecarExport> {
+    let mut new_lines: BTreeMap<String, String> = BTreeMap::new();
+    for record in new_records {
+        let key = gate_record_key(record);
+        let line = serde_json::to_string(record)
+            .map_err(|err| BeadsError::Config(format!("gate row {key}: {err}")))?;
+        new_lines.insert(key, line);
+    }
+
+    let mut temp_output = prepare_jsonl_temp_output(path, config)?;
+    let mut hasher = Sha256::new();
+    let published_bytes = fs::read(path)?;
+    temp_output.writer.write_all(&published_bytes)?;
+    hasher.update(&published_bytes);
+    for line in new_lines.values() {
+        writeln!(temp_output.writer, "{line}")?;
+        hasher.update(line.as_bytes());
+        hasher.update(b"\n");
+    }
+    let JsonlTempOutput {
+        temp_path,
+        temp_guard,
+        writer,
+    } = temp_output;
+    sync_jsonl_writer(writer)?;
+    rename_jsonl_temp_output(&temp_path, temp_guard, path, config)?;
+
+    let content_hash = hex_encode(&hasher.finalize());
+    let cursor = new_records
+        .iter()
+        .map(|record| record.id)
+        .max()
+        .unwrap_or(published.cursor);
+    let count = published.count + new_lines.len();
+    let size = fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    record_published_gates_sidecar(storage, cursor, count, &content_hash, size)?;
+
+    Ok(GateSidecarExport {
+        exported_count: count,
+        content_hash,
     })
 }
 
@@ -15569,7 +15815,7 @@ mod tests {
             last_export_time: Some(export_as_of.to_rfc3339()),
             needs_flush: Some("false".to_string()),
             export_metadata: AdditiveTableWitness {
-                rows: 6,
+                rows: 7,
                 payload_sha256: "99".repeat(32),
             },
         };
@@ -15589,14 +15835,14 @@ mod tests {
             matches!(
                 error,
                 BeadsError::SyncConflict { ref message }
-                    if message.contains("exactly five export metadata rows")
-                        && message.contains("found 6")
+                    if message.contains("exactly six export metadata rows")
+                        && message.contains("found 7")
             ),
             "unexpected finalization error: {error}"
         );
 
         let mut wrong_mtime = finalization;
-        wrong_mtime.export_metadata.rows = 5;
+        wrong_mtime.export_metadata.rows = 6;
         let error = committed
             .advance_to_export_finalized(
                 JsonlSourceStateWitness::Present {
@@ -15631,7 +15877,7 @@ mod tests {
             last_export_time: Some(export_as_of.to_rfc3339()),
             needs_flush: Some("false".to_string()),
             export_metadata: AdditiveTableWitness {
-                rows: 5,
+                rows: 6,
                 payload_sha256: "99".repeat(32),
             },
         };
@@ -21338,7 +21584,7 @@ mod tests {
 
         let finalization = capture_sync_merge_export_finalization_witness(&storage).unwrap();
         assert_eq!(finalization.dirty_issues.rows, 0);
-        assert_eq!(finalization.export_metadata.rows, 5);
+        assert_eq!(finalization.export_metadata.rows, 6);
         assert_eq!(
             finalization.export_hashes,
             sync_merge_export_hash_mapping_witness(&result.issue_hashes).unwrap()
@@ -23075,6 +23321,170 @@ mod tests {
         assert_eq!(
             hash1, hash2,
             "Hashes should be identical regardless of empty lines or whitespace"
+        );
+    }
+
+    /// The gate sidecar publication is incremental: a flush with no new gate
+    /// rows must not rewrite the file, and a new row must be appended without
+    /// touching the published rows.
+    #[test]
+    fn sync_gates_sidecar_publication_appends_only_new_rows() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        fs::create_dir_all(&beads_dir).unwrap();
+        let db_path = beads_dir.join("beads.db");
+        let gates_path = beads_dir.join("gates.jsonl");
+        let mut storage = SqliteStorage::open(&db_path).unwrap();
+
+        let issue = make_test_issue("br-gate-1", "Gate issue");
+        storage.create_issue(&issue, "tester").unwrap();
+
+        let record = |gate: &str| crate::close_policy::GateResultRecord {
+            id: 0,
+            issue_id: "br-gate-1".to_string(),
+            from_status: "in_progress".to_string(),
+            to_status: "closed".to_string(),
+            status_revision: 1,
+            gate: gate.to_string(),
+            provider: "tester".to_string(),
+            passed: true,
+            note: None,
+            recorded_by: Some("tester".to_string()),
+            recorded_at: "2026-03-20 12:00:00".to_string(),
+        };
+
+        storage
+            .insert_gate_result_record(&record("unit-test-verified"))
+            .unwrap();
+        let first = export_gates_to_jsonl(&storage, &gates_path, &ExportConfig::default()).unwrap();
+        assert_eq!(first.exported_count, 1);
+        let published = fs::read(&gates_path).unwrap();
+
+        // A publication with no new gate rows must not rewrite the file.
+        let second =
+            export_gates_to_jsonl(&storage, &gates_path, &ExportConfig::default()).unwrap();
+        assert_eq!(second.exported_count, 1);
+        assert_eq!(second.content_hash, first.content_hash);
+        assert_eq!(
+            fs::read(&gates_path).unwrap(),
+            published,
+            "a flush with no new gate rows must not change the sidecar"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let before = fs::metadata(&gates_path).unwrap().ino();
+            let _ = export_gates_to_jsonl(&storage, &gates_path, &ExportConfig::default()).unwrap();
+            assert_eq!(
+                fs::metadata(&gates_path).unwrap().ino(),
+                before,
+                "a flush with no new gate rows must not replace the sidecar"
+            );
+        }
+
+        // A new gate row is appended; the published rows stay byte-identical.
+        storage
+            .insert_gate_result_record(&record("second-gate"))
+            .unwrap();
+        let third = export_gates_to_jsonl(&storage, &gates_path, &ExportConfig::default()).unwrap();
+        assert_eq!(third.exported_count, 2);
+        let after = fs::read(&gates_path).unwrap();
+        assert!(
+            after.starts_with(&published),
+            "the published rows must stay byte-identical"
+        );
+    }
+
+    /// The staleness probe must not re-hash the whole JSONL on every command:
+    /// an untouched file is proven unchanged by its identity witness, so the
+    /// content hash is only consulted when the file was touched.
+    #[test]
+    fn sync_jsonl_probe_trusts_the_identity_witness_of_an_untouched_file() {
+        let temp = TempDir::new().unwrap();
+        let jsonl_path = temp.path().join("issues.jsonl");
+        fs::write(&jsonl_path, "{\"id\":\"br-1\"}\n").unwrap();
+        let storage = SqliteStorage::open_memory().unwrap();
+
+        // A stored hash that does NOT match the file: had the probe
+        // consulted it, the file would read as changed.
+        storage
+            .set_metadata_shared(METADATA_JSONL_CONTENT_HASH, "not-the-file-hash")
+            .unwrap();
+        // The file's own change-time, witnessed more than a second ago.
+        let identity = file_identity_witness(&fs::metadata(&jsonl_path).unwrap())
+            .expect("a change-time witness");
+        let change_time = identity_change_time(&identity).expect("a change-time");
+        let two_seconds_ago = Utc::now() - chrono::Duration::seconds(2);
+        let settled = format!(
+            "{change_time}|{}",
+            u64::try_from(two_seconds_ago.timestamp_nanos_opt().unwrap_or(0)).unwrap_or(0)
+        );
+        storage
+            .set_metadata_shared(METADATA_JSONL_FILE_WITNESS, &settled)
+            .unwrap();
+
+        let probe = compute_jsonl_newer_impl(&storage, &jsonl_path).unwrap();
+        assert!(
+            !probe.jsonl_newer,
+            "an untouched file must not be re-hashed: the witness proves it unchanged"
+        );
+    }
+
+    /// A touched file is still decided by the content hash: the witness
+    /// moved, so the hash is consulted and it decides.
+    #[test]
+    fn sync_jsonl_probe_hashes_a_touched_file() {
+        let temp = TempDir::new().unwrap();
+        let jsonl_path = temp.path().join("issues.jsonl");
+        fs::write(&jsonl_path, "{\"id\":\"br-1\"}\n").unwrap();
+        let storage = SqliteStorage::open_memory().unwrap();
+        let content_hash = compute_jsonl_hash(&jsonl_path).unwrap();
+        storage
+            .set_metadata_shared(METADATA_JSONL_CONTENT_HASH, &content_hash)
+            .unwrap();
+
+        // The file is rewritten with the same bytes: the change-time moved,
+        // so the hash decides, and the content is unchanged.
+        let content = fs::read_to_string(&jsonl_path).unwrap();
+        fs::write(&jsonl_path, &content).unwrap();
+        let probe = compute_jsonl_newer_impl(&storage, &jsonl_path).unwrap();
+        assert!(
+            !probe.jsonl_newer,
+            "a touched file with unchanged content must not read as newer"
+        );
+
+        // The same file with different content reads as newer.
+        fs::write(&jsonl_path, "{\"id\":\"br-2\"}\n").unwrap();
+        let probe = compute_jsonl_newer_impl(&storage, &jsonl_path).unwrap();
+        assert!(probe.jsonl_newer, "a changed file must read as newer");
+    }
+
+    /// A rebuild re-applies the schema, so the ready query's wave-gate index
+    /// must be part of it: a rebuilt database without it pays the per-candidate
+    /// scan again.
+    #[test]
+    fn sync_rebuild_restores_the_ready_wave_gate_index() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        fs::create_dir_all(&beads_dir).unwrap();
+        let db_path = beads_dir.join("beads.db");
+        let jsonl_path = beads_dir.join("issues.jsonl");
+        let mut storage = SqliteStorage::open(&db_path).unwrap();
+
+        let mut issue = make_test_issue("br-sync-wave", "Wave issue");
+        issue.wave = Some(1);
+        issue.verify = Some("mbx test --lib ready_wave_gate".to_string());
+        storage.create_issue(&issue, "tester").unwrap();
+        export_to_jsonl(&storage, &jsonl_path, &ExportConfig::default()).unwrap();
+
+        // Rebuild the data tables: the schema (with its indexes) is re-applied.
+        storage.reset_data_tables().unwrap();
+
+        let plan = storage.ready_query_plan().unwrap();
+        assert!(
+            plan.iter()
+                .any(|(_, _, detail)| detail.contains("idx_issues_wave")),
+            "a rebuilt database must keep the wave-gate index, got: {plan:?}"
         );
     }
 }

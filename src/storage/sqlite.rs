@@ -4305,6 +4305,27 @@ impl SqliteStorage {
         rows.iter().map(gate_result_record_from_row).collect()
     }
 
+    /// Gate result records recorded after `after_id`, oldest first.
+    ///
+    /// The gate history is append-only, so the rows after a cursor are the
+    /// rows a sidecar publication has not written yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database read fails.
+    pub fn get_gate_result_records_after_id(
+        &self,
+        after_id: i64,
+    ) -> Result<Vec<crate::close_policy::GateResultRecord>> {
+        let rows = self.conn.query_with_params(
+            "SELECT id, issue_id, from_status, to_status, status_revision,
+                    gate, provider, passed, note, recorded_by, recorded_at
+             FROM gate_result_history WHERE id > ? ORDER BY id",
+            &[SqliteValue::from(after_id)],
+        )?;
+        rows.iter().map(gate_result_record_from_row).collect()
+    }
+
     /// Append one imported [`GateResultRecord`] verbatim. Idempotent: a row
     /// whose full tuple already exists is skipped (JSONL re-imports and merge
     /// replays must not duplicate history). Local `id`s stay autoincrement;
@@ -10666,12 +10687,19 @@ impl SqliteStorage {
         // ADR-0001 §5.5 condition 6: wave gate. A waved issue is held while
         // any other issue with a strictly lower wave sits open/in_progress;
         // wave None is never held.
+        //
+        // The blocker set is a CONSTANT (the lowest open/in_progress wave),
+        // not a per-row correlated scan: the correlated form re-read the whole
+        // issues table for every candidate row, which made `br ready` O(n^2).
+        // `issues.wave <= lowest_open_wave` is the same predicate - a row is
+        // held exactly when some open/in_progress wave is strictly lower -
+        // and the COALESCE sentinel (i64::MAX, above every u32 wave) keeps
+        // "no open wave at all" from holding every waved row.
         sql.push_str(
-            " AND (issues.wave IS NULL OR NOT EXISTS (\
-             SELECT 1 FROM issues lower_wave \
+            " AND (issues.wave IS NULL OR issues.wave <= COALESCE((\
+             SELECT MIN(lower_wave.wave) FROM issues lower_wave \
              WHERE lower_wave.wave IS NOT NULL \
-             AND lower_wave.wave < issues.wave \
-             AND lower_wave.status IN ('open', 'in_progress')))",
+             AND lower_wave.status IN ('open', 'in_progress')), 9223372036854775807))",
         );
 
         // Filter by types
@@ -20745,6 +20773,38 @@ impl SqliteStorage {
         crate::storage::schema::execute_batch(&self.conn, sql)?;
         Ok(())
     }
+
+    /// The ready query's query plan, as SQLite reports it.
+    ///
+    /// Each row is `(id, parent, detail)` so a caller can tell which
+    /// subquery a search belongs to.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the plan cannot be produced.
+    pub(crate) fn ready_query_plan(&self) -> Result<Vec<(i64, i64, String)>> {
+        let (sql, params) = Self::build_ready_issue_candidates_query(
+            &ReadyFilters::default(),
+            ReadySortPolicy::Priority,
+            true,
+            false,
+            false,
+            ReadyIssueProjection::Command,
+            false,
+        );
+        let rows = self
+            .conn
+            .query_with_params(&format!("EXPLAIN QUERY PLAN {sql}"), &params)?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| {
+                let id = row.get(0).and_then(SqliteValue::as_integer)?;
+                let parent = row.get(1).and_then(SqliteValue::as_integer)?;
+                let detail = row.get(3).and_then(SqliteValue::as_text).map(String::from);
+                Some((id, parent, detail?))
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -20912,6 +20972,9 @@ mod tests {
             .set_metadata(METADATA_JSONL_MTIME, "2026-07-27T08:00:00+00:00")
             .unwrap();
         storage.set_metadata(METADATA_JSONL_SIZE, "128").unwrap();
+        storage
+            .set_metadata(crate::sync::METADATA_JSONL_FILE_WITNESS, "")
+            .unwrap();
         storage
             .set_metadata(METADATA_LAST_EXPORT_TIME, &receipt.created_at)
             .unwrap();
@@ -29311,6 +29374,87 @@ mod tests {
         assert!(!ready_ids.contains("bd-c1"));
         assert!(ready_ids.contains("bd-b1"));
         assert!(ready_ids.contains("bd-r1"));
+    }
+
+    /// The wave gate must resolve its blocker set ONCE, not per candidate
+    /// row: the correlated form re-scanned `issues` for every candidate row,
+    /// which made `br ready` O(n^2).
+    #[test]
+    fn ready_wave_gate_subquery_is_not_correlated() {
+        let storage = SqliteStorage::open_memory().unwrap();
+        let plan = storage.ready_query_plan().unwrap();
+
+        let wave_row = plan
+            .iter()
+            .find(|(_, _, detail)| detail.contains("lower_wave"))
+            .expect("the wave gate subquery must appear in the plan");
+        let parent = plan
+            .iter()
+            .find(|(id, _, _)| *id == wave_row.1)
+            .map(|(_, _, detail)| detail.as_str())
+            .expect("the wave gate subquery must have a parent plan row");
+
+        assert!(
+            parent.starts_with("SCALAR SUBQUERY"),
+            "the wave gate must resolve its blocker set once, not per candidate row, \
+             got parent plan row {parent:?} (plan: {plan:?})"
+        );
+    }
+
+    /// The wave gate holds a higher wave while a lower wave sits open, and
+    /// releases it once the lower wave is gone.
+    #[test]
+    fn ready_wave_gate_holds_higher_wave_while_lower_wave_is_open() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let created_at = Utc.with_ymd_and_hms(2026, 3, 20, 12, 0, 0).unwrap();
+
+        let mut higher = make_issue(
+            "br-wave-2",
+            "Wave two",
+            Status::Open,
+            3,
+            None,
+            created_at,
+            None,
+        );
+        higher.wave = Some(2);
+        higher.verify = Some("mbx test --lib ready_wave_gate".to_string());
+        let mut lower = make_issue(
+            "br-wave-1",
+            "Wave one",
+            Status::Open,
+            3,
+            None,
+            created_at,
+            None,
+        );
+        lower.wave = Some(1);
+        lower.verify = Some("mbx test --lib ready_wave_gate".to_string());
+
+        storage.create_issue(&higher, "tester").unwrap();
+        let ready_ids = |storage: &SqliteStorage| -> HashSet<String> {
+            storage
+                .get_ready_issues(&ReadyFilters::default(), ReadySortPolicy::Priority)
+                .unwrap()
+                .into_iter()
+                .map(|issue| issue.id)
+                .collect()
+        };
+        assert!(
+            ready_ids(&storage).contains("br-wave-2"),
+            "without a lower open wave the higher wave is dispatchable"
+        );
+
+        storage.create_issue(&lower, "tester").unwrap();
+        let ready = ready_ids(&storage);
+        assert!(
+            ready.contains("br-wave-1"),
+            "the lowest wave is dispatchable"
+        );
+        assert!(
+            !ready.contains("br-wave-2"),
+            "a higher wave is held while a lower wave sits open"
+        );
     }
 
     #[test]

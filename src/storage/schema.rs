@@ -170,6 +170,7 @@ const REQUIRED_RUNTIME_INDEXES: &[&str] = &[
     "idx_issues_status_priority_created",
     "idx_issues_tombstone",
     "idx_issues_updated_at",
+    "idx_issues_wave",
     "idx_labels_issue",
     "idx_labels_label",
     "idx_metadata_key",
@@ -304,6 +305,14 @@ pub const SCHEMA_SQL: &str = r"
         AND ephemeral = 0
         AND pinned = 0
         AND is_template = 0;
+
+    -- Wave gate lookup: the ready query resolves the lowest open/in_progress
+    -- wave through this index instead of scanning the issues table per
+    -- candidate row. Only waved rows are indexed, and `wave` follows
+    -- `status` so the minimum wave per status is the first index entry.
+    CREATE INDEX IF NOT EXISTS idx_issues_wave
+        ON issues(status, wave)
+        WHERE wave IS NOT NULL;
 
     -- Widened ready group (issue #354): when `workflow.status_groups.ready`
     -- surfaces statuses beyond `open` (e.g. `rework`), the partial
@@ -5249,6 +5258,10 @@ mod schema18_tests {
                      '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')",
         )
         .expect("seed issue");
+        // A schema-17 database predates the wave-gate index, and SQLite
+        // refuses to drop a column an index still names.
+        conn.execute("DROP INDEX IF EXISTS idx_issues_wave")
+            .expect("drop wave-gate index");
         for name in TYPED_WORK_LEDGER_COLUMNS {
             conn.execute(&format!("ALTER TABLE issues DROP COLUMN {name}"))
                 .expect("drop v18 column");
@@ -5445,6 +5458,10 @@ mod schema18_tests {
         .expect("seed issue");
         conn.execute("DROP TABLE IF EXISTS capacity_occupancy")
             .expect("drop v17 occupancy table");
+        // A schema-16 database predates the wave-gate index, and SQLite
+        // refuses to drop a column an index still names.
+        conn.execute("DROP INDEX IF EXISTS idx_issues_wave")
+            .expect("drop wave-gate index");
         for name in TYPED_WORK_LEDGER_COLUMNS {
             conn.execute(&format!("ALTER TABLE issues DROP COLUMN {name}"))
                 .expect("drop v18 column");
