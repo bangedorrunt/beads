@@ -3357,9 +3357,26 @@ pub struct DoctorArgs {
     #[arg(long, conflicts_with = "repair")]
     pub repair_indexes: bool,
 
-    /// Allow another JSONL rebuild after prior failed recovery evidence
+    /// Allow another JSONL rebuild after prior failed recovery evidence.
+    ///
+    /// This flag says NOTHING about gate verdicts: it does not disable the
+    /// refusal to rebuild when the verdict rows cannot be restored. Losing
+    /// those rows is a separate, operator-gated decision.
     #[arg(long)]
     pub allow_repeated_repair: bool,
+
+    /// Rebuild even though the gate verdict rows cannot be restored.
+    ///
+    /// The issues JSONL carries issues, not gate verdicts, so a rebuild from
+    /// it empties the verdict store unless `.beads/gates.jsonl` can restore
+    /// it. This flag accepts that loss: every closed bead then reports "no
+    /// legal verdict", and `closed -> closed` is not a legal gate transition,
+    /// so the repair is a reopen/re-gate/re-close per bead.
+    ///
+    /// Requires BR_OPERATOR=1 in the environment (ADR-0001 §5.3). Agents must
+    /// preserve the verdict rows instead.
+    #[arg(long)]
+    pub allow_gate_verdict_loss: bool,
 
     /// With `--repair`, print the planned mutations to stderr without
     /// writing anything. Without `--repair` this is a no-op (doctor is

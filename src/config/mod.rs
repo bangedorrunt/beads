@@ -2350,6 +2350,17 @@ fn rebuild_database_family(
     )?;
     write_authority.verify_database_authority()?;
     verify_rebuilt_database_postconditions(&storage, &import_result)?;
+    // ADR-0001 §5.4: the issues JSONL is a PARTIAL source of truth - it
+    // carries issues, not gate verdict rows. This rebuild therefore empties
+    // the verdict store, and the next flush writes that emptiness over
+    // `.beads/gates.jsonl`: every closed bead then reports "no legal verdict"
+    // and `closed -> closed` is not a legal gate transition, so the repair is
+    // a reopen/re-gate/re-close per bead. Restore the verdicts from the
+    // sidecar here, at the ONE rebuild entry every path routes through
+    // (the recovery path, `br doctor --repair`, and the integrity repair).
+    if let Some(beads_dir) = db_path.parent() {
+        crate::sync::restore_gate_verdicts(&mut storage, beads_dir);
+    }
     Ok((storage, import_result))
 }
 

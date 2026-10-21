@@ -1874,38 +1874,10 @@ fn status_coverage(
 /// issues import must not be rolled back because a sidecar row went stale,
 /// and `br doctor`'s orphan-verdict check surfaces unprovable closes.
 fn load_gates_sidecar_if_present(storage: &mut crate::storage::SqliteStorage, beads_dir: &Path) {
-    let gates_path = beads_dir.join("gates.jsonl");
-    if !gates_path.exists() {
-        return;
-    }
-    match crate::sync::import_gates_from_jsonl(storage, &gates_path, &ImportConfig::default()) {
-        Ok(gates_import) => {
-            info!(
-                total = gates_import.total,
-                inserted = gates_import.inserted,
-                skipped = gates_import.skipped,
-                refused = gates_import.refused,
-                "Gate verdict sidecar imported"
-            );
-            if gates_import.refused > 0 {
-                // A refused row means the sidecar names an issue the issues
-                // export does not have. That disagreement is the operator's
-                // problem to see, not a line to bury: the row is not in the
-                // database, so any close backed by it is unprovable.
-                warn!(
-                    path = %gates_path.display(),
-                    refused = gates_import.refused,
-                    "Gate verdict sidecar rows reference issues that do not exist; those rows were \
-                     refused and are NOT in the database, so a close backed by one is unprovable"
-                );
-            }
-        }
-        Err(error) => warn!(
-            path = %gates_path.display(),
-            %error,
-            "Gate verdict sidecar could not be loaded; closes backed by its PASS rows will be flagged by `br doctor`"
-        ),
-    }
+    // The restore lives in `crate::sync` so the REBUILD paths can use the
+    // same one: a rebuild that does not restore the verdicts empties the
+    // store, and the next flush writes that emptiness over the sidecar.
+    crate::sync::restore_gate_verdicts(storage, beads_dir);
 }
 
 fn execute_status(

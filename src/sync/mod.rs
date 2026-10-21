@@ -11739,6 +11739,70 @@ pub struct GateSidecarImport {
     pub refused: usize,
 }
 
+/// How many gate verdict rows the sidecar holds.
+///
+/// 0 when the sidecar is absent or unreadable - which is exactly the case
+/// where a rebuild cannot restore what it drops.
+pub fn gate_sidecar_row_count(path: &Path) -> usize {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return 0;
+    };
+    raw.lines().filter(|line| !line.trim().is_empty()).count()
+}
+
+/// Restore the gate verdict rows a rebuild dropped, from the sidecar.
+///
+/// The issues JSONL is a PARTIAL source of truth: it carries issues, not
+/// verdict rows. A rebuild from it therefore empties the verdict store unless
+/// the sidecar is reloaded, and the next flush writes that emptiness over
+/// `.beads/gates.jsonl` - every closed bead then reports "no legal verdict",
+/// and `closed -> closed` is not a legal gate transition, so the repair is a
+/// reopen/re-gate/re-close per bead.
+///
+/// Returns `None` when there is no sidecar to restore from.
+pub fn restore_gate_verdicts(
+    storage: &mut SqliteStorage,
+    beads_dir: &Path,
+) -> Option<GateSidecarImport> {
+    let gates_path = beads_dir.join("gates.jsonl");
+    if !gates_path.exists() {
+        return None;
+    }
+    match import_gates_from_jsonl(storage, &gates_path, &ImportConfig::default()) {
+        Ok(summary) => {
+            tracing::info!(
+                total = summary.total,
+                inserted = summary.inserted,
+                skipped = summary.skipped,
+                refused = summary.refused,
+                "Gate verdict sidecar imported"
+            );
+            if summary.refused > 0 {
+                // A refused row means the sidecar names an issue the issues
+                // export does not have. That disagreement is the operator's
+                // problem to see, not a line to bury: the row is not in the
+                // database, so any close backed by it is unprovable.
+                tracing::warn!(
+                    path = %gates_path.display(),
+                    refused = summary.refused,
+                    "Gate verdict sidecar rows reference issues that do not exist; those rows were \
+                     refused and are NOT in the database, so a close backed by one is unprovable"
+                );
+            }
+            Some(summary)
+        }
+        Err(error) => {
+            tracing::warn!(
+                path = %gates_path.display(),
+                %error,
+                "Gate verdict sidecar could not be loaded; closes backed by its PASS rows will be \
+                 flagged by `br doctor`"
+            );
+            None
+        }
+    }
+}
+
 /// ADR-0001 §5.4 ledger fingerprint for robot output: SHA-256 over the
 /// exact `issues.jsonl` bytes and the exact `gates.jsonl` sidecar bytes,
 /// length-framed so the pair is unambiguous, truncated to 16 hex chars to

@@ -3302,12 +3302,22 @@ fn gate_verdict_row_count(db_path: &Path) -> usize {
 /// call site left every test green. The decision is the part worth protecting,
 /// so it lives here; [`bd_lt77_the_repair_path_consults_this_decision`] pins the
 /// wiring separately and is honestly the weaker of the two guards.
+///
+/// `restorable_rows` is how many verdict rows the sidecar can put back. A
+/// rebuild restores them (see `crate::sync::restore_gate_verdicts`), so the
+/// rebuild is only destructive when the sidecar cannot cover what it drops.
+///
+/// `allow_verdict_loss` is the OPERATOR's explicit consent (BR_OPERATOR=1).
+/// It is deliberately NOT the ordinary `--allow-repeated-repair` flag: that
+/// flag means "allow another JSONL rebuild after prior failed recovery
+/// evidence" and nothing about losing a class of record.
 #[must_use]
 pub fn gate_verdict_rebuild_refusal(
     gate_rows: usize,
-    allow_repeated_repair: bool,
+    restorable_rows: usize,
+    allow_verdict_loss: bool,
 ) -> Option<String> {
-    if allow_repeated_repair || gate_rows == 0 {
+    if allow_verdict_loss || gate_rows == 0 || restorable_rows >= gate_rows {
         return None;
     }
     Some(gate_verdict_loss_refusal_message(gate_rows))
@@ -14053,13 +14063,30 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         return Err(BeadsError::Config(reason));
     }
 
-    // bd-lt77: refuse BEFORE rebuilding when gate verdicts exist, because the
-    // JSONL cannot carry them. Reporting `imported N, skipped 0` while
-    // discarding every verdict is a success message describing the wrong
-    // outcome.
+    // Refuse BEFORE rebuilding when gate verdicts exist AND the sidecar cannot
+    // put them back, because the issues JSONL cannot carry them. Reporting
+    // `imported N, skipped 0` while discarding every verdict is a success
+    // message describing the wrong outcome.
+    //
+    // The rebuild itself restores the verdicts from the sidecar
+    // (`crate::sync::restore_gate_verdicts`), so the only destructive case
+    // left is a sidecar that is missing, short, or unreadable. Discarding the
+    // verdicts on purpose is an OPERATOR action: BR_OPERATOR=1 plus the flag
+    // that names the loss.
     {
+        if args.allow_gate_verdict_loss && std::env::var("BR_OPERATOR").as_deref() != Ok("1") {
+            return Err(BeadsError::Config(
+                "--allow-gate-verdict-loss requires BR_OPERATOR=1 in the environment; agents must \
+                 preserve the verdict rows instead"
+                    .to_string(),
+            ));
+        }
         let gate_rows = gate_verdict_row_count(&paths.db_path);
-        if let Some(reason) = gate_verdict_rebuild_refusal(gate_rows, args.allow_repeated_repair) {
+        let restorable_rows =
+            crate::sync::gate_sidecar_row_count(&beads_dir.join("gates.jsonl"));
+        if let Some(reason) =
+            gate_verdict_rebuild_refusal(gate_rows, restorable_rows, args.allow_gate_verdict_loss)
+        {
             let recovery_audit = early_repair.prepend_actions_to_audit(jsonl_rebuild_audit_record(
                 "doctor.jsonl_rebuild",
                 "refused",
@@ -25531,6 +25558,7 @@ version = "2026-05-11-abc123"
             repair: false,
             repair_indexes: true,
             allow_repeated_repair: false,
+            allow_gate_verdict_loss: false,
             dry_run: false,
             robot_triage: false,
             quick: false,
@@ -25610,6 +25638,7 @@ version = "2026-05-11-abc123"
             repair: false,
             repair_indexes: true,
             allow_repeated_repair: false,
+            allow_gate_verdict_loss: false,
             dry_run: false,
             robot_triage: false,
             quick: false,
@@ -25912,6 +25941,7 @@ version = "2026-05-11-abc123"
             repair: false,
             repair_indexes: true,
             allow_repeated_repair: false,
+            allow_gate_verdict_loss: false,
             dry_run: false,
             robot_triage: false,
             quick: false,
@@ -25966,6 +25996,7 @@ version = "2026-05-11-abc123"
             repair: false,
             repair_indexes: true,
             allow_repeated_repair: false,
+            allow_gate_verdict_loss: false,
             dry_run: false,
             robot_triage: false,
             quick: false,
@@ -26021,6 +26052,7 @@ version = "2026-05-11-abc123"
             repair: false,
             repair_indexes: true,
             allow_repeated_repair: false,
+            allow_gate_verdict_loss: false,
             dry_run: true,
             robot_triage: false,
             quick: false,
@@ -26297,16 +26329,43 @@ mod bd_lt77_gate_verdict_loss {
     #[test]
     fn the_repair_refuses_when_verdicts_would_be_dropped() {
         assert!(
-            gate_verdict_rebuild_refusal(7, false).is_some(),
-            "7 gate verdicts with no --allow-repeated-repair MUST refuse — this is bd-lt77"
+            gate_verdict_rebuild_refusal(7, 0, false).is_some(),
+            "7 gate verdicts the sidecar cannot restore MUST refuse"
         );
         assert!(
-            gate_verdict_rebuild_refusal(0, false).is_none(),
+            gate_verdict_rebuild_refusal(7, 7, false).is_none(),
+            "a sidecar that restores every verdict must not block the repair — the rebuild \
+             restores them, so refusing would be theatre"
+        );
+        assert!(
+            gate_verdict_rebuild_refusal(0, 0, false).is_none(),
             "nothing to lose must not block the repair; a guard that always fires is broken"
         );
         assert!(
-            gate_verdict_rebuild_refusal(7, true).is_none(),
+            gate_verdict_rebuild_refusal(7, 0, true).is_none(),
             "an explicit operator override must win, or the escape hatch is a lie"
+        );
+    }
+
+    /// The escape hatch is an OPERATOR action (ADR-0001 §5.3), not an ordinary
+    /// flag. `--allow-repeated-repair` means "allow another JSONL rebuild after
+    /// prior failed recovery evidence" and must never reach this decision.
+    #[test]
+    fn the_verdict_loss_escape_hatch_is_operator_only() {
+        let src = include_str!("doctor.rs");
+        assert!(
+            src.contains("args.allow_gate_verdict_loss"),
+            "the refusal must consult the operator-gated flag"
+        );
+        assert!(
+            !src.contains(
+                &["gate_verdict_rebuild_refusal(", "gate_rows, args.allow_repeated_repair"].concat()
+            ),
+            "the ordinary --allow-repeated-repair flag must NOT reach the verdict refusal"
+        );
+        assert!(
+            src.contains("--allow-gate-verdict-loss requires BR_OPERATOR=1"),
+            "the escape hatch must refuse without BR_OPERATOR=1"
         );
     }
 
@@ -26318,7 +26377,7 @@ mod bd_lt77_gate_verdict_loss {
     fn bd_lt77_the_repair_path_consults_this_decision() {
         let src = include_str!("doctor.rs");
         let call = src
-            .find("gate_verdict_rebuild_refusal(gate_rows, args.allow_repeated_repair)")
+            .find("gate_verdict_rebuild_refusal(gate_rows, restorable_rows, args.allow_gate_verdict_loss)")
             .expect("the repair path must consult gate_verdict_rebuild_refusal");
         let rebuild = src
             .find("Repairing: rebuilding DB from JSONL")
