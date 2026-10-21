@@ -292,9 +292,10 @@ fn scheduler_candidate_limit_keeps_satisfied_external_prefix() {
         "gate_provider",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&external, &provider);
     let close = run_br(
         &external,
-        ["close", &provider, "--commit-sha", "e2e1234"],
+        ["close", &provider, "--commit-sha", &cite_sha],
         "close_provider",
     );
     assert!(

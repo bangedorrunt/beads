@@ -40,6 +40,52 @@ fn setup_workspace_with_issue() -> (BrWorkspace, String) {
     (workspace, id)
 }
 
+/// A REAL commit in the workspace's git repo, citing the bead ids.
+///
+/// The close path verifies that the sha it is given RESOLVES and CITES the
+/// bead, so a placeholder sha proves nothing about the rule under test - and
+/// a sha that resolves nowhere is now refused rather than warned about.
+fn commit_citing(workspace: &BrWorkspace, bead_ids: &[&str]) -> String {
+    let git = |args: &[&str]| -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&workspace.root)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?} failed: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    if !workspace.root.join(".git").exists() {
+        git(&["init", "-q"]);
+    }
+    git(&["config", "user.email", "test@example.com"]);
+    git(&["config", "user.name", "test"]);
+    // One work file per call: a second call must still have something to
+    // commit (`git commit` refuses an empty index).
+    let count = std::process::Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(&workspace.root)
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_else(|| "0".to_string());
+    let work_file = format!("work-{count}.txt");
+    std::fs::write(
+        workspace.root.join(&work_file),
+        format!("work for {}\n", bead_ids.join(", ")),
+    )
+    .expect("write work");
+    git(&["add", &work_file]);
+    git(&[
+        "commit",
+        "-q",
+        "-m",
+        &format!("fix: carry the work for {}", bead_ids.join(", ")),
+    ]);
+    git(&["rev-parse", "HEAD"])
+}
+
 fn record_unit_test_pass(workspace: &BrWorkspace, id: &str) {
     let report = run_br(
         workspace,
@@ -71,9 +117,10 @@ fn close_without_pass_gate_is_nonzero() {
     let _log = common::test_log("close_without_pass_gate_is_nonzero");
     let (workspace, id) = setup_workspace_with_issue();
 
+    let sha = commit_citing(&workspace, &[&id]);
     let closed = run_br(
         &workspace,
-        ["close", &id, "--commit-sha", "deadbee", "--json"],
+        ["close", &id, "--commit-sha", &sha, "--json"],
         "close_without_gate",
     );
     assert!(
@@ -125,9 +172,10 @@ fn close_with_legal_gate_and_sha_sets_close_verdict() {
     let (workspace, id) = setup_workspace_with_issue();
     record_unit_test_pass(&workspace, &id);
 
+    let sha = commit_citing(&workspace, &[&id]);
     let closed = run_br(
         &workspace,
-        ["close", &id, "--commit-sha", "9ef55ebf", "--json"],
+        ["close", &id, "--commit-sha", &sha, "--json"],
         "close_legal",
     );
     assert!(
@@ -158,7 +206,7 @@ fn close_with_legal_gate_and_sha_sets_close_verdict() {
         "expected close_verdict=unit-test-verified in metadata, got: {meta}"
     );
     assert!(
-        meta.contains("commit_sha=9ef55ebf"),
+        meta.contains(&format!("commit_sha={sha}")),
         "expected commit_sha in metadata, got: {meta}"
     );
 }
@@ -252,9 +300,10 @@ fn record_and_close_legally(workspace: &BrWorkspace, id: &str, label_suffix: &st
         report.stderr
     );
 
+    let sha = commit_citing(workspace, &[id]);
     let closed = run_br(
         workspace,
-        ["close", id, "--commit-sha", "deadbee", "--json"],
+        ["close", id, "--commit-sha", &sha, "--json"],
         Box::leak(format!("close_legal_{label_suffix}").into_boxed_str()),
     );
     assert!(

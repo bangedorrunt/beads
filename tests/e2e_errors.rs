@@ -2253,6 +2253,7 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     );
     assert!(close.status.success(), "gate failed: {}", close.stderr);
 
+    let cite_sha = common::cli::citing_sha(&workspace, &blocked_id);
     let close = run_br(
         &workspace,
         [
@@ -2262,7 +2263,7 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
             "--reason",
             "partial batch",
             "--commit-sha",
-            "e2e1234",
+            &cite_sha,
         ],
         "partial_close_batch",
     );

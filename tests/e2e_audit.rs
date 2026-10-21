@@ -999,6 +999,12 @@ fn e2e_audit_log_for_issue() {
             "pass",
             "--to",
             "closed",
+            // The close below is authorised by this PASS row (ADR-0001 §5.3):
+            // a note that leads with `task=<id> verdict=<id>`. A named sha
+            // would have to resolve and cite the bead, and this harness has
+            // no commit to cite.
+            "--note",
+            "task=e2e-audit-task verdict=e2e-audit-verdict",
         ],
         "gate",
     );
@@ -1006,7 +1012,16 @@ fn e2e_audit_log_for_issue() {
 
     let close = run_br(
         &workspace,
-        ["close", &id, "--reason", "Done", "--commit-sha", "e2e1234"],
+        [
+            "close",
+            &id,
+            "--reason",
+            "Done",
+            "--task-id",
+            "e2e-audit-task",
+            "--verdict-id",
+            "e2e-audit-verdict",
+        ],
         "close",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -1100,13 +1115,26 @@ fn e2e_audit_summary() {
             "pass",
             "--to",
             "closed",
+            // The close below is authorised by this PASS row (ADR-0001 §5.3):
+            // a note that leads with `task=<id> verdict=<id>`. A named sha
+            // would have to resolve and cite the bead, and this harness has
+            // no commit to cite.
+            "--note",
+            "task=e2e-audit-task verdict=e2e-audit-verdict",
         ],
         "gate",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     let close = run_br(
         &workspace,
-        ["close", id1, "--commit-sha", "e2e1234"],
+        [
+            "close",
+            id1,
+            "--task-id",
+            "e2e-audit-task",
+            "--verdict-id",
+            "e2e-audit-verdict",
+        ],
         "close",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);

@@ -2726,7 +2726,25 @@ pub mod catalog {
     // `action` is reserved by callers ("close_root", "stress-close", ...) to
     // distinguish steps; the step builder has nowhere to carry it yet, so it
     // stays unused until the harness grows an action slot.
-    fn gate_report_step(issue_alias: &str, _action: &str, label: &str) -> WorkspaceEvolutionStep {
+    /// The task/verdict pair that authorises a close without a commit.
+    ///
+    /// ADR-0001 §5.3 gives a close two proofs: the commit that carries the
+    /// bead id, or a PASS gate note that leads with `task=<id>
+    /// verdict=<id>`. The replay harness has no git history to cite (and its
+    /// SHA must stay deterministic), so it takes the second path - and the
+    /// gate row it records has to name the SAME pair the close names.
+    fn seeded_proof(seed: u64, action: &str) -> (String, String) {
+        let base = seed ^ action_hash(action);
+        (format!("task-{base:016x}"), format!("verdict-{base:016x}"))
+    }
+
+    fn gate_report_step(
+        seed: u64,
+        issue_alias: &str,
+        action: &str,
+        label: &str,
+    ) -> WorkspaceEvolutionStep {
+        let (task, verdict) = seeded_proof(seed, action);
         command_step(
             vec![
                 "gate".to_string(),
@@ -2740,6 +2758,8 @@ pub mod catalog {
                 "pass".to_string(),
                 "--to".to_string(),
                 "closed".to_string(),
+                "--note".to_string(),
+                format!("task={task} verdict={verdict}"),
                 "--json".to_string(),
             ],
             label,
@@ -2814,15 +2834,23 @@ pub mod catalog {
         label: &str,
         no_auto_flush: bool,
     ) -> WorkspaceEvolutionStep {
+        let (task, verdict) = seeded_proof(seed, action);
         let mut args = vec![
             "close".to_string(),
             format!("{{{issue_alias}}}"),
             "--reason".to_string(),
             seeded_reason(seed, action),
-            // ADR-0001 §5.3: closes cite the commit carrying the bead id.
-            // The replay seeds a deterministic SHA per action.
-            "--commit-sha".to_string(),
-            format!("{:016x}", seed ^ action_hash(action)),
+            // ADR-0001 §5.3: a close is authorised either by the commit that
+            // carries the bead id or by a PASS gate note that leads with
+            // `task=<id> verdict=<id>`. The replay harness cites the second:
+            // it has no git history to point at, and a named sha that
+            // resolves nowhere is refused (a proof nobody can check is not a
+            // proof). The gate row recorded before this step names the SAME
+            // pair - see `seeded_proof`.
+            "--task-id".to_string(),
+            task,
+            "--verdict-id".to_string(),
+            verdict,
             "--json".to_string(),
         ];
         if no_auto_flush {
@@ -2871,8 +2899,8 @@ pub mod catalog {
                     "link_dependency",
                 ),
                 command_step(vec!["ready".to_string(), "--json".to_string()], "ready_blocked"),
-                gate_report_step("root", "close_root", "gate_before_close_root"),
-                close_step(seed, "root", "close-root", "close_root", true),
+                gate_report_step(seed, "root", "close_root", "gate_before_close_root"),
+                close_step(seed, "root", "close_root", "close_root", true),
                 stale_read_step("ready", "ready_after_close"),
                 sync_flush_step("flush_after_close"),
                 reopen_step(seed, "root", "reopen-root", "reopen_root"),
@@ -2885,8 +2913,8 @@ pub mod catalog {
                     ],
                     "import_after_reopen",
                 ),
-                gate_report_step("root", "close_root_final", "gate_before_close_root_final"),
-                close_step(seed, "root", "final-close-root", "close_root_final", false),
+                gate_report_step(seed, "root", "close_root_final", "gate_before_close_root_final"),
+                close_step(seed, "root", "close_root_final", "close_root_final", false),
                 command_step(vec!["ready".to_string(), "--json".to_string()], "ready_final"),
                 sync_flush_step("flush_final"),
             ])
@@ -3028,6 +3056,7 @@ pub mod catalog {
 
             if iteration % 3 == 1 {
                 steps.push(gate_report_step(
+                    iteration_seed,
                     &alias,
                     "stress-close",
                     &format!("gate_before_close_stress_{iteration}"),

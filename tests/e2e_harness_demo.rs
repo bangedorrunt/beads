@@ -75,6 +75,7 @@ fn harness_full_workflow() {
         "gate",
     );
     gate.assert_success();
+    let cite_sha = common::cli::citing_sha_in(&ws.root, &id);
     let close = ws.run_br(
         [
             "close",
@@ -82,7 +83,7 @@ fn harness_full_workflow() {
             "--reason",
             "Test complete",
             "--commit-sha",
-            "e2e1234",
+            &cite_sha,
         ],
         "close",
     );

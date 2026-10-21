@@ -961,16 +961,19 @@ fn cli_mutation_crash_boundary_matrix_marks_dirty_until_recovered() {
         ),
         (
             "close",
-            vec![
-                "close".to_string(),
-                issue_id.clone(),
-                "--reason".to_string(),
-                "crash boundary close".to_string(),
-                "--commit-sha".to_string(),
-                "e2e1234".to_string(),
-                "--json".to_string(),
-                "--no-auto-flush".to_string(),
-            ],
+            {
+                let cite_sha = common::cli::citing_sha(&workspace, &issue_id);
+                vec![
+                    "close".to_string(),
+                    issue_id.clone(),
+                    "--reason".to_string(),
+                    "crash boundary close".to_string(),
+                    "--commit-sha".to_string(),
+                    cite_sha,
+                    "--json".to_string(),
+                    "--no-auto-flush".to_string(),
+                ]
+            },
         ),
         (
             "reopen",

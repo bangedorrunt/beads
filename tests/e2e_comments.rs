@@ -592,6 +592,12 @@ fn e2e_comments_on_closed_issue() {
             "pass",
             "--to",
             "closed",
+            // The close below is authorised by this PASS row (ADR-0001 §5.3):
+            // a note that leads with `task=<id> verdict=<id>`. A named sha
+            // would have to resolve and cite the bead, and this harness has
+            // no commit to cite.
+            "--note",
+            "task=e2e-comments-task verdict=e2e-comments-verdict",
         ],
         "gate",
     );
@@ -603,8 +609,10 @@ fn e2e_comments_on_closed_issue() {
             &id,
             "--reason",
             "Testing closed comments",
-            "--commit-sha",
-            "e2e1234",
+            "--task-id",
+            "e2e-comments-task",
+            "--verdict-id",
+            "e2e-comments-verdict",
         ],
         "close_issue",
     );

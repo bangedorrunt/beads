@@ -512,9 +512,10 @@ fn e2e_label_on_closed_issue() {
         "gate_close",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &id);
     let close = run_br(
         &workspace,
-        ["close", &id, "--commit-sha", "e2e1234"],
+        ["close", &id, "--commit-sha", &cite_sha],
         "close",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);

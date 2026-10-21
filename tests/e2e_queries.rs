@@ -184,6 +184,7 @@ fn e2e_queries_ready_stale_count_search() {
         "gate failed: {}",
         gate_issue.stderr
     );
+    let cite_sha = common::cli::citing_sha(&workspace, &closed_id);
     let close_issue = run_br(
         &workspace,
         [
@@ -192,7 +193,7 @@ fn e2e_queries_ready_stale_count_search() {
             "--reason",
             "fixture: ready-after-close",
             "--commit-sha",
-            "e2e1234",
+            &cite_sha,
         ],
         "close_issue",
     );
@@ -645,6 +646,7 @@ fn e2e_reopen_command() {
         "reopen_gate",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &issue_id);
     let close = run_br(
         &workspace,
         [
@@ -653,7 +655,7 @@ fn e2e_reopen_command() {
             "--reason",
             "Testing reopen",
             "--commit-sha",
-            "e2e1234",
+            &cite_sha,
         ],
         "reopen_close",
     );
@@ -738,9 +740,10 @@ fn e2e_reopen_command() {
         "gate again failed: {}",
         gate_again.stderr
     );
+    let cite_sha = common::cli::citing_sha(&workspace, &issue_id);
     let close_again = run_br(
         &workspace,
-        ["close", &issue_id, "--commit-sha", "e2e1234"],
+        ["close", &issue_id, "--commit-sha", &cite_sha],
         "reopen_close_again",
     );
     assert!(
@@ -807,9 +810,10 @@ fn e2e_reopen_honors_env_json_mode() {
         "reopen_env_gate",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &issue_id);
     let close = run_br(
         &workspace,
-        ["close", issue_id, "--commit-sha", "e2e1234"],
+        ["close", issue_id, "--commit-sha", &cite_sha],
         "reopen_env_close",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);

@@ -561,6 +561,7 @@ fn e2e_orphans_excludes_closed_issues() {
         "gate_issue",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &issue_id);
     let close = run_br(
         &workspace,
         [
@@ -569,7 +570,7 @@ fn e2e_orphans_excludes_closed_issues() {
             "--reason",
             "done",
             "--commit-sha",
-            "e2e1234",
+            &cite_sha,
         ],
         "close_issue",
     );
@@ -786,9 +787,10 @@ fn e2e_orphans_multiple_issues_multiple_commits() {
         "gate_3",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &id3);
     let close = run_br(
         &workspace,
-        ["close", &id3, "--reason", "done", "--commit-sha", "e2e1234"],
+        ["close", &id3, "--reason", "done", "--commit-sha", &cite_sha],
         "close_3",
     );
     assert!(close.status.success());

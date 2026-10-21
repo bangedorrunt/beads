@@ -153,6 +153,53 @@ impl BrWorkspace {
     }
 }
 
+/// A REAL commit in the workspace's git repo, citing `bead_id`, and its sha.
+///
+/// The close path verifies that the sha it is given RESOLVES and CITES the
+/// bead: a placeholder sha proves nothing about the rule under test, and a
+/// sha that resolves nowhere is refused rather than warned about. One work
+/// file per call, so a second call in the same test still has something to
+/// commit.
+pub fn citing_sha(workspace: &BrWorkspace, bead_id: &str) -> String {
+    citing_sha_in(&workspace.root, bead_id)
+}
+
+/// [`citing_sha`] for a workspace root that is not a [`BrWorkspace`].
+pub fn citing_sha_in(root: &Path, bead_id: &str) -> String {
+    let git = |args: &[&str]| -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    if !root.join(".git").exists() {
+        git(&["init", "-q"]);
+    }
+    git(&["config", "user.email", "test@example.com"]);
+    git(&["config", "user.name", "test"]);
+    let count = std::process::Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_else(|| "0".to_string());
+    let work_file = format!("work-{count}.txt");
+    std::fs::write(root.join(&work_file), format!("work for {bead_id}\n"))
+        .expect("write the work file");
+    git(&["add", &work_file]);
+    git(&["commit", "-q", "-m", &format!("fix: carry the work for {bead_id}")]);
+    git(&["rev-parse", "HEAD"])
+}
+
 pub fn run_br<I, S>(workspace: &BrWorkspace, args: I, label: &str) -> BrRun
 where
     I: IntoIterator<Item = S>,

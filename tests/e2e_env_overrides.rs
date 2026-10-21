@@ -1226,9 +1226,10 @@ fn e2e_close_honors_toon_env_mode() {
         "close_toon_gate",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &issue_id);
     let close = run_br_with_env(
         &workspace,
-        ["close", &issue_id, "--commit-sha", "e2e1234"],
+        ["close", &issue_id, "--commit-sha", &cite_sha],
         [("BR_OUTPUT_FORMAT", "toon")],
         "close_toon_env",
     );
@@ -1282,9 +1283,10 @@ fn e2e_reopen_honors_toon_env_mode() {
         "close_before_reopen_gate",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &issue_id);
     let close = run_br(
         &workspace,
-        ["close", &issue_id, "--commit-sha", "e2e1234"],
+        ["close", &issue_id, "--commit-sha", &cite_sha],
         "close_before_reopen",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -1653,9 +1655,10 @@ fn e2e_epic_close_eligible_honors_toon_env_mode() {
         "gate child failed: {}",
         gate_child.stderr
     );
+    let cite_sha = common::cli::citing_sha(&workspace, &child_id);
     let close_child = run_br(
         &workspace,
-        ["close", &child_id, "--force", "--commit-sha", "e2e1234"],
+        ["close", &child_id, "--force", "--commit-sha", &cite_sha],
         "close_epic_child_toon",
     );
     assert!(

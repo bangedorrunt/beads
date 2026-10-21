@@ -179,9 +179,10 @@ fn e2e_epic_status_eligible_when_all_children_closed() {
         "gate_task",
     );
     assert!(gate.status.success(), "gate task failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &task_id);
     let close_task = run_br(
         &workspace,
-        ["close", &task_id, "--force", "--commit-sha", "e2e1234"],
+        ["close", &task_id, "--force", "--commit-sha", &cite_sha],
         "close_task",
     );
     assert!(
@@ -256,9 +257,10 @@ fn e2e_epic_close_eligible_closes_epics() {
         "gate_task",
     );
     assert!(gate.status.success(), "gate task failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &task_id);
     let close_task = run_br(
         &workspace,
-        ["close", &task_id, "--force", "--commit-sha", "e2e1234"],
+        ["close", &task_id, "--force", "--commit-sha", &cite_sha],
         "close_task",
     );
     assert!(close_task.status.success());
@@ -357,9 +359,10 @@ fn e2e_epic_close_eligible_dry_run() {
         "gate_task",
     );
     assert!(gate.status.success(), "gate task failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &task_id);
     let close_task = run_br(
         &workspace,
-        ["close", &task_id, "--force", "--commit-sha", "e2e1234"],
+        ["close", &task_id, "--force", "--commit-sha", &cite_sha],
         "close_task",
     );
     assert!(close_task.status.success());
@@ -459,9 +462,10 @@ fn e2e_epic_status_eligible_only_filter() {
         "gate task 1 failed: {}",
         gate_task1.stderr
     );
+    let cite_sha = common::cli::citing_sha(&workspace, &task1_id);
     let close_task1 = run_br(
         &workspace,
-        ["close", &task1_id, "--force", "--commit-sha", "e2e1234"],
+        ["close", &task1_id, "--force", "--commit-sha", &cite_sha],
         "close_task1",
     );
     assert!(close_task1.status.success());
@@ -688,9 +692,10 @@ fn e2e_epic_nested_epics() {
         "gate_task",
     );
     assert!(gate.status.success(), "gate task failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &task_id);
     let close_task = run_br(
         &workspace,
-        ["close", &task_id, "--force", "--commit-sha", "e2e1234"],
+        ["close", &task_id, "--force", "--commit-sha", &cite_sha],
         "close_task",
     );
     assert!(close_task.status.success());
@@ -869,9 +874,10 @@ fn e2e_epic_multiple_children_partial_progress() {
             "gate_task",
         );
         assert!(gate.status.success(), "gate task failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &task_id);
         let close = run_br(
             &workspace,
-            ["close", task_id, "--force", "--commit-sha", "e2e1234"],
+            ["close", task_id, "--force", "--commit-sha", &cite_sha],
             "close_task",
         );
         assert!(close.status.success());
@@ -925,9 +931,10 @@ fn e2e_epic_multiple_children_partial_progress() {
             "gate remaining task failed: {}",
             gate.stderr
         );
+    let cite_sha = common::cli::citing_sha(&workspace, &task_id);
         let close = run_br(
             &workspace,
-            ["close", task_id, "--force", "--commit-sha", "e2e1234"],
+            ["close", task_id, "--force", "--commit-sha", &cite_sha],
             "close_remaining",
         );
         assert!(close.status.success());
@@ -978,9 +985,10 @@ fn e2e_epic_closed_epic_not_shown() {
         "gate_epic",
     );
     assert!(gate.status.success(), "gate epic failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &epic_id);
     let close_epic = run_br(
         &workspace,
-        ["close", &epic_id, "--commit-sha", "e2e1234"],
+        ["close", &epic_id, "--commit-sha", &cite_sha],
         "close_epic",
     );
     assert!(close_epic.status.success());
@@ -1116,9 +1124,10 @@ fn e2e_epic_create_rejects_closed_parent() {
         "gate_epic",
     );
     assert!(gate.status.success(), "gate epic failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &epic_id);
     let close_epic = run_br(
         &workspace,
-        ["close", &epic_id, "--commit-sha", "e2e1234"],
+        ["close", &epic_id, "--commit-sha", &cite_sha],
         "close_epic",
     );
     assert!(

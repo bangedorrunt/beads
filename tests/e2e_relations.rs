@@ -152,9 +152,10 @@ fn e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it() {
         "gate_b",
     );
     assert!(gate_b.status.success(), "gate B failed: {}", gate_b.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &issue_a_id);
     let close_a = run_br(
         &workspace,
-        ["close", &issue_a_id, "--force", "--commit-sha", "e2e1234"],
+        ["close", &issue_a_id, "--force", "--commit-sha", &cite_sha],
         "close_a",
     );
     assert!(
@@ -162,9 +163,10 @@ fn e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it() {
         "close A failed: {}",
         close_a.stderr
     );
+    let cite_sha = common::cli::citing_sha(&workspace, &issue_b_id);
     let close_b = run_br(
         &workspace,
-        ["close", &issue_b_id, "--force", "--commit-sha", "e2e1234"],
+        ["close", &issue_b_id, "--force", "--commit-sha", &cite_sha],
         "close_b",
     );
     assert!(
@@ -945,9 +947,10 @@ fn e2e_dep_tree_external_nodes() {
         "external gate failed: {}",
         gate.stderr
     );
+    let cite_sha = common::cli::citing_sha(&external, &provider_id);
     let close = run_br(
         &external,
-        ["close", &provider_id, "--commit-sha", "e2e1234"],
+        ["close", &provider_id, "--commit-sha", &cite_sha],
         "ext_close",
     );
     assert!(
@@ -1086,9 +1089,10 @@ fn e2e_dep_list_external_nodes() {
         "external gate failed: {}",
         gate.stderr
     );
+    let cite_sha = common::cli::citing_sha(&external, &provider_id);
     let close = run_br(
         &external,
-        ["close", &provider_id, "--commit-sha", "e2e1234"],
+        ["close", &provider_id, "--commit-sha", &cite_sha],
         "ext_close",
     );
     assert!(
@@ -1178,6 +1182,7 @@ fn e2e_close_suggest_next_unblocks() {
         "gate_blocker",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &blocker_id);
     let close = run_br(
         &workspace,
         [
@@ -1185,7 +1190,7 @@ fn e2e_close_suggest_next_unblocks() {
             &blocker_id,
             "--suggest-next",
             "--commit-sha",
-            "e2e1234",
+            &cite_sha,
             "--json",
         ],
         "close_suggest_next",
@@ -1260,9 +1265,10 @@ fn e2e_close_blocked_requires_force() {
         "gate_blocked",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &blocked_id);
     let close_skip = run_br(
         &workspace,
-        ["close", &blocked_id, "--commit-sha", "e2e1234", "--json"],
+        ["close", &blocked_id, "--commit-sha", &cite_sha, "--json"],
         "close_blocked_skip",
     );
     assert!(
@@ -1314,9 +1320,10 @@ fn e2e_close_blocked_requires_force() {
     // real skip reason (dependency block + --force remediation) instead of
     // the misleading "already closed or not found" hint — the issue is open
     // and findable, it just has an open blocker.
+    let cite_sha = common::cli::citing_sha(&workspace, &blocked_id);
     let close_human = run_br(
         &workspace,
-        ["close", &blocked_id, "--commit-sha", "e2e1234"],
+        ["close", &blocked_id, "--commit-sha", &cite_sha],
         "close_blocked_human_error",
     );
     assert!(
@@ -1338,6 +1345,7 @@ fn e2e_close_blocked_requires_force() {
         "close error must not claim the issue is closed/missing when it is blocked: {combined}"
     );
 
+    let cite_sha = common::cli::citing_sha(&workspace, &blocked_id);
     let close_force = run_br(
         &workspace,
         [
@@ -1345,7 +1353,7 @@ fn e2e_close_blocked_requires_force() {
             &blocked_id,
             "--force",
             "--commit-sha",
-            "e2e1234",
+            &cite_sha,
             "--json",
         ],
         "close_blocked_force",
@@ -1434,6 +1442,7 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
         );
         assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     }
+    let cite_sha = common::cli::citing_sha(&workspace, &blocked_id);
     let close = run_br(
         &workspace,
         [
@@ -1441,7 +1450,7 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
             &blocked_id,
             &independent_id,
             "--commit-sha",
-            "e2e1234",
+            &cite_sha,
             "--json",
         ],
         "close_partial_batch",
@@ -1542,9 +1551,10 @@ fn e2e_close_honors_env_json_mode() {
         "gate_env_close",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &issue_id);
     let close = common::cli::run_br_with_env(
         &workspace,
-        ["close", issue_id, "--commit-sha", "e2e1234"],
+        ["close", issue_id, "--commit-sha", &cite_sha],
         [("BR_OUTPUT_FORMAT", "json")],
         "close_env_json",
     );

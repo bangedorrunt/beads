@@ -353,7 +353,7 @@ fn e2e_list_and_count_status_all_matches_every_status() {
                 "true",
                 "--principle",
                 "prove-it-works \u{2014} e2e brief",
-            ],
+        ],
             "status_all_create",
         );
         assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -379,6 +379,12 @@ fn e2e_list_and_count_status_all_matches_every_status() {
             "pass",
             "--to",
             "closed",
+            // The close below is authorised by this PASS row (ADR-0001
+            // §5.3): a note that leads with `task=<id> verdict=<id>`.
+            // A named sha would have to resolve and cite the bead, and
+            // this harness has no commit to cite.
+            "--note",
+            "task=e2e-status-all-task verdict=e2e-status-all-verdict",
         ],
         "status_all_gate",
     );
@@ -390,8 +396,10 @@ fn e2e_list_and_count_status_all_matches_every_status() {
             &ids[2],
             "--reason",
             "done",
-            "--commit-sha",
-            "e2e1234",
+            "--task-id",
+            "e2e-status-all-task",
+            "--verdict-id",
+            "e2e-status-all-verdict",
         ],
         "status_all_close",
     );
@@ -635,6 +643,12 @@ fn e2e_basic_lifecycle() {
             "pass",
             "--to",
             "closed",
+            // The close below is authorised by this PASS row (ADR-0001 §5.3):
+            // a note that leads with `task=<id> verdict=<id>`. A named sha
+            // would have to resolve and cite the bead, and this harness has
+            // no commit to cite.
+            "--note",
+            "task=e2e-lifecycle-task verdict=e2e-lifecycle-verdict",
         ],
         "gate",
     );
@@ -645,8 +659,10 @@ fn e2e_basic_lifecycle() {
         id,
         "--reason".to_string(),
         "e2e lifecycle complete".to_string(),
-        "--commit-sha".to_string(),
-        "e2e1234".to_string(),
+        "--task-id".to_string(),
+        "e2e-lifecycle-task".to_string(),
+        "--verdict-id".to_string(),
+        "e2e-lifecycle-verdict".to_string(),
     ];
     let close = run_br(&workspace, close_args, "close");
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -1290,6 +1306,12 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
             "pass",
             "--to",
             "closed",
+            // The close below is authorised by this PASS row (ADR-0001
+            // §5.3): a note that leads with `task=<id> verdict=<id>`.
+            // A named sha would have to resolve and cite the bead, and
+            // this harness has no commit to cite.
+            "--note",
+            "task=e2e-claim-task verdict=e2e-claim-verdict",
         ],
         "gate_claim_target",
     );
@@ -1304,8 +1326,10 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
             &id,
             "--reason",
             "DONE: baseline close",
-            "--commit-sha",
-            "e2e1234",
+            "--task-id",
+            "e2e-claim-task",
+            "--verdict-id",
+            "e2e-claim-verdict",
             "--json",
         ],
         "close_claim_target",

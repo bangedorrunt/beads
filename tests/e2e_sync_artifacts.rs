@@ -1120,9 +1120,10 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
         "gate_before_close",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &last_id);
     let close = run_br(
         &workspace,
-        ["close", &last_id, "--commit-sha", "e2e1234"],
+        ["close", &last_id, "--commit-sha", &cite_sha],
         "close",
     );
     artifacts.record_command(

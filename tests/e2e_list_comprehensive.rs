@@ -128,6 +128,7 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
         "gate_task2",
     );
     assert!(gate.status.success(), "gate task2 failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &id4);
     let close = run_br(
         &workspace,
         [
@@ -136,7 +137,7 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
             "--reason",
             "fixture: closed in setup",
             "--commit-sha",
-            "e2e1234",
+            &cite_sha,
         ],
         "close_task2",
     );

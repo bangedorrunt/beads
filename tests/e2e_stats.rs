@@ -117,6 +117,7 @@ fn stats_json_after_close() {
         "gate_first",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &first_id);
     let close = run_br(
         &workspace,
         [
@@ -125,7 +126,7 @@ fn stats_json_after_close() {
             "--reason",
             "done",
             "--commit-sha",
-            "e2e1234",
+            &cite_sha,
         ],
         "close_first",
     );

@@ -3137,6 +3137,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
             ],
         );
         assert!(gate.success, "seed gate {idx} failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha_in(&root, &issue_id);
         let closed = run_br_in_dir(
             &root,
             [
@@ -3145,7 +3146,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
                 "--reason",
                 "seed closed",
                 "--commit-sha",
-                "e2e1234",
+                &cite_sha,
             ],
         );
         assert!(closed.success, "seed close {idx} failed: {}", closed.stderr);
@@ -3200,6 +3201,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
                     results.push(gate);
                     continue;
                 }
+                let cite_sha = common::cli::citing_sha_in(&root, &issue_id);
                 let args = vec![
                     "--no-auto-import".to_string(),
                     "--lock-timeout".to_string(),
@@ -3209,7 +3211,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
                     "--reason".to_string(),
                     "cache regression stress".to_string(),
                     "--commit-sha".to_string(),
-                    "e2e1234".to_string(),
+                    cite_sha,
                     "--json".to_string(),
                 ];
                 results.push(run_br_in_dir(&root, args));

@@ -1599,17 +1599,23 @@ fn run_close_core(
             beads_dir,
             &config_layer,
         );
-        let mut warned_unresolvable = false;
         for id in &resolved_ids {
             match validate_close_sha(sha, id, &search_dirs)? {
                 ShaVerdict::Cited { .. } => {}
                 ShaVerdict::Unresolvable => {
-                    if !warned_unresolvable {
-                        warned_unresolvable = true;
-                        ctx.warning(&format!(
-                            "commit {sha} found in no searched repo; cannot verify it cites the bead (pass --repo <path> to verify elsewhere)"
-                        ));
-                    }
+                    // A sha that resolves nowhere cannot be shown to cite the
+                    // bead, so it cannot be the commit that proves it. A
+                    // warning let the close bind a verdict to an unverifiable
+                    // sha: legal here, and unprovable in the ledger check,
+                    // where the derived revision is the commit that carries
+                    // the work.
+                    return Err(BeadsError::validation(
+                        "commit-sha",
+                        format!(
+                            "commit {sha} was found in no searched repo, so it cannot be verified \
+                             to cite {id}. Pass --repo <path> when the work repo lives elsewhere."
+                        ),
+                    ));
                 }
             }
         }
@@ -2719,7 +2725,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-blocked".to_string(), "bd-blocker".to_string()],
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-blocked", "bd-blocker"])),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx).expect("close batch");
@@ -2773,7 +2779,7 @@ mod tests {
                 "bd-close-skip".to_string(),
                 "bd-close-last".to_string(),
             ],
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-close-first", "bd-close-skip", "bd-close-last"])),
             ..CloseArgs::default()
         };
         let execution = execute_route(&args, &CliOverrides::default(), &ctx, &beads_dir, false)
@@ -2819,7 +2825,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-parent".to_string(), "bd-parent.1".to_string()],
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-parent", "bd-parent.1"])),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -2865,7 +2871,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-parent".to_string()],
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-parent"])),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, true, &CliOverrides::default(), &ctx)
@@ -2962,7 +2968,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-child".to_string()],
             reason: Some("Child done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-child"])),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3007,7 +3013,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-closed".to_string()],
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-closed"])),
             ..CloseArgs::default()
         };
 
@@ -3070,7 +3076,7 @@ mod tests {
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
             ids: vec!["bd-blocked".to_string(), "bd-free".to_string()],
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-blocked", "bd-free"])),
             ..CloseArgs::default()
         };
 
@@ -3171,7 +3177,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-policy".to_string()],
             reason: Some("done cleanly".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-policy"])),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx).expect("close issue");
@@ -3227,7 +3233,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-clean".to_string(), "bd-policy-fail".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-clean", "bd-policy-fail"])),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3297,7 +3303,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-no-policy".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-no-policy"])),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx).expect("close issue");
@@ -3368,7 +3374,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["wf-case".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["wf-case"])),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3473,7 +3479,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-prereq".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-prereq"])),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3509,7 +3515,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-prereq".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-prereq"])),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3564,7 +3570,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-prereq".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-prereq"])),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3602,7 +3608,7 @@ mod tests {
             let args = CloseArgs {
                 ids: vec!["bd-prereq".to_string()],
                 reason: Some("done".to_string()),
-                commit_sha: Some(test_sha()),
+                commit_sha: Some(test_sha(temp.path(), &["bd-prereq"])),
                 ..CloseArgs::default()
             };
             execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3627,7 +3633,7 @@ mod tests {
             let args = CloseArgs {
                 ids: vec!["bd-prereq".to_string()],
                 reason: Some("done".to_string()),
-                commit_sha: Some(test_sha()),
+                commit_sha: Some(test_sha(temp.path(), &["bd-prereq"])),
                 ..CloseArgs::default()
             };
             execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3672,9 +3678,61 @@ mod tests {
         .expect("write opt-out policy");
     }
 
-    /// Every legal close cites the commit carrying the bead id.
-    fn test_sha() -> String {
-        "0123456789abcdef".to_string()
+    /// A REAL commit that cites the bead ids, in a git repo at `dir`.
+    ///
+    /// The close path verifies that the sha it is given RESOLVES and CITES the
+    /// bead: a placeholder sha cannot prove either, so a fixture that used one
+    /// proved nothing about the rule it was testing - and it let a close bind
+    /// its verdict to a sha nobody can check (the unresolvable-sha case is
+    /// now a refusal, not a warning).
+    fn test_sha(dir: &std::path::Path, bead_ids: &[&str]) -> String {
+        let git = |args: &[&str]| -> String {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("git runs");
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        if !dir.join(".git").exists() {
+            git(&["init", "-q"]);
+        }
+        git(&["config", "user.email", "test@test.local"]);
+        git(&["config", "user.name", "test"]);
+        // One work file PER call: a second call in the same test must still
+        // have something to commit (`git commit` refuses an empty index).
+        let count = std::process::Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| {
+                String::from_utf8_lossy(&out.stdout)
+                    .trim()
+                    .parse::<usize>()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        let work_file = format!("work-{count}.txt");
+        std::fs::write(
+            dir.join(&work_file),
+            format!("work for {}\n", bead_ids.join(", ")),
+        )
+        .expect("write the work file");
+        git(&["add", &work_file]);
+        git(&[
+            "commit",
+            "-q",
+            "-m",
+            &format!("fix: carry the work for {}", bead_ids.join(", ")),
+        ]);
+        git(&["rev-parse", "HEAD"])
     }
 
     fn setup_gate_repo(temp: &TempDir, status: Status) -> std::path::PathBuf {
@@ -3704,7 +3762,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-1"])),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3751,7 +3809,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-1"])),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3837,7 +3895,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-1"])),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3884,7 +3942,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["bd-1".to_string()],
             reason: Some("done".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["bd-1"])),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3965,7 +4023,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["t-rpt".to_string()],
             reason: Some("survey done. artifact:missing.md".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["t-rpt"])),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -3990,7 +4048,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["t-rpt".to_string()],
             reason: Some("survey done. artifact:survey.md".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["t-rpt"])),
             ..CloseArgs::default()
         };
         execute_with_args(&args, false, &CliOverrides::default(), &ctx)
@@ -4018,7 +4076,7 @@ mod tests {
         let args = CloseArgs {
             ids: vec!["t-rpt".to_string()],
             reason: Some("survey done. artifact:survey.md".to_string()),
-            commit_sha: Some(test_sha()),
+            commit_sha: Some(test_sha(temp.path(), &["t-rpt"])),
             ..CloseArgs::default()
         };
         let err = execute_with_args(&args, false, &CliOverrides::default(), &ctx)

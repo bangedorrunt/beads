@@ -830,9 +830,10 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
         "gate_external_before_follow_up_close",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&main_workspace, &"--commit-sha");
     let close = run_br(
         &main_workspace,
-        ["close", "--commit-sha", "e2e1234", "--json"],
+        ["close", "--commit-sha", &cite_sha, "--json"],
         "close_follow_up_using_routed_last_touched",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -916,9 +917,10 @@ fn e2e_routing_close_external_issue_via_main_workspace() {
         "gate_external_via_route",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&main_workspace, &routed_input);
     let close = run_br(
         &main_workspace,
-        ["close", &routed_input, "--commit-sha", "e2e1234", "--json"],
+        ["close", &routed_input, "--commit-sha", &cite_sha, "--json"],
         "close_external_via_route",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -1002,9 +1004,10 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
         "gate_external_before_follow_up_reopen",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&main_workspace, &routed_input);
     let close = run_br(
         &main_workspace,
-        ["close", &routed_input, "--commit-sha", "e2e1234", "--json"],
+        ["close", &routed_input, "--commit-sha", &cite_sha, "--json"],
         "close_external_before_follow_up_reopen",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -1095,9 +1098,10 @@ fn e2e_routing_reopen_external_issue_via_main_workspace() {
         "gate_external_before_routed_reopen",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&external_workspace, &external_id);
     let close = run_br(
         &external_workspace,
-        ["close", &external_id, "--commit-sha", "e2e1234"],
+        ["close", &external_id, "--commit-sha", &cite_sha],
         "close_external_before_routed_reopen",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);

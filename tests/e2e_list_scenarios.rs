@@ -160,9 +160,10 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
         "gate_bug_closed",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let cite_sha = common::cli::citing_sha(&workspace, &id6);
     let close = run_br(
         &workspace,
-        ["close", &id6, "--commit-sha", "e2e1234"],
+        ["close", &id6, "--commit-sha", &cite_sha],
         "close_bug",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
