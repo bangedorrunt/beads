@@ -11735,17 +11735,10 @@ pub struct GateSidecarImport {
     pub inserted: usize,
     /// Rows skipped as already present (idempotent replay).
     pub skipped: usize,
+    /// Rows refused because they reference an issue that does not exist.
+    pub refused: usize,
 }
 
-/// Load gate verdict rows from a gates.jsonl sidecar into history. Idempotent
-/// by full-tuple match; rows referencing unknown issues are refused rather
-/// than dropped, because a PASS row without its issue means the issues export
-/// and the sidecar disagree.
-///
-/// # Errors
-///
-/// Returns an error on malformed JSONL, or when a row references an unknown
-/// issue, or on any database write failure.
 /// ADR-0001 §5.4 ledger fingerprint for robot output: SHA-256 over the
 /// exact `issues.jsonl` bytes and the exact `gates.jsonl` sidecar bytes,
 /// length-framed so the pair is unambiguous, truncated to 16 hex chars to
@@ -11765,6 +11758,20 @@ pub fn compute_ledger_data_hash(issues_path: &Path, gates_path: &Path) -> Option
     Some(digest[..16].to_string())
 }
 
+/// Load gate verdict rows from a gates.jsonl sidecar into history. Idempotent
+/// by full-tuple match; a row referencing an unknown issue is REFUSED (counted,
+/// not inserted) rather than dropped, because a PASS row without its issue
+/// means the issues export and the sidecar disagree.
+///
+/// The refusal is per row. The history table carries
+/// `FOREIGN KEY (issue_id) REFERENCES issues(id)` with
+/// `PRAGMA foreign_keys = ON`, so one orphan row used to abort the WHOLE load
+/// and take every good verdict row with it - the sidecar silently lost every
+/// verdict behind a single stale row.
+///
+/// # Errors
+///
+/// Returns an error on malformed JSONL, or on any database write failure.
 pub fn import_gates_from_jsonl(
     storage: &mut SqliteStorage,
     path: &Path,
@@ -11775,11 +11782,16 @@ pub fn import_gates_from_jsonl(
         total: 0,
         inserted: 0,
         skipped: 0,
+        refused: 0,
     };
     for line in raw.lines().filter(|line| !line.trim().is_empty()) {
         let record: crate::close_policy::GateResultRecord = serde_json::from_str(line)
             .map_err(|err| BeadsError::Config(format!("gates.jsonl parse: {err}")))?;
         summary.total += 1;
+        if !storage.issue_exists(&record.issue_id)? {
+            summary.refused += 1;
+            continue;
+        }
         if storage.insert_gate_result_record(&record)? {
             summary.inserted += 1;
         } else {

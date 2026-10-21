@@ -1879,12 +1879,27 @@ fn load_gates_sidecar_if_present(storage: &mut crate::storage::SqliteStorage, be
         return;
     }
     match crate::sync::import_gates_from_jsonl(storage, &gates_path, &ImportConfig::default()) {
-        Ok(gates_import) => info!(
-            total = gates_import.total,
-            inserted = gates_import.inserted,
-            skipped = gates_import.skipped,
-            "Gate verdict sidecar imported"
-        ),
+        Ok(gates_import) => {
+            info!(
+                total = gates_import.total,
+                inserted = gates_import.inserted,
+                skipped = gates_import.skipped,
+                refused = gates_import.refused,
+                "Gate verdict sidecar imported"
+            );
+            if gates_import.refused > 0 {
+                // A refused row means the sidecar names an issue the issues
+                // export does not have. That disagreement is the operator's
+                // problem to see, not a line to bury: the row is not in the
+                // database, so any close backed by it is unprovable.
+                warn!(
+                    path = %gates_path.display(),
+                    refused = gates_import.refused,
+                    "Gate verdict sidecar rows reference issues that do not exist; those rows were \
+                     refused and are NOT in the database, so a close backed by one is unprovable"
+                );
+            }
+        }
         Err(error) => warn!(
             path = %gates_path.display(),
             %error,

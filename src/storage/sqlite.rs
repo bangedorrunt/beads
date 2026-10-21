@@ -8247,6 +8247,29 @@ impl SqliteStorage {
         Self::get_issue_from_conn(&self.conn, id)
     }
 
+    /// Does an issue with this id exist in the table?
+    ///
+    /// Mirrors the foreign key exactly - the row must be present in `issues`,
+    /// whatever its status - so a caller deciding whether a foreign-key
+    /// referencing row may be written gets the same answer the database
+    /// would give. `get_issue` is not that answer: it filters.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub fn issue_exists(&self, id: &str) -> Result<bool> {
+        let count = self
+            .conn
+            .query_row_with_params(
+                "SELECT count(*) FROM issues WHERE id = ?",
+                &[SqliteValue::from(id)],
+            )?
+            .get(0)
+            .and_then(SqliteValue::as_integer)
+            .unwrap_or(0);
+        Ok(count > 0)
+    }
+
     /// Append one `issue.snapshot` event for a touched issue inside the
     /// committing mutation transaction (dual-write half of the v20 log).
     /// Generation-qualified id makes replay idempotent by event_id.

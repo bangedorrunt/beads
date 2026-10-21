@@ -836,6 +836,77 @@ fn gates_jsonl_roundtrip_flush_import() {
     assert_eq!(rows[0].provider, "verifier");
 }
 
+/// ADR-0001 §5.4: ONE orphan row must not take the whole sidecar with it.
+///
+/// The verdict history carries `FOREIGN KEY (issue_id) REFERENCES issues(id)`
+/// with `PRAGMA foreign_keys = ON`, so a single row naming an issue the
+/// export does not have used to abort the ENTIRE load: every good verdict
+/// row was lost behind it, and only a warn-level line said so.
+#[test]
+fn gate_sidecar_refuses_an_orphan_row_without_losing_the_rest() {
+    let temp = TempDir::new().unwrap();
+    let db_path = temp.path().join("beads.db");
+    let issues_path = temp.path().join("issues.jsonl");
+    let gates_path = temp.path().join("gates.jsonl");
+
+    {
+        let mut storage = SqliteStorage::open(&db_path).unwrap();
+        storage
+            .create_issue(&issue_with_id("test-g2", "Kept verdict"), "tester")
+            .unwrap();
+        storage
+            .record_scoped_gate_result(
+                "test-g2",
+                "open",
+                0,
+                "closed",
+                "unit-test-verified",
+                "verifier",
+                true,
+                Some("cargo test => green"),
+                "tester",
+            )
+            .unwrap();
+        export_to_jsonl(&storage, &issues_path, &ExportConfig::default()).unwrap();
+        export_gates_to_jsonl(&storage, &gates_path, &ExportConfig::default()).unwrap();
+    }
+
+    // One orphan row: same verdict, but naming an issue that does not exist.
+    let mut sidecar = fs::read_to_string(&gates_path).unwrap();
+    let orphan = sidecar
+        .lines()
+        .next()
+        .expect("the export produced one row")
+        .replace("test-g2", "test-gone");
+    sidecar.push_str(&orphan);
+    sidecar.push('\n');
+    fs::write(&gates_path, &sidecar).unwrap();
+
+    // WIPE: a fresh clone - no database, only the JSONL pair.
+    fs::remove_file(&db_path).unwrap();
+    let mut fresh = SqliteStorage::open(&db_path).unwrap();
+    import_from_jsonl(
+        &mut fresh,
+        &issues_path,
+        &ImportConfig::default(),
+        Some("test-"),
+    )
+    .unwrap();
+
+    // The load must SUCCEED: the orphan row is refused, the good row lands.
+    let import =
+        import_gates_from_jsonl(&mut fresh, &gates_path, &ImportConfig::default()).unwrap();
+    assert_eq!(import.total, 2, "both rows are in the sidecar");
+    assert_eq!(import.refused, 1, "the orphan row is refused");
+    assert_eq!(import.inserted, 1, "the good row is still inserted");
+
+    let rows = fresh
+        .get_scoped_gate_results("test-g2", "open", "closed")
+        .unwrap();
+    assert_eq!(rows.len(), 1, "the good verdict survives the orphan row");
+    assert!(rows[0].passed);
+}
+
 /// ADR-0001 §5.4: `data_hash` covers BOTH exported files and is
 /// deterministic for identical content; touching either file changes it.
 #[test]
