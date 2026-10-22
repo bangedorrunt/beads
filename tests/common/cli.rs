@@ -164,8 +164,21 @@ pub fn citing_sha(workspace: &BrWorkspace, bead_id: &str) -> String {
     citing_sha_in(&workspace.root, bead_id)
 }
 
+/// [`citing_sha`] for a batch: one commit citing EVERY id.
+///
+/// A batch close verifies the sha cites each requested bead, so a commit that
+/// names only one of them is refused (exit 4) before any issue is written.
+pub fn citing_sha_all(workspace: &BrWorkspace, bead_ids: &[&str]) -> String {
+    citing_sha_all_in(&workspace.root, bead_ids)
+}
+
 /// [`citing_sha`] for a workspace root that is not a [`BrWorkspace`].
 pub fn citing_sha_in(root: &Path, bead_id: &str) -> String {
+    citing_sha_all_in(root, &[bead_id])
+}
+
+/// [`citing_sha_all`] for a workspace root that is not a [`BrWorkspace`].
+pub fn citing_sha_all_in(root: &Path, bead_ids: &[&str]) -> String {
     let git = |args: &[&str]| -> String {
         let out = std::process::Command::new("git")
             .args(args)
@@ -192,11 +205,12 @@ pub fn citing_sha_in(root: &Path, bead_id: &str) -> String {
         .filter(|out| out.status.success())
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
         .unwrap_or_else(|| "0".to_string());
+    let cited = bead_ids.join(" ");
     let work_file = format!("work-{count}.txt");
-    std::fs::write(root.join(&work_file), format!("work for {bead_id}\n"))
+    std::fs::write(root.join(&work_file), format!("work for {cited}\n"))
         .expect("write the work file");
     git(&["add", &work_file]);
-    git(&["commit", "-q", "-m", &format!("fix: carry the work for {bead_id}")]);
+    git(&["commit", "-q", "-m", &format!("fix: carry the work for {cited}")]);
     git(&["rev-parse", "HEAD"])
 }
 

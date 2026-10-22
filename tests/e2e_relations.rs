@@ -1442,7 +1442,10 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
         );
         assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     }
-    let cite_sha = common::cli::citing_sha(&workspace, &blocked_id);
+    // The close sha must cite every bead it closes, and the batch names two
+    // ids: a sha citing only the blocked one aborts the whole batch at the sha
+    // check (exit 4) before the partial-close path runs at all.
+    let cite_sha = common::cli::citing_sha_all(&workspace, &[&blocked_id, &independent_id]);
     let close = run_br(
         &workspace,
         [
