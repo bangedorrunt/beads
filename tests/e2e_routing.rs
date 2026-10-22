@@ -830,7 +830,7 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
         "gate_external_before_follow_up_close",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
-    let cite_sha = common::cli::citing_sha(&main_workspace, &"--commit-sha");
+    let cite_sha = common::cli::citing_sha(&main_workspace, "--commit-sha");
     let close = run_br(
         &main_workspace,
         ["close", "--commit-sha", &cite_sha, "--json"],

@@ -810,7 +810,7 @@ fn e2e_reopen_honors_env_json_mode() {
         "reopen_env_gate",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
-    let cite_sha = common::cli::citing_sha(&workspace, &issue_id);
+    let cite_sha = common::cli::citing_sha(&workspace, issue_id);
     let close = run_br(
         &workspace,
         ["close", issue_id, "--commit-sha", &cite_sha],

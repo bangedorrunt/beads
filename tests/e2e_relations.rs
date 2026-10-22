@@ -1551,7 +1551,7 @@ fn e2e_close_honors_env_json_mode() {
         "gate_env_close",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
-    let cite_sha = common::cli::citing_sha(&workspace, &issue_id);
+    let cite_sha = common::cli::citing_sha(&workspace, issue_id);
     let close = common::cli::run_br_with_env(
         &workspace,
         ["close", issue_id, "--commit-sha", &cite_sha],
