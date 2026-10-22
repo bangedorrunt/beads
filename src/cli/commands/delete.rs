@@ -137,6 +137,11 @@ pub fn execute(
         return Err(BeadsError::validation("ids", "no issue IDs provided"));
     }
 
+    // A tombstone must say why it exists. `--reason` lost its silent
+    // "delete" default; the purge path above creates no tombstone and so
+    // needs none.
+    let reason = require_delete_reason(args.reason.as_deref())?;
+
     // Deduplicate
     let mut ids: Vec<String> = ids
         .into_iter()
@@ -373,7 +378,7 @@ pub fn execute(
                         storage.delete_issue_with_expected_revision(
                             id,
                             &actor,
-                            &args.reason,
+                            reason,
                             None,
                             args.expected_revision,
                         )
@@ -438,6 +443,22 @@ pub fn execute(
     }
 
     Ok(())
+}
+
+/// The reason a retirement must carry. A tombstone is the one state that
+/// cannot be reopened with its history intact, so a placeholder reason is the
+/// same failure as no reason: the next reader cannot tell a deduplicated bead
+/// from an abandoned one.
+fn require_delete_reason(reason: Option<&str>) -> Result<&str> {
+    let trimmed = reason.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        return Err(BeadsError::validation(
+            "reason",
+            "br delete requires --reason <TEXT>: a tombstone with a blank reason \
+             cannot be told apart from an abandoned bead",
+        ));
+    }
+    Ok(trimmed)
 }
 
 /// Purge every tombstone in the workspace (`br delete --hard` with no IDs).
@@ -548,6 +569,9 @@ fn execute_routed(
     local_beads_dir: &Path,
     routed_batches: Vec<config::routing::RoutedIssueBatch>,
 ) -> Result<()> {
+    // execute() already refused a missing reason; this keeps the routed path
+    // safe on its own, since a routed batch is still a tombstone.
+    let reason = require_delete_reason(args.reason.as_deref())?;
     let normalized_local_beads_dir = crate::sync::path::canonicalize(local_beads_dir)
         .unwrap_or_else(|_| local_beads_dir.to_path_buf());
     let mut prepared_routes = Vec::with_capacity(routed_batches.len());
@@ -757,6 +781,9 @@ fn apply_delete_route(
     route: &PreparedDeleteRoute,
     ctx: &OutputContext,
 ) -> Result<DeleteResult> {
+    // Every route in this function tombstones, so the reason must hold here
+    // too, whichever caller prepared the route.
+    let reason = require_delete_reason(args.reason.as_deref())?;
     let mut storage_ctx = config::open_storage_with_cli(&route.beads_dir, &route.route_cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, &route.route_cli)?;
     let config_layer = storage_ctx.load_config(&route.route_cli)?;
@@ -803,7 +830,7 @@ fn apply_delete_route(
                     storage.delete_issue_with_expected_revision(
                         id,
                         &actor,
-                        &args.reason,
+                        reason,
                         None,
                         args.expected_revision,
                     )
@@ -1313,6 +1340,47 @@ mod tests {
 
     fn init_logging() {
         crate::logging::init_test_logging();
+    }
+
+    /// The placeholder reason is what made 30 tombstones unreadable: every one
+    /// carried the literal default "delete". Both a missing flag and a blank
+    /// string must refuse, and a real reason survives trimming.
+    #[test]
+    fn delete_refuses_a_blank_reason() {
+        let err = require_delete_reason(None).expect_err("a missing reason must refuse");
+        assert!(
+            err.to_string().contains("--reason"),
+            "the refusal must name the flag: {err}"
+        );
+        assert!(require_delete_reason(Some("   \n\t ")).is_err());
+        assert_eq!(
+            require_delete_reason(Some("  duplicate of the sibling  ")).unwrap(),
+            "duplicate of the sibling"
+        );
+    }
+
+    /// The parser must not supply a placeholder, and the validator is what
+    /// refuses a missing one. Keeping `reason` optional is deliberate: the
+    /// no-id `--hard` purge creates no tombstone and must still run.
+    #[test]
+    fn delete_args_carry_no_default_reason() {
+        use crate::cli::DeleteArgs;
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct DeleteOnly {
+            #[command(flatten)]
+            delete: DeleteArgs,
+        }
+        let bare = DeleteOnly::try_parse_from(["delete", "PROBE-1"]).expect("parses");
+        assert_eq!(
+            bare.delete.reason, None,
+            "a missing --reason must stay missing, not become a placeholder"
+        );
+        assert!(require_delete_reason(bare.delete.reason.as_deref()).is_err());
+        let explicit = DeleteOnly::try_parse_from(["delete", "PROBE-1", "--reason", "dupes"])
+            .expect("an explicit reason parses");
+        assert_eq!(explicit.delete.reason.as_deref(), Some("dupes"));
     }
 
     fn create_test_issue(id: &str, title: &str) -> Issue {

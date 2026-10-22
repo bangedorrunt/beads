@@ -1454,9 +1454,11 @@ pub struct DeleteArgs {
     #[arg(long = "expected-revision", value_name = "N")]
     pub expected_revision: Option<u64>,
 
-    /// Delete reason (default: "delete")
-    #[arg(long, default_value = "delete")]
-    pub reason: String,
+    /// Why the bead is being retired. Required: the old `default_value =
+    /// "delete"` stamped 30 tombstones in one project with a placeholder that
+    /// says nothing, so a retirement could not be told from an abandonment.
+    #[arg(long, value_name = "TEXT")]
+    pub reason: Option<String>,
 
     /// Read IDs from file (one per line, # comments ignored)
     #[arg(long)]
