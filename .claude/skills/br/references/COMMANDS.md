@@ -43,8 +43,9 @@ br close --actor "$ACTOR" <id> --reason "Done"       # Close with reason
 br close --actor "$ACTOR" <id> --reason "..." --suggest-next --json  # Close and suggest next
 br close --actor "$ACTOR" <id> --reason "..." --force --json         # Force close
 br reopen --actor "$ACTOR" <id> --reason "..."       # Reopen closed issue
-br delete <id>                                       # Delete issue (tombstone)
-br delete <id1> <id2> --detach                      # Drop touching edges first, then delete (safe vs --cascade)
+br delete <id> --reason "duplicate"                  # Delete issue (tombstone); --reason is required
+br delete <id1> <id2> --reason "dupe" --detach       # Drop touching edges first, then delete (safe vs --cascade)
+br delete --hard                                    # Purge every tombstone; creates none, so no --reason
 ```
 
 ### Create Options

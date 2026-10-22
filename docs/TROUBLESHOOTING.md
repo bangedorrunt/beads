@@ -397,13 +397,13 @@ br dep add bd-123 bd-456  # Different IDs
 **Solutions:**
 ```bash
 # View what depends on it
-br dep list bd-123
+br dep list <id>
 
 # Remove dependencies first
-br dep remove bd-dependent bd-123
+br dep remove <dependent-id> <id>
 
 # Or force delete (cascades to dependents)
-br delete bd-123 --force
+br delete <id> --reason "obsolete" --force
 ```
 
 ---

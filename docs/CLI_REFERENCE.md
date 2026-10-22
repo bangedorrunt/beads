@@ -575,12 +575,12 @@ br delete [OPTIONS] <IDS>...
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `--reason <TEXT>` | Delete reason (default: `delete`) |
+| `--reason <TEXT>` | Why the bead is retired (**required** for a delete that creates a tombstone; a blank or default reason cannot be told apart from an abandonment) |
 | `--from-file <PATH>` | Read IDs from file (one per line, `#` comments ignored) |
 | `--cascade` | Delete dependents recursively |
 | `--force` | Bypass dependent checks, orphaning dependents |
 | `--detach` | Drop every edge touching the listed issues, then delete; dependents outside the list are orphaned, never deleted (safe alternative to `--cascade`) |
-| `--hard` | Prune tombstones from JSONL immediately |
+| `--hard` | Prune tombstones from JSONL immediately. With no IDs it purges every tombstone and needs no `--reason`, since it creates none |
 | `--dry-run` | Preview only, no changes |
 
 ---

@@ -335,7 +335,7 @@ br --help
 br init
 br create "Test issue" --type task
 br list
-br delete bd-xxx  # Clean up test issue
+br delete <id> --reason "cleanup after smoke test"  # Clean up test issue
 ```
 
 ---

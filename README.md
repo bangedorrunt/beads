@@ -444,7 +444,7 @@ git commit -m "Fix: login timeout (br-a1b2c3)"
 | `update` | Update issue | `br update br-abc123 --priority 0` |
 | `close` | Close issue | `br close br-abc123 --reason "Done"` |
 | `reopen` | Reopen closed issue | `br reopen br-abc123` |
-| `delete` | Delete issue (tombstone) | `br delete br-abc123` |
+| `delete` | Delete issue (tombstone, `--reason` required) | `br delete br-abc123 --reason "duplicate"` |
 | `defer` | Schedule issue for later | `br defer br-abc123 --until tomorrow` |
 | `undefer` | Make deferred issue ready again | `br undefer br-abc123` |
 
