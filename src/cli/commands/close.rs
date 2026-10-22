@@ -555,32 +555,10 @@ fn evaluate_close_policy(
         violations.extend(decision.violations);
     }
 
-    // Phase 5: a proved close is legal only when a PASS note leads with the
-    // same task and verdict the caller named. The SHA path is unchanged.
-    if !args.bypass_policy && to == "closed" && !is_report_close {
-        if let Ok(Some((task, verdict))) =
-            proved_close_pair(args.task_id.as_deref(), args.verdict_id.as_deref())
-        {
-            let results = storage.get_scoped_gate_results(issue_id, from, to)?;
-            let bound = results.iter().any(|row| {
-                row.passed
-                    && row.note.as_deref().is_some_and(|note| {
-                        crate::cli::commands::gate::proved_note_binding(note)
-                            .is_some_and(|(t, v)| t == task && v == verdict)
-                    })
-            });
-            if !bound {
-                violations.push(PolicyViolation {
-                    gate: "gate_proved_binding".to_string(),
-                    message: format!(
-                        "close of {issue_id} named task={task} verdict={verdict}, but no PASS \
-                         gate note leads with that pair. Report one with \
-                         --note \"task={task} verdict={verdict}\" before closing."
-                    ),
-                    detail: None,
-                });
-            }
-        }
+    if let Some(violation) =
+        proved_binding_violation(storage, issue_id, from, to, args, is_report_close)?
+    {
+        violations.push(violation);
     }
 
     Ok(EvaluatedGates {
@@ -588,6 +566,50 @@ fn evaluate_close_policy(
         close_verdict,
         report_artifacts: report_cited.unwrap_or_default(),
     })
+}
+
+/// Phase 5: a proved close is legal only when a PASS note leads with the same
+/// task and verdict the caller named. The SHA path is unchanged, and a report
+/// close keeps its own gate (ADR-0005 §2).
+///
+/// Split out of [`evaluate_close_policy`] to keep it under the line-count
+/// lint; the decision itself did not change.
+fn proved_binding_violation(
+    storage: &SqliteStorage,
+    issue_id: &str,
+    from: &str,
+    to: &str,
+    args: &CloseArgs,
+    is_report_close: bool,
+) -> Result<Option<PolicyViolation>> {
+    if args.bypass_policy || to != "closed" || is_report_close {
+        return Ok(None);
+    }
+    let Ok(Some((task, verdict))) =
+        proved_close_pair(args.task_id.as_deref(), args.verdict_id.as_deref())
+    else {
+        return Ok(None);
+    };
+    let results = storage.get_scoped_gate_results(issue_id, from, to)?;
+    let bound = results.iter().any(|row| {
+        row.passed
+            && row.note.as_deref().is_some_and(|note| {
+                crate::cli::commands::gate::proved_note_binding(note)
+                    .is_some_and(|(t, v)| t == task && v == verdict)
+            })
+    });
+    if bound {
+        return Ok(None);
+    }
+    Ok(Some(PolicyViolation {
+        gate: "gate_proved_binding".to_string(),
+        message: format!(
+            "close of {issue_id} named task={task} verdict={verdict}, but no PASS \
+             gate note leads with that pair. Report one with \
+             --note \"task={task} verdict={verdict}\" before closing."
+        ),
+        detail: None,
+    }))
 }
 
 /// Collect the IDs of issues that have a `blocks` edge *from* `issue_id`

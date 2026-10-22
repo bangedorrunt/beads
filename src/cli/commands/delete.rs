@@ -571,7 +571,7 @@ fn execute_routed(
 ) -> Result<()> {
     // execute() already refused a missing reason; this keeps the routed path
     // safe on its own, since a routed batch is still a tombstone.
-    let reason = require_delete_reason(args.reason.as_deref())?;
+    require_delete_reason(args.reason.as_deref())?;
     let normalized_local_beads_dir = crate::sync::path::canonicalize(local_beads_dir)
         .unwrap_or_else(|_| local_beads_dir.to_path_buf());
     let mut prepared_routes = Vec::with_capacity(routed_batches.len());

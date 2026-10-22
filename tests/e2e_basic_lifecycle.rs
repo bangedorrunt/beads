@@ -136,6 +136,29 @@ fn write_dotted_jsonl_fixture(workspace: &BrWorkspace) -> PathBuf {
     jsonl_path
 }
 
+/// Create an issue with the brief this harness uses everywhere, and return its
+/// id. The `--verify true` and the principle are what make the bead legal to
+/// create in the first place, so a scenario that only needs a row should not
+/// have to repeat them.
+fn create_brief_issue(workspace: &BrWorkspace, title: &str, label: &str) -> String {
+    let create = run_br(
+        workspace,
+        [
+            "create",
+            title,
+            "-d",
+            "e2e brief",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works \u{2014} e2e brief",
+        ],
+        label,
+    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+    parse_created_id(&create.stdout)
+}
+
 fn assert_br_success(run: &BrRun, context: &str) {
     assert!(run.status.success(), "{context}: {}", run.stderr);
 }
@@ -340,25 +363,10 @@ fn e2e_list_and_count_status_all_matches_every_status() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // One open, one in_progress, one closed issue.
-    let mut ids = Vec::new();
-    for title in ["Open one", "Working one", "Closed one"] {
-        let create = run_br(
-            &workspace,
-            [
-                "create",
-                title,
-                "-d",
-                "e2e brief",
-                "--verify",
-                "true",
-                "--principle",
-                "prove-it-works \u{2014} e2e brief",
-        ],
-            "status_all_create",
-        );
-        assert!(create.status.success(), "create failed: {}", create.stderr);
-        ids.push(parse_created_id(&create.stdout));
-    }
+    let ids: Vec<String> = ["Open one", "Working one", "Closed one"]
+        .into_iter()
+        .map(|title| create_brief_issue(&workspace, title, "status_all_create"))
+        .collect();
     let claim = run_br(
         &workspace,
         ["update", &ids[1], "--status", "in_progress"],

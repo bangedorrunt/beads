@@ -11989,6 +11989,7 @@ pub struct GateSidecarImport {
 ///
 /// 0 when the sidecar is absent or unreadable - which is exactly the case
 /// where a rebuild cannot restore what it drops.
+#[must_use]
 pub fn gate_sidecar_row_count(path: &Path) -> usize {
     let Ok(raw) = fs::read_to_string(path) else {
         return 0;

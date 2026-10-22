@@ -14,6 +14,18 @@ fn parse_created_id(stdout: &str) -> String {
     id_part.trim().to_string()
 }
 
+/// Create one issue and return its id. Shared by the scenarios that just need
+/// distinct rows to hang dependencies on.
+fn create_issue(workspace: &BrWorkspace, title: &str, issue_type: &str) -> String {
+    let created = run_br(workspace, ["create", title, "--type", issue_type], "create");
+    assert!(
+        created.status.success(),
+        "create {title} failed: {}",
+        created.stderr
+    );
+    parse_created_id(&created.stdout)
+}
+
 // ============================================================================
 // SUCCESS PATH TESTS
 // ============================================================================
@@ -607,31 +619,13 @@ fn e2e_epic_nested_epics() {
     assert!(init.status.success());
 
     // Create parent epic
-    let create_parent = run_br(
-        &workspace,
-        ["create", "Parent Epic", "--type", "epic"],
-        "create_parent",
-    );
-    assert!(create_parent.status.success());
-    let parent_id = parse_created_id(&create_parent.stdout);
+    let parent_id = create_issue(&workspace, "Parent Epic", "epic");
 
     // Create child epic
-    let create_child = run_br(
-        &workspace,
-        ["create", "Child Epic", "--type", "epic"],
-        "create_child",
-    );
-    assert!(create_child.status.success());
-    let child_id = parse_created_id(&create_child.stdout);
+    let child_id = create_issue(&workspace, "Child Epic", "epic");
 
     // Create a task under the child epic
-    let create_task = run_br(
-        &workspace,
-        ["create", "Nested Task", "--type", "task"],
-        "create_task",
-    );
-    assert!(create_task.status.success());
-    let task_id = parse_created_id(&create_task.stdout);
+    let task_id = create_issue(&workspace, "Nested Task", "task");
 
     // Set up relationships: task -> child epic, child epic -> parent epic
     let dep1 = run_br(
@@ -874,7 +868,7 @@ fn e2e_epic_multiple_children_partial_progress() {
             "gate_task",
         );
         assert!(gate.status.success(), "gate task failed: {}", gate.stderr);
-    let cite_sha = common::cli::citing_sha(&workspace, &task_id);
+        let cite_sha = common::cli::citing_sha(&workspace, task_id);
         let close = run_br(
             &workspace,
             ["close", task_id, "--force", "--commit-sha", &cite_sha],
@@ -931,7 +925,7 @@ fn e2e_epic_multiple_children_partial_progress() {
             "gate remaining task failed: {}",
             gate.stderr
         );
-    let cite_sha = common::cli::citing_sha(&workspace, &task_id);
+        let cite_sha = common::cli::citing_sha(&workspace, task_id);
         let close = run_br(
             &workspace,
             ["close", task_id, "--force", "--commit-sha", &cite_sha],
