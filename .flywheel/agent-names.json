@@ -1,26 +1,13 @@
 [
   {
-    "pane_id": "w8N:p1",
-    "name": "flywheel-beads-oc",
-    "mail_identity": "GreenStream",
-    "skills_injected": false
-  },
-  {
-    "pane_id": "w8N:p2",
-    "name": "flywheel-beads-oc2",
-    "mail_identity": "CobaltMaple",
-    "skills_injected": false
-  },
-  {
-    "pane_id": "w8N:p3",
-    "name": "flywheel-beads-oc3",
-    "mail_identity": "LavenderSalmon",
-    "skills_injected": false
-  },
-  {
-    "pane_id": "w8N:p4",
-    "name": "flywheel-beads-oc4",
-    "mail_identity": "CalmLantern",
-    "skills_injected": false
+    "pane_id": "w7V:p1",
+    "name": "flywheel-beads-coder",
+    "profile": "coder",
+    "harness": "opencode",
+    "model_pin": "opencode-go/muse-spark-1.3-contributor",
+    "skills_digest": "skills-v1:7a6d9a8305e4:n=5",
+    "mail_identity": "PinkMarsh",
+    "skills_injected": false,
+    "incarnation": 0
   }
 ]
