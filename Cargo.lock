@@ -1195,18 +1195,15 @@ checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 
 [[package]]
 name = "elm-effect"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
- "jiff",
- "num-bigint",
- "num-traits",
  "thiserror 1.0.69",
  "tokio",
 ]
 
 [[package]]
 name = "elm-effect-elm"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "elm-effect",
  "elm-effect-journal",
@@ -1217,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "elm-effect-journal"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "elm-effect",
  "serde",
