@@ -45,6 +45,25 @@ impl Default for HistoryConfig {
     }
 }
 
+/// Default byte budget for one target's snapshots in `.br_history/`.
+///
+/// A count cap alone is not a bound when each snapshot is the whole ledger:
+/// 100 snapshots of a 3 MB `issues.jsonl` is 300 MB of near-identical copies,
+/// which is what `.br_history/` had grown to before this cap. The newest
+/// snapshot is always kept even when it alone exceeds the budget, so the
+/// first snapshot after a large ledger still lands.
+pub const DEFAULT_HISTORY_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Resolve the byte budget from `BR_HISTORY_MAX_BYTES` (bytes; `0` disables
+/// the byte leg and leaves only the count/age caps).
+#[must_use]
+pub fn history_max_bytes() -> u64 {
+    std::env::var("BR_HISTORY_MAX_BYTES")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_HISTORY_MAX_BYTES)
+}
+
 /// Backup entry metadata.
 #[derive(Debug, Clone)]
 pub struct BackupEntry {
@@ -572,6 +591,17 @@ pub(crate) fn backup_before_export_snapshot(
 ///
 /// Returns an error if listing or deleting backups fails.
 fn rotate_history(history_dir: &Path, config: &HistoryConfig, target_key: &str) -> Result<()> {
+    rotate_history_with_budget(history_dir, config, target_key, history_max_bytes())
+}
+
+/// [`rotate_history`] with an explicit byte budget, so the byte leg is
+/// testable without touching process environment.
+fn rotate_history_with_budget(
+    history_dir: &Path,
+    config: &HistoryConfig,
+    target_key: &str,
+    max_bytes: u64,
+) -> Result<()> {
     let mut backups: Vec<_> = list_backups(history_dir, None)?
         .into_iter()
         .filter(|entry| entry.target_key == target_key)
@@ -592,14 +622,20 @@ fn rotate_history(history_dir: &Path, config: &HistoryConfig, target_key: &str) 
 
     let mut deleted_count = 0;
 
-    // Filter by age
+    // Filter by age/count, then by the byte budget, walking newest first so
+    // the retained set is the newest contiguous run. `kept_bytes` only counts
+    // survivors, so a zero-byte snapshot never consumes budget.
+    let mut kept_bytes = 0_u64;
     for (idx, entry) in backups.iter().enumerate() {
         let is_too_old = entry.timestamp < cutoff;
         let is_dominated = idx >= config.max_count;
+        let is_over_budget = max_bytes > 0 && idx > 0 && kept_bytes + entry.size > max_bytes;
 
-        if is_too_old || is_dominated {
+        if is_too_old || is_dominated || is_over_budget {
             remove_backup_artifacts(&entry.path)?;
             deleted_count += 1;
+        } else {
+            kept_bytes = kept_bytes.saturating_add(entry.size);
         }
     }
 
@@ -840,6 +876,56 @@ mod tests {
                 .iter()
                 .any(|b| b.path.to_string_lossy().contains(&t3.to_string()))
         );
+    }
+
+    #[test]
+    fn test_backup_rotation_byte_budget_keeps_newest_run() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        let history_dir = beads_dir.join(".br_history");
+        fs::create_dir_all(&history_dir).unwrap();
+
+        let config = HistoryConfig {
+            enabled: true,
+            max_count: 100,
+            max_age_days: 30,
+            min_interval_secs: 0,
+        };
+
+        let now = Utc::now();
+        let stamp = |hours: i64| (now - chrono::Duration::hours(hours)).format("%Y%m%d_%H%M%S");
+        let names: Vec<String> = (1..=3)
+            .map(|h| format!("issues.{}.jsonl", stamp(h)))
+            .collect();
+        for name in &names {
+            // 10 bytes each, so a 25-byte budget holds two snapshots, not three.
+            fs::write(history_dir.join(name), "0123456789").unwrap();
+        }
+
+        let target_key = target_key_for_path(&beads_dir, &beads_dir.join("issues.jsonl"));
+        rotate_history_with_budget(&history_dir, &config, &target_key, 25).unwrap();
+
+        let remaining = list_backups(&history_dir, None).unwrap();
+        assert_eq!(remaining.len(), 2, "byte budget holds two 10-byte snapshots");
+        assert!(
+            remaining
+                .iter()
+                .any(|b| b.path.to_string_lossy().contains(&stamp(1).to_string())),
+            "newest snapshot is always kept"
+        );
+        assert!(
+            !remaining
+                .iter()
+                .any(|b| b.path.to_string_lossy().contains(&stamp(3).to_string())),
+            "oldest snapshot is over budget"
+        );
+
+        // 0 disables the byte leg: count/age alone decide.
+        for name in &names {
+            fs::write(history_dir.join(name), "0123456789").unwrap();
+        }
+        rotate_history_with_budget(&history_dir, &config, &target_key, 0).unwrap();
+        assert_eq!(list_backups(&history_dir, None).unwrap().len(), 3);
     }
 
     #[test]
