@@ -718,7 +718,6 @@ pub struct SkippedIssue {
     pub reason: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 struct CloseExecution {
     closed: Vec<ClosedIssue>,
