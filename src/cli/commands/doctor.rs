@@ -235,13 +235,11 @@ struct LocalRepairResult {
 /// stderr without touching disk. The run-dir is still created (so the
 /// caller has somewhere to inspect the planned actions) but no
 /// `actions.jsonl` lines are appended.
-#[allow(dead_code)] // WP1 scaffold; wired into legacy fixers in later doctor work packages.
 struct DoctorRepairSession {
     run: RunDir,
     ctx: MutateContext,
 }
 
-#[allow(dead_code)] // WP1 scaffold; methods are exercised once repair call sites move to mutate().
 impl DoctorRepairSession {
     /// Build a fresh session rooted at `repo_root`. Creates
     /// `<repo_root>/.doctor/runs/<run-id>/` (or the
@@ -336,7 +334,6 @@ impl DoctorRepairSession {
     }
 }
 
-#[allow(dead_code)] // Used by DoctorRepairSession once the scaffold is wired into repair flow.
 /// Pass-5 cycle 1: per-FM filter for `--repair --only`/`--skip`.
 ///
 /// Each chokepointed fixer takes the active filter and consults
