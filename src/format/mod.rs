@@ -24,7 +24,7 @@
 //! - Tables with styled columns for issue lists
 //! - Panels for detailed issue views
 //! - Trees for dependency visualization
-//! - Consistent theming via [`Theme`]
+//! - Consistent theming via [`crate::output::Theme`]
 //!
 //! Output mode is determined by [`OutputContext`]:
 //! - Rich: TTY with colors enabled
@@ -55,7 +55,6 @@ pub use text::{
 
 // Rich output support
 pub use crate::output::{OutputContext, OutputMode};
-pub use theme::Theme;
 
 // Syntax highlighting
 pub use syntax::{

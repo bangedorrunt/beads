@@ -16,7 +16,8 @@
 //! These components work alongside existing text.rs functions:
 //!
 //! ```ignore
-//! use crate::format::{OutputContext, OutputMode, Theme};
+//! use crate::format::{OutputContext, OutputMode};
+//! use crate::output::Theme;
 //! use crate::format::rich::RichIssueTable;
 //!
 //! let ctx = OutputContext::detect();
