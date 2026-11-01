@@ -33,17 +33,10 @@ fn is_256() -> bool {
 // — raw hacker-night constants —
 
 const VOID: Color = Color::Rgb(0x08, 0x08, 0x0e);
-#[allow(dead_code)]
-const SURFACE: Color = Color::Rgb(0x12, 0x12, 0x2a);
-#[allow(dead_code)]
-const OVERLAY: Color = Color::Rgb(0x1a, 0x1a, 0x3e);
 const SELECTION_BG: Color = Color::Rgb(0x24, 0x24, 0x3f);
 const FG: Color = Color::Rgb(0xc8, 0xd0, 0xe8);
 const MUTED: Color = Color::Rgb(0x56, 0x5f, 0x89);
-#[allow(dead_code)]
-const EMPHASIS: Color = Color::Rgb(0xed, 0xed, 0xed);
 const CYAN: Color = Color::Rgb(0x0d, 0xb9, 0xd7);
-#[allow(dead_code)]
 const LAV: Color = Color::Rgb(0xbb, 0x9a, 0xf7);
 const MINT: Color = Color::Rgb(0x73, 0xda, 0xca);
 const ICE: Color = Color::Rgb(0x89, 0xdd, 0xff);
