@@ -188,8 +188,9 @@ impl Cmd for BeadsCmd {
     /// no trace of its own: the durable intent is the row itself, which
     /// makes this an `Ephemeral` read.
     ///
-    /// A `Persist` command earns `Durable` when the close write itself
-    /// routes through the fold — see `references/migrate-beads.md` item 5.
+    /// Gate reads are ephemeral. Close writes stay in storage
+    /// (`BEGIN IMMEDIATE`) — there is no `Persist` `BeadsCmd` (migrate-beads:
+    /// a Persist command would be a second journal beside SQLite).
     fn durability(&self) -> Durability {
         Durability::Ephemeral
     }
