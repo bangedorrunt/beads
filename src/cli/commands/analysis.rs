@@ -733,15 +733,6 @@ fn insights_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
     })
 }
 
-#[allow(dead_code)]
-fn gated_full(map: &BTreeMap<String, f64>, has_edges: &dyn Fn(&str) -> bool) -> Value {
-    let filtered: BTreeMap<String, f64> = map
-        .iter()
-        .filter(|(id, value)| has_edges(id) && **value != 0.0)
-        .map(|(id, value)| (id.clone(), *value))
-        .collect();
-    id_keyed_numbers(&filtered)
-}
 
 fn stats_value(result: &AnalysisResult, node_count: usize, edge_count: usize) -> Value {
     Value::Object({
