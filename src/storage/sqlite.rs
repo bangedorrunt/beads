@@ -11331,11 +11331,6 @@ impl SqliteStorage {
         Self::rebuild_child_counters_impl(&self.conn)
     }
 
-    #[allow(dead_code)] // Guarded standalone entry point; bulk mutations use the in-tx primitive.
-    pub(crate) fn rebuild_child_counters(&self) -> Result<usize> {
-        self.with_connection_write_transaction(|_| self.rebuild_child_counters_in_tx())
-    }
-
     fn rebuild_child_counters_impl(conn: &Connection) -> Result<usize> {
         // Clear existing counters
         conn.execute("DELETE FROM child_counters")?;
@@ -19072,7 +19067,7 @@ impl SqliteStorage {
     /// # Errors
     ///
     /// Returns an error if the database operation fails.
-    #[allow(dead_code)] // Guarded standalone entry point; bulk import uses the in-tx primitive.
+    #[cfg(test)]
     pub(crate) fn insert_new_issue_for_import(&self, issue: &Issue) -> Result<bool> {
         self.with_connection_write_transaction(|_| self.insert_new_issue_for_import_in_tx(issue))
     }
@@ -19192,7 +19187,7 @@ impl SqliteStorage {
     /// # Errors
     ///
     /// Returns an error if the marker cannot be updated.
-    #[allow(dead_code)] // Guarded standalone entry point; bulk import uses the in-tx primitive.
+    #[cfg(test)]
     pub(crate) fn replace_dirty_issue_marker(&self, issue_id: &str, marked_at: &str) -> Result<()> {
         self.with_connection_write_transaction(|_| {
             self.replace_dirty_issue_marker_in_tx(issue_id, marked_at)
@@ -19675,7 +19670,7 @@ impl SqliteStorage {
     /// # Errors
     ///
     /// Returns an error if any relation insert fails.
-    #[allow(dead_code)] // Guarded standalone entry point; bulk import uses the in-tx primitive.
+    #[cfg(test)]
     pub(crate) fn insert_new_issue_relations_for_import(&self, issue: &Issue) -> Result<()> {
         self.with_connection_write_transaction(|_| {
             self.insert_new_issue_relations_for_import_in_tx(issue)
@@ -19691,7 +19686,7 @@ impl SqliteStorage {
 
     /// Upsert one imported issue and replace all of its owned relations in one
     /// authority-verified transaction.
-    #[allow(dead_code)] // Guarded standalone entry point; bulk import/merge use one outer transaction.
+    #[cfg(test)]
     pub(crate) fn upsert_issue_and_relations_for_import(&self, issue: &Issue) -> Result<bool> {
         self.with_connection_write_transaction(|_| {
             let changed = self.upsert_issue_for_import_in_tx(issue)?;
