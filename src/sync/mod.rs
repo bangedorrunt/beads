@@ -2115,6 +2115,7 @@ where
     )
 }
 
+#[cfg(test)]
 pub(crate) fn export_temp_path(output_path: &Path) -> PathBuf {
     export_temp_path_for_attempt(output_path, 0)
 }

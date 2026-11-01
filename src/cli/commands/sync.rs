@@ -29,7 +29,7 @@ use crate::sync::{
     apply_reviewed_additive_reconcile_under_authority, apply_sync_reconcile,
     canonical_sync_path_sha256, capture_sync_database_witness, compute_jsonl_snapshot_content_hash,
     compute_staleness, database_write_authority_sha256, ensure_no_conflict_markers_snapshot,
-    export_temp_path, export_to_jsonl_with_policy_expected_under_authorities,
+    export_to_jsonl_with_policy_expected_under_authorities,
     export_to_jsonl_with_policy_expected_under_authority, finalize_export_under_authority,
     get_issue_ids_from_jsonl_snapshot, id_matches_expected_prefix, import_from_jsonl_snapshot,
     load_base_snapshot_from_source, plan_reviewed_additive_reconcile, plan_sync_reconcile,
@@ -474,10 +474,8 @@ struct BaseWitnessArtifacts {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)] // Fields may be used in future sync enhancements
 struct SyncPathPolicy {
     jsonl_path: PathBuf,
-    jsonl_temp_path: PathBuf,
     manifest_path: PathBuf,
     beads_dir: PathBuf,
     is_external: bool,
@@ -1598,7 +1596,6 @@ fn validate_sync_paths(
     }
 
     let manifest_path = canonical_beads.join(".manifest.json");
-    let jsonl_temp_path = export_temp_path(&jsonl_path);
 
     if contains_git_dir(&jsonl_path) {
         warn!(
@@ -1620,7 +1617,6 @@ fn validate_sync_paths(
 
     debug!(
         jsonl_path = %jsonl_path.display(),
-        jsonl_temp_path = %jsonl_temp_path.display(),
         manifest_path = %manifest_path.display(),
         is_external,
         "Sync path validation complete"
@@ -1628,7 +1624,6 @@ fn validate_sync_paths(
 
     Ok(SyncPathPolicy {
         jsonl_path,
-        jsonl_temp_path,
         manifest_path,
         beads_dir: canonical_beads,
         is_external,
@@ -5254,7 +5249,6 @@ mod tests {
 
         let path_policy = SyncPathPolicy {
             jsonl_path: current_jsonl_path.clone(),
-            jsonl_temp_path: current_jsonl_path.with_extension("jsonl.tmp"),
             manifest_path: beads_dir.join(".manifest.json"),
             beads_dir,
             is_external: false,
