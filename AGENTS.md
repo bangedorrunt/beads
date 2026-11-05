@@ -4,11 +4,11 @@ bangedorrunt's hard fork of `beads_rust` — fail-closed work-ledger for the
 flywheel × toron stack. Binary remains `br`. Governing decision:
 [ADR-0001](docs/decisions/0001-make-beads-the-fail-closed-work-ledger.md).
 
-Do not add MCP tools. Do not run git from `br` (exception: explicit user-invoked
-`br vcs-status`, read-only). Upstream
-`Dicklesworthstone/beads_rust` is historical — cherry-pick only on captain
-**fork sync** (RULE below). Where this file conflicts with ADR-0001 or the
-coordination contract, **this fork wins**.
+Do not add MCP tools (fork policy — review-enforced, no gate). Do not run
+git from `br` — one exception: user-invoked `br vcs-status`, read-only.
+Upstream `Dicklesworthstone/beads_rust` is historical — cherry-pick only on
+captain **fork sync** (RULE below). Where this file conflicts with ADR-0001 or
+the coordination contract, **this fork wins**.
 
 ## Coordination contract
 
@@ -37,8 +37,7 @@ Do nothing with the parent until the captain's message contains **fork sync**.
    Never `git merge upstream/main`. Never rebase onto upstream.
 7. Prove with the smallest relevant `mbx test` (or `br doctor` in scratch).
 
-Baseline: founding FF `9c45f79a` (2026-08-21); TAKEs through upstream
-`34ca862b`. Update the banner SHA only when a TAKE lands.
+Baseline: FF `9c45f79a`; TAKEs through upstream `34ca862b`.
 
 ## Toolchain and checks
 
