@@ -77,7 +77,6 @@ impl<'a> IssuePanel<'a> {
         let mut content = Text::new("");
         let issue_id = sanitize_terminal_inline(&self.issue.id);
 
-        // Header: ID and Status badges
         content.append_styled(
             &format!("{}  ", issue_id.as_ref()),
             self.theme.issue_id.clone(),
@@ -95,14 +94,12 @@ impl<'a> IssuePanel<'a> {
             self.theme.type_style(&self.issue.issue_type),
         );
 
-        // Title
         content.append_styled(
             sanitize_terminal_inline(&self.issue.title).as_ref(),
             self.theme.issue_title.clone(),
         );
         content.append("\n");
 
-        // Description
         if let Some(ref desc) = self.issue.description {
             content.append("\n");
             content.append_styled(
@@ -112,19 +109,16 @@ impl<'a> IssuePanel<'a> {
             content.append("\n");
         }
 
-        // Metadata section
         content.append_styled(
             "\n───────────────────────────────────\n",
             self.theme.dimmed.clone(),
         );
 
-        // Assignee
         if let Some(line) = self.assignee_line() {
             content.append_styled("Assignee: ", self.theme.dimmed.clone());
             content.append_styled(&format!("{line}\n"), self.theme.username.clone());
         }
 
-        // Labels
         let labels = self
             .details
             .map_or(self.issue.labels.as_slice(), |d| d.labels.as_slice());
@@ -142,7 +136,6 @@ impl<'a> IssuePanel<'a> {
             content.append("\n");
         }
 
-        // Timestamps
         content.append_styled("Created:  ", self.theme.dimmed.clone());
         content.append_styled(
             &format!("{}\n", self.issue.created_at.format("%Y-%m-%d %H:%M")),
@@ -158,14 +151,11 @@ impl<'a> IssuePanel<'a> {
         self.append_rollup(&mut content);
         self.append_relationships(&mut content);
 
-        // Comments
         let comments: &[Comment] = self
             .details
             .map_or(self.issue.comments.as_slice(), |d| d.comments.as_slice());
         self.append_comments(&mut content, comments);
 
-        // Build and print panel — always use terminal width so descriptions
-        // are never silently truncated (issue #91).
         let panel_width = ctx.width();
         let content = if wrap {
             wrap_rich_text(&content, panel_width)
@@ -383,7 +373,6 @@ mod tests {
             Some("AmberFox (herdr flywheel-demo-oc, pane w1:p1)")
         );
 
-        // No assignee: the line is absent regardless of resolution.
         let unassigned = Issue::default();
         assert_eq!(
             IssuePanel::new(&unassigned, &theme)
@@ -392,7 +381,6 @@ mod tests {
             None
         );
 
-        // Both halves are sanitized: pins and pane names come from a file.
         let hostile = Issue {
             id: "hostile-fixture".to_string(),
             assignee: Some("pin\u{1b}[2J".to_string()),

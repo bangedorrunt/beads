@@ -95,7 +95,6 @@ impl BackupFileGuard {
 impl Drop for BackupFileGuard {
     fn drop(&mut self) {
         if !self.persist {
-            // Use remove_file directly and ignore NotFound to be TOCTOU-safe.
             if let Err(cleanup_err) = fs::remove_file(&self.path)
                 && cleanup_err.kind() != io::ErrorKind::NotFound
             {
@@ -190,8 +189,6 @@ static BACKUP_FILENAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 pub(crate) fn parse_backup_filename(filename: &str) -> Option<(String, DateTime<Utc>)> {
     let without_ext = filename.strip_suffix(".jsonl")?;
 
-    // Pattern: <stem>.<timestamp>[.<collision_index>]
-    // Timestamp formats: YYYYMMDD_HHMMSS or YYYYMMDD_HHMMSS_<fractional-seconds>
     // where the fractional component can be microsecond or nanosecond precision.
     let caps = BACKUP_FILENAME_REGEX.captures(without_ext)?;
 
@@ -522,17 +519,12 @@ pub(crate) fn backup_before_export_snapshot(
 
     ensure_history_dir_path(&history_dir)?;
 
-    // Determine backup filename based on target filename
     let file_stem = target_path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("issues");
     let target_key = target_key_for_path(beads_dir, target_path);
 
-    // Skip a new snapshot when the most recent backup is either identical
-    // content (dedup) or younger than the configured throttle floor (#313).
-    // We match by full target identity so similarly named exports do not
-    // collapse each other's history.
     if let Some(latest) = get_latest_backup(&history_dir, &target_key)? {
         if snapshot_and_file_are_identical(source, &latest.path)? {
             tracing::debug!(
@@ -542,22 +534,10 @@ pub(crate) fn backup_before_export_snapshot(
             return Ok(());
         }
 
-        // Time-throttle: under bursty mutation every `br` edit auto-flushes the
-        // JSONL, and copying the whole file into a fresh backup each time is
-        // O(repo-size) write amplification. If the latest snapshot is younger
-        // than `min_interval_secs`, skip this one — the export still proceeds,
-        // so the file is current; we just don't keep a near-duplicate snapshot
-        // per edit. A future (older-than-floor) edit takes the next snapshot.
         if config.min_interval_secs > 0 {
-            // Compare in whole seconds: building a chrono `Duration` from a
-            // possibly-huge `min_interval_secs` could overflow/panic. `age_secs
-            // >= 0` guards against a future-dated latest backup (clock skew): we
-            // never skip based on a backup that appears newer than "now".
             let age_secs = Utc::now()
                 .signed_duration_since(latest.timestamp)
                 .num_seconds();
-            // `try_from` fails for a negative age (future-dated latest / clock
-            // skew), so we never throttle on a backup that appears newer than now.
             if u64::try_from(age_secs).is_ok_and(|age| age < config.min_interval_secs) {
                 tracing::debug!(
                     "Skipping backup: throttled ({age_secs}s since latest < {}s floor)",
@@ -568,8 +548,6 @@ pub(crate) fn backup_before_export_snapshot(
         }
     }
 
-    // Create a timestamped backup file with collision resistance and no
-    // overwrite race so pre-existing symlinks or files are never clobbered.
     let (backup_path, mut backup_file) = create_backup_file(&history_dir, file_stem)?;
     let mut backup_guard = BackupFileGuard::new(backup_path.clone());
     io::copy(&mut source.reader(), &mut backup_file).map_err(BeadsError::Io)?;
@@ -579,7 +557,6 @@ pub(crate) fn backup_before_export_snapshot(
     backup_guard.persist();
     tracing::debug!("Created backup: {}", backup_path.display());
 
-    // Rotate history for this specific target
     rotate_history(&history_dir, config, &target_key)?;
 
     Ok(())
@@ -611,10 +588,8 @@ fn rotate_history_with_budget(
         return Ok(());
     }
 
-    // Sort newest first to ensure limit-based pruning targets the oldest entries
     backups.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
 
-    // Determine cutoff time
     let now = Utc::now();
     let max_safe_days = 365_i64 * 1000;
     let days_i64 = i64::from(config.max_age_days).min(max_safe_days);
@@ -622,9 +597,6 @@ fn rotate_history_with_budget(
 
     let mut deleted_count = 0;
 
-    // Filter by age/count, then by the byte budget, walking newest first so
-    // the retained set is the newest contiguous run. `kept_bytes` only counts
-    // survivors, so a zero-byte snapshot never consumes budget.
     let mut kept_bytes = 0_u64;
     for (idx, entry) in backups.iter().enumerate() {
         let is_too_old = entry.timestamp < cutoff;
@@ -711,7 +683,6 @@ pub fn list_backups(history_dir: &Path, filter_prefix: Option<&str>) -> Result<V
         });
     }
 
-    // Sort newest first
     backups.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
 
     Ok(backups)
@@ -830,8 +801,6 @@ mod tests {
             min_interval_secs: 0,
         };
 
-        // Manually create 3 backup files with distinct timestamps
-        // Use very recent dates to avoid age pruning
         let now = Utc::now();
         let t1 = (now - chrono::Duration::hours(3)).format("%Y%m%d_%H%M%S");
         let t2 = (now - chrono::Duration::hours(2)).format("%Y%m%d_%H%M%S");
@@ -847,25 +816,20 @@ mod tests {
             File::create(history_dir.join(name)).unwrap();
         }
 
-        // Verify initial state
         let backups = list_backups(&history_dir, None).unwrap();
         assert_eq!(backups.len(), 3);
 
-        // Run rotation for "issues" stem
         let target_key = target_key_for_path(&beads_dir, &beads_dir.join("issues.jsonl"));
         rotate_history(&history_dir, &config, &target_key).unwrap();
 
-        // Should keep only max_count (2) newest files
         let remaining = list_backups(&history_dir, None).unwrap();
         assert_eq!(remaining.len(), 2);
 
-        // Ensure the oldest one was deleted
         assert!(
             !remaining
                 .iter()
                 .any(|b| b.path.to_string_lossy().contains(&t1.to_string()))
         );
-        // Ensure newer ones kept
         assert!(
             remaining
                 .iter()
@@ -898,7 +862,6 @@ mod tests {
             .map(|h| format!("issues.{}.jsonl", stamp(h)))
             .collect();
         for name in &names {
-            // 10 bytes each, so a 25-byte budget holds two snapshots, not three.
             fs::write(history_dir.join(name), "0123456789").unwrap();
         }
 
@@ -920,7 +883,6 @@ mod tests {
             "oldest snapshot is over budget"
         );
 
-        // 0 disables the byte leg: count/age alone decide.
         for name in &names {
             fs::write(history_dir.join(name), "0123456789").unwrap();
         }
@@ -936,7 +898,6 @@ mod tests {
         let history_dir = beads_dir.join(".br_history");
         let target = beads_dir.join("issues.jsonl");
 
-        // Large floor so the second (immediate) snapshot is always throttled.
         let config = HistoryConfig {
             enabled: true,
             max_count: 100,
@@ -946,8 +907,6 @@ mod tests {
 
         fs::write(&target, "v1\n").unwrap();
         backup_before_export(&beads_dir, &config, &target).unwrap();
-        // Changed content, so the identical-content dedup does NOT fire — only
-        // the time-throttle can skip this second snapshot (#313).
         fs::write(&target, "v2-different\n").unwrap();
         backup_before_export(&beads_dir, &config, &target).unwrap();
 
@@ -958,7 +917,6 @@ mod tests {
             "a changed file within the throttle floor must not create a second snapshot (#313)"
         );
 
-        // With the throttle disabled, the same changed-content export does snapshot.
         let unthrottled = HistoryConfig {
             min_interval_secs: 0,
             ..config.clone()
@@ -1153,10 +1111,8 @@ mod tests {
 
         let config = HistoryConfig::default();
 
-        // First backup
         backup_before_export(&beads_dir, &config, &jsonl_path).unwrap();
 
-        // Second backup (same content) - should be skipped
         backup_before_export(&beads_dir, &config, &jsonl_path).unwrap();
 
         let backups = list_backups(&history_dir, None).unwrap();
@@ -1168,7 +1124,6 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let history_dir = temp.path();
 
-        // Create files with manual timestamps
         File::create(history_dir.join("issues.20230101_100000.jsonl")).unwrap();
         File::create(history_dir.join("issues.20230102_100000.jsonl")).unwrap();
         File::create(history_dir.join("issues.invalid_name.jsonl")).unwrap();
@@ -1176,7 +1131,6 @@ mod tests {
         let backups = list_backups(history_dir, None).unwrap();
         assert_eq!(backups.len(), 2);
 
-        // Newest first
         assert!(backups[0].path.to_string_lossy().contains("20230102"));
         assert!(backups[1].path.to_string_lossy().contains("20230101"));
     }
@@ -1219,9 +1173,6 @@ mod tests {
         fs::create_dir_all(&beads_dir).unwrap();
 
         let target = beads_dir.join("issues.jsonl");
-        // Disable the snapshot throttle: this test exercises filename
-        // collision-resistance for two same-second backups, which requires
-        // both snapshots to actually be written (#313).
         let config = HistoryConfig {
             min_interval_secs: 0,
             ..HistoryConfig::default()
@@ -1248,22 +1199,16 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let history_dir = temp.path();
 
-        // Create 5 files
         for i in 0..5 {
             let ts = Utc::now() - chrono::Duration::days(i64::from(i));
             let ts_str = ts.format("%Y%m%d_%H%M%S");
             File::create(history_dir.join(format!("issues.{ts_str}.jsonl"))).unwrap();
         }
 
-        // Keep 3
         let deleted = prune_backups(history_dir, 3, None).unwrap();
         assert_eq!(deleted, 2);
         assert_eq!(list_backups(history_dir, None).unwrap().len(), 3);
 
-        // Keep 100 (default), older than 2 days
-        // Files remaining: 0, 1, 2 days old.
-        // older_than 2 means delete anything older than 48h (effectively file 2)
-        // file 1 (24h old) is kept.
         let deleted_age = prune_backups(history_dir, 100, Some(2)).unwrap();
         assert_eq!(deleted_age, 1);
         assert_eq!(list_backups(history_dir, None).unwrap().len(), 2);

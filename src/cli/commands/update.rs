@@ -36,8 +36,6 @@ struct UpdatedIssueOutput {
     title: String,
     status: String,
     priority: i32,
-    // Coordination fields echoed so a caller can confirm a claim landed from
-    // the update response alone, without a follow-up `br show` (#393).
     assignee: Option<String>,
     owner: Option<String>,
     updated_at: DateTime<Utc>,
@@ -183,15 +181,8 @@ struct PreparedUpdateRoute {
 /// Returns an error if database operations fail or validation errors occur.
 #[allow(clippy::too_many_lines)]
 pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContext) -> Result<()> {
-    // Refuse terminal-state transitions before doing any I/O. `br update`
-    // is a data-only field mutator; terminal-state transitions
-    // (closed, tombstone) must go through their dedicated commands so the
-    // close-policy / delete pipelines are applied (see beads#301).
     reject_terminal_status_transition(args.status.as_deref())?;
 
-    // Resolve description-file input once before route discovery/fan-out.
-    // This is essential for `--description-file -`: stdin is a single stream
-    // and must not be consumed independently by each routed repository.
     let resolved_args = resolve_update_description(args)?;
     let args = &resolved_args;
 
@@ -226,9 +217,6 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
                 let normalized_batch_beads_dir = crate::sync::path::canonicalize(&batch.beads_dir)
                     .unwrap_or_else(|_| batch.beads_dir.clone());
                 let mut batch_cli = cli.clone();
-                // Routed projects must resolve their own metadata-defined DB path
-                // instead of being forced back to the local override. Preserve the
-                // caller's explicit DB only for the local batch.
                 batch_cli.db = if normalized_batch_beads_dir == normalized_local_beads_dir {
                     cli.db.clone()
                 } else {
@@ -349,11 +337,6 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
         for warning in &capacity_warnings {
             ctx.warning(&warning.to_string());
         }
-        // beads#297: emit inherited governing context for any
-        // bead that just transitioned into in_progress (via --claim or
-        // --status in_progress). Done after the update summary so the
-        // child's status change is visible first, then the inherited
-        // context the agent should be operating under.
         emit_inherited_context_for_in_progress_transitions(&beads_dir, cli, &render_items);
     }
 
@@ -438,9 +421,6 @@ fn emit_inherited_context_for_in_progress_transitions(
     if claimed_ids.is_empty() {
         return;
     }
-    // Open a transient read-only storage to walk ancestry. Failure
-    // here is non-fatal — the update has already succeeded and the
-    // child's status change is already printed.
     let Ok(storage_ctx) = config::open_storage_with_cli(beads_dir, cli) else {
         return;
     };
@@ -465,9 +445,6 @@ fn prepare_single_route(
 ) -> Result<PreparedUpdateRoute> {
     let routed_write_lock =
         acquire_routed_workspace_write_lock(beads_dir, auto_flush_external, cli.lock_timeout)?;
-    // Reuse the routed authority for the storage open below; acquiring the
-    // same database-family lock from a second descriptor in this process
-    // would self-deadlock until the lock timeout (#409 routed cluster).
     let mut route_cli = cli.clone();
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
     let cli = &route_cli;
@@ -475,10 +452,6 @@ fn prepare_single_route(
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
 
     let config_layer = storage_ctx.load_config(cli)?;
-    // The audit trail may name `$USER`; the ASSIGNEE a claim stores may not:
-    // a host username matches no live pane, so the orchestrator hands the
-    // bead to another lane while the first lane still holds it. A claim that
-    // names no claimant fails closed and names the remedy.
     let actor = if args.claim && args.assignee.is_none() {
         crate::agent_registry::claim_assignee(config::actor_from_layer(&config_layer).as_deref())?
     } else {
@@ -489,9 +462,6 @@ fn prepare_single_route(
 
     let claim_exclusive = config::claim_exclusive_from_layer(&config_layer);
     let mut update = build_update(args, &actor, claim_exclusive)?;
-    // One assignee dialect: fold a registered herdr pane name to its pin, and
-    // refuse an unregistered one the caller passed explicitly (a claim-derived
-    // actor passes through untouched so unregistered harnesses keep claiming).
     if let Some(Some(input)) = update.assignee.as_ref() {
         update.assignee = Some(Some(crate::agent_registry::fold_assignee_for_store(
             beads_dir,
@@ -500,38 +470,15 @@ fn prepare_single_route(
         )?));
     }
     if args.claim {
-        // The claim guard compares the stored assignee against `claim_actor`
-        // (its `current == claim_actor` branch is the idempotent re-claim), so
-        // both sides must speak the stored dialect: a registered herdr actor
-        // folds to its pin, and an explicit `--assignee` is the claim identity.
-        // A raw actor compared against a stored pin refuses a same-agent
-        // re-claim that the guard exists to allow.
         update.claim_actor = update.assignee.clone().flatten();
     }
 
-    // Strict status-workflow enforcement (issue #311) + transition rules
-    // (issue #312, layer 1). When the project's `.beads/policy.yaml` configures
-    // `workflow.strict: true` with a non-empty `workflow.statuses` set, a target
-    // status outside that set is rejected. When `workflow.strict: true` with a
-    // non-empty `workflow.transitions` map, a `from -> to` status change that is
-    // not an allowed transition is rejected. Absent/non-strict workflow config
-    // is a no-op, so existing repos are unaffected.
     if let Some(new_status) = update.status.as_ref() {
         let policy = crate::close_policy::load_for_beads_dir(beads_dir)?;
         policy.workflow.validate_status(new_status.as_str())?;
         let transitions_enforced = policy.workflow.transitions_enforced();
-        // A `--claim` on a closed issue is #497's dedicated guard
-        // (`validate_transition_to_in_progress` below, which points at
-        // `br reopen`), not a generic workflow.transitions error — let it
-        // speak. Skipping the policy check here never admits a forbidden
-        // claim: the claim guards are strictly stricter on the
-        // closed -> in_progress edge (they refuse it outright).
         if transitions_enforced && !args.claim {
             for id in &resolved_ids {
-                // The current status is the `from` state for the transition
-                // check. An issue that cannot be read (missing/unresolved)
-                // validates against the `initial` key (from = None), mirroring
-                // a create.
                 let current = storage_ctx
                     .storage
                     .get_issue(id)?
@@ -552,7 +499,6 @@ fn prepare_single_route(
 
     validate_mutable_target_issues(&storage_ctx.storage, &resolved_ids, has_updates)?;
 
-    // Validate labels before making any database changes
     for label in &args.add_label {
         LabelValidator::validate(label).map_err(|e| BeadsError::validation("label", e.message))?;
     }
@@ -575,9 +521,6 @@ fn prepare_single_route(
 
     let resolved_parent =
         resolve_parent_update(args.parent.as_deref(), &resolver, &storage_ctx.storage)?;
-    // ADR-0005 §2: deliverable is immutable after creation. The flag
-    // exists only for idempotent restatement: same value passes, any
-    // retype is refused before any mutation.
     if let Some(requested) = args.deliverable.as_deref() {
         let wanted: crate::model::Deliverable = requested
             .parse()
@@ -646,10 +589,6 @@ fn execute_prepared_route(
         || !matches!(prepared.resolved_parent, ParentUpdatePlan::Unchanged);
     let parent_changes_cache = !matches!(prepared.resolved_parent, ParentUpdatePlan::Unchanged);
 
-    // Snapshot every row before the atomic field-update transaction. Human
-    // diffs are derived from these validated snapshots, preserving the #256
-    // defense while allowing the whole status batch to commit or roll back as
-    // one unit.
     let mut issues_before = HashMap::with_capacity(prepared.resolved_ids.len());
     for id in &prepared.resolved_ids {
         let issue_before_result = prepared.storage_ctx.storage.get_issue(id);
@@ -700,7 +639,6 @@ fn execute_prepared_route(
     for id in &prepared.resolved_ids {
         let issue_before = issues_before.remove(id).flatten();
 
-        // Apply labels
         for label in &prepared.add_labels {
             let add_label_result = retry_mutation_with_jsonl_recovery(
                 &mut prepared.storage_ctx,
@@ -750,7 +688,6 @@ fn execute_prepared_route(
             route_has_mutated = true;
         }
 
-        // Apply parent
         let parent_result = apply_parent_update(
             &mut prepared.storage_ctx,
             !route_has_mutated,
@@ -770,11 +707,6 @@ fn execute_prepared_route(
             blocked_cache_dirty = true;
         }
 
-        // Re-read post-mutation state for JSON/TOON machine output only.
-        // For human-readable diff rendering we synthesize the diff from
-        // `(issue_before, update)` below instead of trusting a second read,
-        // to defend against the "unrelated bead's fields leak into diff"
-        // regression reported in issue #256.
         let issue_after_result = prepared.storage_ctx.storage.get_issue(id);
         let issue_after = preserve_blocked_cache_on_error(
             &mut prepared.storage_ctx.storage,
@@ -788,14 +720,6 @@ fn execute_prepared_route(
                 updated_issues.push(UpdatedIssueOutput::from(issue));
             }
         } else if use_human_output && prepared.has_updates {
-            // Derive the rendered title and diff from the validated
-            // pre-mutation snapshot + the user's requested update.  If a
-            // title change was requested use the requested new title, else
-            // fall back to the authoritative `issue_before.title` (whose
-            // row id has been post-condition-checked to equal `id`).  Only
-            // if we have no `issue_before` at all (it was deleted / did
-            // not exist before our write, which should not happen on the
-            // `update` command path) do we fall back to the post-read.
             let title = prepared
                 .update
                 .title
@@ -1050,13 +974,6 @@ fn validate_transition_to_in_progress(
         return Ok(());
     }
 
-    // `--claim` is a start-work shorthand, not a reopen. Left unchecked it
-    // moved a closed issue to `in_progress` and erased `closed_at` /
-    // `close_reason` — the terminal-state contract `br close` enforces on the
-    // way in was silently undone on the way out (GitHub #497). Refuse before
-    // any mutation and point at `br reopen`, which clears the close fields
-    // deliberately and records the transition. `--force` only waives the
-    // advisory guards below; it is not a reopen either.
     if args.claim {
         for id in ids {
             let Some(issue) = storage.get_issue(id)? else {
@@ -1071,9 +988,6 @@ fn validate_transition_to_in_progress(
     }
 
     for id in ids {
-        // Use start-blockers (not `is_blocked`), so an epic that is only
-        // "blocked" by its own still-open children — a close-ordering rollup,
-        // not a real dependency — can still be claimed and worked on (#315).
         let blockers = storage.get_start_blockers(id)?;
         if !blockers.is_empty() {
             return Err(BeadsError::validation(
@@ -1342,9 +1256,6 @@ fn build_update(args: &UpdateArgs, actor: &str, claim_exclusive: bool) -> Result
 
     let issue_type = args.type_.as_ref().map(|t| t.parse()).transpose()?;
 
-    // An explicit `--assignee` wins over `--claim`'s actor default: the claim
-    // recipe passes both (`--claim --assignee <pin>`) so the stored assignee
-    // is the pin, not the pane name.
     let assignee = match optional_string_field(args.assignee.as_deref()) {
         Some(explicit) => Some(explicit),
         None if args.claim => Some(Some(actor.to_string())),
@@ -1367,7 +1278,6 @@ fn build_update(args: &UpdateArgs, actor: &str, claim_exclusive: bool) -> Result
         None => (None, None, None),
     };
 
-    // Build update struct
     Ok(IssueUpdate {
         title: args.title.clone(),
         description: args.description.clone().map(Some),
@@ -1534,8 +1444,6 @@ pub(crate) fn resolve_ac_shape(
             "ac",
             "--ac judgment conflicts with --verify; drop the VERIFY command or use --ac checkable",
         )),
-        // Checkable wins whenever a VERIFY command is present; otherwise an
-        // explicit --ac flag governs and the bare default is checkable.
         (_, Some(crate::model::AcShape::Checkable) | None) => Ok(crate::model::AcShape::Checkable),
         (false, Some(shape)) => Ok(shape),
     }
@@ -1813,11 +1721,10 @@ mod tests {
         init_test_logging();
         info!("test_parse_date_with_timezone: starting");
         let result = parse_date("2024-12-25T08:00:00-05:00").unwrap();
-        // Should be converted to UTC
         assert_eq!(result.year(), 2024);
         assert_eq!(result.month(), 12);
         assert_eq!(result.day(), 25);
-        assert_eq!(result.hour(), 13); // 8:00 EST = 13:00 UTC
+        assert_eq!(result.hour(), 13);
         info!("test_parse_date_with_timezone: assertions passed");
     }
 
@@ -1834,11 +1741,9 @@ mod tests {
     fn test_parse_date_partial_date() {
         init_test_logging();
         info!("test_parse_date_partial_date: starting");
-        // Partial dates without time should now succeed
         let result = parse_date("2024-01-15");
         assert!(result.is_ok());
         let date = result.unwrap();
-        // Contract: bare dates mean 09:00 LOCAL; assert in local time.
         let local = date.with_timezone(&Local);
         assert_eq!(local.year(), 2024);
         assert_eq!(local.month(), 1);
@@ -1896,17 +1801,12 @@ mod tests {
     fn test_build_update_with_status() {
         init_test_logging();
         info!("test_build_update_with_status: starting");
-        // Non-terminal status transitions still flow through build_update.
-        // Terminal transitions (closed/tombstone) are rejected up-front by
-        // `reject_terminal_status_transition` — see beads#301 and the
-        // dedicated tests below.
         let args_blocked = UpdateArgs {
             status: Some("blocked".to_string()),
             ..Default::default()
         };
         let update_blocked = build_update(&args_blocked, "test_actor", false).unwrap();
         assert_eq!(update_blocked.status, Some(Status::Blocked));
-        // Close metadata should be explicitly cleared for non-terminal statuses.
         assert_eq!(update_blocked.closed_at, Some(None));
         assert_eq!(update_blocked.close_reason, Some(None));
         assert_eq!(update_blocked.closed_by_session, Some(None));

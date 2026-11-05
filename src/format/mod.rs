@@ -53,14 +53,11 @@ pub use text::{
     terminal_width, truncate_title,
 };
 
-// Rich output support
 pub use crate::output::{OutputContext, OutputMode};
 
-// Syntax highlighting
 pub use syntax::{
     available_themes, detect_language_from_filename, highlight_code, parse_code_fence,
     supported_languages,
 };
 
-// Markdown rendering
 pub use markdown::{contains_markdown, escape_markdown, render_markdown};

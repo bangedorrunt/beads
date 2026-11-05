@@ -52,12 +52,10 @@ pub fn compute_data_hash(issues: &[Issue]) -> String {
         field(&mut h, issue.acceptance_criteria.as_deref().unwrap_or(""));
         field(&mut h, issue.assignee.as_deref().unwrap_or(""));
         field(&mut h, issue.source_repo.as_deref().unwrap_or(""));
-        // bv's model: nil ExternalRef writes nothing before its NUL.
         field(&mut h, issue.external_ref.as_deref().unwrap_or(""));
         field(&mut h, issue.status.as_str());
         field(&mut h, issue.issue_type.as_str());
         field(&mut h, &issue.priority.0.to_string());
-        // bv: nil EstimatedMinutes writes nothing before its NUL.
         field(
             &mut h,
             &issue
@@ -81,7 +79,6 @@ pub fn compute_data_hash(issues: &[Issue]) -> String {
                 .map_or_else(String::new, go_rfc3339_nano),
         );
 
-        // Labels sorted.
         let mut labels = issue.labels.clone();
         labels.sort();
         for label in &labels {
@@ -89,7 +86,6 @@ pub fn compute_data_hash(issues: &[Issue]) -> String {
         }
         Digest::update(&mut h, [0u8]);
 
-        // Dependencies sorted by (depends_on, type, created_at, created_by).
         let mut deps: Vec<&crate::model::Dependency> = issue.dependencies.iter().collect();
         deps.sort_by(|a, b| {
             a.depends_on_id
@@ -106,7 +102,6 @@ pub fn compute_data_hash(issues: &[Issue]) -> String {
         }
         Digest::update(&mut h, [0u8]);
 
-        // Comments sorted by (id, created_at, author, text).
         let mut comments: Vec<&crate::model::Comment> = issue.comments.iter().collect();
         comments.sort_by(|a, b| {
             a.id.cmp(&b.id)
@@ -121,7 +116,7 @@ pub fn compute_data_hash(issues: &[Issue]) -> String {
             field(&mut h, &go_rfc3339_nano(&c.created_at));
         }
 
-        Digest::update(&mut h, [1u8]); // issue separator
+        Digest::update(&mut h, [1u8]);
     }
 
     let digest = crate::util::hex_encode(&h.finalize());
@@ -152,7 +147,7 @@ mod tests {
 
     #[test]
     fn go_rfc3339_nano_matches_go_forms() {
-        let t = chrono::Utc.timestamp_opt(1_754_042_400, 0).unwrap(); // 2025-08-01T10:00:00Z
+        let t = chrono::Utc.timestamp_opt(1_754_042_400, 0).unwrap();
         assert_eq!(go_rfc3339_nano(&t), "2025-08-01T10:00:00Z");
         let half = chrono::Utc
             .timestamp_opt(1_754_042_400, 500_000_000)

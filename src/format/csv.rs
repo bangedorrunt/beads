@@ -45,8 +45,6 @@ pub const ALL_FIELDS: &[&str] = &[
 /// when the value starts with `=`, `+`, `-`, `@`, `\t`, `\r`, or `\n`.
 #[must_use]
 pub fn escape_field(value: &str) -> String {
-    // Mitigate CSV formula injection: prefix dangerous characters with a
-    // single-quote so spreadsheets treat the cell as a literal string.
     if value.starts_with(['=', '+', '-', '@', '\t', '\r', '\n']) {
         let escaped = value.replace('"', "\"\"");
         return format!("\"'{escaped}\"");
@@ -147,7 +145,6 @@ pub fn write_csv<W: Write>(writer: &mut W, issues: &[Issue], fields: &[&str]) ->
 #[must_use]
 pub fn format_csv(issues: &[Issue], fields: &[&str]) -> String {
     let mut output = Vec::new();
-    // write_csv should not fail with Vec<u8>
     write_csv(&mut output, issues, fields).expect("writing to Vec should not fail");
     String::from_utf8_lossy(&output).into_owned()
 }

@@ -98,7 +98,6 @@ fn highlight_rich(code: &str, language: &str, _width: usize) -> String {
 /// Normalize language name to syntect's expected format.
 fn normalize_language(language: &str) -> String {
     match language.to_lowercase().as_str() {
-        // Common aliases
         "rs" => "rust",
         "py" => "python",
         "js" => "javascript",
@@ -111,7 +110,6 @@ fn normalize_language(language: &str) -> String {
         "cpp" | "cxx" | "cc" | "c++" => "c++",
         "cs" => "c#",
         "dockerfile" => "docker",
-        // Already normalized
         lang => lang,
     }
     .to_string()
@@ -135,14 +133,11 @@ pub fn parse_code_fence(fence: &str) -> (String, String) {
         return (String::from("text"), String::new());
     }
 
-    // Check for opening fence
     let first_line = lines[0].trim();
     if !first_line.starts_with("```") {
-        // Not a fenced code block, treat as plain text
         return (String::from("text"), fence.to_string());
     }
 
-    // Extract language from opening fence
     let language = first_line.trim_start_matches("```").trim().to_lowercase();
     let lang = if language.is_empty() {
         String::from("text")
@@ -150,7 +145,6 @@ pub fn parse_code_fence(fence: &str) -> (String, String) {
         language
     };
 
-    // Extract code (skip first and last line if it's a closing fence)
     let code_lines: Vec<&str> = if lines.len() > 1 {
         let end = if lines
             .last()
@@ -239,7 +233,7 @@ mod tests {
         let code = "fn main() {}";
         let result = highlight_code(code, "rust", &ctx(OutputMode::Plain));
         assert_eq!(result, "    fn main() {}");
-        assert!(!result.contains("\x1b[")); // No ANSI codes
+        assert!(!result.contains("\x1b["));
     }
 
     #[test]
@@ -253,7 +247,7 @@ mod tests {
     fn test_highlight_code_json_mode_unchanged() {
         let code = "fn main() { println!(\"test\"); }";
         let result = highlight_code(code, "rust", &ctx(OutputMode::Json));
-        assert_eq!(result, code); // Unchanged
+        assert_eq!(result, code);
     }
 
     #[test]
@@ -274,7 +268,6 @@ mod tests {
     fn test_highlight_code_rich_mode_rust() {
         let code = "fn main() { println!(\"Hello\"); }";
         let result = highlight_code(code, "rust", &ctx(OutputMode::Rich));
-        // Should contain the code text
         assert!(result.contains("fn"));
         assert!(result.contains("main"));
         assert!(result.contains("println"));
@@ -292,7 +285,6 @@ mod tests {
     fn test_highlight_code_unknown_language_fallback() {
         let code = "some random text";
         let result = highlight_code(code, "nonexistent_language_xyz", &ctx(OutputMode::Rich));
-        // Should fall back to plain formatting
         assert!(result.contains("some random text"));
     }
 
@@ -312,7 +304,7 @@ mod tests {
         assert_eq!(normalize_language("tsx"), "typescript");
         assert_eq!(normalize_language("sh"), "bash");
         assert_eq!(normalize_language("yml"), "yaml");
-        assert_eq!(normalize_language("rust"), "rust"); // Already normalized
+        assert_eq!(normalize_language("rust"), "rust");
     }
 
     #[test]
@@ -378,10 +370,8 @@ mod tests {
 
     #[test]
     fn test_highlight_long_code_with_line_numbers() {
-        // Code with > 5 lines should show line numbers in rich mode
         let code = "line1\nline2\nline3\nline4\nline5\nline6\nline7";
         let result = highlight_code(code, "text", &ctx(OutputMode::Rich));
-        // Just verify it doesn't crash and contains the content
         assert!(result.contains("line1"));
         assert!(result.contains("line7"));
     }

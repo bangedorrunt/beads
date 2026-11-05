@@ -55,27 +55,20 @@ fn run_quiet_json<const N: usize>(
     serde_json::from_str(&payload).expect(description)
 }
 
-// ============================================================================
-// --json flag tests
-// ============================================================================
-
 #[test]
 fn e2e_json_flag_list() {
     let _log = common::test_log("e2e_json_flag_list");
     let workspace = BrWorkspace::new();
 
-    // Initialize and create issue
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let create = run_br(&workspace, ["create", "JSON test issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // List with --json flag
     let list = run_br(&workspace, ["list", "--json"], "list_json");
     assert!(list.status.success(), "list --json failed: {}", list.stderr);
 
-    // Output should be valid paginated JSON with an issues array.
     let json = parse_list_issues(&list.stdout);
     assert!(!json.is_empty(), "JSON list should not be empty");
     assert!(
@@ -105,7 +98,6 @@ fn e2e_json_flag_show() {
         .unwrap_or("")
         .trim();
 
-    // Show with --json flag
     let show = run_br(&workspace, ["show", id, "--json"], "show_json");
     assert!(show.status.success(), "show --json failed: {}", show.stderr);
 
@@ -125,7 +117,6 @@ fn e2e_json_flag_ready() {
     let create = run_br(&workspace, ["create", "Ready JSON test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Ready with --json flag
     let ready = run_br(&workspace, ["ready", "--json"], "ready_json");
     assert!(
         ready.status.success(),
@@ -134,7 +125,6 @@ fn e2e_json_flag_ready() {
     );
 
     let payload = extract_json_payload(&ready.stdout);
-    // Pagination object with issues array.
     let json: Value = serde_json::from_str(&payload).expect("valid JSON object");
     assert!(json.get("issues").and_then(Value::as_array).is_some());
 }
@@ -147,7 +137,6 @@ fn e2e_json_flag_blocked() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Blocked with --json flag (even with no blocked issues)
     let blocked = run_br(&workspace, ["blocked", "--json"], "blocked_json");
     assert!(
         blocked.status.success(),
@@ -157,7 +146,6 @@ fn e2e_json_flag_blocked() {
 
     let payload = extract_json_payload(&blocked.stdout);
     let json: Value = serde_json::from_str(&payload).expect("valid JSON");
-    // Pagination object with issues array (empty when no blocked issues)
     assert!(json.get("issues").and_then(Value::as_array).is_some());
 }
 
@@ -172,7 +160,6 @@ fn e2e_json_flag_stats() {
     let create = run_br(&workspace, ["create", "Stats JSON test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Stats with --json flag
     let stats = run_br(&workspace, ["stats", "--json"], "stats_json");
     assert!(
         stats.status.success(),
@@ -182,7 +169,6 @@ fn e2e_json_flag_stats() {
 
     let payload = extract_json_payload(&stats.stdout);
     let json: Value = serde_json::from_str(&payload).expect("valid JSON");
-    // Stats output has a "summary" object with count fields
     assert!(
         json.get("summary").is_some(),
         "stats should have summary field: {json}"
@@ -193,10 +179,6 @@ fn e2e_json_flag_stats() {
         "stats summary should have count fields: {summary}"
     );
 }
-
-// ============================================================================
-// --robot flag tests
-// ============================================================================
 
 /// Note: --robot is not a global flag for `list` command.
 /// The `list --json` flag provides machine-readable output.
@@ -213,11 +195,9 @@ fn e2e_robot_flag_list() {
     let create = run_br(&workspace, ["create", "Robot test issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // List with --json flag (provides robot-parseable output)
     let list = run_br(&workspace, ["list", "--json"], "list_json");
     assert!(list.status.success(), "list --json failed: {}", list.stderr);
 
-    // JSON mode should output valid JSON to stdout
     let payload = extract_json_payload(&list.stdout);
     let json: Value = serde_json::from_str(&payload).expect("json mode should output valid JSON");
     assert!(json.is_object(), "list should be JSON object envelope");
@@ -235,7 +215,6 @@ fn e2e_robot_flag_stderr_diagnostics() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Use --no-auto-flush so sync has something to export
     let create = run_br(
         &workspace,
         ["create", "Robot stderr test", "--no-auto-flush"],
@@ -243,16 +222,13 @@ fn e2e_robot_flag_stderr_diagnostics() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Sync with --json flag to get JSON output
     let sync = run_br(&workspace, ["sync", "--flush-only", "--json"], "sync_json");
     assert!(sync.status.success(), "sync --json failed: {}", sync.stderr);
 
-    // stdout should be parseable JSON
     let payload = extract_json_payload(&sync.stdout);
     let json: Value =
         serde_json::from_str(&payload).expect("json mode stdout should be valid JSON");
 
-    // Verify it has expected fields from sync output
     assert!(
         json.get("exported_issues").is_some(),
         "JSON output should have exported_issues field"
@@ -290,10 +266,6 @@ fn e2e_robot_flag_sync_flush_outputs_json() {
     assert_eq!(json["exported_issues"].as_u64(), Some(1));
 }
 
-// ============================================================================
-// --no-color flag tests
-// ============================================================================
-
 #[test]
 fn e2e_no_color_flag() {
     let _log = common::test_log("e2e_no_color_flag");
@@ -305,7 +277,6 @@ fn e2e_no_color_flag() {
     let create = run_br(&workspace, ["create", "No-color test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Note: Our test harness already sets NO_COLOR=1, but let's verify --no-color works
     let list = run_br(&workspace, ["list", "--no-color"], "list_no_color");
     assert!(
         list.status.success(),
@@ -313,7 +284,6 @@ fn e2e_no_color_flag() {
         list.stderr
     );
 
-    // Output should not contain ANSI escape codes
     assert!(
         !list.stdout.contains("\x1b["),
         "output should not contain ANSI escape codes with --no-color"
@@ -331,11 +301,9 @@ fn e2e_no_color_env_var() {
     let create = run_br(&workspace, ["create", "NO_COLOR env test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Test with NO_COLOR environment variable (already set by test harness)
     let list = run_br(&workspace, ["list"], "list_with_no_color_env");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
-    // Output should not contain ANSI escape codes
     assert!(
         !list.stdout.contains("\x1b["),
         "output should not contain ANSI escape codes with NO_COLOR env"
@@ -403,10 +371,6 @@ fn e2e_quiet_overrides_env_json_for_list() {
     );
 }
 
-// ============================================================================
-// --no-db flag tests
-// ============================================================================
-
 #[test]
 fn e2e_no_db_flag_list() {
     let _log = common::test_log("e2e_no_db_flag_list");
@@ -415,14 +379,12 @@ fn e2e_no_db_flag_list() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create issue and flush to JSONL
     let create = run_br(&workspace, ["create", "No-DB list test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // List with --no-db flag (reads from JSONL only)
     let list = run_br(&workspace, ["--no-db", "list", "--json"], "list_no_db");
     assert!(
         list.status.success(),
@@ -461,7 +423,6 @@ fn e2e_no_db_flag_show() {
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // Show with --no-db flag
     let show = run_br(&workspace, ["--no-db", "show", id, "--json"], "show_no_db");
     assert!(
         show.status.success(),
@@ -586,7 +547,6 @@ fn e2e_no_db_flag_ready() {
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // Ready with --no-db flag
     let ready = run_br(&workspace, ["--no-db", "ready", "--json"], "ready_no_db");
     assert!(
         ready.status.success(),
@@ -594,7 +554,6 @@ fn e2e_no_db_flag_ready() {
         ready.stderr
     );
 
-    // Should output valid pagination JSON
     let payload = extract_json_payload(&ready.stdout);
     let json: Value = serde_json::from_str(&payload).expect("valid JSON");
     assert!(json.get("issues").and_then(Value::as_array).is_some());
@@ -651,10 +610,6 @@ fn e2e_no_db_hard_delete_flushes_jsonl() {
     );
 }
 
-// ============================================================================
-// --allow-stale flag tests
-// ============================================================================
-
 #[test]
 fn e2e_allow_stale_flag() {
     let _log = common::test_log("e2e_allow_stale_flag");
@@ -666,16 +621,13 @@ fn e2e_allow_stale_flag() {
     let create = run_br(&workspace, ["create", "Stale test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Sync to make JSONL current
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // Modify JSONL directly (makes DB "stale" relative to JSONL)
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
     fs::write(&jsonl_path, format!("{}\n", contents.trim())).expect("write jsonl");
 
-    // List with --allow-stale should succeed even if DB is stale
     let list = run_br(&workspace, ["--allow-stale", "list"], "list_allow_stale");
     assert!(
         list.status.success(),
@@ -683,10 +635,6 @@ fn e2e_allow_stale_flag() {
         list.stderr
     );
 }
-
-// ============================================================================
-// --no-auto-import flag tests
-// ============================================================================
 
 #[test]
 fn e2e_no_auto_import_flag() {
@@ -699,16 +647,13 @@ fn e2e_no_auto_import_flag() {
     let create = run_br(&workspace, ["create", "Auto-import test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Export to JSONL
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // Modify JSONL directly to make it newer than the DB
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
     fs::write(&jsonl_path, format!("{}\n", contents.trim())).expect("write jsonl");
 
-    // With --no-auto-import, should skip the startup import probe entirely
     let list = run_br(
         &workspace,
         ["--no-auto-import", "list"],
@@ -721,10 +666,6 @@ fn e2e_no_auto_import_flag() {
     );
 }
 
-// ============================================================================
-// --no-auto-flush flag tests
-// ============================================================================
-
 #[test]
 fn e2e_no_auto_flush_flag() {
     let _log = common::test_log("e2e_no_auto_flush_flag");
@@ -733,7 +674,6 @@ fn e2e_no_auto_flush_flag() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create with --no-auto-flush
     let create = run_br(
         &workspace,
         ["create", "No auto-flush test", "--no-auto-flush"],
@@ -741,25 +681,17 @@ fn e2e_no_auto_flush_flag() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Check if JSONL exists and if it contains the issue
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
     if jsonl_path.exists() {
         let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
-        // With --no-auto-flush, the issue should NOT be in JSONL yet
-        // (unless there was a previous sync)
-        // This is a soft check since auto-import might have created empty file
         if contents.contains("No auto-flush test") {
-            // If it does contain it, that's unexpected but not necessarily wrong
-            // depending on implementation details
         }
     }
 
-    // Now explicitly flush
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // After flush, issue should be in JSONL
     let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
     assert!(
         contents.contains("No auto-flush test"),
@@ -777,11 +709,9 @@ fn e2e_no_auto_flush_from_project_config() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Disable auto-flush via project config.
     let config_path = workspace.root.join(".beads").join("config.yaml");
     fs::write(&config_path, "sync:\n  auto_flush: false\n").expect("write config");
 
-    // Create without --no-auto-flush flag; config should suppress auto-flush.
     let create = run_br(
         &workspace,
         ["create", "No auto-flush from config"],
@@ -789,7 +719,6 @@ fn e2e_no_auto_flush_from_project_config() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Issue should not be present in JSONL until explicit flush.
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     if jsonl_path.exists() {
         let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
@@ -819,7 +748,6 @@ fn e2e_no_auto_flush_config_hyphen_variant() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Use hyphen variant in config.
     let config_path = workspace.root.join(".beads").join("config.yaml");
     fs::write(&config_path, "sync:\n  auto-flush: false\n").expect("write config");
 
@@ -849,10 +777,6 @@ fn e2e_no_auto_flush_config_hyphen_variant() {
     );
 }
 
-// ============================================================================
-// --lock-timeout flag tests
-// ============================================================================
-
 #[test]
 fn e2e_lock_timeout_flag() {
     let _log = common::test_log("e2e_lock_timeout_flag");
@@ -861,7 +785,6 @@ fn e2e_lock_timeout_flag() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create with custom lock timeout
     let create = run_br(
         &workspace,
         ["--lock-timeout", "5000", "create", "Lock timeout test"],
@@ -873,7 +796,6 @@ fn e2e_lock_timeout_flag() {
         create.stderr
     );
 
-    // Verify issue was created
     let list = run_br(&workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
@@ -884,10 +806,6 @@ fn e2e_lock_timeout_flag() {
     );
 }
 
-// ============================================================================
-// --quiet flag tests
-// ============================================================================
-
 #[test]
 fn e2e_quiet_flag() {
     let _log = common::test_log("e2e_quiet_flag");
@@ -896,7 +814,6 @@ fn e2e_quiet_flag() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create with --quiet flag
     let create = run_br(
         &workspace,
         ["--quiet", "create", "Quiet test"],
@@ -908,8 +825,6 @@ fn e2e_quiet_flag() {
         create.stderr
     );
 
-    // Quiet mode should minimize output (may still show created ID)
-    // Just verify it succeeded and didn't crash
 }
 
 #[test]
@@ -923,7 +838,6 @@ fn e2e_quiet_flag_list() {
     let create = run_br(&workspace, ["create", "Quiet list test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // List with --quiet flag
     let list = run_br(&workspace, ["--quiet", "list"], "list_quiet");
     assert!(
         list.status.success(),
@@ -931,9 +845,6 @@ fn e2e_quiet_flag_list() {
         list.stderr
     );
 
-    // Quiet mode should still show results but with minimal decoration
-    // Verify it shows the issue title somewhere
-    // (exact format depends on implementation)
 }
 
 #[test]
@@ -1476,10 +1387,6 @@ fn e2e_quiet_flag_sync_subcommands() {
     );
 }
 
-// ============================================================================
-// --verbose flag tests
-// ============================================================================
-
 #[test]
 fn e2e_verbose_flag() {
     let _log = common::test_log("e2e_verbose_flag");
@@ -1488,7 +1395,6 @@ fn e2e_verbose_flag() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create with -v flag
     let create = run_br(
         &workspace,
         ["-v", "create", "Verbose test"],
@@ -1500,9 +1406,6 @@ fn e2e_verbose_flag() {
         create.stderr
     );
 
-    // Verbose mode should show more output (in stderr typically)
-    // RUST_LOG is already set to debug in test harness, so this is mostly
-    // verifying the flag doesn't cause issues
 }
 
 #[test]
@@ -1513,7 +1416,6 @@ fn e2e_very_verbose_flag() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create with -vv flag for more verbosity
     let create = run_br(
         &workspace,
         ["-vv", "create", "Very verbose test"],
@@ -1526,10 +1428,6 @@ fn e2e_very_verbose_flag() {
     );
 }
 
-// ============================================================================
-// Combined flags tests
-// ============================================================================
-
 #[test]
 fn e2e_json_no_color_combined() {
     let _log = common::test_log("e2e_json_no_color_combined");
@@ -1541,7 +1439,6 @@ fn e2e_json_no_color_combined() {
     let create = run_br(&workspace, ["create", "Combined flags test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Combine --json and --no-color
     let list = run_br(
         &workspace,
         ["list", "--json", "--no-color"],
@@ -1553,7 +1450,6 @@ fn e2e_json_no_color_combined() {
         list.stderr
     );
 
-    // Should be valid JSON with no color codes
     let _json = parse_list_issues(&list.stdout);
     assert!(
         !list.stdout.contains("\x1b["),
@@ -1575,7 +1471,6 @@ fn e2e_no_db_json_combined() {
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // Combine --no-db and --json
     let list = run_br(&workspace, ["--no-db", "list", "--json"], "list_no_db_json");
     assert!(
         list.status.success(),
@@ -1601,7 +1496,6 @@ fn e2e_quiet_json_combined() {
     let create = run_br(&workspace, ["create", "Quiet JSON test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Combine --quiet and --json
     let list = run_br(&workspace, ["--quiet", "list", "--json"], "list_quiet_json");
     assert!(
         list.status.success(),
@@ -1609,13 +1503,8 @@ fn e2e_quiet_json_combined() {
         list.stderr
     );
 
-    // JSON should still be valid
     let _json = parse_list_issues(&list.stdout);
 }
-
-// ============================================================================
-// Global flag position tests
-// ============================================================================
 
 #[test]
 fn e2e_global_flag_before_command() {
@@ -1628,7 +1517,6 @@ fn e2e_global_flag_before_command() {
     let create = run_br(&workspace, ["create", "Position test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Global flag before command
     let list = run_br(&workspace, ["--json", "list"], "list_flag_before");
     assert!(
         list.status.success(),
@@ -1650,7 +1538,6 @@ fn e2e_global_flag_after_command() {
     let create = run_br(&workspace, ["create", "Position test 2"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Global flag after command
     let list = run_br(&workspace, ["list", "--json"], "list_flag_after");
     assert!(
         list.status.success(),
@@ -1660,10 +1547,6 @@ fn e2e_global_flag_after_command() {
 
     let _json = parse_list_issues(&list.stdout);
 }
-
-// ============================================================================
-// Output mode consistency tests (beads-14eu)
-// ============================================================================
 
 /// JSON mode should produce stdout that parses as valid JSON with no extra text.
 #[test]
@@ -1677,7 +1560,6 @@ fn e2e_json_stdout_is_clean_json() {
     let create = run_br(&workspace, ["create", "JSON clean test"], "create");
     assert!(create.status.success());
 
-    // Verify multiple commands produce clean JSON stdout
     for (cmd, label) in [
         (vec!["list", "--json"], "list"),
         (vec!["ready", "--json"], "ready"),
@@ -1696,7 +1578,6 @@ fn e2e_json_stdout_is_clean_json() {
             output.stdout
         );
 
-        // No ANSI escape codes in JSON output
         assert!(
             !output.stdout.contains("\x1b["),
             "{label} --json stdout contains ANSI escape codes"
@@ -1716,15 +1597,12 @@ fn e2e_quiet_reduces_output() {
     let create = run_br(&workspace, ["create", "Quiet reduction test"], "create");
     assert!(create.status.success());
 
-    // Normal list output
     let normal = run_br(&workspace, ["list"], "list_normal");
     assert!(normal.status.success());
 
-    // Quiet list output
     let quiet = run_br(&workspace, ["--quiet", "list"], "list_quiet_cmp");
     assert!(quiet.status.success());
 
-    // Quiet output should be shorter or equal (never longer)
     assert!(
         quiet.stdout.len() <= normal.stdout.len(),
         "quiet output ({} bytes) should not exceed normal output ({} bytes)\nquiet: {}\nnormal: {}",
@@ -1747,7 +1625,6 @@ fn e2e_json_overrides_quiet() {
     let create = run_br(&workspace, ["create", "Precedence test"], "create");
     assert!(create.status.success());
 
-    // --quiet --json should still produce valid JSON
     let output = run_br(&workspace, ["--quiet", "list", "--json"], "quiet_json_prec");
     assert!(output.status.success());
 

@@ -37,10 +37,6 @@ use rusqlite::{Error as RError, OpenFlags as ROpenFlags, Statement, ToSql, param
 /// afterwards, which wins.
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 /// Storage-layer database error.
 ///
 /// Variant set is exactly what callers outside this module match on; the
@@ -187,10 +183,6 @@ impl DbError {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Values and rows
-// ---------------------------------------------------------------------------
 
 /// A single SQLite value owned by a [`Row`].
 ///
@@ -357,8 +349,6 @@ fn exec_buffered(stmt: &mut Statement<'_>, params: &[SqliteValue]) -> Result<usi
     match stmt.execute(params_from_iter(params.iter())) {
         Ok(changes) => Ok(changes),
         // PRAGMA assignments like `journal_mode = WAL` return a result row;
-        // the pre-rusqlite engine tolerated executing them, so drain the
-        // rows and report the connection's change counter instead of failing.
         Err(RError::ExecuteReturnedResults) => {
             let mut rows = stmt.query(params_from_iter(params.iter()))?;
             while rows.next()?.is_some() {}
@@ -367,10 +357,6 @@ fn exec_buffered(stmt: &mut Statement<'_>, params: &[SqliteValue]) -> Result<usi
         Err(other) => Err(other),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Connection
-// ---------------------------------------------------------------------------
 
 /// Synchronous SQLite connection over rusqlite.
 ///
@@ -556,10 +542,6 @@ impl Connection {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Prepared statements
-// ---------------------------------------------------------------------------
-
 /// Prepared statement tied to the lifetime of its [`Connection`].
 pub struct PreparedStatement<'conn> {
     conn: &'conn Connection,
@@ -641,10 +623,6 @@ impl PreparedStatement<'_> {
         exec_buffered(&mut self.inner, params).map_err(|err| self.conn.db_error(err))
     }
 }
-
-// ---------------------------------------------------------------------------
-// compat: rusqlite-style open flags
-// ---------------------------------------------------------------------------
 
 pub mod compat {
     //! Open-flag compatibility surface for callers that open databases with

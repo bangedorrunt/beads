@@ -846,8 +846,6 @@ impl CapacityHierarchyState {
 
         let (counted, exempt): (u64, u64) = match mode {
             CapacityCountingMode::LeafWork => {
-                // Emission order puts descendant components first, so every
-                // child flag is final before its parent is examined.
                 let mut has_active_descendant = vec![false; comp_count];
                 let mut counted = 0u64;
                 let mut exempt = 0u64;
@@ -866,8 +864,6 @@ impl CapacityHierarchyState {
                 (counted, exempt)
             }
             CapacityCountingMode::Roots => {
-                // Reverse emission order puts ancestor components first, so
-                // each component's flag is final before it propagates down.
                 let mut has_active_ancestor = vec![false; comp_count];
                 for comp in (0..comp_count).rev() {
                     if active_members[comp] > 0 || has_active_ancestor[comp] {
@@ -1133,13 +1129,7 @@ fn append_label_or_membership_exists(
         params.push(SqliteValue::from(label.as_str()));
     }
 }
-// Multi-row INSERT rewrites of `export_hashes` can trip false PRIMARY KEY
-// conflicts. Batch the DELETE side for efficiency, but re-insert one row at
-// a time for correctness.
 const EXPORT_HASH_CHUNK_SIZE: usize = 32;
-// The same false primary-key conflict can surface when an existing
-// blocked-cache population is rewritten via a large multi-values INSERT. Keep
-// the delete batched/full-table, but re-insert rows individually.
 const BLOCKED_CACHE_DELETE_CHUNK_SIZE: usize = 400;
 const DIRTY_ISSUE_CHUNK_SIZE: usize = 900;
 const BLOCKS_DEP_EDGE_FILTER_LIMIT: usize = 400;
@@ -1566,8 +1556,6 @@ fn resolved_ready_status_list(filters: &ReadyFilters) -> Vec<String> {
     } else {
         filters.ready_statuses.clone()
     };
-    // ADR-0035 Spec 4: drafts are never ready, by construction — even when a
-    // policy group names them. `q` captures drafts; `ready` dispatches work.
     statuses.retain(|status| !status.eq_ignore_ascii_case("draft"));
     if filters.include_deferred
         && !statuses
@@ -1737,8 +1725,6 @@ impl BlockedIssueProjection {
 
     const fn cached_blocked_by_index(self) -> usize {
         match self {
-            // Full cached projection has issue columns 0..48, followed by
-            // `bc.blocked_by` at position 49.
             Self::Full => 49,
             Self::Command => 10,
         }
@@ -1771,7 +1757,7 @@ impl MutationContext {
 
     pub fn record_event(&mut self, event_type: EventType, issue_id: &str, details: Option<String>) {
         self.events.push(Event {
-            id: 0, // Placeholder, DB assigns auto-inc ID
+            id: 0,
             issue_id: issue_id.to_string(),
             event_type,
             actor: self.actor.clone(),
@@ -1815,7 +1801,6 @@ impl MutationContext {
 
     pub fn invalidate_cache(&mut self) {
         self.invalidate_blocked_cache = true;
-        // Force full rebuild by clearing any incremental affected set.
         self.cache_affected_ids = None;
     }
 
@@ -1922,10 +1907,6 @@ impl SqliteStorage {
     where
         F: FnMut(&Connection) -> Result<R>,
     {
-        // Issue #219: same retry parameters as with_write_transaction (see
-        // that method for rationale). This shared-connection variant is used
-        // for blocked-cache rebuilds and metadata writes which also contend
-        // for the write lock under parallel agent operations.
         const MAX_RETRIES: u32 = 8;
         let base_backoff_ms: u64 = 50;
         let mut last_error: Option<crate::error::BeadsError> = None;
@@ -2062,12 +2043,6 @@ impl SqliteStorage {
     }
 
     fn ensure_known_metadata_defaults(conn: &Connection) -> Result<()> {
-        // Read-first, write-only-if-missing pattern (#243). The read
-        // (`metadata_key_exists`) needs no write lock, so ordinary opens do
-        // not contend with active writers. If a key is missing, the INSERT
-        // re-checks existence inside the statement because `metadata.key` is
-        // intentionally not unique; `INSERT OR IGNORE` would not protect
-        // against duplicate default rows.
         for (key, default_value) in KNOWN_METADATA_DEFAULTS {
             if Self::metadata_key_exists(conn, key)? {
                 continue;
@@ -2075,9 +2050,6 @@ impl SqliteStorage {
             match Self::insert_metadata_default_if_missing(conn, key, default_value) {
                 Ok(()) => {}
                 Err(e) if e.is_transient() => {
-                    // BUSY — another writer is active. The default will be
-                    // present once their transaction commits, or we'll seed
-                    // it on the next open.
                 }
                 Err(e) => return Err(e),
             }
@@ -2195,8 +2167,6 @@ impl SqliteStorage {
             BlockedCacheRefreshPlan::Incremental(ids) => {
                 Self::incremental_blocked_cache_update(conn, ids)
             }
-            // Deferred plan is never applied eagerly; the stale marker already
-            // set inside the write transaction signals reads to compute in-memory.
             BlockedCacheRefreshPlan::Deferred => Ok(0),
         }
     }
@@ -2330,8 +2300,6 @@ impl SqliteStorage {
         plan: &BlockedCacheRefreshPlan,
     ) -> Result<()> {
         // Disable FK enforcement before the transaction.  PRAGMA foreign_keys
-        // can only be changed outside an active transaction; false FK
-        // violations on blocked_issues_cache inserts are suppressed (#215).
         self.conn.execute("PRAGMA foreign_keys = OFF")?;
         let result = self.with_connection_write_transaction(|conn| {
             let refreshed = Self::apply_blocked_cache_refresh_plan(conn, plan)?;
@@ -2390,8 +2358,6 @@ impl SqliteStorage {
         }
 
         // Disable FK enforcement before the transaction.  PRAGMA foreign_keys
-        // can only be changed outside an active transaction; false FK
-        // violations on blocked_issues_cache inserts are suppressed (#215).
         self.conn.execute("PRAGMA foreign_keys = OFF")?;
         let result = self.with_connection_write_transaction(|conn| {
             if !Self::metadata_equals(conn, BLOCKED_CACHE_STATE_KEY, BLOCKED_CACHE_STATE_STALE)? {
@@ -2423,20 +2389,10 @@ impl SqliteStorage {
     pub fn open_with_timeout(path: &Path, lock_timeout_ms: Option<u64>) -> Result<Self> {
         let conn = Connection::open(path.to_string_lossy().into_owned())?;
 
-        // Set busy_timeout. Default is 0 (#243) — frankensqlite's busy
-        // handler hot-spins, so we rely on application-level retry (see
-        // `with_write_transaction`). The `.write.lock` flock serializes
-        // concurrent mutating processes before they reach this point.
         if let Some(timeout_ms) = lock_timeout_ms {
             conn.execute(&format!("PRAGMA busy_timeout={timeout_ms}"))?;
         }
 
-        // Ordinary opens keep the shipped auto-migration contract: a database
-        // behind CURRENT_SCHEMA_VERSION is migrated in place (legacy fleets
-        // depend on this — pre-v13 databases have no reviewed migration
-        // pair). The reviewed `br doctor migrate-schema` lifecycle remains
-        // the explicit, receipt-bound alternative for operator-driven
-        // migrations of supported version pairs.
         let schema_current = connection_user_version(&conn)
             .or_else(|| database_header_user_version(path))
             .is_some_and(|version| version >= u32::try_from(CURRENT_SCHEMA_VERSION).unwrap_or(0));
@@ -2464,32 +2420,16 @@ impl SqliteStorage {
 
     pub(crate) fn open_current_read_only(path: &Path) -> Result<Option<Self>> {
         let current_schema_version = u32::try_from(CURRENT_SCHEMA_VERSION).unwrap_or(0);
-        // Cheap header pre-filter: only reject when the file is definitively not
-        // a SQLite database (no valid header magic). A low header *version* must
-        // NOT disqualify — an uncheckpointed WAL from another process may hold
-        // the true, current value that the raw header bytes do not yet reflect
-        // (issue #373). A real database always carries the header magic even
-        // when its user_version lives only in the WAL.
         if database_header_user_version(path).is_none() {
             return Ok(None);
         }
 
-        // Open READ_WRITE (no create): a READ_ONLY connection cannot delete
-        // the -shm/-wal family on close under real SQLite, so every fast-open
-        // command would leave sidecar litter beside the database. A clean
-        // read-write close checkpoints and removes them, keeping the fast
-        // path net-zero on the database family. Open failures (e.g. a
-        // read-only filesystem) fall back to the full recovery open.
         let conn = open_with_flags(
             path.to_string_lossy().as_ref(),
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX
                 | OpenFlags::SQLITE_OPEN_URI,
         )?;
-        // Now that the connection is open, consult the effective schema version
-        // (WAL-aware) and fall back to the header peek. Reviewed reconciliation
-        // is intentionally exact-version only: a future schema may add columns,
-        // triggers, or invariants that this binary cannot witness safely.
         if connection_user_version(&conn).or_else(|| database_header_user_version(path))
             != Some(current_schema_version)
         {
@@ -2571,10 +2511,6 @@ impl SqliteStorage {
             let path =
                 std::env::temp_dir().join(format!("beads_mem_{}_{}.db", std::process::id(), count));
 
-            // Build the storage on a fallible path so that any failure after
-            // the file has been created still removes it (the partial
-            // `Connection` / file would otherwise be orphaned without a live
-            // `Drop` to clean it).
             match Self::build_memory(&path) {
                 Ok(storage) => return Ok(storage),
                 Err(error) => {
@@ -2628,7 +2564,6 @@ impl SqliteStorage {
         // Safety-level PRAGMAs cannot run inside a transaction under real
         // SQLite ("Safety level may not be changed inside a transaction"),
         // so the runtime pragma restoration happens after COMMIT. The
-        // previous engine tolerated the in-transaction form; rusqlite does not.
         crate::storage::schema::apply_runtime_pragmas(&self.conn)?;
         Ok(())
     }
@@ -2655,10 +2590,7 @@ impl SqliteStorage {
             DROP TABLE IF EXISTS issues;
             ",
         )?;
-        // Recreate with full schema (config/metadata already exist, IF NOT EXISTS is safe).
-        // Use the DDL-only variant rather than apply_runtime_compatible_schema because we
         // are mid-transaction here: safety-level PRAGMAs are rejected by real SQLite
-        // inside a transaction and are re-applied by reset_data_tables after COMMIT.
         crate::storage::schema::apply_runtime_compatible_schema_ddl(&self.conn)?;
         Ok(())
     }
@@ -3019,12 +2951,6 @@ impl SqliteStorage {
     where
         F: FnMut(&mut Self) -> Result<R>,
     {
-        // Issue #219/#243: parallel agents caused "database is busy" errors
-        // or deadlocks.  With busy_timeout=0 (see DEFAULT_BUSY_TIMEOUT_MS),
-        // BEGIN IMMEDIATE returns SQLITE_BUSY immediately, and all retry
-        // timing happens here via thread::sleep with jittered exponential
-        // backoff. 8 retries × (50ms → 6400ms) gives ~12.7s total wait with
-        // good desynchronization under concurrent access.
         const MAX_RETRIES: u32 = 8;
         let base_backoff_ms: u64 = 50;
         let mut last_error: Option<crate::error::BeadsError> = None;
@@ -3060,9 +2986,6 @@ impl SqliteStorage {
                             self.verify_attached_database_authority_after_commit(
                                 "write transaction",
                             )?;
-                            // Periodic WAL checkpoint to prevent unbounded WAL growth.
-                            // Uses PASSIVE mode so it never blocks concurrent readers
-                            // or writers (issue #219).
                             self.mutation_count += 1;
                             if self.mutation_count >= WAL_CHECKPOINT_INTERVAL {
                                 self.mutation_count = 0;
@@ -3083,7 +3006,6 @@ impl SqliteStorage {
                             last_error = Some(commit_error);
                             let backoff = Self::jittered_backoff(base_backoff_ms, attempt);
                             std::thread::sleep(Duration::from_millis(backoff));
-                            // retry
                         }
                         Err(e) => {
                             return Err(Self::rollback_transaction_error(
@@ -3107,7 +3029,6 @@ impl SqliteStorage {
                         last_error = Some(e);
                         let backoff = Self::jittered_backoff(base_backoff_ms, attempt);
                         std::thread::sleep(Duration::from_millis(backoff));
-                        // retry
                     } else {
                         return Err(e);
                     }
@@ -3147,8 +3068,6 @@ impl SqliteStorage {
     /// thundering-herd synchronization across concurrent agents.
     fn jittered_backoff(base_ms: u64, attempt: u32) -> u64 {
         let deterministic = base_ms * 2u64.pow(attempt);
-        // Add +-25% jitter using a cheap PRNG seeded from the current time.
-        // No need for cryptographic randomness here.
         let nanos = u64::from(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -3159,8 +3078,6 @@ impl SqliteStorage {
         if jitter_range == 0 {
             return deterministic;
         }
-        // Map nanos into [-jitter_range, +jitter_range) using i128 to avoid
-        // truncation on the u64→i64 boundary.
         let raw = i128::from(nanos % (jitter_range * 2)) - i128::from(jitter_range);
         let result = i128::from(deterministic) + raw;
         u64::try_from(result.max(1)).unwrap_or(u64::MAX)
@@ -3181,7 +3098,6 @@ impl SqliteStorage {
         let mut count = 0;
 
         for chunk in unique_exports.chunks(EXPORT_HASH_CHUNK_SIZE) {
-            // Delete existing entries row-by-row rather than one IN-list DELETE.
             for (id, _) in chunk {
                 self.conn.execute_with_params(
                     "DELETE FROM export_hashes WHERE issue_id = ?",
@@ -3189,9 +3105,6 @@ impl SqliteStorage {
                 )?;
             }
 
-            // A false primary-key conflict can surface when many existing rows are
-            // reinserted via one VALUES list, so keep each
-            // insert isolated after the chunk delete.
             for (issue_id, content_hash) in chunk {
                 self.conn.execute_with_params(
                     "INSERT INTO export_hashes (issue_id, content_hash, exported_at) VALUES (?, ?, ?)",
@@ -3405,7 +3318,6 @@ impl SqliteStorage {
 
         let mut total_deleted = 0;
         for chunk in issue_ids.chunks(EXPORT_HASH_CHUNK_SIZE) {
-            // Delete existing entries row-by-row rather than one IN-list DELETE.
             let mut chunk_deleted = 0;
             for id in chunk {
                 let deleted = self.conn.execute_with_params(
@@ -3424,12 +3336,6 @@ impl SqliteStorage {
     /// database file. Errors are logged but do not propagate — checkpoint
     /// failure is non-fatal and will be retried on the next interval.
     fn try_wal_checkpoint(&self) {
-        // Issue #219: TRUNCATE mode requires an exclusive lock, which blocks
-        // all concurrent readers and writers.  Under parallel agent operations
-        // this was a major source of "database is busy" errors.  PASSIVE mode
-        // checkpoints only pages that are not currently needed by any reader,
-        // so it never blocks other connections.  The WAL file may grow slightly
-        // larger between checkpoints, but journal_size_limit (set in
         // apply_runtime_pragmas) caps it.
         if let Err(e) = self.verify_attached_database_authority() {
             tracing::warn!(error = %e, "Skipping WAL checkpoint after database authority changed");
@@ -3577,8 +3483,6 @@ impl SqliteStorage {
     /// Returns an error if the underlying event query fails.
     pub fn find_last_in_progress_actor(&self, issue_id: &str) -> Result<Option<String>> {
         let events = crate::storage::events::get_events(&self.conn, issue_id, 0)?;
-        // get_events returns DESC ordering by created_at then id, so the first
-        // matching event is the most recent transition into in_progress.
         for event in events {
             if event.event_type == crate::model::EventType::StatusChanged
                 && event
@@ -3624,10 +3528,6 @@ impl SqliteStorage {
     ) -> Result<()> {
         let gates_json = serde_json::to_string(policy_gates_fired).map_err(BeadsError::from)?;
 
-        // INSERT OR REPLACE: a re-close (e.g. close → reopen → close) overwrites
-        // the prior row. If the project ever needs full history, querying the
-        // events table gives an audit trail; `close_metadata` is the
-        // currently-effective metadata for the most recent close.
         self.with_connection_write_transaction(|conn| {
             conn.execute_with_params(
                 "INSERT OR REPLACE INTO close_metadata (
@@ -4070,8 +3970,6 @@ impl SqliteStorage {
     /// the proof was filed under.
     fn assert_close_verdict_proven_in_tx(conn: &Connection, id: &str, verdict: &str) -> Result<()> {
         if !crate::storage::schema::table_exists(conn, "gate_result_history") {
-            // Pre-migration database: no row can exist yet, and refusing here
-            // would make legacy closes unrecordable rather than safe.
             return Ok(());
         }
         let rows = conn.query_with_params(
@@ -5085,8 +4983,6 @@ impl SqliteStorage {
             };
             let provider = row.get(3).and_then(SqliteValue::as_text).unwrap_or("");
             let expires_at = row.get(4).and_then(SqliteValue::as_text);
-            // An unparseable expiry is treated as already expired: counting
-            // again is the fail-safe direction for a corrupt record.
             let has_expired = expires_at.is_some_and(|raw| {
                 chrono::DateTime::parse_from_rfc3339(raw)
                     .map_or(true, |dt| dt.with_timezone(&Utc) <= now)
@@ -5513,11 +5409,6 @@ impl SqliteStorage {
         for (status, limit) in &policy.statuses {
             let members = [status.clone()];
             let pair = engine.counts("status", status, &members)?;
-            // Under `all`, a rising count always has an entering transition.
-            // Hierarchy counting can raise a capacity without one — closing a
-            // child shared by two active parents makes both parents start
-            // counting — so fall back to the first transition in the batch
-            // rather than letting the increase escape enforcement.
             let entering = Self::blamed_capacity_transition(engine, &members);
 
             if let (Some(hard_limit), Some(transition)) = (limit.hard, entering)
@@ -5761,7 +5652,6 @@ impl SqliteStorage {
             return Ok(());
         }
 
-        // Lazily built shared inputs.
         let mut occupancy: Option<HashMap<String, CapacityOccupancyRow>> = None;
         let mut subtree: Option<CapacitySubtreeIndex> = None;
 
@@ -5880,7 +5770,6 @@ impl SqliteStorage {
         let exempt_ids = exemptions.exempt_ids(check.kind_str, &canonical_name);
         let is_exempt = |issue_id: &str| exempt_ids.is_some_and(|ids| ids.contains(issue_id));
 
-        // Scope key of a transition, in the entering and draining direction.
         let enter_key = |transition: &CapacityBatchTransition| -> Option<String> {
             match check.keying {
                 CapacityScopeKeying::Repository => Some(String::new()),
@@ -5919,9 +5808,6 @@ impl SqliteStorage {
             }
         };
 
-        // Partition keys that gain occupancy from this batch. For the acting
-        // scopes this is at most the single acting key; for assignee/subtree
-        // it is the distinct keys of entering transitions.
         let mut candidate_keys: Vec<String> = Vec::new();
         for transition in transitions {
             if is_exempt(&transition.issue_id) {
@@ -6488,34 +6374,11 @@ impl SqliteStorage {
     where
         F: FnMut(&Connection, &mut MutationContext) -> Result<R>,
     {
-        // A warning belongs exclusively to the mutation that produced it.
-        // Clear before BEGIN so failed/retried operations cannot expose stale
-        // evidence from an earlier command.
         self.last_capacity_warnings.clear();
 
         // Disable FK enforcement before the transaction begins.  PRAGMA
-        // foreign_keys can only be changed outside an active transaction.
-        // False FK violations can surface even when the referenced
-        // issue_id was just
-        // written/verified in the same transaction (#215).  All FK
-        // invariants (dependencies -> issues, events -> issues,
-        // dirty_issues -> issues, etc.) are enforced by application logic
-        // within the mutation closures.
         self.conn.execute("PRAGMA foreign_keys = OFF")?;
 
-        // Peek (clone) — do NOT take — the per-command attribution staged for
-        // this mutation. We must not permanently consume the staged value until
-        // the mutation is known to COMMIT: if `with_write_transaction` returns a
-        // recoverable `Database(_)` error, `retry_mutation_with_jsonl_recovery`
-        // re-invokes this `mutate()` after rebuilding the DB from JSONL, and the
-        // staged slot must still be present so the recovered write records the
-        // attribution (#312 hardening, F1). Cloning here also means the internal
-        // BUSY-retry loop inside `with_write_transaction` re-applies the SAME
-        // value on each attempt and stamps exactly once on the committing run.
-        //
-        // Invariant: pending attribution is consumed by exactly one committing
-        // mutation, or cleared — it never leaks into a later, unrelated
-        // operation. It is `.take()`n below only after a successful commit.
         let pending_attribution = self.pending_event_attribution.clone().unwrap_or_default();
 
         let tx_result: Result<_> = self.with_write_transaction(|storage| {
@@ -6523,7 +6386,6 @@ impl SqliteStorage {
             ctx.attribution = pending_attribution.clone();
             let result = f(&storage.conn, &mut ctx)?;
 
-            // Write events
             if !ctx.events.is_empty() {
                 let sql = "INSERT INTO events (issue_id, event_type, actor, old_value, new_value, comment, created_at, agent_name, harness, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
                 for event in &ctx.events {
@@ -6561,16 +6423,12 @@ impl SqliteStorage {
                 }
             }
 
-            // Mark dirty
             if !ctx.dirty_ids.is_empty() {
                 let now_str = Utc::now().to_rfc3339();
-                // Collect IDs into a Vec for chunked processing
                 let dirty_vec: Vec<_> = ctx.dirty_ids.iter().collect();
 
                 for chunk in dirty_vec.chunks(DIRTY_ISSUE_CHUNK_SIZE) {
-                    // Explicit DELETE + INSERT instead of INSERT OR REPLACE because
                     for insert_chunk in chunk.chunks(450) {
-                        // Delete existing entries row-by-row rather than one IN-list DELETE.
                         for id in insert_chunk {
                             storage.conn.execute_with_params(
                                 "DELETE FROM dirty_issues WHERE issue_id = ?",
@@ -6578,7 +6436,6 @@ impl SqliteStorage {
                             )?;
                         }
 
-                        // Now insert fresh rows one by one
                         for id in insert_chunk {
                             storage.conn.execute_with_params(
                                 "INSERT INTO dirty_issues (issue_id, marked_at) VALUES (?, ?)",
@@ -6592,10 +6449,6 @@ impl SqliteStorage {
                 }
             }
 
-            // ADR-0035 Spec 4 dual-write (bd-hj1t): one event_log row per
-            // touched issue, same transaction. Payload is the post-mutation
-            // snapshot; replaying the log rebuilds the table. A log failure
-            // fails the mutation (fail-closed) — never row-without-event.
             if !ctx.dirty_ids.is_empty() {
                 let mut ids: Vec<&String> = ctx.dirty_ids.iter().collect();
                 ids.sort();
@@ -6611,15 +6464,6 @@ impl SqliteStorage {
 
             let mut blocked_cache_plan = BlockedCacheRefreshPlan::from_context(&ctx);
             if blocked_cache_plan.is_some() {
-                // An Incremental refresh only rewrites its own connected
-                // component and then declares the WHOLE cache fresh, which is
-                // sound only if the cache was already consistent. If a prior
-                // Deferred write left the cache stale (its edge is committed
-                // but not yet in blocked_issues_cache), an Incremental refresh
-                // would clear the stale marker while that earlier change is
-                // still missing — reporting a blocked issue as ready. Upgrade
-                // to a Full rebuild in that case (Full is always correct), so
-                // "the next non-deferred write rebuilds the cache" holds.
                 if matches!(
                     blocked_cache_plan,
                     Some(BlockedCacheRefreshPlan::Incremental(_))
@@ -6640,15 +6484,10 @@ impl SqliteStorage {
             Ok((result, blocked_cache_plan, ctx.capacity_warnings))
         });
 
-        // Consume the staged attribution only now that the transaction has
-        // COMMITTED (#312 hardening, F1). On a recoverable error the slot is
-        // intentionally left intact so the JSONL-recovery retry can re-stamp it.
         if tx_result.is_ok() {
             self.pending_event_attribution = None;
         }
 
-        // Re-enable FK enforcement after the transaction completes
-        // (regardless of success or failure).
         let (result, blocked_cache_plan, capacity_warnings) =
             Self::finish_foreign_key_suppressed_result(&self.conn, op, tx_result)?;
 
@@ -6656,10 +6495,6 @@ impl SqliteStorage {
 
         match blocked_cache_plan {
             Some(BlockedCacheRefreshPlan::Deferred) => {
-                // Stale marker already set inside the transaction.  Reads will
-                // compute blocked state in-memory until the next non-deferred
-                // write rebuilds the cache.  Skipping the eager second write
-                // transaction eliminates DB lock contention for dep add/remove.
                 tracing::debug!(
                     operation = op,
                     "Blocked cache refresh deferred; will rebuild lazily on next read"
@@ -6688,8 +6523,6 @@ impl SqliteStorage {
         let capacity_policy = self.workflow_capacity_policy.clone();
 
         self.mutate("create_issue", actor, |conn, ctx| {
-            // Explicit duplicate check for UNIQUE constraints on
-            // non-rowid columns.
             match conn.query_row_with_params(
                 "SELECT 1 FROM issues WHERE id = ? LIMIT 1",
                 &[SqliteValue::from(issue.id.as_str())],
@@ -6703,7 +6536,6 @@ impl SqliteStorage {
                 Err(error) => return Err(error.into()),
             }
 
-            // Check for external_ref collision
             if let Some(ref ext_ref) = issue.external_ref {
                 let existing_ext = conn.query_with_params(
                     "SELECT id FROM issues WHERE external_ref = ? LIMIT 1",
@@ -6800,7 +6632,6 @@ impl SqliteStorage {
                     SqliteValue::from(i64::from(i32::from(issue.pinned))),
                     SqliteValue::from(i64::from(i32::from(issue.is_template))),
                     issue.agent_context.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
-                    // Schema v18 (ADR-0001 §5.2): typed work-ledger fields.
                     issue.verify.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
                     SqliteValue::from(
                         serde_json::to_string(&issue.principles).unwrap_or_default(),
@@ -6818,17 +6649,13 @@ impl SqliteStorage {
                         crate::model::Blast::High => "high",
                     }),
                     SqliteValue::from(i64::try_from(issue.revision).unwrap_or(i64::MAX)),
-                    // ADR-0005 §§2-3: deliverable as canonical string, promotes nullable.
                     SqliteValue::from(issue.deliverable.as_str()),
                     issue.promotes.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
                 ],
             )?;
 
-            // GitHub #384 phase 5: creation admits the issue into its
-            // initial status; record the admitting attribution.
             Self::record_capacity_occupancy_in_tx(conn, &issue.id, &ctx.actor, &ctx.attribution)?;
 
-            // Update child counter if this is a hierarchical ID
             if let Ok(parsed) = parse_id(&issue.id)
                 && !parsed.is_root()
                 && let Some(parent) = parsed.parent()
@@ -6837,7 +6664,6 @@ impl SqliteStorage {
                 Self::update_child_counter_in_tx(conn, &parent, child_num)?;
             }
 
-            // Insert Labels
             let mut seen_labels = HashSet::new();
             for label in &issue.labels {
                 if !seen_labels.insert(label.as_str()) {
@@ -6854,7 +6680,6 @@ impl SqliteStorage {
                 );
             }
 
-            // Insert Dependencies
             let mut seen_deps = HashSet::new();
             for dep in &issue.dependencies {
                 if dep.depends_on_id == issue.id {
@@ -6867,7 +6692,6 @@ impl SqliteStorage {
                     continue;
                 }
                 Self::ensure_dependency_target_exists_in_tx(conn, &dep.depends_on_id)?;
-                // Check cycle if blocking.
                 if Self::check_dependency_cycle_for_type(
                     conn,
                     &issue.id,
@@ -6906,7 +6730,6 @@ impl SqliteStorage {
                 ctx.invalidate_cache_for(&[issue.id.as_str(), dep.depends_on_id.as_str()]);
             }
 
-            // Insert Comments
             for comment in &issue.comments {
                 conn.execute_with_params(
                     "INSERT INTO comments (issue_id, author, text, created_at) VALUES (?, ?, ?, ?)",
@@ -6961,10 +6784,6 @@ impl SqliteStorage {
         depends_on_id: &str,
         blocking_only: bool,
     ) -> Result<bool> {
-        // Build the per-node neighbor query.  We UNION two directions:
-        //   (a) standard deps: given node as issue_id, follow to depends_on_id
-        //   (b) parent-child reversed: given node as depends_on_id (parent),
-        //       follow to issue_id (child) -- because parent is blocked by child
         let neighbor_sql = if blocking_only {
             "SELECT depends_on_id FROM dependencies \
              WHERE issue_id = ? AND type IN ('blocks', 'conditional-blocks', 'waits-for') \
@@ -6984,8 +6803,6 @@ impl SqliteStorage {
         let mut stmt = conn.prepare(&neighbor_sql)?;
 
         let mut visited = HashSet::new();
-        // Level-synchronous BFS: process all nodes at one depth before moving
-        // to the next, so we can enforce a depth cap cleanly.
         let mut frontier: Vec<String> = vec![depends_on_id.to_string()];
         visited.insert(depends_on_id.to_string());
 
@@ -7004,7 +6821,7 @@ impl SqliteStorage {
                 for row in &rows {
                     if let Some(neighbor) = row.get(0).and_then(SqliteValue::as_text) {
                         if neighbor == issue_id {
-                            return Ok(true); // Cycle detected -- early exit
+                            return Ok(true);
                         }
                         if visited.insert(neighbor.to_string()) {
                             next_frontier.push(neighbor.to_string());
@@ -7025,8 +6842,6 @@ impl SqliteStorage {
         parent_id: &str,
         blocking_only: bool,
     ) -> Result<bool> {
-        // Stored parent-child rows are child -> parent, but the blocker graph
-        // edge is parent -> child because parents wait for children.
         Self::check_cycle(conn, parent_id, child_id, blocking_only)
     }
 
@@ -7109,15 +6924,6 @@ impl SqliteStorage {
             let from = issue.status.as_str();
             let to = to_status.as_str();
 
-            // GitHub #399: enforce `workflow.transitions` at the storage
-            // chokepoint. `br update` validated the transition in its own CLI
-            // layer, but `br close` (and the MCP/epic batch writers) reached
-            // this preflight with only required-field and gate evaluation, so
-            // a status move the transitions map forbids still committed.
-            // Validating here — inside the same `BEGIN IMMEDIATE` preflight,
-            // before any row is touched — makes a batch close all-or-nothing
-            // and leaves `--bypass-policy` semantics intact because an
-            // explicit bypass reason already `continue`d above.
             workflow.validate_transition(Some(from), to)?;
 
             let prospective_acceptance_criteria = update
@@ -7253,8 +7059,6 @@ impl SqliteStorage {
         }
 
         if updates.iter().all(|(_, update)| update.is_empty()) {
-            // This path does not call `mutate()`, so explicitly consume staged
-            // attribution just like the historical single-update no-op path.
             self.pending_event_attribution = None;
         } else {
             let capacity_policy = self.workflow_capacity_policy.clone();
@@ -7271,8 +7075,6 @@ impl SqliteStorage {
                         });
                     }
                     // governed-by: ADR-0005 — a captain-held bead refuses
-                    // close on every path (verdict, force, bypass,
-                    // teardown, kill, TTL). Clears only on answer/`--verdict`.
                     if update.status.as_ref().is_some_and(|s| matches!(s, Status::Closed))
                         && Self::captain_hold_blocks_close_in_tx(conn, id)?
                     {
@@ -7320,8 +7122,6 @@ impl SqliteStorage {
                     }
                 }
 
-                // GitHub #384 phase 5: record who moved each issue into its
-                // new status so scoped capacities can key future admissions.
                 for transition in &transitions {
                     Self::record_capacity_occupancy_in_tx(
                         conn,
@@ -7331,8 +7131,6 @@ impl SqliteStorage {
                     )?;
                 }
 
-                // GitHub #384 phase 4: leaving the applicable status ends an
-                // issue's capacity exemption, atomically with the departure.
                 for transition in &transitions {
                     if let Some(from) = transition.from.as_deref() {
                         Self::end_departed_capacity_exemptions_in_tx(
@@ -7400,10 +7198,6 @@ impl SqliteStorage {
         actor: &str,
     ) -> Result<()> {
         let mut issue = Self::get_issue_from_conn(conn, id)?.ok_or_else(|| {
-            // Issue #245: if `get_issue` (read path) can find the row but
-            // `get_issue_from_conn` inside a write transaction cannot, the
-            // database is likely corrupt (B-tree or index malformation).
-            // Surface a more helpful error than bare ISSUE_NOT_FOUND.
             tracing::warn!(
                 id = %id,
                 "update_issue: row not found inside write transaction \
@@ -7419,8 +7213,6 @@ impl SqliteStorage {
             });
         }
 
-        // Recheck eligibility and assignment inside the write transaction.
-        // A saved claim command must not undo a later close or deferral.
         let mut claim_state = None;
         if updates.expect_unassigned {
             Self::validate_claim_target(&issue, Utc::now())?;
@@ -7438,9 +7230,9 @@ impl SqliteStorage {
             let claim_actor = updates.claim_actor.as_deref().unwrap_or("");
 
             match trimmed {
-                None => { /* unassigned, proceed with claim */ }
+                None => {  }
                 Some(current) if !updates.claim_exclusive && current == claim_actor => {
-                    /* same actor re-claim, idempotent */
+
                 }
                 Some(current) => {
                     return Err(BeadsError::validation(
@@ -7464,13 +7256,11 @@ impl SqliteStorage {
         let mut set_clauses: Vec<String> = vec![];
         let mut params: Vec<SqliteValue> = vec![];
 
-        // Helper to add update
         let mut add_update = |field: &str, val: SqliteValue| {
             set_clauses.push(format!("{field} = ?"));
             params.push(val);
         };
 
-        // Title
         if let Some(ref title) = updates.title {
             let old_title = issue.title.clone();
             issue.title.clone_from(title);
@@ -7484,7 +7274,6 @@ impl SqliteStorage {
             );
         }
 
-        // Simple text fields - use empty string instead of NULL for bd compatibility
         if let Some(ref val) = updates.description {
             issue.description.clone_from(val);
             add_update(
@@ -7508,7 +7297,6 @@ impl SqliteStorage {
             add_update("notes", SqliteValue::from(val.as_deref().unwrap_or("")));
         }
 
-        // Status
         if let Some(ref status) = updates.status {
             let old_status_obj = issue.status.clone();
             let old_status = old_status_obj.as_str().to_string();
@@ -7540,14 +7328,12 @@ impl SqliteStorage {
                 }
             }
 
-            // Record Closed event if status is now Closed and wasn't before
             if *status == Status::Closed {
                 if !was_terminal {
                     let reason = updates.close_reason.as_ref().and_then(Clone::clone);
                     ctx.record_event(EventType::Closed, id, reason);
                 }
 
-                // Auto-set closed_at if not provided
                 if updates.closed_at.is_none() && issue.closed_at.is_none() {
                     let now = Utc::now();
                     issue.closed_at = Some(now);
@@ -7575,8 +7361,6 @@ impl SqliteStorage {
                 issue.delete_reason.clone_from(&reason);
                 add_update("deleted_at", SqliteValue::from(now.to_rfc3339()));
                 add_update("deleted_by", SqliteValue::from(actor));
-                // Always update delete_reason if we are setting to Tombstone,
-                // using close_reason as fallback if provided.
                 add_update(
                     "delete_reason",
                     SqliteValue::from(reason.as_deref().unwrap_or("")),
@@ -7590,7 +7374,6 @@ impl SqliteStorage {
                     )?;
                 }
                 if issue.closed_at.is_some() && updates.closed_at.is_none() {
-                    // Reopening (or fixing state): Clear closed_at if it was set
                     issue.closed_at = None;
                     issue.close_reason = None;
                     issue.closed_by_session = None;
@@ -7615,7 +7398,6 @@ impl SqliteStorage {
             }
         }
 
-        // Priority
         if let Some(priority) = updates.priority {
             let old_priority = issue.priority.0;
             if priority.0 != old_priority {
@@ -7631,13 +7413,11 @@ impl SqliteStorage {
             }
         }
 
-        // Issue type
         if let Some(ref issue_type) = updates.issue_type {
             issue.issue_type.clone_from(issue_type);
             add_update("issue_type", SqliteValue::from(issue_type.as_str()));
         }
 
-        // Assignee
         if let Some(ref assignee_opt) = updates.assignee {
             let old_assignee = issue.assignee.clone();
             issue.assignee.clone_from(assignee_opt);
@@ -7658,7 +7438,6 @@ impl SqliteStorage {
             }
         }
 
-        // Simple Option fields - use empty string instead of NULL for bd compatibility
         if let Some(ref val) = updates.owner {
             issue.owner.clone_from(val);
             add_update("owner", SqliteValue::from(val.as_deref().unwrap_or("")));
@@ -7671,7 +7450,6 @@ impl SqliteStorage {
             );
         }
         if let Some(ref val) = updates.external_ref {
-            // Explicit uniqueness check before the write
             if let Some(ext_ref) = val {
                 let existing_ext = conn.query_with_params(
                     "SELECT id FROM issues WHERE external_ref = ? AND id != ? LIMIT 1",
@@ -7696,9 +7474,6 @@ impl SqliteStorage {
             );
         }
         if let Some(ref val) = updates.source_repo {
-            // `source_repo` is NOT NULL DEFAULT '.' so an explicit clear
-            // must fall back to "." rather than SQL NULL — otherwise the
-            // schema's NOT NULL constraint rejects the write.
             let next = val.clone().unwrap_or_else(|| ".".to_string());
             issue.source_repo = Some(next.clone());
             add_update("source_repo", SqliteValue::from(next.as_str()));
@@ -7717,7 +7492,6 @@ impl SqliteStorage {
                 val.as_deref().map_or(SqliteValue::Null, SqliteValue::from),
             );
         }
-        // Use empty string instead of NULL for bd compatibility
         if let Some(ref val) = updates.close_reason {
             issue.close_reason.clone_from(val);
             add_update(
@@ -7733,7 +7507,6 @@ impl SqliteStorage {
             );
         }
 
-        // Tombstone fields
         if let Some(ref val) = updates.deleted_at {
             issue.deleted_at = *val;
             add_update(
@@ -7741,7 +7514,6 @@ impl SqliteStorage {
                 val.map_or(SqliteValue::Null, |d| SqliteValue::from(d.to_rfc3339())),
             );
         }
-        // Use empty string instead of NULL for bd compatibility
         if let Some(ref val) = updates.deleted_by {
             issue.deleted_by.clone_from(val);
             add_update(
@@ -7757,7 +7529,6 @@ impl SqliteStorage {
             );
         }
 
-        // Date fields
         if let Some(ref val) = updates.due_at {
             issue.due_at = *val;
             add_update(
@@ -7780,8 +7551,6 @@ impl SqliteStorage {
             );
         }
 
-        // ADR-0001 §5.2 typed brief fields. `principles` is a JSON document
-        // column; ac_shape/blast are TEXT enums (same encoding as create).
         if let Some(ref val) = updates.verify {
             issue.verify.clone_from(val);
             add_update(
@@ -7832,13 +7601,6 @@ impl SqliteStorage {
             );
         }
         if let Some(ref val) = updates.close_verdict {
-            // ADR-0001 §5.4: a close that records a verdict must leave the
-            // PASS row that proves it, and it must do so in this transaction.
-            // The row is written by a *different* command (`br gate report`),
-            // so nothing structurally stopped a verdict landing without one
-            // (twice in one day in a sibling ledger); the only detector was a
-            // hand-read `br doctor`. Refuse the write instead of repairing the
-            // orphan afterwards.
             if issue.status == Status::Closed
                 && let Some(verdict) = val.as_deref().map(str::trim).filter(|v| !v.is_empty())
             {
@@ -7901,7 +7663,6 @@ impl SqliteStorage {
             return Ok(());
         }
 
-        // Update updated_at only when a stored field needs rewriting.
         let updated_at = Utc::now();
         issue.updated_at = updated_at;
 
@@ -7910,14 +7671,10 @@ impl SqliteStorage {
         set_clauses.push("updated_at = ?".to_string());
         params.push(SqliteValue::from(updated_at.to_rfc3339()));
 
-        // Update content hash
         let new_hash = issue.compute_content_hash();
         set_clauses.push("content_hash = ?".to_string());
         params.push(SqliteValue::from(new_hash));
 
-        // Every successful durable issue update advances the CAS token exactly
-        // once. The SQL predicate below makes the increment part of the same
-        // atomic write as the field mutation.
         issue.revision = issue
             .revision
             .checked_add(1)
@@ -7927,9 +7684,6 @@ impl SqliteStorage {
             i64::try_from(issue.revision).unwrap_or(i64::MAX),
         ));
 
-        // Build and execute SQL. Claim operations use an additional
-        // compare-and-set predicate so exactly one contender can win even
-        // if two writers both observed the row as unassigned earlier.
         let mut where_clause = "id = ?".to_string();
         params.push(SqliteValue::from(id));
         if let Some(expected_revision) = updates.expected_revision {
@@ -7939,9 +7693,6 @@ impl SqliteStorage {
             ));
         }
         if let Some((assignee, status, defer_until)) = claim_state {
-            // Compare exactly what passed the Rust eligibility/assignment
-            // checks. This preserves whitespace handling and RFC3339 offsets
-            // without a second, subtly different SQL interpretation.
             where_clause.push_str(" AND assignee IS ? AND status = ? AND defer_until IS ?");
             params.push(assignee);
             params.push(status);
@@ -8085,9 +7836,6 @@ impl SqliteStorage {
                 &acting,
             )?;
             ctx.capacity_warnings.extend(capacity_warnings);
-            // GitHub #384 phase 4: tombstoning leaves every status, so any
-            // active exemption whose applicable set contained the previous
-            // status ends here, atomically with the delete.
             Self::end_departed_capacity_exemptions_in_tx(
                 conn,
                 &capacity_policy,
@@ -8151,8 +7899,6 @@ impl SqliteStorage {
                 "DELETE FROM close_metadata WHERE issue_id = ?",
                 &[SqliteValue::from(id)],
             )?;
-            // GitHub #384 phase 5: the tombstone transition is a status
-            // change like any other; record its admission attribution.
             Self::record_capacity_occupancy_in_tx(conn, id, &ctx.actor, &ctx.attribution)?;
 
             if !was_terminal {
@@ -8225,10 +7971,6 @@ impl SqliteStorage {
             )?;
             conn.execute_with_params("DELETE FROM issues WHERE id = ?", &[SqliteValue::from(id)])?;
 
-            // Record the intentional removal so the exporter's stale-database
-            // guard can distinguish "purged on purpose" from "never imported"
-            // (#405). Without this, a post-purge flush would need blanket
-            // force semantics, which disables the data-loss guard entirely.
             Self::record_purged_id_pending_export_in_tx(conn, id)?;
 
             ctx.invalidate_cache();
@@ -8739,8 +8481,6 @@ impl SqliteStorage {
                 sql.push_str(" AND status NOT IN ('closed', 'tombstone', 'deferred')");
             }
         } else if filters.statuses.as_ref().is_none_or(Vec::is_empty) {
-            // When including closed issues, still exclude tombstones (deleted issues) by default
-            // unless specific statuses were requested.
             sql.push_str(" AND status != 'tombstone'");
         }
 
@@ -8765,11 +8505,8 @@ impl SqliteStorage {
         }
 
         if !sort_default_in_rust {
-            // Apply custom sort if provided
             if let Some(ref sort_field) = filters.sort {
                 let order = if filters.reverse { "DESC" } else { "ASC" };
-                // Simple validation to prevent injection (though params should handle it,
-                // column names can't be parameterized)
                 match sort_field.as_str() {
                     "priority" => {
                         let secondary_order = if filters.reverse { "ASC" } else { "DESC" };
@@ -8787,11 +8524,9 @@ impl SqliteStorage {
                         let _ = write!(sql, " ORDER BY updated_at {order}, id ASC");
                     }
                     "title" => {
-                        // Case-insensitive sort for title
                         let _ = write!(sql, " ORDER BY title COLLATE NOCASE {order}, id ASC");
                     }
                     _ => {
-                        // Default fallback
                         sql.push_str(" ORDER BY priority ASC, created_at DESC, id ASC");
                     }
                 }
@@ -9130,9 +8865,6 @@ impl SqliteStorage {
         }
 
         let mut sql = String::from(
-            // ADR-0001 §5.2: lint reads the typed brief fields (priority band
-            // for the principles rule, verify/principles for the schema), so
-            // this projection carries them instead of re-hydrating full rows.
             "SELECT id, title, description, status, priority, issue_type, \
              created_at, updated_at, verify, principles, revision
              FROM issues WHERE 1=1",
@@ -9390,13 +9122,6 @@ impl SqliteStorage {
 
         let labels_and = filters.labels.as_deref().unwrap_or(&[]);
         let labels_or = filters.labels_or.as_deref().unwrap_or(&[]);
-        // `SELECT COUNT(*) ... WHERE id IN
-        // (SELECT ... GROUP BY ... HAVING ...)` shape is fragile across engines
-        // (see beads-ro3m), so it is avoided here; previously it
-        // `unwrap_or(0)` below would silently report as zero. The bare
-        // membership subquery is unaffected, so multi-label AND counting
-        // routes through the two-step candidate-ids path instead of the
-        // uncorrelated IN fast path.
         let multi_label_and = unique_label_refs(labels_and).len() > 1;
         let label_filters_can_use_uncorrelated_in = !multi_label_and
             && filters.statuses.as_ref().is_none_or(Vec::is_empty)
@@ -10004,8 +9729,6 @@ impl SqliteStorage {
                 sql.push_str(" AND status NOT IN ('closed', 'tombstone', 'deferred')");
             }
         } else if filters.statuses.as_ref().is_none_or(Vec::is_empty) {
-            // When including closed issues, still exclude tombstones (deleted issues) by default
-            // unless specific statuses were requested.
             sql.push_str(" AND status != 'tombstone'");
         }
 
@@ -10383,10 +10106,6 @@ impl SqliteStorage {
             return Ok(Vec::new());
         }
 
-        // Resolve `--parent` membership in Rust so the candidate query filters
-        // on a plain `id IN (...)` list rather than an `IN (subquery)` /
-        // recursive CTE (see `ReadyFilters::parent_member_ids`). Skip the work
-        // when membership has already been resolved by the caller.
         let resolved_filters;
         let filters = if filters.parent.is_some() && filters.parent_member_ids.is_none() {
             let mut owned = filters.clone();
@@ -10409,8 +10128,6 @@ impl SqliteStorage {
             );
         }
 
-        // Read-only path: if the cache is stale, compute blocked IDs in memory
-        // instead of persisting (issue #216 — read ops must not write).
         if readiness.blocked_cache_stale {
             let blocked_ids = match Self::compute_blocked_issues_map_impl(&self.conn) {
                 Ok(map) => map.into_keys().collect(),
@@ -10601,65 +10318,33 @@ impl SqliteStorage {
             append_label_or_membership_exists(&mut sql, &mut params, &filters.labels_or);
         }
 
-        // Ready condition 1: the configured ready status group is "ready"
-        // (issue #354). The default group is `[open]`, matching pre-#354
-        // behavior (in_progress means already claimed). `--include-deferred`
-        // additionally folds in `deferred` without double-counting it if the
-        // configured group already lists it.
         let ready_statuses = resolved_ready_status_list(filters);
-        // The status list is inlined as SQL string literals rather than bound
-        // `?` params. Status values are internal, validated, lowercased policy
-        // names (never raw user input reaching SQL); a bound `IN (?)` predicate
-        // sitting alongside a
-        // correlated/grouped `id IN (SELECT ... HAVING ...)` label subquery —
-        // the same engine class of limitation documented on
-        // `ReadyFilters::parent_member_ids` (#307/#308). Inlining keeps the
-        // single-`open` case byte-identical to the pre-#354 literal and keeps
-        // widened groups index-coverable. Single quotes are still escaped
-        // defensively in case a project configures an exotic custom status.
         {
             let list = inline_status_list(&ready_statuses);
             let _ = write!(sql, " AND status IN ({list})");
         }
 
-        // Ready condition 2: blocked issues are filtered in SQL when the cache
-        // is healthy; fallback callers filter them in Rust after directly
-        // recomputing the blocker graph from dependencies.
         if exclude_blocked_in_sql {
             sql.push_str(" AND issues.id NOT IN (SELECT issue_id FROM blocked_issues_cache)");
         }
 
-        // Ready condition 2b: captain-held rows are parked behind their corr
-        // (ADR-0005) and never dispatchable while any hold is open. The table
-        // is created lazily on first bind, so callers pass false when it does
-        // not exist yet (nothing can be held then).
         if exclude_held_in_sql {
             sql.push_str(
                 " AND issues.id NOT IN (SELECT issue_id FROM captain_holds WHERE open = 1)",
             );
         }
 
-        // Ready condition 3: `defer_until` is NULL or <= now (unless `include_deferred`)
         if !filters.include_deferred {
             sql.push_str(" AND (defer_until IS NULL OR datetime(defer_until) <= datetime('now'))");
         }
 
-        // Ready condition 4: not pinned. Legacy rows may still store NULL,
-        // which the rest of the storage layer treats as false.
         sql.push_str(" AND (pinned = 0 OR pinned IS NULL)");
 
-        // Ready condition 5: not ephemeral and not wisp. Legacy rows may
-        // still store NULL, which should behave the same as false.
         sql.push_str(" AND (ephemeral = 0 OR ephemeral IS NULL)");
         sql.push_str(" AND id NOT LIKE '%-wisp-%'");
 
-        // Exclude templates
         sql.push_str(" AND (is_template = 0 OR is_template IS NULL)");
 
-        // ADR-0001 §5.5 condition 4: `verify` must be Some, non-empty, and a
-        // single line (no newline/carriage return). The loop executes this
-        // command as the bead's proof; without it the bead is not
-        // dispatchable.
         sql.push_str(
             " AND issues.verify IS NOT NULL \
              AND trim(issues.verify) != '' \
@@ -10667,10 +10352,6 @@ impl SqliteStorage {
              AND instr(issues.verify, char(13)) = 0",
         );
 
-        // ADR-0001 §5.5 condition 5: priority <= 2 requires at least one
-        // principles citation, each with non-empty name and decision. The
-        // column stores a JSON array of {name, decision} objects; malformed
-        // or absent JSON fails the band check fail-closed.
         sql.push_str(
             " AND (issues.priority > 2 OR (\
              issues.principles IS NOT NULL \
@@ -10684,17 +10365,6 @@ impl SqliteStorage {
              OR trim(je.value ->> '$.decision') = '')))",
         );
 
-        // ADR-0001 §5.5 condition 6: wave gate. A waved issue is held while
-        // any other issue with a strictly lower wave sits open/in_progress;
-        // wave None is never held.
-        //
-        // The blocker set is a CONSTANT (the lowest open/in_progress wave),
-        // not a per-row correlated scan: the correlated form re-read the whole
-        // issues table for every candidate row, which made `br ready` O(n^2).
-        // `issues.wave <= lowest_open_wave` is the same predicate - a row is
-        // held exactly when some open/in_progress wave is strictly lower -
-        // and the COALESCE sentinel (i64::MAX, above every u32 wave) keeps
-        // "no open wave at all" from holding every waved row.
         sql.push_str(
             " AND (issues.wave IS NULL OR issues.wave <= COALESCE((\
              SELECT MIN(lower_wave.wave) FROM issues lower_wave \
@@ -10702,7 +10372,6 @@ impl SqliteStorage {
              AND lower_wave.status IN ('open', 'in_progress')), 9223372036854775807))",
         );
 
-        // Filter by types
         if let Some(ref types) = filters.types
             && !types.is_empty()
         {
@@ -10713,7 +10382,6 @@ impl SqliteStorage {
             }
         }
 
-        // Filter by priorities
         if let Some(ref priorities) = filters.priorities
             && !priorities.is_empty()
         {
@@ -10724,31 +10392,19 @@ impl SqliteStorage {
             }
         }
 
-        // Filter by assignee
         if let Some(ref assignee) = filters.assignee {
             sql.push_str(" AND assignee = ?");
             params.push(SqliteValue::from(assignee.as_str()));
         }
 
-        // Filter for unassigned
         if filters.unassigned {
             sql.push_str(" AND (assignee IS NULL OR assignee = '')");
         }
 
-        // Filter by parent (--parent flag).
-        //
-        // Membership is resolved in Rust (see `resolve_ready_parent_member_ids`)
-        // and passed as `parent_member_ids`, so we filter with a plain
-        // `id IN (...)` list rather than an `IN (subquery)` / recursive CTE. This
-        // avoids embedded-SQLite planner bugs around `IN (subquery)` under
-        // multi-table joins (#307) and recursive CTEs referenced from a
-        // correlated `EXISTS` (#308).
         let cte_prefix = String::new();
         if filters.parent.is_some() {
             match filters.parent_member_ids.as_deref() {
                 Some([]) | None => {
-                    // Parent has no matching descendants (or membership was not
-                    // resolved): force an empty result without scanning.
                     sql.push_str(" AND 1=0");
                 }
                 Some(member_ids) => {
@@ -10775,8 +10431,6 @@ impl SqliteStorage {
             }
         }
 
-        // Apply limit in SQL only when the blocked filter also happens in SQL.
-        // Fallback callers must filter blocked IDs in Rust first.
         if apply_limit
             && let Some(limit) = filters.limit
             && limit > 0
@@ -10811,8 +10465,6 @@ impl SqliteStorage {
         }
 
         let sort_hybrid_in_rust = sort == ReadySortPolicy::Hybrid && filters.limit.is_none();
-        // The holds table is created lazily on first bind; when it does not
-        // exist yet nothing can be held, so skip the subquery (it would fail).
         let exclude_held_in_sql = crate::storage::schema::table_exists(&self.conn, "captain_holds");
         let (sql, params) = Self::build_ready_issue_candidates_query(
             filters,
@@ -10988,8 +10640,6 @@ impl SqliteStorage {
     ///
     /// Returns an error if the database query fails.
     pub fn get_blocked_ids(&self) -> Result<HashSet<String>> {
-        // Read-only path: if the cache is stale, compute in memory instead of
-        // persisting (issue #216 — read ops must not write).
         if self.blocked_cache_marked_stale()? {
             return match Self::compute_blocked_issues_map_impl(&self.conn) {
                 Ok(map) => Ok(map.into_keys().collect()),
@@ -11021,7 +10671,6 @@ impl SqliteStorage {
     pub fn get_blocks_dep_edges(&self) -> Result<Vec<(String, String)>> {
         let mut edges = Vec::new();
 
-        // Query 1: Standard blocking types
         let rows1 = self.conn.query(
             "SELECT issue_id, depends_on_id FROM dependencies \
              WHERE type IN ('blocks', 'conditional-blocks', 'waits-for')",
@@ -11034,7 +10683,6 @@ impl SqliteStorage {
             }
         }
 
-        // Query 2: Parent-child (reversed direction)
         let rows2 = self.conn.query(
             "SELECT depends_on_id, issue_id FROM dependencies \
              WHERE type = 'parent-child'",
@@ -11121,8 +10769,6 @@ impl SqliteStorage {
     ///
     /// Returns an error if the database query fails.
     pub fn is_blocked(&self, issue_id: &str) -> Result<bool> {
-        // Read-only path: if the cache is stale, compute in memory instead of
-        // persisting (issue #216 — read ops must not write).
         if self.blocked_cache_marked_stale()? {
             let blocked_ids = match Self::compute_blocked_issues_map_impl(&self.conn) {
                 Ok(map) => map.into_keys().collect::<HashSet<_>>(),
@@ -11225,8 +10871,6 @@ impl SqliteStorage {
     /// use [`get_blockers`](Self::get_blockers); callers enforcing start/claim
     /// ordering should use [`get_start_blockers`](Self::get_start_blockers).
     fn get_blocker_refs(&self, issue_id: &str) -> Result<Vec<String>> {
-        // Read-only path: if the cache is stale, compute in memory instead of
-        // persisting (issue #216 — read ops must not write).
         if self.blocked_cache_marked_stale()? {
             let blocked_issues_map = match Self::compute_blocked_issues_map_impl(&self.conn) {
                 Ok(map) => map,
@@ -11281,7 +10925,6 @@ impl SqliteStorage {
         if !force_rebuild {
             return Ok(0);
         }
-        // Disable FK enforcement before the transaction (#215).
         self.conn.execute("PRAGMA foreign_keys = OFF")?;
         let result = self.with_write_transaction(|storage| {
             let rebuilt = Self::rebuild_blocked_cache_impl(&storage.conn)?;
@@ -11332,11 +10975,8 @@ impl SqliteStorage {
     }
 
     fn rebuild_child_counters_impl(conn: &Connection) -> Result<usize> {
-        // Clear existing counters
         conn.execute("DELETE FROM child_counters")?;
 
-        // Build counters only for parents that still exist. Recovered imports can
-        // contain hierarchical IDs whose root parent was deleted long ago.
         let rows = conn.query("SELECT id FROM issues")?;
         let issue_ids: HashSet<String> = rows
             .iter()
@@ -11382,7 +11022,6 @@ impl SqliteStorage {
 
         let mut count = 0;
         for (parent_id, last_child) in max_children {
-            // Explicit DELETE + INSERT instead of INSERT OR REPLACE because
             conn.execute_with_params(
                 "DELETE FROM child_counters WHERE parent_id = ?",
                 &[SqliteValue::from(parent_id.as_str())],
@@ -11404,13 +11043,8 @@ impl SqliteStorage {
         let mut blocked_issues_map = Self::load_direct_blockers_impl(conn)?;
         let children_by_parent = Self::load_local_parent_child_edges_impl(conn)?;
 
-        // 1. Propagate standard blockers (blocks, conditional-blocks, waits-for)
-        // from parent to children.
         Self::propagate_blocked_parents(&mut blocked_issues_map, &children_by_parent);
 
-        // 2. Add blockers for parents with open children.
-        // We do this AFTER propagation so that a parent blocked only by its children
-        // does not transitively block those same children (avoiding logic cycle).
         let child_blockers = Self::load_local_open_child_blockers_impl(conn)?;
         for (parent_id, mut blockers) in child_blockers {
             blocked_issues_map
@@ -11599,7 +11233,6 @@ impl SqliteStorage {
     fn rebuild_blocked_cache_impl(conn: &Connection) -> Result<usize> {
         let blocked_issues_map = Self::compute_blocked_issues_map_impl(conn)?;
 
-        // Clear the cache table before repopulating with fresh entries.
         Self::reset_blocked_cache_table(conn)?;
 
         let mut entries = Vec::with_capacity(blocked_issues_map.len());
@@ -11625,19 +11258,9 @@ impl SqliteStorage {
     }
 
     fn reset_blocked_cache_table(conn: &Connection) -> Result<()> {
-        // Use DELETE FROM instead of DROP TABLE + CREATE TABLE to avoid
-        // frankensqlite page leak (#224): DROP TABLE leaves old root pages
-        // unreachable, causing integrity_check to report 'Page N: never used'.
-        //
-        // The table and index are guaranteed to exist (created at schema apply
-        // time via SCHEMA_SQL).  Per-entry DELETE+INSERT in
-        // insert_blocked_cache_entries handles any phantom B-tree entries that
-        // bulk DELETE may leave behind (#215).
         if table_exists(conn, "blocked_issues_cache") {
             conn.execute("DELETE FROM blocked_issues_cache")?;
         } else {
-            // Table doesn't exist yet (fresh DB before schema fully applied,
-            // or recovery scenario).  Fall back to CREATE.
             execute_batch(
                 conn,
                 r"
@@ -11671,8 +11294,6 @@ impl SqliteStorage {
         let affected_children_by_parent =
             Self::filter_parent_child_edges_for_ids(&children_by_parent, &affected);
 
-        // Recompute only the affected component instead of rebuilding the full
-        // blocker graph inside the active write transaction.
         let mut blocked_issues_map = Self::load_direct_blockers_for_ids_impl(conn, &affected)?;
         Self::propagate_blocked_parents(&mut blocked_issues_map, &affected_children_by_parent);
         let child_blockers = Self::load_local_open_child_blockers_for_ids_impl(conn, &affected)?;
@@ -11683,7 +11304,6 @@ impl SqliteStorage {
                 .append(&mut blockers);
         }
 
-        // 3. Delete only affected rows from the cache (batched).
         let affected_vec: Vec<_> = affected.iter().collect();
         for chunk in affected_vec.chunks(BLOCKED_CACHE_DELETE_CHUNK_SIZE) {
             let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();
@@ -11698,7 +11318,6 @@ impl SqliteStorage {
             conn.execute_with_params(&sql, &params)?;
         }
 
-        // 4. Re-insert only affected rows that have blockers.
         let mut entries = Vec::new();
         for id in &affected {
             if let Some(mut blockers) = blocked_issues_map.remove(id.as_str()) {
@@ -11735,11 +11354,8 @@ impl SqliteStorage {
         conn: &Connection,
         entries: &[(String, String)],
     ) -> Result<usize> {
-        // Callers are responsible for disabling FK enforcement before calling
-        // this function; false FK violations under pressure are suppressed (#215).
         let mut count = 0;
         for (issue_id, blockers_json) in entries {
-            // Explicit DELETE + INSERT instead of INSERT OR REPLACE because
             conn.execute_with_params(
                 "DELETE FROM blocked_issues_cache WHERE issue_id = ?",
                 &[SqliteValue::from(issue_id.as_str())],
@@ -11757,14 +11373,6 @@ impl SqliteStorage {
     }
 
     fn load_direct_blockers_impl(conn: &Connection) -> Result<HashMap<String, Vec<String>>> {
-        // Exclude external dependencies from the persisted cache because their
-        // status is not locally known and must be resolved at query time.
-        //
-        // ADR-0001 §5.5 condition 2 (parent #432): CLOSED and MISSING local
-        // blockers are ignored — they must not hide an issue from ready;
-        // `br doctor` reports them as repair work instead. Every other
-        // locally-known status keeps the historical blocking semantics
-        // (deferred/blocker epics still gate their dependents, #357).
         let rows = conn.query(
             "SELECT DISTINCT d.issue_id, d.depends_on_id || ':' || COALESCE(i.status, 'unknown')
              FROM dependencies d
@@ -11946,29 +11554,6 @@ impl SqliteStorage {
     fn load_local_open_child_blockers_impl(
         conn: &Connection,
     ) -> Result<HashMap<String, Vec<String>>> {
-        // Parents are treated as "blocked by open children" ONLY when the
-        // parent is an epic.  For epics that is the natural semantics: the
-        // epic aggregates its children and cannot itself be closed (or
-        // meaningfully worked on) while any child is still open.  For plain
-        // task/feature/bug/etc. parents in a parent-child chain, the
-        // tests (`parent_child_transitive_blocking`,
-        // `deep_parent_child_chain_blocking`,
-        // `deep_chain_beyond_50_levels_blocks_all_descendants`) and the
-        // `conformance.rs` docstring describe the opposite direction:
-        // children inherit a parent's *blocked* state via
-        // `propagate_blocked_parents`, but an open, unblocked non-epic
-        // parent does not itself become blocked just because it has open
-        // children.  Restricting this rule to `p.issue_type = 'epic'`
-        // preserves the epic-rollup behaviour while avoiding the
-        // every-parent-with-open-kids false-blocked that was masking
-        // genuine unblock transitions along a parent-child chain.
-        //
-        // Join on the parent issue (p) to guarantee `depends_on_id` exists
-        // in the `issues` table.  The `dependencies.depends_on_id` column
-        // has no foreign key (intentionally, for external refs), so
-        // dangling rows can accumulate.  Without this guard the subsequent
-        // INSERT into `blocked_issues_cache` (which *does* have a FK on
-        // `issue_id`) fails with "FOREIGN KEY constraint failed" (#215).
         let rows = conn.query(&format!(
             "SELECT DISTINCT d.depends_on_id as parent_id, d.issue_id || '{CHILD_OPEN_BLOCKER_SUFFIX}' as blocker
              FROM dependencies d
@@ -12012,11 +11597,6 @@ impl SqliteStorage {
 
         for chunk in parent_ids.chunks(400) {
             let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();
-            // Join on the parent issue (p) to guarantee depends_on_id exists
-            // in the issues table — same guard as the non-ids variant (#215).
-            // Epic-only scoping matches the non-ids variant: the "parent
-            // blocked by open children" rollup is epic-specific, not a
-            // property of every parent-child edge.
             let sql = format!(
                 "SELECT DISTINCT d.depends_on_id as parent_id, d.issue_id || '{CHILD_OPEN_BLOCKER_SUFFIX}' as blocker
                  FROM dependencies d
@@ -12111,8 +11691,6 @@ impl SqliteStorage {
         &self,
         projection: BlockedIssueProjection,
     ) -> Result<Vec<(Issue, Vec<String>)>> {
-        // Read-only path: if the cache is stale, compute in memory instead of
-        // persisting (issue #216 — read ops must not write).
         if self.blocked_cache_marked_stale()? {
             let blocked_issues_map = match Self::compute_blocked_issues_map_impl(&self.conn) {
                 Ok(map) => map,
@@ -12226,9 +11804,6 @@ impl SqliteStorage {
     ///
     /// Returns an error if the dependency probe query fails.
     pub fn has_external_dependencies(&self, blocking_only: bool) -> Result<bool> {
-        // `external;` is the next ASCII boundary after the `external:` prefix,
-        // making the range equivalent to LIKE 'external:%' under SQLite's
-        // default binary TEXT collation while staying index-friendly.
         let target_sql = if blocking_only {
             "SELECT 1
              FROM dependencies INDEXED BY idx_dependencies_depends_on
@@ -12249,10 +11824,6 @@ impl SqliteStorage {
         }
 
         let parent_sql = if blocking_only {
-            // CASE is lazy: when the indexed external-child range is empty,
-            // fsqlite does not execute the disproportionately expensive epic
-            // join. Keeping both branches in one statement avoids paying a
-            // second query setup cost when an external child does exist.
             "SELECT 1
              WHERE CASE
                  WHEN EXISTS (
@@ -12328,7 +11899,6 @@ impl SqliteStorage {
             }
         }
 
-        // Query each external project's database to find satisfied capabilities
         let mut satisfied: HashMap<String, HashSet<String>> = HashMap::new();
         for (project, caps) in &project_caps {
             let Some(db_path) = external_db_paths.get(project) else {
@@ -12383,8 +11953,6 @@ impl SqliteStorage {
     ) -> Result<HashMap<String, Vec<String>>> {
         let mut blockers: HashMap<String, Vec<String>> = HashMap::new();
 
-        // Direct external blockers.
-        // 1. Local issues blocked by external targets (standard blocking types)
         let rows = self.conn.query(
             "SELECT issue_id, depends_on_id
              FROM dependencies
@@ -12407,9 +11975,6 @@ impl SqliteStorage {
             }
         }
 
-        // 2. Local epic parents blocked by external children. This mirrors
-        // `load_local_open_child_blockers_impl`: child-open rollup is an epic
-        // aggregation rule, not a property of every parent-child edge.
         let rows = self.conn.query(
             "SELECT d.depends_on_id, d.issue_id
              FROM dependencies d
@@ -12431,7 +11996,6 @@ impl SqliteStorage {
             }
         }
 
-        // Propagate externally blocked parents down through local parent-child relationships.
         let edge_rows = self.conn.query(
             "SELECT issue_id, depends_on_id
              FROM dependencies
@@ -12800,8 +12364,6 @@ impl SqliteStorage {
     /// Returns an error if the database query fails.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn get_epic_counts(&self) -> Result<std::collections::HashMap<String, (usize, usize)>> {
-        // Fetch raw rows and aggregate in Rust to avoid SUM(CASE WHEN ... THEN 1 ELSE 0 END)
-        // which some engines reject (non-column arguments in aggregate functions).
         let rows = self.conn.query(
             "SELECT
                 d.depends_on_id AS epic_id,
@@ -12821,9 +12383,9 @@ impl SqliteStorage {
                 .to_string();
             let status = row.get(1).and_then(SqliteValue::as_text).unwrap_or("");
             let entry = counts.entry(epic_id).or_insert((0, 0));
-            entry.0 += 1; // total
+            entry.0 += 1;
             if status == "closed" || status == "tombstone" {
-                entry.1 += 1; // closed
+                entry.1 += 1;
             }
         }
         Ok(counts)
@@ -12908,9 +12470,6 @@ impl SqliteStorage {
             });
         }
 
-        // Tolerate a degenerate empty/whitespace-only metadata string the same
-        // way JSONL deserialization does: treat it as absent rather than
-        // rejecting it as invalid JSON.
         let metadata = match metadata {
             Some(metadata) if !metadata.trim().is_empty() => {
                 serde_json::from_str::<serde_json::Value>(metadata).map_err(|err| {
@@ -12969,9 +12528,6 @@ impl SqliteStorage {
                 if existing_type.eq_ignore_ascii_case(dep_type) {
                     return Ok(false);
                 }
-                // One pair carries one edge: a second type over the same
-                // pair is never silently swallowed. Name both types so the
-                // caller knows which edge already exists.
                 return Err(BeadsError::Validation {
                     field: "type".to_string(),
                     reason: format!(
@@ -12983,9 +12539,6 @@ impl SqliteStorage {
                 });
             }
 
-            // Cycle check runs INSIDE the transaction (BEGIN IMMEDIATE) to
-            // prevent TOCTOU races where a concurrent writer could insert an
-            // edge between our check and our INSERT.
             if let Ok(dt) = dep_type.parse::<DependencyType>()
                 && Self::check_dependency_cycle_for_type(
                     conn,
@@ -13033,11 +12586,6 @@ impl SqliteStorage {
                 Some(format!("Added dependency on {depends_on_id} ({dep_type})")),
             );
             ctx.mark_dirty(issue_id);
-            // Defer the blocked-cache rebuild to the next read rather than
-            // doing it eagerly in a second write transaction.  This eliminates
-            // the main DB lock contention source under concurrent agents:
-            // previously even the incremental path held a second write lock
-            // while traversing all parent-child edges in the graph.
             ctx.invalidate_cache_deferred();
 
             Ok(true)
@@ -13270,7 +12818,6 @@ impl SqliteStorage {
                     Some(format!("Removed dependency on {depends_on_id}")),
                 );
                 ctx.mark_dirty(issue_id);
-                // Defer rebuild for the same reason as add_dependency_with_metadata.
                 ctx.invalidate_cache_deferred();
             }
 
@@ -13444,7 +12991,6 @@ impl SqliteStorage {
                 return Ok(());
             }
 
-            // Remove existing parent
             conn.execute_with_params(
                 "DELETE FROM dependencies WHERE issue_id = ? AND type = 'parent-child'",
                 &[SqliteValue::from(issue_id)],
@@ -13618,8 +13164,6 @@ impl SqliteStorage {
             let mut changed_ids = HashSet::new();
             let now_str = Utc::now().to_rfc3339();
 
-            // The existing-label probe binds one label plus every issue id, so
-            // reserve one parameter slot for the label value.
             for chunk in unique_issue_ids.chunks(SQLITE_VAR_LIMIT - 1) {
                 let placeholders = vec!["?"; chunk.len()];
                 let params = chunk
@@ -13860,8 +13404,6 @@ impl SqliteStorage {
             let mut changed_ids = HashSet::new();
             let now_str = Utc::now().to_rfc3339();
 
-            // Label lookups/deletes bind one label plus every issue id, so
-            // reserve one parameter slot for the label value.
             for chunk in unique_issue_ids.chunks(SQLITE_VAR_LIMIT - 1) {
                 let placeholders = vec!["?"; chunk.len()];
                 let params = chunk
@@ -14074,7 +13616,6 @@ impl SqliteStorage {
                 )?;
             }
 
-            // Record changes
             let removed: Vec<_> = old_labels
                 .iter()
                 .filter(|label| !desired_labels.contains(label))
@@ -14154,8 +13695,6 @@ impl SqliteStorage {
         &self,
         issue_ids: &[String],
     ) -> Result<HashMap<String, Vec<String>>> {
-        // Stay below SQLite's common 999-variable ceiling while keeping the
-        // default scheduler candidate window to one evidence-loading round trip.
         const SQLITE_VAR_LIMIT: usize = 900;
 
         if issue_ids.is_empty() {
@@ -14164,7 +13703,6 @@ impl SqliteStorage {
 
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
 
-        // SQLite has a finite variable limit (default 999). Chunk to avoid query failures.
         for chunk in issue_ids.chunks(SQLITE_VAR_LIMIT) {
             let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();
             let sql = format!(
@@ -14870,7 +14408,6 @@ impl SqliteStorage {
     ///
     /// Returns an error if the database query fails.
     pub fn next_child_number(&self, parent_id: &str) -> Result<u32> {
-        // First, check the child_counters table (source of truth)
         match self.conn.query_row_with_params(
             "SELECT last_child FROM child_counters WHERE parent_id = ?",
             &[SqliteValue::from(parent_id)],
@@ -14884,9 +14421,6 @@ impl SqliteStorage {
             Err(e) => return Err(e.into()),
         }
 
-        // Fallback: Scan issues table for legacy data or missing counter
-        // Find all existing child IDs matching the pattern {parent_id}.N
-        // Escape LIKE wildcards in parent_id to prevent injection
         let escaped_parent = escape_like_pattern(parent_id);
         let pattern = format!("{escaped_parent}.%");
         let ids_rows = self.conn.query_with_params(
@@ -14898,15 +14432,12 @@ impl SqliteStorage {
             .filter_map(|r| r.get(0).and_then(SqliteValue::as_text).map(String::from))
             .collect();
 
-        // Extract child numbers and find the maximum
         let prefix_with_dot = format!("{parent_id}.");
         let max_child = ids
             .iter()
             .filter_map(|id| {
                 id.strip_prefix(&prefix_with_dot)
                     .and_then(|suffix| {
-                        // Handle both simple children (parent.1) and nested (parent.1.2)
-                        // We only care about direct children, so take the first segment
                         suffix.split('.').next()
                     })
                     .and_then(|num_str| num_str.parse::<u32>().ok())
@@ -14914,7 +14445,6 @@ impl SqliteStorage {
             .max()
             .unwrap_or(0);
 
-        // Use saturating_add to prevent overflow (extremely unlikely but safe)
         Ok(max_child.saturating_add(1))
     }
 
@@ -14924,7 +14454,6 @@ impl SqliteStorage {
         parent_id: &str,
         child_number: u32,
     ) -> Result<()> {
-        // Check current value
         let current_max = match conn.query_row_with_params(
             "SELECT last_child FROM child_counters WHERE parent_id = ?",
             &[SqliteValue::from(parent_id)],
@@ -14935,9 +14464,6 @@ impl SqliteStorage {
         };
 
         if i64::from(child_number) > current_max {
-            // DELETE + INSERT to simulate UPSERT.
-            // FK enforcement is disabled by the caller's transaction wrapper
-            // to avoid false FK violations (#215).
             conn.execute_with_params(
                 "DELETE FROM child_counters WHERE parent_id = ?",
                 &[SqliteValue::from(parent_id)],
@@ -15216,10 +14742,6 @@ impl SqliteStorage {
         &self,
         issue_ids: &[String],
     ) -> Result<(HashMap<String, usize>, HashMap<String, usize>)> {
-        // Stay below SQLite's common 999-variable ceiling while keeping the
-        // default scheduler candidate window to one evidence-loading round trip.
-        // Avoid CTE VALUES materialization, which is a primary root-page
-        // collision trigger in in-memory databases.
         const SQLITE_VAR_LIMIT: usize = 900;
 
         if issue_ids.is_empty() {
@@ -15230,9 +14752,6 @@ impl SqliteStorage {
         let mut dependent_counts: HashMap<String, usize> = HashMap::new();
 
         for chunk in issue_ids.chunks(SQLITE_VAR_LIMIT) {
-            // Numbered parameters let both UNION arms share the same bindings,
-            // preserving the 900-ID chunk boundary without exceeding SQLite's
-            // variable ceiling.
             let placeholders: Vec<String> = (1..=chunk.len())
                 .map(|parameter_index| format!("?{parameter_index}"))
                 .collect();
@@ -15243,8 +14762,6 @@ impl SqliteStorage {
                 .map(|issue_id| SqliteValue::from(issue_id.as_str()))
                 .collect();
 
-            // Tag 0 means dependency count (the issue depends on something);
-            // tag 1 means dependent count (other issues depend on this issue).
             let sql = format!(
                 "SELECT 0, issue_id, COUNT(*) FROM dependencies \
                  WHERE issue_id IN ({joined}) GROUP BY issue_id \
@@ -15450,10 +14967,6 @@ impl SqliteStorage {
             Ok(deleted > 0)
         })
     }
-
-    // ========================================================================
-    // Export-related methods
-    // ========================================================================
 
     /// Get all issues for JSONL export.
     ///
@@ -15737,7 +15250,6 @@ impl SqliteStorage {
     fn clear_dirty_issue_ids_in_tx(&self, issue_ids: &[String]) -> Result<usize> {
         let mut total_deleted = 0;
         for chunk in issue_ids.chunks(SQLITE_VAR_LIMIT) {
-            // Delete existing entries row-by-row rather than one IN-list DELETE.
             let mut chunk_deleted = 0;
             for id in chunk {
                 let deleted = self.conn.execute_with_params(
@@ -15764,10 +15276,6 @@ impl SqliteStorage {
     fn clear_all_dirty_issues_in_tx(storage: &mut Self) -> Result<usize> {
         Ok(storage.conn.execute("DELETE FROM dirty_issues")?)
     }
-
-    // =========================================================================
-    // Export Hashes (for incremental export)
-    // =========================================================================
 
     /// Get the stored export hash for an issue.
     ///
@@ -16214,9 +15722,6 @@ impl SqliteStorage {
     /// visited set, so imported dependency cycles terminate and the issue
     /// itself is never counted as its own descendant.
     pub fn derived_rollup(&self, issue_id: &str) -> Result<Option<RollupSummary>> {
-        // Walk the subtree level by level against `idx_dependencies_depends_on_type`
-        // instead of loading the repository's whole edge map: showing a handful
-        // of issues in a large project should touch only their own subtrees.
         let mut visited: HashSet<String> = HashSet::new();
         visited.insert(issue_id.to_string());
         let mut frontier: Vec<String> = vec![issue_id.to_string()];
@@ -16242,8 +15747,6 @@ impl SqliteStorage {
                     let Some(child) = row.get(0).and_then(SqliteValue::as_text) else {
                         continue;
                     };
-                    // A visited set keeps an imported parent-child cycle from
-                    // looping and stops the issue counting itself.
                     if !visited.insert(child.to_string()) {
                         continue;
                     }
@@ -16402,16 +15905,8 @@ impl SqliteStorage {
             ephemeral: get_bool(33),
             pinned: get_bool(34),
             is_template: get_bool(35),
-            // Position 36 lands after `is_template` in the Full SELECT
-            // and before `bc.blocked_by` in the BlockedIssue::Full
-            // variant; the cached_blocked_by_index was bumped to 37
-            // in lock-step so the projection-specific blocked-by
-            // accessor still finds the right column.
             source_repo_path: get_non_empty_str(36),
             agent_context: get_non_empty_str(37),
-            // Schema v18 (ADR-0001 §5.2): positions 38-45 in the Full
-            // SELECT. principles is a JSON document column; ac_shape/blast
-            // are TEXT enums with defaults for pre-v18 rows.
             verify: get_non_empty_str(38),
             principles: parse_principles_json(get_str(39)),
             wave: row
@@ -16428,8 +15923,6 @@ impl SqliteStorage {
                 .and_then(SqliteValue::as_integer)
                 .and_then(|value| u64::try_from(value).ok())
                 .unwrap_or(1),
-            // ADR-0005 §§2-3: positions 47-48 in the Full SELECT.
-            // deliverable defaults to diff for pre-ADR-0005 rows.
             deliverable: parse_deliverable(row.get(47).and_then(SqliteValue::as_text)),
             promotes: get_non_empty_str(48),
             labels: vec![],
@@ -16499,8 +15992,6 @@ impl SqliteStorage {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
-            // ADR-0001 §5.5: the ready JSON surface carries the typed
-            // work-ledger fields (columns 14-17 of the Command projection).
             verify: get_non_empty_str(14),
             principles: row
                 .get(15)
@@ -16531,9 +16022,6 @@ impl SqliteStorage {
 
     fn structured_ready_issue_from_row(row: &Row) -> Result<Issue> {
         let mut issue = Self::ready_issue_from_row(row)?;
-        // json_group_array may return NULL (not "[]") for zero-label issues
-        // under some SQLite builds; default gracefully instead of dropping
-        // the row via `?` propagation.
         let labels: Vec<String> = row
             .get(18)
             .and_then(SqliteValue::as_text)
@@ -17100,15 +16588,6 @@ fn finish_issue_mutation_write_probe(
     rollback_result: std::result::Result<usize, DbError>,
 ) -> Result<()> {
     match (probe_result, rollback_result) {
-        // A zero-row probe update means the target issue was not
-        // write-addressable through the mutation path the probe was
-        // attempting — exactly the failure mode this diagnostic was
-        // built to catch (issue #263). Returning Ok here would turn
-        // the probe into a false-negative oracle for the storage
-        // layer's visibility/write-path bug class. Surface it as the
-        // primary error. If ROLLBACK also fails, retain the zero-row
-        // diagnostic as the source while explicitly reporting that the
-        // connection's transaction state is now unknown.
         (Ok(0), rollback) => {
             let original_error = BeadsError::Database(DbError::Internal(
                 "write probe did not find issue inside mutation transaction".to_string(),
@@ -17397,12 +16876,6 @@ impl IssueUpdate {
             && self.workflow_policy_bypass_reason.is_none()
             && self.verify.is_none()
             && self.principles_append.is_empty()
-            // A clear with nothing to replace is still a real mutation: it
-            // empties the citation set. Omitting it here made
-            // `br update --clear-principles` read as "no updates specified",
-            // so the update never reached storage and the flag exited 0 having
-            // done nothing — the exact failure `bd_clear_principles` warns
-            // about in its own comments.
             && !self.principles_clear
             && self.wave.is_none()
             && self.pin.is_none()
@@ -17601,7 +17074,7 @@ fn ready_hybrid_high_bucket_priorities(priorities: Option<&[Priority]>) -> Vec<P
 }
 
 /// Parse the v18 principles JSON column (empty/NULL => empty list).
-#[allow(clippy::needless_pass_by_value)] // adapter boundary takes owned string
+#[allow(clippy::needless_pass_by_value)]
 fn parse_principles_json(raw: String) -> Vec<crate::model::PrincipleCitation> {
     if raw.trim().is_empty() {
         return Vec::new();
@@ -17703,9 +17176,7 @@ fn sort_ready_issues(issues: &mut [Issue], sort: ReadySortPolicy) {
 
 fn parse_status(s: Option<&str>) -> Result<Status> {
     match s {
-        // NULL status predates the NOT NULL constraint: schema default.
         None => Ok(Status::default()),
-        // Unknown text fails loud (bd-bqyb) — never a silent Custom.
         Some(val) => val.parse(),
     }
 }
@@ -17759,8 +17230,6 @@ fn dependency_metadata_from_row(
             });
         }
         _ => {
-            // Graceful fallback for missing dependencies (e.g. deleted/not synced yet)
-            // instead of crashing the query with a Config error.
             return Ok(IssueWithDependencyMetadata {
                 id: id.to_string(),
                 title: format!("[missing issue: {}]", id),
@@ -17888,9 +17357,6 @@ fn query_external_project_capabilities(
     let conn = open_existing_read_only_connection(db_path)?;
     let mut satisfied = HashSet::new();
 
-    // Direct bead-id check: if foreign issue id == capability and is closed, satisfy.
-    // This supports `external:project:bead-id` for cross-repo bead gating
-    // (beads_rust-cross-repo-dep-edges-mvzxq) — complements the provides-label path.
     for cap_chunk in capabilities
         .iter()
         .collect::<Vec<_>>()
@@ -17991,7 +17457,6 @@ fn query_external_project_capabilities(
         }
     }
 
-    // Explicitly close the connection instead of relying on Drop.
     let _ = conn.close();
     Ok(satisfied)
 }
@@ -18013,8 +17478,6 @@ fn open_existing_read_only_connection(path: &Path) -> Result<Connection> {
 
 fn parse_datetime(s: &str) -> Result<DateTime<Utc>> {
     if s.is_empty() {
-        // NULL/empty datetime columns (common when migrating from bd/Go beads)
-        // default to epoch rather than crashing the import.
         return Ok(DateTime::<Utc>::UNIX_EPOCH);
     }
 
@@ -18147,7 +17610,7 @@ fn parse_opt_datetime_value(value: Option<&SqliteValue>) -> Result<Option<DateTi
 /// for seconds (≤10^10), milliseconds (≤10^13), microseconds (≤10^16), and
 /// nanoseconds (≤10^19).
 fn datetime_from_epoch_auto(n: i64) -> Result<DateTime<Utc>> {
-    const MS_THRESHOLD: i64 = 10_000_000_000; // ~Nov 2286 as seconds
+    const MS_THRESHOLD: i64 = 10_000_000_000;
     const US_THRESHOLD: i64 = 10_000_000_000_000;
     const NS_THRESHOLD: i64 = 10_000_000_000_000_000;
 
@@ -18186,11 +17649,6 @@ fn datetime_from_epoch_seconds_f64(f: f64) -> Result<DateTime<Utc>> {
             "non-finite datetime column value: {f}"
         )));
     }
-    // Use floor/fract so the (secs, nanos) split is correct for negative
-    // timestamps too — with trunc() and abs() on the fraction, `-1.5`
-    // resolves to `(-1, 500_000_000)` = `-0.5` rather than the intended
-    // `(-2, 500_000_000)` = `-1.5`. The `fract()` here is f − floor(f),
-    // which is always in [0, 1) regardless of sign.
     let floor_seconds = f.floor();
     if !(MIN_I64_AS_F64..=MAX_I64_AS_F64).contains(&floor_seconds) {
         return Err(BeadsError::Config(format!(
@@ -18224,10 +17682,6 @@ fn escape_like_pattern(s: &str) -> String {
         .replace('_', "\\_")
 }
 
-// ============================================================================
-// EXPORT/SYNC METHODS
-// ============================================================================
-
 impl SqliteStorage {
     /// Get issue with all relations populated for export.
     ///
@@ -18241,7 +17695,6 @@ impl SqliteStorage {
             return Ok(None);
         };
 
-        // Populate relations
         issue.labels = self.get_labels(id)?;
         issue.dependencies = self.get_dependencies_full(id)?;
         issue.comments = self.get_comments(id)?;
@@ -18263,7 +17716,6 @@ impl SqliteStorage {
 
         let mut issues = self.get_issues_by_ids(ids)?;
 
-        // Fetch relations in batch
         let labels_map = self.get_labels_for_issues(ids)?;
         let deps_map = self.get_dependencies_full_for_issues(ids)?;
         let comments_map = self.get_comments_for_issues(ids)?;
@@ -18444,7 +17896,6 @@ impl SqliteStorage {
             .get(0)
             .and_then(SqliteValue::as_integer)
             .unwrap_or(0);
-        // count is always non-negative from COUNT(*), safe to cast
         #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         Ok(count as usize)
     }
@@ -18588,15 +18039,6 @@ impl SqliteStorage {
         conn: &Connection,
     ) -> Result<BTreeMap<String, Vec<String>>> {
         let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        // Cycle health is a *blocking* question, and it must agree with the
-        // add-time gate: `br dep add -t related` (and custom non-blocking
-        // types) are never cycle-checked on insertion, so counting those
-        // edges here made `br dep cycles` fail (nonzero since #368) on
-        // graphs the add path deliberately allowed (GitHub #391). Both modes
-        // therefore use the blocking edge set; `--blocking-only` remains a
-        // compatible alias now that the default matches add-time semantics.
-        // The reversed parent-child containment edges below participate in
-        // both modes, exactly like the add-time traversal.
         let standard_edge_sql = "SELECT issue_id, depends_on_id FROM dependencies \
              WHERE type IN ('blocks', 'conditional-blocks', 'waits-for')";
         let rows1 = conn.query(standard_edge_sql)?;
@@ -18760,8 +18202,6 @@ impl SqliteStorage {
         None
     }
 
-    // ===== Import Helper Methods =====
-
     /// Find an issue by external reference.
     ///
     /// # Errors
@@ -18824,7 +18264,7 @@ impl SqliteStorage {
         ))
     }
 
-    #[allow(clippy::too_many_lines)] // one binding per v18 field, kept explicit
+    #[allow(clippy::too_many_lines)]
     fn import_issue_field_values(
         issue: &Issue,
         timestamps: &ImportIssueTimestampStrings,
@@ -18905,7 +18345,6 @@ impl SqliteStorage {
                 .agent_context
                 .as_deref()
                 .map_or(SqliteValue::Null, SqliteValue::from),
-            // Schema v18 (ADR-0001 §5.2): typed work-ledger fields.
             issue
                 .verify
                 .as_deref()
@@ -18935,9 +18374,6 @@ impl SqliteStorage {
                 crate::model::Blast::High => "high",
             }),
             SqliteValue::from(i64::try_from(issue.revision).unwrap_or(i64::MAX)),
-            // ADR-0005 §§2-3: deliverable as canonical string, promotes as
-            // nullable cited bead id. Trailing so the revision pop below can
-            // skip over them explicitly.
             SqliteValue::from(issue.deliverable.as_str()),
             issue
                 .promotes
@@ -18958,14 +18394,7 @@ impl SqliteStorage {
                 fields.len()
             )));
         }
-        // Reorder into physical SELECT * order: import SQL keeps
-        // source_repo_path beside source_repo, while the migrated schema
-        // appends [source_repo_path, agent_context, <v18 columns>] at the
-        // end of the table.
         let v18_tail: Vec<_> = fields.drain(37..).collect();
-        // Import SQL places source_repo_path beside source_repo for parameter
-        // readability, while migrated physical schemas append it immediately
-        // before agent_context. Reorder into SELECT * / schema-catalog order.
         let source_repo_path = fields.remove(23);
         let agent_context = fields.pop().ok_or_else(|| {
             BeadsError::Config("Import issue raw witness lost the agent_context field".to_string())
@@ -19022,10 +18451,6 @@ impl SqliteStorage {
         timestamps: &ImportIssueTimestampStrings,
     ) -> Result<usize> {
         let mut params = Self::import_issue_field_values(issue, timestamps);
-        // An import is a durable local mutation. Preserve the local CAS
-        // sequence instead of replacing it with a source repository's token.
-        // ADR-0005: deliverable/promotes trail the revision token; pop them
-        // first, drop the source revision, then re-push in SET order.
         let promotes_value = params.pop().ok_or_else(|| {
             BeadsError::Config("Import issue update lost the promotes field".to_string())
         })?;
@@ -19101,9 +18526,6 @@ impl SqliteStorage {
     pub(crate) fn upsert_issue_for_import_in_tx(&self, issue: &Issue) -> Result<bool> {
         let timestamps = ImportIssueTimestampStrings::from_issue(issue);
 
-        // Narrow existence probe: don't deserialize the row, just check
-        // if the id is present. If it's malformed we still want to
-        // overwrite it.
         let issue_exists = match self.conn.query_row_with_params(
             "SELECT 1 FROM issues WHERE id = ? LIMIT 1",
             &[SqliteValue::from(issue.id.as_str())],
@@ -19225,11 +18647,6 @@ impl SqliteStorage {
         let next = current
             .checked_add(1)
             .ok_or_else(|| BeadsError::Config(format!("issue {issue_id} revision exhausted")))?;
-        // Revision is a local CAS token (ADR-0004), not source content identity:
-        // advancing it must not invent a new `updated_at`. The caller's source
-        // timestamp already describes this state, and overwriting it here would
-        // make the row look newer than the JSONL that produced it, turning
-        // identical re-imports into perpetual "database newer" conflicts.
         let changed = self.conn.execute_with_params(
             "UPDATE issues SET revision = ? WHERE id = ?",
             &[
@@ -19288,7 +18705,6 @@ impl SqliteStorage {
             .collect::<Vec<_>>();
         let relation_changed = existing_labels != desired_labels;
 
-        // Remove existing labels
         self.conn.execute_with_params(
             "DELETE FROM labels WHERE issue_id = ?",
             &[SqliteValue::from(issue_id)],
@@ -19319,8 +18735,6 @@ impl SqliteStorage {
             return Ok(());
         }
 
-        // Keep label inserts single-row: multi-values inserts with repeated
-        // issue_id bindings are fragile on this primary key.
         for label in unique_labels {
             self.conn.execute_with_params(
                 "INSERT OR IGNORE INTO labels (issue_id, label) VALUES (?, ?)",
@@ -19426,7 +18840,6 @@ impl SqliteStorage {
                 )
                 .collect::<Vec<_>>();
 
-        // Remove existing dependencies where this issue is the dependent.
         self.conn.execute_with_params(
             "DELETE FROM dependencies WHERE issue_id = ?",
             &[SqliteValue::from(issue_id)],
@@ -19499,9 +18912,6 @@ impl SqliteStorage {
                 &dep.depends_on_id,
                 dep.dep_type.as_str(),
             )?;
-            // Deduplicate by target because the dependencies table is keyed by
-            // (issue_id, depends_on_id). Type-distinct duplicates would be
-            // ignored by insertion anyway.
             if seen_deps.insert(dep.depends_on_id.as_str()) {
                 unique_deps.push(dep);
             }
@@ -19618,7 +19028,6 @@ impl SqliteStorage {
                 .map(|(author, text, created_at)| (*author, *text, created_at.as_str()))
                 .collect::<Vec<_>>();
 
-        // Remove existing comments.
         self.conn.execute_with_params(
             "DELETE FROM comments WHERE issue_id = ?",
             &[SqliteValue::from(issue_id)],
@@ -19865,11 +19274,6 @@ impl SqliteStorage {
                 .collect::<HashSet<_>>();
             changed_ids.extend(notes.iter().map(|(issue_id, _)| issue_id.clone()));
 
-            // Capacity is a final-state property of the complete merge, not a
-            // sequence of independent row writes. Build one transition batch
-            // from the transaction's exact prestate so a kept/new issue cannot
-            // bypass limits and a capacity-neutral swap is not rejected merely
-            // because its admitting row happens to be applied first.
             let mut affected_ids = kept
                 .iter()
                 .map(|issue| issue.id.clone())
@@ -19975,9 +19379,6 @@ impl SqliteStorage {
                 changed_ids.insert(tombstone.id.clone());
             }
 
-            // Materialize every issue row before validating/inserting
-            // dependency relations so references between two newly merged
-            // rows do not depend on report ordering.
             for issue in kept {
                 storage.upsert_issue_for_import_in_tx(issue)?;
             }
@@ -20404,14 +19805,6 @@ impl SqliteStorage {
             Ok(()) => Ok(()),
             Err(BeadsError::Database(error)) if is_import_comment_id_collision(&error) => {
                 match self.import_comment_id_owner(comment.id)? {
-                    // Whenever ANY row already owns this id — a comment on
-                    // another issue OR an earlier comment of *this* issue whose
-                    // id was AUTO-reallocated to the same value during this
-                    // import — reinsert without an explicit id so AUTOINCREMENT
-                    // assigns a fresh one. True same-issue JSONL duplicates are
-                    // rejected earlier by `validate_import_comments_for_issue`,
-                    // so this cannot silently swallow a genuine duplicate
-                    // (issue #374).
                     Some(_) => {
                         self.insert_import_comment_without_id(issue_id, comment, &created_at)
                     }
@@ -20732,25 +20125,12 @@ fn label_count_error() -> BeadsError {
 
 impl Drop for SqliteStorage {
     fn drop(&mut self) {
-        // Read-only commands leave `mutation_count` at zero, so they keep
-        // the original "no checkpoint on teardown" behaviour that prevents
-        // spurious busy failures under parallel read traffic. Mutating
-        // commands that committed since the last periodic checkpoint —
-        // including the abnormal-exit case where signal-induced shutdown
-        // (`crate::shutdown`) returns from main without re-entering
-        // `with_write_transaction` — get one final TRUNCATE here so WAL
-        // frames are not stranded on disk after the process ends (#270).
         if self.mutation_count > 0
             && let Err(e) = self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         {
             tracing::debug!(error = %e, "WAL checkpoint on drop failed (non-fatal)");
         }
-        // Explicitly close the connection instead of relying on Drop.
         let _ = self.conn.close_in_place();
-        // Ephemeral temp databases (open_memory) are unlinked here, after the
-        // connection is closed, so the file and its WAL/SHM/journal sidecars are
-        // not left behind in TMPDIR (#299). Persistent databases have
-        // `temp_db_path == None` and are never touched.
         if let Some(path) = self.temp_db_path.take() {
             remove_temp_db_files(&path);
         }
@@ -20855,9 +20235,6 @@ mod tests {
             deleted_by: None,
             delete_reason: None,
             original_type: None,
-            // ADR-0001 §5.5: ready-dispatchable fixtures carry a runnable
-            // VERIFY and a principles citation by default; predicate tests
-            // opt out by clearing these fields explicitly.
             verify: Some("cargo test --offline".to_string()),
             principles: vec![crate::model::PrincipleCitation {
                 name: "prove-it-works".to_string(),
@@ -21194,8 +20571,6 @@ mod tests {
     }
 
     fn required_review_fields_workflow() -> crate::close_policy::Workflow {
-        // Presence of required_fields enables these checks independently of
-        // strict status-vocabulary enforcement.
         let mut workflow = crate::close_policy::Workflow::default();
         workflow.required_fields.insert(
             "in_progress -> blocked".to_string(),
@@ -21379,7 +20754,6 @@ mod tests {
             "error should name the rejected transition: {message}"
         );
 
-        // Neither issue moved: the whole batch is preflighted before mutation.
         assert_eq!(
             storage
                 .get_issue("bd-trans-allowed")
@@ -21397,7 +20771,6 @@ mod tests {
             Status::Open
         );
 
-        // The allowed leg on its own still commits.
         storage
             .update_issues_atomically(&closes[..1], "tester")
             .unwrap();
@@ -21410,7 +20783,6 @@ mod tests {
             Status::Closed
         );
 
-        // `--bypass-policy` (a recorded bypass reason) still gets through.
         storage
             .update_issues_atomically(
                 &[(
@@ -21936,8 +21308,6 @@ mod tests {
             .unwrap();
         storage.set_workflow_capacity_policy(hard_status_capacity("in_progress", 1));
 
-        // Admission intentionally appears first. Sequential evaluation would
-        // reject it at 2/1 even though the batch's final occupancy remains 1.
         let batch = [
             (
                 "bd-cap-swap-open".to_string(),
@@ -22030,7 +21400,6 @@ mod tests {
         assert_eq!(warnings[1].capacity_kind, "group");
         assert_eq!(warnings[1].capacity_name, "active_work");
         assert!(storage.take_capacity_warnings().is_empty());
-        // `all` counting must not advertise hierarchy evidence.
         assert_eq!(warnings[0].counting_mode, "all");
         assert!(warnings[0].aggregate_parents_excluded.is_none());
     }
@@ -22073,7 +21442,6 @@ mod tests {
             )
             .unwrap();
 
-        // The exempted issue enters a full capacity without consuming a slot.
         let update = IssueUpdate {
             status: Some(Status::InProgress),
             ..IssueUpdate::default()
@@ -22082,9 +21450,6 @@ mod tests {
             .update_issue("bd-ex-hotfix", &update, "tester")
             .unwrap();
 
-        // A normal issue is still rejected, and the evidence separates the
-        // counted total from the exempt total (GitHub #384: "Reports show
-        // counted and exempt totals separately").
         let error = storage
             .update_issue("bd-ex-normal", &update, "tester")
             .unwrap_err();
@@ -22133,8 +21498,6 @@ mod tests {
             .update_issue("bd-exl-hotfix", &enter, "tester")
             .unwrap();
 
-        // Leaving the applicable status ends the exemption, audited, in the
-        // same transaction as the departure.
         let leave = IssueUpdate {
             status: Some(Status::Closed),
             ..IssueUpdate::default()
@@ -22155,8 +21518,6 @@ mod tests {
             Some("left_status")
         );
 
-        // Re-entry counts again: without a fresh grant the full capacity
-        // rejects it.
         let error = storage
             .update_issue("bd-exl-hotfix", &enter, "tester")
             .unwrap_err();
@@ -22196,7 +21557,6 @@ mod tests {
             .update_issue("bd-exp-hotfix", &enter, "tester")
             .unwrap();
 
-        // Simulate the clock passing the expiry.
         storage
             .with_connection_write_transaction(|conn| {
                 conn.execute_with_params(
@@ -22210,8 +21570,6 @@ mod tests {
             })
             .unwrap();
 
-        // Expired exemptions count again: the hotfix now occupies a slot, so
-        // the next admission sees current=2 with no exempt total.
         let error = storage
             .update_issue("bd-exp-normal", &enter, "tester")
             .unwrap_err();
@@ -22221,16 +21579,12 @@ mod tests {
         assert_eq!(violation.current, 2);
         assert_eq!(violation.exempt, None);
 
-        // The rejected mutation rolled its own expiry marking back with it,
-        // but listing derives `expired` from the record without mutating.
         let records = storage
             .list_capacity_exemptions(Some("bd-exp-hotfix"))
             .unwrap();
         assert_eq!(records[0].state, "expired");
         assert!(records[0].ended_at.is_none(), "read paths never mutate");
 
-        // The first *committed* observation persists the audited expire
-        // record: draining the overfull status is allowed and commits.
         let drain = IssueUpdate {
             status: Some(Status::Closed),
             ..IssueUpdate::default()
@@ -22277,8 +21631,6 @@ mod tests {
             )
             .unwrap();
 
-        // Removing the provider from policy silently withdraws its grants
-        // without touching the audit history.
         storage.set_workflow_capacity_policy(hard_status_capacity("in_progress", 1));
         let enter = IssueUpdate {
             status: Some(Status::InProgress),
@@ -22395,8 +21747,6 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, BeadsError::WorkflowCapacityExceeded { .. }));
 
-        // Exempting the long-lived review item from the observed queue lets
-        // fresh work start without draining it.
         storage
             .grant_capacity_exemption(
                 "bd-exa-review",
@@ -22434,9 +21784,6 @@ mod tests {
         policy.counting.hierarchy = crate::close_policy::CapacityCountingMode::LeafWork;
         storage.set_workflow_capacity_policy(policy);
 
-        // leaf_work counts only the child; exempting it frees the slot while
-        // the parent stays aggregate-excluded (the exempt issue remains
-        // active for suppression, so an exemption can never raise a count).
         storage
             .grant_capacity_exemption(
                 "bd-lwx-child",
@@ -22518,9 +21865,6 @@ mod tests {
 
     #[test]
     fn capacity_leaf_work_counts_the_github_384_example_as_two_slots() {
-        // Epic: in_progress / Parent: in_progress / A: in_progress /
-        // B: in_review. The issue body specifies this consumes two slots
-        // under leaf_work, not four.
         let mut storage = SqliteStorage::open_memory().unwrap();
         seed_capacity_hierarchy(
             &mut storage,
@@ -22538,7 +21882,6 @@ mod tests {
             2,
         ));
 
-        // A fresh leaf admitted into the group makes it 3 > hard 2.
         let now = Utc::now();
         storage
             .create_issue(
@@ -22562,14 +21905,11 @@ mod tests {
         assert_eq!(violation.counting_mode, "leaf_work");
         assert_eq!(violation.current, 2, "epic and parent are aggregates");
         assert_eq!(violation.prospective, 3);
-        // Epic and parent are active but excluded as aggregates.
         assert_eq!(violation.aggregate_parents_excluded, Some(2));
     }
 
     #[test]
     fn capacity_leaf_work_starts_counting_a_parent_when_its_last_child_leaves() {
-        // Draining the final active descendant must not free a slot: the
-        // active parent stops being an aggregate and begins counting itself.
         let mut storage = SqliteStorage::open_memory().unwrap();
         seed_capacity_hierarchy(
             &mut storage,
@@ -22587,7 +21927,6 @@ mod tests {
             1,
         ));
 
-        // Only child A counts right now; the parent is an aggregate.
         let now = Utc::now();
         storage
             .create_issue(
@@ -22608,8 +21947,6 @@ mod tests {
         assert_eq!(violation.current, 1);
         assert_eq!(violation.aggregate_parents_excluded, Some(1));
 
-        // Closing child A leaves the parent as the sole counted issue, so
-        // the count stays 1 and admitting a fresh issue still fails.
         storage
             .update_issue(
                 "bd-lw2-child-a",
@@ -22635,10 +21972,6 @@ mod tests {
 
     #[test]
     fn capacity_leaf_work_enforces_an_increase_caused_only_by_a_drain() {
-        // A child shared by two active parents is the one case where a
-        // transition that only *leaves* the capacity still raises the count:
-        // closing it turns both parents from aggregates into counted work.
-        // The hard limit must still be enforced.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let now = Utc::now();
         for id in ["bd-shared-p1", "bd-shared-p2", "bd-shared-child"] {
@@ -22649,8 +21982,6 @@ mod tests {
                 )
                 .unwrap();
         }
-        // Two parents for one child: reachable through import, not through
-        // `--parent`, which replaces the existing edge.
         storage
             .conn
             .execute(
@@ -22665,7 +21996,6 @@ mod tests {
             1,
         ));
 
-        // Only the shared child counts today: both parents are aggregates.
         let error = storage
             .update_issue(
                 "bd-shared-child",
@@ -22698,8 +22028,6 @@ mod tests {
 
     #[test]
     fn capacity_leaf_work_ignores_blocks_edges() {
-        // Only parent-child edges participate: a `blocks` edge between two
-        // active leaves must never suppress one of them.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let now = Utc::now();
         for id in ["bd-lwb-1", "bd-lwb-2"] {
@@ -22744,8 +22072,6 @@ mod tests {
 
     #[test]
     fn capacity_roots_counts_the_highest_active_ancestor() {
-        // Same tree as the leaf_work example: under `roots` the epic is the
-        // single counted work stream.
         let mut storage = SqliteStorage::open_memory().unwrap();
         seed_capacity_hierarchy(
             &mut storage,
@@ -22807,7 +22133,6 @@ mod tests {
             default: Some(1),
             ..crate::close_policy::CapacityWeights::default()
         };
-        // An epic represents no independent execution; bd-w-2 is double-weight.
         weights.types.insert("epic".to_string(), 0);
         weights.issues.insert("bd-w-2".to_string(), 2);
         let mut policy = crate::close_policy::CapacityPolicy {
@@ -22826,7 +22151,6 @@ mod tests {
         );
         storage.set_workflow_capacity_policy(policy);
 
-        // Weighted current = 0 (epic) + 1 + 2 = 3; one more unit exceeds 3.
         storage
             .create_issue(
                 &make_issue("bd-w-3", "third", Status::Open, 1, None, now, None),
@@ -22857,8 +22181,6 @@ mod tests {
 
     #[test]
     fn capacity_weighted_counts_a_created_issue_before_its_row_exists() {
-        // Creation must resolve the new issue's weight from the requested
-        // type, not from a row that does not exist yet.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let now = Utc::now();
         let mut weights = crate::close_policy::CapacityWeights::default();
@@ -22892,9 +22214,6 @@ mod tests {
 
     #[test]
     fn capacity_hierarchy_counts_every_member_of_a_dependency_cycle() {
-        // Imported data can contain a parent-child cycle. Condensing the
-        // cycle into one component keeps its active members visible instead
-        // of letting them cancel each other out.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let now = Utc::now();
         for id in ["bd-cyc-1", "bd-cyc-2"] {
@@ -22905,7 +22224,6 @@ mod tests {
                 )
                 .unwrap();
         }
-        // Bypass the cycle guard the way a JSONL import would.
         storage
             .conn
             .execute(
@@ -22948,8 +22266,6 @@ mod tests {
 
     #[test]
     fn capacity_leaf_work_batch_is_evaluated_on_the_final_state() {
-        // A batch that activates a parent and closes its only active child
-        // is capacity-neutral under leaf_work regardless of request order.
         let mut storage = SqliteStorage::open_memory().unwrap();
         seed_capacity_hierarchy(
             &mut storage,
@@ -23073,7 +22389,6 @@ mod tests {
             "rejected transition must not modify issue state"
         );
 
-        // A different actor has an independent partition.
         storage
             .update_issues_atomically(&[("bd-sca-4".to_string(), to_in_progress())], "bob")
             .expect("bob's partition is empty");
@@ -23101,7 +22416,6 @@ mod tests {
             .update_issues_atomically(&[("bd-scs-1".to_string(), to_in_progress())], "alice")
             .unwrap();
 
-        // One batch: alice releases her slot and claims another issue.
         storage
             .update_issues_atomically(
                 &[
@@ -23156,7 +22470,6 @@ mod tests {
         storage
             .update_issues_atomically(&[("bd-scg-3".to_string(), claim_for("carol"))], "op")
             .expect("carol's partition is independent");
-        // No prospective assignee → the assignee scope is inapplicable.
         storage
             .update_issues_atomically(&[("bd-scg-4".to_string(), to_in_progress())], "op")
             .expect("unassigned transitions are not subject to the assignee scope");
@@ -23204,15 +22517,11 @@ mod tests {
         assert_eq!(violation.scope, "harness");
         assert_eq!(violation.scope_key.as_deref(), Some("swarm-h1"));
 
-        // No harness attribution → the harness scope is inapplicable. The
-        // staged attribution deliberately survives the failed mutation above
-        // (post-recovery retry semantics), so clear it first.
         let _ = storage.take_pending_event_attribution();
         storage
             .update_issues_atomically(&[("bd-sch-3".to_string(), to_in_progress())], "op")
             .expect("attribution-free transitions skip the harness scope");
 
-        // Session scope behaves identically, keyed on the session value.
         let mut storage = SqliteStorage::open_memory().unwrap();
         for id in ["bd-scn-1", "bd-scn-2"] {
             storage
@@ -23287,7 +22596,6 @@ mod tests {
         assert_eq!(violation.scope, "subtree");
         assert_eq!(violation.scope_key.as_deref(), Some("bd-sct-root"));
 
-        // An issue outside the subtree has its own root partition.
         storage
             .update_issues_atomically(&[("bd-sct-other".to_string(), to_in_progress())], "op")
             .expect("a different subtree is unaffected");
@@ -23309,7 +22617,6 @@ mod tests {
         policy.exemptions.providers = vec!["operator".to_string()];
         storage.set_workflow_capacity_policy(policy);
 
-        // Alice occupies her only slot; without an exemption the claim fails.
         let error = storage
             .update_issues_atomically(&[("bd-sce-next".to_string(), to_in_progress())], "alice")
             .unwrap_err();
@@ -23396,8 +22703,6 @@ mod tests {
         storage
             .update_issues_atomically(&[("bd-scr-1".to_string(), to_in_progress())], "alice")
             .unwrap();
-        // The repository scope ignores the acting partition: a different
-        // actor is still bound by the shared limit.
         let error = storage
             .update_issues_atomically(&[("bd-scr-2".to_string(), to_in_progress())], "bob")
             .unwrap_err();
@@ -23474,14 +22779,12 @@ mod tests {
                 )
                 .unwrap();
         }
-        // Containment: E ── S ── E2 (parent-child rows are child -> parent).
         storage
             .add_dependency("bd-391-s", "bd-391-e", "parent-child", "seed")
             .unwrap();
         storage
             .add_dependency("bd-391-e2", "bd-391-s", "parent-child", "seed")
             .unwrap();
-        // Blocks chains reaching the epic: H -> E, R -> H, A -> E, M -> A.
         for (from, to) in [
             ("bd-391-h", "bd-391-e"),
             ("bd-391-r", "bd-391-h"),
@@ -23491,18 +22794,14 @@ mod tests {
             storage.add_dependency(from, to, "blocks", "seed").unwrap();
         }
 
-        // Documented containment rule: a descendant's blocks-edge back into
-        // a chain that reaches the epic is rejected as a cycle.
         let error = storage
             .add_dependency("bd-391-e2", "bd-391-r", "blocks", "seed")
             .unwrap_err();
         assert!(matches!(error, BeadsError::DependencyCycle { .. }));
 
-        // A `related` edge is accepted unchecked...
         storage
             .add_dependency("bd-391-e2", "bd-391-m", "related", "seed")
             .unwrap();
-        // ...and must NOT surface as a cycle in any report mode.
         assert!(
             storage.detect_blocking_cycles().unwrap().is_empty(),
             "blocking cycle report must ignore related edges"
@@ -23519,8 +22818,6 @@ mod tests {
             );
         }
 
-        // Positive control: a genuine blocking cycle is still detected.
-        // (Insert via the import-relation path, which does not cycle-check.)
         for id in ["bd-391-p", "bd-391-q"] {
             storage
                 .create_issue(
@@ -23562,8 +22859,6 @@ mod tests {
             .unwrap();
         storage.set_workflow_capacity_policy(hard_status_capacity("in_progress", 1));
 
-        // The status is already at its hard limit; a same-status update must
-        // not be treated as a new admission.
         let update = IssueUpdate {
             status: Some(Status::InProgress),
             title: Some("still held".to_string()),
@@ -23603,7 +22898,6 @@ mod tests {
         assert_eq!(rollup.descendants.get("open"), Some(&1));
         assert_eq!(rollup.descendants.get("closed"), Some(&1));
 
-        // A leaf has no children and therefore no rollup.
         let leaf = storage
             .get_issue_details("bd-rollup-child-a", false, false, 0)
             .unwrap()
@@ -23613,8 +22907,6 @@ mod tests {
 
     #[test]
     fn derived_rollup_terminates_on_a_parent_child_cycle() {
-        // The subtree walk must not loop on imported cyclic data, and the
-        // issue itself must never appear among its own descendants.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let now = Utc::now();
         for id in ["bd-rc-1", "bd-rc-2"] {
@@ -23850,8 +23142,6 @@ mod tests {
         parent_id: &str,
         created_at: DateTime<Utc>,
     ) {
-        // Temporarily disable FK checks for the raw INSERT since external
-        // children do not exist in the local issues table.
         storage.conn.execute("PRAGMA foreign_keys = OFF").unwrap();
         storage
             .conn
@@ -23908,8 +23198,6 @@ mod tests {
             .clone()
             .expect("open_memory must record its temp db path");
 
-        // Perform a mutation so SQLite actually materializes the WAL sidecar,
-        // exercising the sidecar-cleanup path and not just the base .db file.
         let issue = make_issue(
             "bd-1",
             "tmp leak repro",
@@ -23929,7 +23217,6 @@ mod tests {
 
         drop(storage);
 
-        // The base file and every sidecar SQLite may have created must be gone.
         let name = db_path
             .file_name()
             .and_then(|n| n.to_str())
@@ -23967,7 +23254,6 @@ mod tests {
             let p = dir.path().join(format!("beads_mem_test_0.db{suffix}"));
             assert!(!p.exists(), "should have been removed: {}", p.display());
         }
-        // Idempotent / tolerant of already-missing files.
         remove_temp_db_files(&base);
     }
 
@@ -24031,7 +23317,6 @@ mod tests {
 
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Verify it exists (raw query since get_issue not impl yet)
         let count = storage
             .conn
             .query_row_with_params(
@@ -24055,7 +23340,6 @@ mod tests {
             "create_issue should persist the canonical content hash"
         );
 
-        // Verify event
         let event_count = storage
             .conn
             .query_row_with_params(
@@ -24068,7 +23352,6 @@ mod tests {
             .unwrap_or(0);
         assert_eq!(event_count, 1);
 
-        // Verify dirty
         let dirty_count = storage
             .conn
             .query_row_with_params(
@@ -24131,8 +23414,6 @@ mod tests {
 
     #[test]
     fn test_get_all_issues_metadata_rejects_unknown_status_loudly() {
-        // bd-bqyb: a smuggled unknown status fails the metadata read instead
-        // of materializing as Custom.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let issue = make_issue(
             "bd-custom",
@@ -24183,24 +23464,19 @@ mod tests {
         let issue = make_issue("bd-tx1", "Tx Test", Status::Open, 2, None, Utc::now(), None);
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Attempt a mutation that fails
         let result: Result<()> = storage.mutate("fail_op", "tester", |_tx, ctx| {
-            // Do something valid first (record an event)
             ctx.record_event(
                 EventType::Updated,
                 "bd-tx1",
                 Some("Should be rolled back".to_string()),
             );
 
-            // Return error to trigger rollback
             Err(BeadsError::Config("Planned failure".to_string()))
         });
 
         assert!(result.is_err());
 
-        // Verify side effects (event) are gone
         let events = storage.get_events("bd-tx1", 100).unwrap();
-        // Should only have the creation event
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, EventType::Created);
     }
@@ -24219,7 +23495,6 @@ mod tests {
         );
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Verify that a closure error causes a rollback.
         let result: Result<()> = storage.mutate("fail_in_closure", "tester", |_tx, _ctx| {
             Err(BeadsError::validation(
                 "test",
@@ -24232,7 +23507,6 @@ mod tests {
             "closure error should propagate as transaction failure"
         );
 
-        // Subsequent writes should still succeed after rollback.
         let follow_up = make_issue(
             "bd-tx-side-effect-2",
             "Follow Up",
@@ -24251,9 +23525,6 @@ mod tests {
 
     #[test]
     fn test_event_insert_for_missing_issue_succeeds_with_fk_disabled() {
-        // FK enforcement is disabled during mutate transactions to work
-        // around suppressed false FK violations (#215).  Events for
-        // non-existent issue_ids are tolerated rather than rejected.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let issue = make_issue(
             "bd-tx-fk",
@@ -24298,12 +23569,10 @@ mod tests {
         storage.create_issue(&parent, "tester").unwrap();
         storage.create_issue(&child, "tester").unwrap();
 
-        // Parent (bd-p1) depends on external capability
         storage
             .add_dependency("bd-p1", "external:extproj:capability", "blocks", "tester")
             .unwrap();
 
-        // Child (bd-c1) depends on Parent (bd-p1) via parent-child
         storage
             .add_dependency("bd-c1", "bd-p1", "parent-child", "tester")
             .unwrap();
@@ -24725,9 +23994,6 @@ mod tests {
         let issue = make_issue("bd-close-285", "Close me", Status::Open, 2, None, t1, None);
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Sanity: dirty-tracker is empty after create. (`create_issue`
-        // marks dirty, so we clear it explicitly so the assertion below
-        // measures only the close path's contribution.)
         storage.clear_all_dirty_issues().unwrap();
         assert_eq!(storage.get_dirty_issue_count().unwrap(), 0);
 
@@ -24742,13 +24008,8 @@ mod tests {
             .update_issue("bd-close-285", &close_update, "tester")
             .expect("close path must succeed");
 
-        // Half 1: the in-memory return value reports Closed.
         assert_eq!(updated.status, Status::Closed, "returned issue.status");
 
-        // Half 2: the SQLite store actually reflects Closed. Reading
-        // through `get_issue` exercises the same query path consumers
-        // use; a raw SELECT is unnecessary because the user-visible
-        // symptom is the wrong status surfacing through that API.
         let reloaded = storage
             .get_issue("bd-close-285")
             .expect("get_issue")
@@ -24759,10 +24020,6 @@ mod tests {
             "SQLite row must report closed; if this fails, br close persisted to JSONL but not DB (issue #285)"
         );
 
-        // Half 3: dirty_issues queued the close so the next flush can
-        // export it. If this count is zero the JSONL→DB reconciliation
-        // path has nothing to act on and divergence accumulates over
-        // time (the 2.4% drift rate the issue reports).
         assert_eq!(
             storage.get_dirty_issue_count().unwrap(),
             1,
@@ -24921,10 +24178,6 @@ mod tests {
     }
     #[test]
     fn test_update_issue_writes_source_repo_path() {
-        // Regression for #289: `br update --source-repo-path PATH` must
-        // round-trip through SQLite. Without writing to the column, the
-        // installed checkpoint would silently lose the value on every
-        // create-then-update cycle.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap();
         let issue = make_issue(
@@ -24950,8 +24203,6 @@ mod tests {
             Some("/data/projects/widget_engine")
         );
 
-        // Read back through a fresh fetch to prove it persisted (not just
-        // returned from the in-memory `Issue` the update builder mutates).
         let reread = storage.get_issue("bd-srp").unwrap().unwrap();
         assert_eq!(reread.source_repo.as_deref(), Some("widget_engine"));
         assert_eq!(
@@ -24959,8 +24210,6 @@ mod tests {
             Some("/data/projects/widget_engine")
         );
 
-        // Clear path: passing an empty string through `optional_string_field`
-        // sets the inner Option to None, which should write SQL NULL.
         let clear = IssueUpdate {
             source_repo_path: Some(None),
             ..IssueUpdate::default()
@@ -25061,81 +24310,6 @@ mod tests {
         assert_eq!(after.delete_reason, tombstone.delete_reason);
         assert!(storage.get_dirty_issue_ids().unwrap().is_empty());
     }
-
-    /*
-    #[test]
-    fn test_update_issue_recomputes_hash_from_fresh_transaction_state() {
-        use std::sync::mpsc;
-        use std::time::Duration;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("beads.db");
-
-        let mut setup = SqliteStorage::open(&db_path).unwrap();
-        let issue = make_issue(
-            "bd-race1",
-            "Original title",
-            Status::Open,
-            2,
-            None,
-            Utc::now(),
-            None,
-        );
-        setup.create_issue(&issue, "tester").unwrap();
-        drop(setup);
-
-        let (ready_tx, ready_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let writer_db_path = db_path.clone();
-
-        let writer = std::thread::spawn(move || {
-            let storage = SqliteStorage::open(&writer_db_path).unwrap();
-            storage.conn.execute("BEGIN IMMEDIATE").unwrap();
-            storage
-                .conn
-                .execute_with_params(
-                    "UPDATE issues SET description = ?, updated_at = ? WHERE id = ?",
-                    &[
-                        SqliteValue::from("Thread description"),
-                        SqliteValue::from(Utc::now().to_rfc3339()),
-                        SqliteValue::from("bd-race1"),
-                    ],
-                )
-                .unwrap();
-            ready_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-            storage.conn.execute("COMMIT").unwrap();
-        });
-
-        ready_rx.recv().unwrap();
-
-        let updater_db_path = db_path;
-        let updater = std::thread::spawn(move || {
-            let mut storage = SqliteStorage::open(&updater_db_path).unwrap();
-            let updates = IssueUpdate {
-                title: Some("Updated title".to_string()),
-                ..IssueUpdate::default()
-            };
-            storage
-                .update_issue("bd-race1", &updates, "tester")
-                .unwrap();
-            storage.get_issue("bd-race1").unwrap().unwrap()
-        });
-
-        std::thread::sleep(Duration::from_millis(50));
-        release_tx.send(()).unwrap();
-
-        writer.join().unwrap();
-        let updated = updater.join().unwrap();
-
-        assert_eq!(updated.description.as_deref(), Some("Thread description"));
-        assert_eq!(
-            updated.content_hash.as_deref(),
-            Some(crate::util::content_hash(&updated).as_str())
-        );
-    }
-    */
 
     #[test]
     fn test_delete_issue_sets_tombstone() {
@@ -25448,7 +24622,6 @@ mod tests {
         assert!(empty.0.is_empty());
         assert!(empty.1.is_empty());
 
-        // Repeating an ID inside one IN-list must not multiply its grouped count.
         let ids = [
             "bd-dependency-only",
             "bd-dependency-only",
@@ -26194,7 +25367,6 @@ mod tests {
             matches!(&err, BeadsError::Validation { field, .. } if field == "dependencies[0].metadata"),
             "metadata validation error must name the offending dependency field: {err:?}"
         );
-        // #323: the error must be actionable — naming the issue and target.
         let msg = err.to_string();
         assert!(
             msg.contains(&issue.id) && msg.contains(&stable_parent.id),
@@ -27277,7 +26449,6 @@ mod tests {
         storage.create_issue(&issue_a, "tester").unwrap();
         storage.create_issue(&issue_b, "tester").unwrap();
 
-        // Same-type duplicate stays idempotent.
         assert!(
             storage
                 .add_dependency("bd-a1", "bd-b1", "blocks", "tester")
@@ -27289,8 +26460,6 @@ mod tests {
                 .unwrap()
         );
 
-        // A different type over the same pair must fail loudly, naming
-        // both the existing and the requested type — never silent success.
         let err = storage
             .add_dependency("bd-a1", "bd-b1", "parent-child", "tester")
             .unwrap_err();
@@ -27300,7 +26469,6 @@ mod tests {
             "conflict must name both types, got: {message}"
         );
 
-        // The original edge is untouched.
         let deps = storage.get_dependencies_full("bd-a1").unwrap();
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].dep_type.as_str(), "blocks");
@@ -27374,10 +26542,6 @@ mod tests {
 
     #[test]
     fn test_import_dependency_with_legacy_empty_metadata_rebuilds() {
-        // Regression for issue #323: legacy JSONL with `"metadata":""` (an
-        // empty string that is not valid JSON) must rebuild cleanly through the
-        // JSONL deserialize -> SQLite import path, materializing as the empty
-        // JSON object `"{}"` with no data loss.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc.with_ymd_and_hms(2025, 7, 2, 0, 0, 0).unwrap();
 
@@ -27386,8 +26550,6 @@ mod tests {
         storage.create_issue(&issue_a, "tester").unwrap();
         storage.create_issue(&issue_b, "tester").unwrap();
 
-        // Deserialize exactly as a JSONL rebuild would (not constructing the
-        // Dependency directly) so the empty-string coercion is exercised.
         let dep_json = r#"{
             "issue_id": "bd-a1",
             "depends_on_id": "bd-b1",
@@ -27408,7 +26570,6 @@ mod tests {
         let deps = storage.get_dependencies_full("bd-a1").unwrap();
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].depends_on_id, "bd-b1");
-        // None is materialized as "{}" on insert.
         assert_eq!(deps[0].metadata.as_deref(), Some("{}"));
     }
 
@@ -27635,9 +26796,6 @@ mod tests {
         storage.add_dependency("bd-rel-cy1", "bd-rel-cy2", "related", "tester")?;
         storage.add_dependency("bd-rel-cy2", "bd-rel-cy1", "related", "tester")?;
 
-        // GitHub #391: `related` edges are never cycle-checked when added,
-        // so no report mode may count them — the default previously did,
-        // making `br dep cycles` fail on graphs the add path allowed.
         assert!(storage.detect_all_cycles()?.is_empty());
         assert!(storage.detect_blocking_cycles()?.is_empty());
         Ok(())
@@ -28053,9 +27211,6 @@ mod tests {
         );
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Long-content comments are explicitly permitted — spec write-ups,
-        // session transcripts, etc. routinely exceed 50KB. The prior cap
-        // rejected legitimate pre-existing JSONL records on rebuild.
         let long_text = "x".repeat(600_000);
         storage
             .add_comment("bd-c-invalid-input", "alice", &long_text)
@@ -28283,13 +27438,6 @@ mod tests {
 
     #[test]
     fn test_sync_comments_for_import_handles_auto_realloc_self_collision() {
-        // Issue #374: during a single import, an earlier comment whose JSONL id
-        // collides with a comment on *another* issue is AUTO-reallocated a fresh
-        // id via AUTOINCREMENT. If that freshly assigned id happens to equal a
-        // *later* comment's JSONL id in the SAME import, the later insert hits a
-        // PK collision whose owner is this very issue. The old narrow guard
-        // (`owner != issue_id`) turned that self-collision into a hard failure,
-        // corrupting rebuild-from-JSONL. It must instead reallocate again.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc.with_ymd_and_hms(2025, 7, 4, 0, 0, 0).unwrap();
 
@@ -28314,16 +27462,11 @@ mod tests {
         storage.create_issue(&issue_a, "tester").unwrap();
         storage.create_issue(&issue_b, "tester").unwrap();
 
-        // Existing comment on issue B occupies id E and makes E the current
-        // AUTOINCREMENT high-water mark, so the next auto id is E + 1.
         let existing = storage
             .add_comment("bd-c-realloc-b", "bob", "Existing comment on B")
             .unwrap();
         let e = existing.id;
 
-        // First imported comment collides with B's id (E) -> auto-realloc to
-        // E + 1. Second imported comment's JSONL id is E + 1, which now collides
-        // with the just-reallocated first comment -> a same-issue self-collision.
         let first = crate::model::Comment {
             id: e,
             issue_id: "bd-c-realloc-a".to_string(),
@@ -28348,12 +27491,10 @@ mod tests {
         assert_eq!(comments_a.len(), 2, "both imported comments must be kept");
         assert_eq!(comments_a[0].body, "first imported (collides with B)");
         assert_eq!(comments_a[1].body, "second imported (self-collision)");
-        // Reallocated ids must be distinct and must not clobber B's comment.
         assert_ne!(comments_a[0].id, comments_a[1].id);
         assert_ne!(comments_a[0].id, e);
         assert_ne!(comments_a[1].id, e);
 
-        // Issue B's original comment is untouched.
         assert_eq!(
             storage.get_comments("bd-c-realloc-b").unwrap(),
             vec![existing]
@@ -28362,11 +27503,6 @@ mod tests {
 
     #[test]
     fn connection_user_version_sees_wal_resident_value_header_misses() {
-        // Issue #373: a user_version written through a connection lives in the
-        // uncheckpointed WAL, so a raw file-header peek reads a stale value
-        // while the connection observes the true one. connection_user_version
-        // must report the WAL-resident value; database_header_user_version must
-        // not — proving the exact scenario the open-path fix guards against.
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("wal_uv.db");
 
@@ -28375,10 +27511,8 @@ mod tests {
         conn.execute("CREATE TABLE t (x INTEGER)").unwrap();
         conn.execute("PRAGMA user_version = 4242").unwrap();
 
-        // Through the connection: WAL-aware, sees the new value.
         assert_eq!(connection_user_version(&conn), Some(4242));
 
-        // Raw header peek of the main db file misses the uncheckpointed value.
         assert_ne!(
             database_header_user_version(&db_path),
             Some(4242),
@@ -28498,9 +27632,7 @@ mod tests {
                 .unwrap()
         );
 
-        // rusqlite's execute() rejects multi-statement SQL; run each
         // statement separately (the PRAGMA first, so the FK-exempt insert
-        // lands).
         storage.conn.execute("PRAGMA foreign_keys = OFF").unwrap();
         storage
             .conn
@@ -28680,7 +27812,6 @@ mod tests {
         );
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Verify event has timestamp
         let created_at: String = storage
             .conn
             .query_row_with_params(
@@ -28693,7 +27824,6 @@ mod tests {
             .unwrap_or("")
             .to_string();
 
-        // Should be a valid RFC3339 timestamp
         assert!(
             chrono::DateTime::parse_from_rfc3339(&created_at).is_ok(),
             "Event timestamp should be valid RFC3339"
@@ -28704,7 +27834,6 @@ mod tests {
     fn test_blocked_cache_invalidation() {
         let mut storage = SqliteStorage::open_memory().unwrap();
 
-        // Create issues first (required for FK constraints on events table)
         let issue1 = make_issue(
             "bd-c1",
             "Cached issue",
@@ -28727,7 +27856,6 @@ mod tests {
         );
         storage.create_issue(&issue2, "tester").unwrap();
 
-        // Manually insert some cache data
         storage
             .conn
             .execute_with_params(
@@ -28739,7 +27867,6 @@ mod tests {
             )
             .unwrap();
 
-        // Verify cache has data
         let count = storage
             .conn
             .query_row_with_params(
@@ -28752,33 +27879,26 @@ mod tests {
             .unwrap_or(0);
         assert_eq!(count, 1);
 
-        // Now add a non-blocking dependency type ("related" doesn't block)
         storage
             .add_dependency("bd-c1", "bd-b1", "related", "tester")
             .unwrap();
 
-        // With deferred cache refresh, add_dependency now marks the cache stale
-        // rather than rebuilding immediately.  Verify the stale marker was set.
         assert!(
             storage.blocked_cache_marked_stale().unwrap(),
             "cache should be marked stale after add_dependency"
         );
 
-        // Read operations compute blocked state in memory when the cache is
-        // stale, WITHOUT persisting (#216 — read ops must not write).
         let blocked = storage.is_blocked("bd-c1").unwrap();
         assert!(
             !blocked,
             "bd-c1 should not be blocked after adding only a 'related' dep"
         );
 
-        // The stale marker should remain — read ops do not clear it.
         assert!(
             storage.blocked_cache_marked_stale().unwrap(),
             "cache should still be stale after read (reads must not write)"
         );
 
-        // The stale cache entry should still be in the table (not cleaned by reads).
         let count = storage
             .conn
             .query_row_with_params(
@@ -28797,20 +27917,12 @@ mod tests {
 
     #[test]
     fn test_incremental_refresh_after_deferred_write_rebuilds_fully() {
-        // Regression: an Incremental blocked-cache refresh only recomputes its
-        // own parent-child component but then declares the whole cache fresh.
-        // If a prior Deferred write left the cache stale (its blocking edge is
-        // committed but not yet in blocked_issues_cache), an unrelated
-        // Incremental write must NOT clear the stale marker while that earlier
-        // change is still missing — it must upgrade to a Full rebuild.
         let mut storage = SqliteStorage::open_memory().unwrap();
         for (id, title) in [("bd-x", "X"), ("bd-y", "Y"), ("bd-z", "Z"), ("bd-w", "W")] {
             let issue = make_issue(id, title, Status::Open, 2, None, Utc::now(), None);
             storage.create_issue(&issue, "tester").unwrap();
         }
 
-        // A "blocks" dependency uses the Deferred plan: commits the edge and
-        // marks the cache stale, but does NOT write blocked_issues_cache.
         storage
             .add_dependency("bd-x", "bd-y", "blocks", "tester")
             .unwrap();
@@ -28819,9 +27931,6 @@ mod tests {
             "add_dependency must leave the cache stale"
         );
 
-        // An UNRELATED set_parent uses the Incremental plan. bd-x is outside
-        // bd-z/bd-w's parent-child component, so a naive incremental refresh
-        // would clear the stale marker with bd-x still absent from the cache.
         storage.set_parent("bd-z", Some("bd-w"), "tester").unwrap();
 
         assert!(
@@ -28869,8 +27978,6 @@ mod tests {
             )
             .unwrap();
 
-        // Read operations compute blocked state in memory when the cache is
-        // stale, WITHOUT persisting (#216 — read ops must not write).
         assert!(storage.is_blocked(&blocked.id).unwrap());
 
         let close_update = IssueUpdate {
@@ -28890,7 +27997,6 @@ mod tests {
             !storage.is_blocked(&blocked.id).unwrap(),
             "in-memory blocked computation should see the blocker is now closed"
         );
-        // The stale marker should remain — read ops do not clear it.
         assert!(
             storage.blocked_cache_marked_stale().unwrap(),
             "cache should still be stale after read (reads must not write)"
@@ -28933,8 +28039,6 @@ mod tests {
             )
             .unwrap();
 
-        // Read operations compute blocked state in memory when the cache is
-        // stale, WITHOUT persisting (#216 — read ops must not write).
         assert!(storage.is_blocked(&parent.id).unwrap());
 
         storage
@@ -28949,7 +28053,6 @@ mod tests {
             storage.is_blocked(&child.id).unwrap(),
             "in-memory blocked computation should propagate parent blockers to the child"
         );
-        // The stale marker should remain — read ops do not clear it.
         assert!(
             storage.blocked_cache_marked_stale().unwrap(),
             "cache should still be stale after read (reads must not write)"
@@ -28989,14 +28092,6 @@ mod tests {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let now = Utc::now();
 
-        // `bd-parent` is an Epic so that the "parent blocked by open
-        // children" rollup applies: the incremental update is specifically
-        // exercising the epic-child aggregation path, where removing a
-        // direct blocker on the epic should not unblock the epic as long
-        // as its children remain open.  Non-epic parents intentionally do
-        // not carry that blocker (see `parent_child_transitive_blocking`
-        // in `tests/storage_blocked_cache.rs`), so the test would be
-        // testing semantics that no longer apply to plain tasks.
         let mut parent = make_issue("bd-parent", "Parent", Status::Open, 2, None, now, None);
         parent.issue_type = IssueType::Epic;
         for issue in [
@@ -29073,11 +28168,6 @@ mod tests {
 
     #[test]
     fn test_get_start_blockers_ignores_child_open_but_keeps_real_blockers() {
-        // #315: an epic that is "blocked" only by its own still-open children
-        // must remain claimable / startable (the child-open rollup is a
-        // close-ordering constraint, not a real dependency). A genuine `blocks`
-        // edge must still prevent starting, and the child-open marker must be
-        // filtered out of the reported start-blockers.
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
@@ -29136,23 +28226,18 @@ mod tests {
             .add_dependency("bd-epic-blocked", "bd-real-blocker", "blocks", "tester")
             .unwrap();
 
-        // Both epics are "blocked" in the close-ordering sense (open children).
         assert!(storage.is_blocked("bd-epic").unwrap());
         assert!(storage.is_blocked("bd-epic-blocked").unwrap());
 
-        // An epic blocked ONLY by open children has no start-blockers: claimable.
         assert!(
             storage.get_start_blockers("bd-epic").unwrap().is_empty(),
             "epic with only open children must be startable (#315)"
         );
-        // The close-ordering view (get_blockers) is unchanged — still rolls up.
         assert_eq!(
             storage.get_blockers("bd-epic").unwrap(),
             vec!["bd-epic.1".to_string()]
         );
 
-        // An epic with a real `blocks` dependency is still start-blocked, and
-        // the child-open marker is filtered out of the reported blockers.
         assert_eq!(
             storage.get_start_blockers("bd-epic-blocked").unwrap(),
             vec!["bd-real-blocker".to_string()],
@@ -29162,14 +28247,6 @@ mod tests {
 
     #[test]
     fn test_get_start_blockers_ignores_inherited_parent_blocked_marker() {
-        // #357 (start-path counterpart of #355): a child whose ONLY blocker is
-        // the inherited `<parent>:parent-blocked` rollup — i.e. its parent epic
-        // is itself blocked, but the child has no real prerequisite of its own —
-        // must be claimable / startable. `parent-child` is hierarchy, not a
-        // prerequisite edge from the parent to the child, and the actionable
-        // children of a blocked epic are frequently exactly the work that
-        // unblocks the epic. A child with a DIRECT real blocker must still
-        // reject, so this strips only the propagated marker, not real edges.
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
@@ -29211,25 +28288,19 @@ mod tests {
             storage.create_issue(&issue, "tester").unwrap();
         }
 
-        // The parent epic is genuinely blocked by an open prerequisite.
         storage
             .add_dependency("bd-parent", "bd-blocker", "blocks", "tester")
             .unwrap();
-        // Both children belong to the parent via hierarchy (parent-child).
         storage
             .add_dependency("bd-child", "bd-parent", "parent-child", "tester")
             .unwrap();
         storage
             .add_dependency("bd-child-direct", "bd-parent", "parent-child", "tester")
             .unwrap();
-        // bd-child-direct ALSO has a real prerequisite of its own.
         storage
             .add_dependency("bd-child-direct", "bd-direct-blocker", "blocks", "tester")
             .unwrap();
 
-        // The blocked parent propagates a `:parent-blocked` marker onto its
-        // children — confirm the child carries it as its only (non-direct)
-        // blocker before asserting the start gate ignores it.
         let child_blockers = storage.get_blockers("bd-child").unwrap();
         assert!(
             child_blockers
@@ -29238,23 +28309,17 @@ mod tests {
             "child of a blocked epic should inherit the parent-blocked rollup: {child_blockers:?}"
         );
 
-        // #357: a child whose only blocker is the inherited parent-blocked
-        // marker has no real start-blockers — it must be claimable / startable.
         assert!(
             storage.get_start_blockers("bd-child").unwrap().is_empty(),
             "child blocked only by inherited :parent-blocked must be startable (#357)"
         );
 
-        // A child with a DIRECT real `blocks` edge is still start-blocked; only
-        // the inherited parent-blocked marker is filtered, never the real edge.
         assert_eq!(
             storage.get_start_blockers("bd-child-direct").unwrap(),
             vec!["bd-direct-blocker".to_string()],
             "a real direct blocker must still prevent starting (#357 strips only the rollup)"
         );
 
-        // The close path (already fixed by #355) remains correct: the child
-        // with only the inherited marker is closable too.
         assert!(
             storage.get_close_blockers("bd-child").unwrap().is_empty(),
             "child blocked only by inherited :parent-blocked must be closable (#355)"
@@ -30612,18 +29677,15 @@ mod tests {
         issue.content_hash = Some(issue.compute_content_hash());
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Get initial hash
         let initial = storage.get_issue("bd-h1").unwrap().unwrap();
         let initial_hash = initial.content_hash.unwrap();
 
-        // Update title
         let update = IssueUpdate {
             title: Some("New Title".to_string()),
             ..IssueUpdate::default()
         };
         storage.update_issue("bd-h1", &update, "tester").unwrap();
 
-        // Check new hash
         let updated = storage.get_issue("bd-h1").unwrap().unwrap();
         let updated_hash = updated.content_hash.unwrap();
 
@@ -30637,19 +29699,16 @@ mod tests {
     fn test_delete_config() {
         let mut storage = SqliteStorage::open_memory().unwrap();
 
-        // Set a config value
         storage.set_config("test_key", "test_value").unwrap();
         assert_eq!(
             storage.get_config("test_key").unwrap(),
             Some("test_value".to_string())
         );
 
-        // Delete it
         let deleted = storage.delete_config("test_key").unwrap();
         assert!(deleted, "Should return true when key existed");
         assert_eq!(storage.get_config("test_key").unwrap(), None);
 
-        // Delete non-existent key
         let deleted_again = storage.delete_config("nonexistent").unwrap();
         assert!(!deleted_again, "Should return false when key doesn't exist");
     }
@@ -30971,8 +30030,6 @@ mod tests {
         );
 
         // Use PRAGMA table_info to verify the repair (sqlite_master can
-        // return inconsistent results mid-rebuild).
-        // Check that the `key` column no longer has pk flag set.
         let config_has_pk = reopened
             .conn
             .query("PRAGMA table_info('config')")
@@ -31132,9 +30189,6 @@ mod tests {
         );
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Stomp the persisted status with a value the Status enum
-        // doesn't accept. A subsequent import of the same id must
-        // still succeed — the existence check stops at SELECT 1.
         storage
             .conn
             .execute_with_params(
@@ -31203,13 +30257,11 @@ mod tests {
     fn test_pragmas_are_set_correctly() {
         let storage = SqliteStorage::open_memory().unwrap();
 
-        // Check foreign keys are enabled
         assert!(
             SqliteStorage::foreign_keys_enabled(&storage.conn).unwrap(),
             "Foreign keys should be enabled"
         );
 
-        // Check journal mode (memory DBs use 'memory' mode)
         let mode = storage
             .conn
             .query_row("PRAGMA journal_mode")
@@ -31334,7 +30386,6 @@ mod tests {
         let issue = make_issue("bd-dup-1", "First issue", Status::Open, 2, None, t1, None);
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Try to create another issue with the same ID
         let dup = make_issue("bd-dup-1", "Duplicate", Status::Open, 2, None, t1, None);
         let result = storage.create_issue(&dup, "tester");
 
@@ -31616,7 +30667,6 @@ mod tests {
     #[test]
     fn test_diag_data_visibility() {
         use crate::storage::SqliteValue;
-        // Simplest possible reproduction
         let conn = crate::storage::Connection::open(":memory:".to_string()).unwrap();
         conn.execute("CREATE TABLE t (k TEXT, v TEXT)").unwrap();
         conn.execute_with_params(
@@ -31625,7 +30675,6 @@ mod tests {
         )
         .unwrap();
 
-        // 1: count without WHERE
         let r1 = conn
             .query_with_params("SELECT count(*) FROM t", &[])
             .unwrap();
@@ -31634,7 +30683,6 @@ mod tests {
             r1.first().map(Row::values)
         );
 
-        // 2: count with literal WHERE
         let r2 = conn
             .query_with_params("SELECT count(*) FROM t WHERE k = 'a'", &[])
             .unwrap();
@@ -31643,7 +30691,6 @@ mod tests {
             r2.first().map(Row::values)
         );
 
-        // 3: count with bind WHERE
         let explain3 = conn
             .prepare("SELECT count(*) FROM t WHERE k = ?")
             .map_or_else(|e| format!("PREPARE ERROR: {e}"), |s| s.explain());
@@ -31664,7 +30711,6 @@ mod tests {
             r3.first().map(Row::values)
         );
 
-        // Also get EXPLAIN for the working non-aggregate version
         let explain4 = conn
             .prepare("SELECT k FROM t WHERE k = ?")
             .map_or_else(|e| format!("PREPARE ERROR: {e}"), |s| s.explain());
@@ -31675,7 +30721,6 @@ mod tests {
             eprintln!("[DIAG] 4.E| (empty)");
         }
 
-        // 4: select with bind WHERE (no aggregate)
         let r4 = conn
             .query_with_params("SELECT k FROM t WHERE k = ?", &[SqliteValue::from("a")])
             .unwrap();
@@ -31684,7 +30729,6 @@ mod tests {
             r4.first().map(Row::values)
         );
 
-        // 5: count(k) with bind WHERE
         let r5 = conn
             .query_with_params(
                 "SELECT count(k) FROM t WHERE k = ?",
@@ -31696,7 +30740,6 @@ mod tests {
             r5.first().map(Row::values)
         );
 
-        // 6: count with bind WHERE but no match
         let r6 = conn
             .query_with_params(
                 "SELECT count(*) FROM t WHERE k = ?",
@@ -31720,10 +30763,8 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     fn test_diag_root_page_visibility() {
         use crate::storage::SqliteValue;
-        // Create full beads schema and check which root pages are accessible
         let conn = crate::storage::Connection::open(":memory:".to_string()).unwrap();
 
-        // Apply schema step by step, checking after each table
         let tables = vec![(
             "issues",
             r"CREATE TABLE IF NOT EXISTS issues (
@@ -31777,7 +30818,6 @@ mod tests {
             }
         }
 
-        // Create first few indexes
         let indexes = vec![
             "CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status)",
             "CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority)",
@@ -31793,15 +30833,6 @@ mod tests {
             "CREATE INDEX IF NOT EXISTS idx_issues_due_at ON issues(due_at) WHERE due_at IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS idx_issues_defer_until ON issues(defer_until) WHERE defer_until IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS idx_issues_ready ON issues(status, priority, created_at) WHERE status = 'open' AND ephemeral = 0 AND pinned = 0 AND (is_template = 0 OR is_template IS NULL)",
-            // Issue #354: `br ready` can be configured (workflow.status_groups.ready)
-            // to surface statuses beyond `open` (e.g. `rework`). The partial
-            // `idx_issues_ready` above only covers `status = 'open'`, so a widened
-            // ready group would fall back to a scan on the status leg. The partial
-            // predicate is a static migration string and cannot be widened to a
-            // per-repo dynamic group, so we add a non-partial `(status, priority,
-            // created_at)` index to keep the widened `status IN (...) ORDER BY
-            // priority, created_at` ready query index-covered. The tighter partial
-            // index still wins for the common default `[open]` group.
             "CREATE INDEX IF NOT EXISTS idx_issues_status_priority_created ON issues(status, priority, created_at)",
         ];
         for (i, sql) in indexes.iter().enumerate() {
@@ -31811,7 +30842,6 @@ mod tests {
             }
         }
 
-        // Try count(*) first (simplest possible query)
         match conn.query_with_params("SELECT count(*) FROM sqlite_master", &[]) {
             Ok(rows) => {
                 let count = rows
@@ -31824,7 +30854,6 @@ mod tests {
             Err(e) => eprintln!("[ROOT-DIAG] count(*) FAILED: {e}"),
         }
 
-        // Try SELECT without ORDER BY
         match conn.query_with_params("SELECT type, name, rootpage FROM sqlite_master", &[]) {
             Ok(rows) => {
                 eprintln!("[ROOT-DIAG] sqlite_master entries (no ORDER BY):");
@@ -31839,7 +30868,6 @@ mod tests {
             Err(e) => eprintln!("[ROOT-DIAG] SELECT (no ORDER BY) FAILED: {e}"),
         }
 
-        // Try SELECT with ORDER BY
         match conn.query_with_params(
             "SELECT type, name, rootpage FROM sqlite_master ORDER BY rootpage",
             &[],
@@ -31855,7 +30883,6 @@ mod tests {
             Err(e) => eprintln!("[ROOT-DIAG] SELECT (ORDER BY) FAILED: {e}"),
         }
 
-        // Try simple SELECT from issues table
         match conn.query_with_params("SELECT count(*) FROM issues", &[]) {
             Ok(rows) => {
                 let count = rows
@@ -31870,7 +30897,6 @@ mod tests {
 
         let max_rootpage = 0i64;
 
-        // Also try: incrementally create indexes and check count(*) after each
         eprintln!("[ROOT-DIAG] --- Incremental index creation with count check ---");
         let conn2 = crate::storage::Connection::open(":memory:".to_string()).unwrap();
         conn2
@@ -31902,7 +30928,6 @@ mod tests {
             }
         }
 
-        // Test multi-insert with explicit transactions
         eprintln!("[ROOT-DIAG] --- Multi-insert test ---");
         let conn3 = crate::storage::Connection::open(":memory:".to_string()).unwrap();
         conn3
@@ -31945,7 +30970,6 @@ mod tests {
             eprintln!("[ROOT-DIAG]   id={id} msg={msg}");
         }
 
-        // Also test without explicit transactions (autocommit)
         let conn4 = crate::storage::Connection::open(":memory:".to_string()).unwrap();
         conn4
             .execute("CREATE TABLE ev2 (id INTEGER PRIMARY KEY AUTOINCREMENT, msg TEXT)")
@@ -31985,7 +31009,6 @@ mod tests {
             eprintln!("[ROOT-DIAG]   id={id} msg={msg}");
         }
 
-        // Test events-like table with indexes and WHERE+ORDER BY
         eprintln!("[ROOT-DIAG] --- Events-like test ---");
         let conn5 = crate::storage::Connection::open(":memory:".to_string()).unwrap();
         conn5
@@ -32017,7 +31040,6 @@ mod tests {
             conn5.execute("COMMIT").unwrap();
         }
 
-        // Test count
         let ev_count = conn5
             .query_with_params("SELECT count(*) FROM ev3", &[])
             .unwrap();
@@ -32028,7 +31050,6 @@ mod tests {
             .unwrap_or(-99);
         eprintln!("[ROOT-DIAG] ev3 count: {c}");
 
-        // Test WHERE with bind (no order) - uses index_eq path
         let ev_where = conn5
             .query_with_params(
                 "SELECT id, msg FROM ev3 WHERE issue_id = ?1",
@@ -32037,19 +31058,16 @@ mod tests {
             .unwrap();
         eprintln!("[ROOT-DIAG] ev3 WHERE bind: {} rows", ev_where.len());
 
-        // Test WHERE with literal (no bind) - uses full scan
         let ev_literal = conn5
             .query_with_params("SELECT id, msg FROM ev3 WHERE issue_id = 'test-001'", &[])
             .unwrap();
         eprintln!("[ROOT-DIAG] ev3 WHERE literal: {} rows", ev_literal.len());
 
-        // Test full scan (no WHERE)
         let ev_all = conn5
             .query_with_params("SELECT id, msg FROM ev3", &[])
             .unwrap();
         eprintln!("[ROOT-DIAG] ev3 ALL (no where): {} rows", ev_all.len());
 
-        // Test WHERE with ORDER BY
         let ev_ordered = conn5
             .query_with_params(
                 "SELECT id, msg FROM ev3 WHERE issue_id = ?1 ORDER BY created_at DESC, id DESC",
@@ -32125,7 +31143,6 @@ mod tests {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc.with_ymd_and_hms(2025, 8, 1, 0, 0, 0).unwrap();
 
-        // Create issues with different titles
         let issue1 = make_issue(
             "bd-s1",
             "Fix authentication bug",
@@ -32158,7 +31175,6 @@ mod tests {
         storage.create_issue(&issue2, "tester").unwrap();
         storage.create_issue(&issue3, "tester").unwrap();
 
-        // Filter by title containing "bug"
         let filters = ListFilters {
             title_contains: Some("bug".to_string()),
             ..ListFilters::default()
@@ -33080,26 +32096,21 @@ mod tests {
         storage.create_issue(&issue2, "tester").unwrap();
         storage.create_issue(&issue3, "tester").unwrap();
 
-        // Filter updated_before 'old' (inclusive? SQL uses <=)
-        // If we use 'old', issue1 matches. issue2 matches. issue3 does not.
         let mut filters = ListFilters {
             updated_before: Some(old),
             ..Default::default()
         };
 
         let issues = storage.list_issues(&filters).unwrap();
-        // Should contain bd-old and bd-older
         assert_eq!(issues.len(), 2);
         let ids: Vec<_> = issues.iter().map(|i| i.id.as_str()).collect();
         assert!(ids.contains(&"bd-old"));
         assert!(ids.contains(&"bd-older"));
         assert!(!ids.contains(&"bd-new"));
 
-        // Filter updated_after 'old'
         filters.updated_before = None;
         filters.updated_after = Some(old);
         let issues = storage.list_issues(&filters).unwrap();
-        // Should contain bd-old and bd-new
         assert_eq!(issues.len(), 2);
         let ids: Vec<_> = issues.iter().map(|i| i.id.as_str()).collect();
         assert!(ids.contains(&"bd-old"));
@@ -33125,10 +32136,8 @@ mod tests {
         storage.create_issue(&issue1, "tester").unwrap();
         storage.create_issue(&issue2, "tester").unwrap();
 
-        // Add label to issue1
         storage.add_label("bd-l1", "test-label", "tester").unwrap();
 
-        // Filter by label
         let filters = ListFilters {
             labels: Some(vec!["test-label".to_string()]),
             ..Default::default()
@@ -33281,9 +32290,6 @@ mod tests {
         let issue = make_issue("bd-x1", "Blocked", Status::Open, 2, None, t1, None);
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Add a dependency on an ID containing a quote, as could exist in a
-        // legacy/corrupt database. `create_issue` now rejects invalid IDs, so
-        // seed the low-level row directly through the import upsert path.
         let tricky_id = "bd-q\"ote";
         let tricky_issue = make_issue(tricky_id, "Tricky", Status::Open, 2, None, t1, None);
         storage.upsert_issue_for_import(&tricky_issue).unwrap();
@@ -33291,17 +32297,12 @@ mod tests {
             .add_dependency("bd-x1", tricky_id, "blocks", "tester")
             .unwrap();
 
-        // Cache should be rebuilt and handle the quote correctly
-        // (rebuild happens automatically on add_dependency via mutation context)
-
-        // Verify we can read it back without error
         let blocked = storage.get_blocked_issues().unwrap();
         assert_eq!(blocked.len(), 1);
         assert_eq!(blocked[0].0.id, "bd-x1");
 
         let blockers = &blocked[0].1;
         assert_eq!(blockers.len(), 1);
-        // ID + ":open" (since the tricky issue is open)
         assert_eq!(blockers[0], "bd-q\"ote:open");
     }
 
@@ -33321,9 +32322,7 @@ mod tests {
         storage.add_label("bd-1", "backend", "tester").unwrap();
         storage.add_label("bd-1", "urgent", "tester").unwrap();
         storage.add_label("bd-2", "backend", "tester").unwrap();
-        // bd-3 has no labels
 
-        // Filter AND: backend + urgent
         let filters_and = ReadyFilters {
             labels_and: vec!["backend".to_string(), "urgent".to_string()],
             ..Default::default()
@@ -33334,7 +32333,6 @@ mod tests {
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].id, "bd-1");
 
-        // Filter OR: urgent
         let filters_or = ReadyFilters {
             labels_or: vec!["urgent".to_string()],
             ..Default::default()
@@ -33345,7 +32343,6 @@ mod tests {
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].id, "bd-1");
 
-        // Filter OR: backend (should get 1 and 2)
         let filters_or_backend = ReadyFilters {
             labels_or: vec!["backend".to_string()],
             ..Default::default()
@@ -33358,8 +32355,6 @@ mod tests {
 
     #[test]
     fn test_ready_default_group_is_open_only() {
-        // #354: with no ready_statuses configured, the query behaves exactly as
-        // before — only `open` issues surface, `rework`/`in_progress` do not.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc::now();
 
@@ -33386,8 +32381,6 @@ mod tests {
 
     #[test]
     fn test_ready_configured_group_surfaces_rework() {
-        // #354: a configured ready group [open, rework] surfaces rework items
-        // while preserving each issue's actual status.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc::now();
 
@@ -33428,15 +32421,12 @@ mod tests {
         let mut ids: Vec<&str> = res.iter().map(|i| i.id.as_str()).collect();
         ids.sort_unstable();
         assert_eq!(ids, vec!["bd-open", "bd-rework"]);
-        // in_progress stays out; statuses are preserved.
         let rework = res.iter().find(|i| i.id == "bd-rework").unwrap();
         assert_eq!(rework.status.as_str(), "deferred");
     }
 
     #[test]
     fn test_ready_configured_group_still_gates_defer_until() {
-        // #354: a non-deferred configured member with a future defer_until is
-        // still time-gated out unless --include-deferred is set.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc::now();
         let future = t1 + chrono::Duration::days(7);
@@ -33476,7 +32466,6 @@ mod tests {
             "future defer_until must gate the rework member out"
         );
 
-        // With --include-deferred, the gate drops and the rework member returns.
         let filters_deferred = ReadyFilters {
             ready_statuses: vec!["open".to_string(), "deferred".to_string()],
             include_deferred: true,
@@ -33492,8 +32481,6 @@ mod tests {
 
     #[test]
     fn test_ready_include_deferred_no_double_count_when_group_lists_deferred() {
-        // #354: --include-deferred folds in `deferred`, but must not double-count
-        // it (or error) when the configured group already lists `deferred`.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc::now();
 
@@ -33528,7 +32515,6 @@ mod tests {
             .unwrap();
         let mut ids: Vec<&str> = res.iter().map(|i| i.id.as_str()).collect();
         ids.sort_unstable();
-        // Exactly one row per id — no duplicate `bd-deferred`.
         assert_eq!(ids, vec!["bd-deferred", "bd-open"]);
     }
 
@@ -33537,32 +32523,19 @@ mod tests {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc::now();
 
-        // Create parent epic.  `bd-epic` and `bd-epic.1` are typed as Epic
-        // so the epic-rollup "parent blocked by open children" rule applies
-        // to them; that is what the later "only non-blocked descendants are
-        // ready" assertion exercises.  Non-epic parents intentionally do
-        // NOT inherit a child-open blocker (see
-        // `parent_child_transitive_blocking` in
-        // `tests/storage_blocked_cache.rs`), so typing these as Task would
-        // make every parent-child node trivially ready, defeating the
-        // point of the recursive-ready test.
         let mut parent = make_issue("bd-epic", "Parent Epic", Status::Open, 1, None, t1, None);
         parent.issue_type = IssueType::Epic;
         storage.create_issue(&parent, "tester").unwrap();
 
-        // Create direct children of the epic.  `bd-epic.1` is itself an
-        // epic so it can be rolled-up-blocked by its grandchild below.
         let mut child1 = make_issue("bd-epic.1", "Child 1", Status::Open, 2, None, t1, None);
         child1.issue_type = IssueType::Epic;
         let child2 = make_issue("bd-epic.2", "Child 2", Status::Open, 2, None, t1, None);
         storage.create_issue(&child1, "tester").unwrap();
         storage.create_issue(&child2, "tester").unwrap();
 
-        // Create unrelated issue (not a child of the epic)
         let unrelated = make_issue("bd-other", "Unrelated", Status::Open, 2, None, t1, None);
         storage.create_issue(&unrelated, "tester").unwrap();
 
-        // Add parent-child dependencies (no grandchild yet)
         storage
             .add_dependency("bd-epic.1", "bd-epic", "parent-child", "tester")
             .unwrap();
@@ -33570,7 +32543,6 @@ mod tests {
             .add_dependency("bd-epic.2", "bd-epic", "parent-child", "tester")
             .unwrap();
 
-        // Test: --parent bd-epic (non-recursive) should return only direct children
         let filters_direct = ReadyFilters {
             parent: Some("bd-epic".to_string()),
             recursive: false,
@@ -33588,16 +32560,12 @@ mod tests {
         assert!(ids.contains(&"bd-epic.1"), "Should contain child1");
         assert!(ids.contains(&"bd-epic.2"), "Should contain child2");
 
-        // Now create grandchild and its dependency for recursive test
         let grandchild = make_issue("bd-epic.1.1", "Grandchild", Status::Open, 2, None, t1, None);
         storage.create_issue(&grandchild, "tester").unwrap();
         storage
             .add_dependency("bd-epic.1.1", "bd-epic.1", "parent-child", "tester")
             .unwrap();
 
-        // Test: --parent bd-epic --recursive should return all non-blocked descendants
-        // Note: bd-epic.1 is now blocked by its open child bd-epic.1.1 (blocked-cache
-        // semantics), so only bd-epic.2 and bd-epic.1.1 are "ready".
         let filters_recursive = ReadyFilters {
             parent: Some("bd-epic".to_string()),
             recursive: true,
@@ -33623,7 +32591,6 @@ mod tests {
             "Should NOT contain unrelated issue"
         );
 
-        // Test: --parent with non-existent parent should return empty
         let filters_nonexistent = ReadyFilters {
             parent: Some("bd-nonexistent".to_string()),
             recursive: false,
@@ -33660,9 +32627,6 @@ mod tests {
         storage.create_issue(&parent, "tester").unwrap();
         storage.create_issue(&unrelated, "tester").unwrap();
 
-        // More than SQLite's total bound-variable budget. The historical
-        // implementation emitted multiple `id IN (...)` chunks in one
-        // statement, but SQLite still counted every placeholder together.
         let child_count = SQLITE_VAR_LIMIT + 101;
         storage.conn.execute("BEGIN IMMEDIATE").unwrap();
         for index in 0..child_count {
@@ -33678,7 +32642,6 @@ mod tests {
                         SqliteValue::from(id.as_str()),
                         SqliteValue::from(timestamp.as_str()),
                         SqliteValue::from(timestamp.as_str()),
-                        // ADR-0001 §5.5: raw bulk insert bypasses make_issue defaults.
                         SqliteValue::from("cargo test --offline"),
                         SqliteValue::from(r#"[{"name":"prove-it-works","decision":"default test fixture citation"}]"#),
                     ],
@@ -33743,7 +32706,6 @@ mod tests {
         parent.issue_type = IssueType::Epic;
         storage.create_issue(&parent, "tester").unwrap();
 
-        // Two labelled direct children + one unlabelled direct child.
         let child1 = make_issue("bd-epic.1", "Child 1", Status::Open, 2, None, t1, None);
         let child2 = make_issue("bd-epic.2", "Child 2", Status::Open, 2, None, t1, None);
         let child3 = make_issue("bd-epic.3", "Child 3", Status::Open, 2, None, t1, None);
@@ -33762,7 +32724,6 @@ mod tests {
             .add_label("bd-epic.2", "mini-safe", "tester")
             .unwrap();
 
-        // A labelled descendant under bd-epic.1 (for the recursive case).
         let grandchild = make_issue("bd-epic.1.1", "Grandchild", Status::Open, 2, None, t1, None);
         storage.create_issue(&grandchild, "tester").unwrap();
         storage
@@ -33772,8 +32733,6 @@ mod tests {
             .add_label("bd-epic.1.1", "mini-safe", "tester")
             .unwrap();
 
-        // --parent alone: all three direct children are ready (non-epic parents
-        // do not inherit a child-open blocker).
         let parent_only = ReadyFilters {
             parent: Some("bd-epic".to_string()),
             ..Default::default()
@@ -33787,7 +32746,6 @@ mod tests {
             "parent-only should return three direct children"
         );
 
-        // --parent + --label: intersection = the two labelled direct children.
         let parent_label = ReadyFilters {
             parent: Some("bd-epic".to_string()),
             labels_and: vec!["mini-safe".to_string()],
@@ -33806,7 +32764,6 @@ mod tests {
         assert!(ids.contains(&"bd-epic.2"));
         assert!(!ids.contains(&"bd-epic.3"), "unlabelled child excluded");
 
-        // --parent + --recursive + --label: includes the labelled grandchild.
         let parent_recursive_label = ReadyFilters {
             parent: Some("bd-epic".to_string()),
             recursive: true,
@@ -33835,18 +32792,12 @@ mod tests {
             let issue = make_issue(id, id, Status::Open, 2, None, t1, None);
             storage.create_issue(&issue, "tester").unwrap();
         }
-        // a -> b -> c -> a (cycle through parent-child edges).
         storage
             .add_dependency("cyc-b", "cyc-a", "parent-child", "tester")
             .unwrap();
         storage
             .add_dependency("cyc-c", "cyc-b", "parent-child", "tester")
             .unwrap();
-        // The edge that closes the a -> b -> c -> a cycle. `add_dependency` now
-        // correctly REFUSES to create a parent-child cycle, so a genuine cycle
-        // can only enter the store via import/legacy data. Insert the closing
-        // row straight into the table (bypassing the guard) to exercise the
-        // recursive-BFS termination path against real cyclic data.
         storage
             .conn
             .execute_with_params(
@@ -33867,8 +32818,6 @@ mod tests {
             recursive: true,
             ..Default::default()
         };
-        // The visited-set BFS must terminate; the exact membership is whatever
-        // the readiness rules allow, but the call must return without hanging.
         let res = storage
             .get_ready_issues(&filters, ReadySortPolicy::Oldest)
             .unwrap();
@@ -33879,8 +32828,6 @@ mod tests {
         );
     }
 
-    // Fixture-heavy by design: the inline schema must mirror the real v18
-    // issues table so the NULL-legacy-flags path is exercised end to end.
     #[allow(clippy::too_many_lines)]
     #[test]
     fn test_get_ready_issues_treats_null_legacy_flags_as_false() {
@@ -34000,7 +32947,6 @@ mod tests {
                     SqliteValue::from("task"),
                     SqliteValue::from(stamp.as_str()),
                     SqliteValue::from(stamp.as_str()),
-                    // ADR-0001 §5.5 dispatchable fixture (see fixtures.rs).
                     SqliteValue::from("cargo test --offline"),
                     SqliteValue::from(r#"[{"name":"p","decision":"d"}]"#),
                 ],
@@ -34182,11 +33128,9 @@ mod tests {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc::now();
 
-        // Create an open issue (should appear in ready)
         let open_issue = make_issue("bd-open", "Open Issue", Status::Open, 2, None, t1, None);
         storage.create_issue(&open_issue, "tester").unwrap();
 
-        // Create an in_progress issue (should NOT appear in ready)
         let ip_issue = make_issue(
             "bd-inprogress",
             "In Progress Issue",
@@ -34202,7 +33146,6 @@ mod tests {
             .get_ready_issues(&ReadyFilters::default(), ReadySortPolicy::Priority)
             .unwrap();
 
-        // Only the open issue should be ready; in_progress is already claimed
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].id, "bd-open");
     }
@@ -34212,31 +33155,24 @@ mod tests {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
 
-        // Create parent issue
         let parent = make_issue("bd-parent", "Parent Epic", Status::Open, 2, None, t1, None);
         storage.create_issue(&parent, "tester").unwrap();
 
-        // No children yet - should return 1
         let next = storage.next_child_number("bd-parent").unwrap();
         assert_eq!(next, 1, "First child should be .1");
 
-        // Create first child
         let child1 = make_issue("bd-parent.1", "Child 1", Status::Open, 2, None, t1, None);
         storage.create_issue(&child1, "tester").unwrap();
 
-        // Should now return 2
         let next = storage.next_child_number("bd-parent").unwrap();
         assert_eq!(next, 2, "After .1 exists, next should be .2");
 
-        // Create child with .3 (skip .2)
         let child3 = make_issue("bd-parent.3", "Child 3", Status::Open, 2, None, t1, None);
         storage.create_issue(&child3, "tester").unwrap();
 
-        // Should return 4 (max is 3, so next is 4)
         let next = storage.next_child_number("bd-parent").unwrap();
         assert_eq!(next, 4, "After .3 exists (skipping .2), next should be .4");
 
-        // Create grandchild - should not affect parent's next child number
         let grandchild = make_issue(
             "bd-parent.1.1",
             "Grandchild",
@@ -34248,14 +33184,12 @@ mod tests {
         );
         storage.create_issue(&grandchild, "tester").unwrap();
 
-        // Parent's next child should still be 4
         let next = storage.next_child_number("bd-parent").unwrap();
         assert_eq!(
             next, 4,
             "Grandchild should not affect parent's next child number"
         );
 
-        // Check grandchild's parent (bd-parent.1) next child number
         let next_for_child1 = storage.next_child_number("bd-parent.1").unwrap();
         assert_eq!(
             next_for_child1, 2,
@@ -34396,9 +33330,6 @@ mod tests {
 
     #[test]
     fn test_parse_datetime_value_integer_microseconds() {
-        // 1776651488000000 µs = 2026-04-20T02:18:08Z — the exact wire format
-        // the schema v6 migration repairs. The old reader (as_text().unwrap_or("")
-        // → parse_datetime) silently produced UNIX_EPOCH here.
         let v = SqliteValue::Integer(1_776_651_488_000_000);
         let dt = parse_datetime_value(Some(&v)).unwrap();
         assert_eq!(dt.year(), 2026);
@@ -34411,7 +33342,6 @@ mod tests {
 
     #[test]
     fn test_parse_datetime_value_integer_seconds() {
-        // 1_776_651_488 s = 2026-04-20T02:18:08Z
         let v = SqliteValue::Integer(1_776_651_488);
         let dt = parse_datetime_value(Some(&v)).unwrap();
         assert_eq!(dt.year(), 2026);
@@ -34466,8 +33396,6 @@ mod tests {
 
     #[test]
     fn test_parse_opt_datetime_value_integer_preserved_not_dropped() {
-        // The legacy get_opt_datetime path turned integer-typed columns
-        // into None; parse_opt_datetime_value must preserve the timestamp.
         let v = SqliteValue::Integer(1_776_651_488_000_000);
         let dt = parse_opt_datetime_value(Some(&v)).unwrap().unwrap();
         assert_eq!(dt.year(), 2026);
@@ -34496,16 +33424,10 @@ mod tests {
 
     #[test]
     fn test_datetime_from_epoch_seconds_f64_negative_fraction_floor_split() {
-        // Regression: the (secs, nanos) split must use floor(), not trunc(),
-        // so negative fractional seconds round the right way. With trunc()
-        // and abs(), `-1.5` incorrectly resolved to `-0.5` (secs=-1,
-        // nanos=5e8), one second higher than intended.
         let dt = datetime_from_epoch_seconds_f64(-1.5).unwrap();
-        // -1.5 s before epoch = 1969-12-31T23:59:58.5Z
         assert_eq!(dt.timestamp(), -2);
         assert_eq!(dt.timestamp_subsec_nanos(), 500_000_000);
 
-        // Positive fractional remains correct after the fix.
         let dt = datetime_from_epoch_seconds_f64(1_776_651_488.25).unwrap();
         assert_eq!(dt.timestamp(), 1_776_651_488);
         assert_eq!(dt.timestamp_subsec_nanos(), 250_000_000);
@@ -34524,17 +33446,12 @@ mod tests {
 
     #[test]
     fn test_parse_datetime_value_integer_negative_is_pre_epoch() {
-        // -3600 s = 1969-12-31T23:00:00Z. Confirms negatives route through
-        // the seconds branch correctly (not mis-classified as a larger
-        // unit, and no wrap-around via unsigned_abs).
         let v = SqliteValue::Integer(-3600);
         let dt = parse_datetime_value(Some(&v)).unwrap();
         assert_eq!(dt.timestamp(), -3600);
         assert_eq!(dt.timestamp_subsec_nanos(), 0);
 
-        // Negative microsecond-range values pick up div_euclid/rem_euclid's
-        // floor semantics instead of truncating toward zero.
-        let v = SqliteValue::Integer(-1_500_000_000_000_000); // µs-range magnitude
+        let v = SqliteValue::Integer(-1_500_000_000_000_000);
         let dt = parse_datetime_value(Some(&v)).unwrap();
         assert_eq!(dt.timestamp(), -1_500_000_000);
         assert_eq!(dt.timestamp_subsec_nanos(), 0);
@@ -34542,25 +33459,20 @@ mod tests {
 
     #[test]
     fn test_reset_data_tables_preserves_config() {
-        // Use a real file to avoid in-memory BUSY contention under parallel tests.
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
 
-        // Set config and create some issues
         storage.set_config("issue_prefix", "test").unwrap();
         storage.set_metadata("last_import", "2025-01-01").unwrap();
         let issue = make_issue("test-1", "Issue 1", Status::Open, 2, None, t1, None);
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Verify issue exists
         assert!(storage.get_issue("test-1").unwrap().is_some());
 
-        // Reset data tables
         storage.reset_data_tables().unwrap();
 
-        // Config and metadata should be preserved
         assert_eq!(
             storage.get_config("issue_prefix").unwrap(),
             Some("test".to_string()),
@@ -34570,10 +33482,8 @@ mod tests {
             Some("2025-01-01".to_string()),
         );
 
-        // Issue data should be gone
         assert!(storage.get_issue("test-1").unwrap().is_none());
 
-        // Should be able to insert new issues (schema intact)
         let issue2 = make_issue("test-2", "Issue 2", Status::Open, 2, None, t1, None);
         storage.create_issue(&issue2, "tester").unwrap();
         assert!(storage.get_issue("test-2").unwrap().is_some());
@@ -34851,11 +33761,6 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("drop-checkpoint.db");
 
-        // Mutating handle: create_issue must drive `mutation_count`
-        // above zero so the Drop impl's gate selects the checkpoint
-        // branch. This assertion is the single point of contract
-        // between the heuristic in `Drop` and the underlying
-        // `with_write_transaction` accounting.
         {
             let mut storage = SqliteStorage::open(&db_path).unwrap();
             let now = Utc::now();
@@ -34873,16 +33778,8 @@ mod tests {
                 storage.mutation_count > 0,
                 "create_issue must increment mutation_count so the Drop heuristic checkpoints WAL"
             );
-            // Drop runs at end of scope and exercises the checkpoint
-            // path. Any panic from inside Drop would surface as a
-            // test failure regardless of whether we observe the
-            // sidecar afterward.
         }
 
-        // Re-opening must succeed and see the row, proving the
-        // committed data survived the Drop teardown intact (whether
-        // it lives in the main DB file post-checkpoint or in a
-        // replayed WAL is the engine's call).
         let storage = SqliteStorage::open(&db_path).unwrap();
         assert_eq!(
             storage.mutation_count, 0,
@@ -34947,11 +33844,6 @@ mod tests {
         storage.create_issue(&task3, "tester").unwrap();
         storage.create_issue(&blocker, "tester").unwrap();
 
-        // Build a complex dependency graph:
-        // epic <- task1 (parent-child)
-        // epic <- task2 (parent-child)
-        // task1 is blocked by blocker
-        // task3 is blocked by task2
         storage
             .add_dependency("proj-task1", "proj-epic", "parent-child", "tester")
             .unwrap();
@@ -34965,7 +33857,6 @@ mod tests {
             .add_dependency("proj-task3", "proj-task2", "blocks", "tester")
             .unwrap();
 
-        // Verify initial blocked state
         let blocked = storage.get_blocked_issues().unwrap();
         assert!(
             blocked.iter().any(|(i, _)| i.id == "proj-task1"),
@@ -34976,7 +33867,6 @@ mod tests {
             "task3 should be blocked by task2"
         );
 
-        // Update status to in_progress — this triggers blocked cache rebuild
         let updates = IssueUpdate {
             status: Some(Status::InProgress),
             ..Default::default()
@@ -34986,13 +33876,11 @@ mod tests {
             .unwrap();
         assert_eq!(updated.status, Status::InProgress);
 
-        // Cache should still be consistent after rebuild
         assert!(
             !storage.blocked_cache_marked_stale().unwrap(),
             "cache should not be stale after successful update"
         );
 
-        // Close the blocker — should unblock task1
         let close_updates = IssueUpdate {
             status: Some(Status::Closed),
             close_reason: Some(Some("done".to_string())),
@@ -35003,13 +33891,11 @@ mod tests {
             .unwrap();
         assert_eq!(closed.status, Status::Closed);
 
-        // task1 should now be unblocked
         let blocked_after = storage.get_blocked_issues().unwrap();
         assert!(
             !blocked_after.iter().any(|(i, _)| i.id == "proj-task1"),
             "task1 should be unblocked after blocker is closed"
         );
-        // task3 should still be blocked by task2
         assert!(
             blocked_after.iter().any(|(i, _)| i.id == "proj-task3"),
             "task3 should still be blocked by task2"
@@ -35041,14 +33927,12 @@ mod tests {
             .add_dependency("m06q-task", "m06q-blocker", "blocks", "tester")
             .unwrap();
 
-        // Verify task is blocked
         let blocked = storage.get_blocked_issues().unwrap();
         assert!(
             blocked.iter().any(|(i, _)| i.id == "m06q-task"),
             "task should be blocked initially"
         );
 
-        // Close the blocker — triggers cache rebuild
         let close_updates = IssueUpdate {
             status: Some(Status::Closed),
             close_reason: Some(Some("done".to_string())),
@@ -35058,9 +33942,6 @@ mod tests {
             .update_issue("m06q-blocker", &close_updates, "tester")
             .unwrap();
 
-        // Immediately "claim" the now-unblocked task by updating its status.
-        // This used to fail with UNIQUE constraint on blocked_issues_cache.issue_id
-        // when the cache rebuild inserted a duplicate row.
         let claim_updates = IssueUpdate {
             status: Some(Status::InProgress),
             ..Default::default()
@@ -35070,7 +33951,6 @@ mod tests {
             .unwrap();
         assert_eq!(claimed.status, Status::InProgress);
 
-        // Task should not appear in blocked list
         let blocked_after = storage.get_blocked_issues().unwrap();
         assert!(
             !blocked_after.iter().any(|(i, _)| i.id == "m06q-task"),
@@ -35123,11 +34003,9 @@ mod tests {
             .add_dependency("m06q-dual", "m06q-b2", "blocks", "tester")
             .unwrap();
 
-        // Task blocked by both
         let blocked = storage.get_blocked_issues().unwrap();
         assert!(blocked.iter().any(|(i, _)| i.id == "m06q-dual"));
 
-        // Close first blocker
         let close = IssueUpdate {
             status: Some(Status::Closed),
             close_reason: Some(Some("done".to_string())),
@@ -35135,17 +34013,14 @@ mod tests {
         };
         storage.update_issue("m06q-b1", &close, "tester").unwrap();
 
-        // Task still blocked by b2
         let blocked = storage.get_blocked_issues().unwrap();
         assert!(
             blocked.iter().any(|(i, _)| i.id == "m06q-dual"),
             "task should still be blocked by second blocker"
         );
 
-        // Close second blocker
         storage.update_issue("m06q-b2", &close, "tester").unwrap();
 
-        // Immediately claim — should succeed without UNIQUE violation
         let claim = IssueUpdate {
             status: Some(Status::InProgress),
             ..Default::default()
@@ -35159,11 +34034,6 @@ mod tests {
             "task should be unblocked after both blockers closed"
         );
     }
-
-    // ========================================================================
-    // get_open_dot_notation_children — supplementary guard for legacy/imported
-    // dot-notation parent-child relationships that lack formal dep rows.
-    // ========================================================================
 
     #[test]
     fn dot_notation_children_detects_open_direct_children() {
@@ -35181,7 +34051,6 @@ mod tests {
             None,
         );
         let mut child3 = make_issue("bd-epic.3", "Child 3", Status::Closed, 1, None, now, None);
-        // closed rows require closed_at set (DB CHECK constraint).
         child3.closed_at = Some(now);
         storage.create_issue(&parent, "t").unwrap();
         storage.create_issue(&child1, "t").unwrap();
@@ -35242,9 +34111,6 @@ mod tests {
 
     #[test]
     fn dot_notation_children_escapes_like_specials_in_parent_id() {
-        // If escape_like_pattern were bypassed, a parent id containing `_`
-        // would match any single character via LIKE. Pin the escaping behavior
-        // so `a_b-1.1` matches but `axb-1.1` does not.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
         let parent = make_issue(
@@ -35393,16 +34259,10 @@ mod tests {
 
     #[test]
     fn open_auto_migrates_legacy_integer_datetimes_and_done_status() {
-        // Simulate the exact on-disk corruption observed in the wild: a v5
-        // DB (pre-migration user_version) with integer-typed DATETIME
-        // columns on some rows and a legacy Go-beads "done" status on
-        // another. Opening the DB with the fixed binary must auto-promote
-        // to v6 and normalize both.
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("legacy.db");
         {
             let storage = SqliteStorage::open(&db_path).unwrap();
-            // Drop the user_version so we exercise the v5 → v6 path.
             storage.conn.execute("PRAGMA user_version = 5").unwrap();
             storage
                 .conn
@@ -35424,7 +34284,6 @@ mod tests {
                 .unwrap();
         }
 
-        // Reopen — this triggers run_migrations(), which must repair both.
         let storage = SqliteStorage::open(&db_path).unwrap();
 
         let row = storage
@@ -35455,8 +34314,6 @@ mod tests {
             "closed_at should be populated for migrated done issue"
         );
 
-        // The export path must now produce a correct Issue — the reader
-        // regression (silent 1970-01-01 / null) is gone.
         let issue = storage
             .get_issue_for_export("legacy-int")
             .unwrap()
@@ -35563,10 +34420,6 @@ mod tests {
             "shared transaction should report the authority mismatch: {shared_error}"
         );
 
-        // The engine fails closed (CannotOpen)
-        // on a connection whose underlying file was replaced, so post-scenario
-        // forensics must reopen the displaced inode fresh instead of reading
-        // through the stale connection.
         drop(storage);
         let displaced = SqliteStorage::open(&displaced_path).unwrap();
         assert_eq!(
@@ -35706,10 +34559,6 @@ mod tests {
             error.contains("reconcile committed state before retrying"),
             "{error}"
         );
-        // The displaced-inode connection fails closed, so
-        // verify the committed mutation with a fresh open of the database
-        // path: the commit lives in the WAL, which stays beside the original
-        // path and replays over the hook's byte-identical copy.
         drop(storage);
         let reopened = SqliteStorage::open(&db_path).unwrap();
         assert_eq!(
@@ -35718,10 +34567,6 @@ mod tests {
             "the committed mutation must survive in the WAL at the database path"
         );
     }
-
-    // ========================================================================
-    // Issue #312, Layer 3 — attribution capture-only tests
-    // ========================================================================
 
     #[test]
     fn pending_attribution_is_stamped_onto_create_event() {
@@ -35780,8 +34625,6 @@ mod tests {
             status: Some(Status::InProgress),
             ..Default::default()
         };
-        // The transition must NOT be gated/rejected by the attribution; it is a
-        // recorded audit trail only.
         let updated = storage
             .update_issue("bd-attr-2", &update, "tester")
             .expect("status change should not be blocked by attribution");
@@ -35802,7 +34645,6 @@ mod tests {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let now = Utc.with_ymd_and_hms(2026, 6, 7, 12, 0, 0).unwrap();
 
-        // First create stages attribution...
         storage.set_pending_event_attribution(EventAttribution::new(
             Some("agent-x"),
             None,
@@ -35814,8 +34656,6 @@ mod tests {
             .create_issue(&first, "tester")
             .expect("create first");
 
-        // ...the second create stages NONE, so it must record no attribution
-        // (the prior staging must not leak into this unrelated mutation).
         let second = make_issue("bd-attr-4", "Second", Status::Open, 2, None, now, None);
         storage
             .create_issue(&second, "tester")
@@ -35841,16 +34681,8 @@ mod tests {
         assert!(EventAttribution::new(None, None, None, None).is_empty());
     }
 
-    // ---- #312 hardening (F1): attribution survives a non-committing mutation
-    // and is consumed only after a successful commit -----------------------
-
     #[test]
     fn pending_attribution_survives_failed_mutation_and_stamps_on_retry() {
-        // Models the JSONL-recovery retry path: the first `mutate()` does NOT
-        // commit (its closure errors → rollback), so the staged attribution must
-        // remain available for the *next* `mutate()` to stamp. Previously the
-        // start-of-`mutate()` `.take()` consumed it on the failed attempt,
-        // dropping attribution from the recovered write (F1).
         let mut storage = SqliteStorage::open_memory().unwrap();
 
         storage.set_pending_event_attribution(EventAttribution::new(
@@ -35860,8 +34692,6 @@ mod tests {
             None,
         ));
 
-        // A mutation whose closure fails with a non-transient error: it rolls
-        // back and never commits. The staged slot must be left intact.
         let failed: Result<()> = storage.mutate("noop_fail", "tester", |_conn, _ctx| {
             Err(BeadsError::Config("simulated mutation failure".into()))
         });
@@ -35872,8 +34702,6 @@ mod tests {
              retry can still stamp it",
         );
 
-        // The retry: a committing mutation must now record the (still-staged)
-        // attribution onto its events.
         let now = Utc.with_ymd_and_hms(2026, 6, 7, 12, 0, 0).unwrap();
         let issue = make_issue("bd-attr-retry", "Retried", Status::Open, 2, None, now, None);
         storage.create_issue(&issue, "tester").expect("create");
@@ -35886,14 +34714,11 @@ mod tests {
         assert_eq!(created.agent_name.as_deref(), Some("agent-retry"));
         assert_eq!(created.model.as_deref(), Some("opus-4"));
 
-        // And after the committing mutation, the slot is cleared (consumed once).
         assert!(
             storage.pending_event_attribution.is_none(),
             "attribution must be consumed by exactly one committing mutation",
         );
     }
-
-    // ---- #312 hardening (F2): no-op update clears the staged slot ----------
 
     #[test]
     fn empty_update_clears_pending_attribution_so_it_does_not_leak() {
@@ -35910,9 +34735,6 @@ mod tests {
         );
         storage.create_issue(&issue, "tester").expect("create");
 
-        // Stage attribution, then call update_issue with EMPTY updates: this
-        // early-returns without calling `mutate()`, but must still drain the
-        // staged slot so it cannot leak onto the next, unrelated mutation (F2).
         storage.set_pending_event_attribution(EventAttribution::new(
             Some("agent-leak"),
             None,
@@ -35928,8 +34750,6 @@ mod tests {
             "empty-update no-op must clear the staged attribution",
         );
 
-        // Confirm no leak: a subsequent create (which stages nothing) records
-        // no attribution.
         let next = make_issue("bd-attr-next", "Next", Status::Open, 2, None, now, None);
         storage.create_issue(&next, "tester").expect("create next");
         let events = storage.get_events("bd-attr-next", 0).expect("events");
@@ -37439,8 +36259,6 @@ mod tests {
         entering.status = Status::InProgress;
         let mut draining = storage.get_issue(&active.id).unwrap().unwrap();
         draining.status = Status::Open;
-        // Deliberately put the admitting row first. Sequential evaluation
-        // would reject it even though the complete merge is capacity-neutral.
         let kept = vec![entering, draining];
         let intent = sync_merge_test_intent(&storage, &kept, &[], &[]);
         let receipt = storage
@@ -37730,7 +36548,6 @@ mod stale_draft_tests {
         let tombstoned = storage.get_issue("bd-old").unwrap().unwrap();
         assert_eq!(tombstoned.status, Status::Tombstone);
         assert!(storage.stale_draft_ids(7).unwrap().is_empty());
-        // Fresh draft untouched.
         assert_eq!(
             storage.get_issue("bd-fresh").unwrap().unwrap().status,
             Status::Draft

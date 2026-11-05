@@ -725,16 +725,6 @@ fn e2e_sync_rename_prefix_applies_after_missing_db_recovery_without_force() {
 
 #[test]
 fn e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl() {
-    // Regression: post-command auto-flush used to unconditionally call
-    // `export_to_jsonl_with_policy`, which overwrote any existing JSONL —
-    // including unresolved `<<<<<<<` / `=======` / `>>>>>>>` regions from
-    // a botched `git merge`. Auto-import's conflict-markers check catches
-    // most of these before the mutation runs, but commands invoked with
-    // `--no-auto-import` skip that guard entirely, leaving auto-flush as
-    // the last line of defense. The fix teaches `auto_flush` itself to
-    // skip when it sees merge markers, so the mutation still lands in the
-    // DB but the JSONL on disk keeps its unresolved state for the
-    // operator to fix.
     let _log =
         common::test_log("e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl");
     let workspace = BrWorkspace::new();
@@ -753,17 +743,12 @@ fn e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl() {
         seed_flush.stderr
     );
 
-    // Drop the JSONL into a half-resolved merge-conflict state.
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let clean = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let conflicted = format!("<<<<<<< HEAD\n{clean}=======\n{clean}>>>>>>> branch\n");
     fs::write(&jsonl_path, &conflicted).expect("write conflicted jsonl");
     let before_bytes = fs::read(&jsonl_path).expect("read conflicted jsonl");
 
-    // Run a mutating command with `--no-auto-import` so the first line of
-    // defense (auto-import's conflict-markers scan) is bypassed. The
-    // mutation should still succeed against the DB, but auto-flush must
-    // NOT overwrite the conflict-markered JSONL.
     let update = run_br(
         &workspace,
         ["--no-auto-import", "update", &issue_id, "--priority", "1"],
@@ -775,7 +760,6 @@ fn e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl() {
         update.stderr
     );
 
-    // On-disk JSONL must still hold the conflict markers byte-for-byte.
     let after_bytes = fs::read(&jsonl_path).expect("reread jsonl");
     assert_eq!(
         before_bytes, after_bytes,
@@ -785,11 +769,6 @@ fn e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl() {
 
 #[test]
 fn e2e_auto_flush_failure_fails_loudly_in_json_mode() {
-    // ADR-0001 §5.8 wave 4 (GH #435): a mutating command whose auto-flush
-    // failed must NEVER exit 0 — the export ledger (export_hashes) would
-    // answer "in sync" against a JSONL it did not record. The command still
-    // prints its normal output and the AUTO_FLUSH_FAILED warning, but exits
-    // with the sync/JSONL code (6) so scripted callers see the flush debt.
     let _log = common::test_log("e2e_auto_flush_failure_fails_loudly_in_json_mode");
     let workspace = BrWorkspace::new();
 
@@ -858,13 +837,6 @@ fn e2e_auto_flush_failure_fails_loudly_in_json_mode() {
 
 #[test]
 fn e2e_concurrent_sync_lock_holder_skips_flush_without_losing_the_ledger() {
-    // The other half of the GH #435 concurrency surface (ADR-0001 §5.8
-    // wave 4): a second process holding .sync.lock makes auto-flush SKIP.
-    // Unlike a failed flush, a skip writes nothing — JSONL and the
-    // export_hashes ledger stay mutually consistent, and `needs_flush`
-    // keeps flagging the debt — so the mutation stays exit-0, with the
-    // AUTO_FLUSH_FAILED warning as the audit trail. If this ever starts
-    // losing hash bookkeeping, the fails-loudly contract above applies.
     let _log =
         common::test_log("e2e_concurrent_sync_lock_holder_skips_flush_without_losing_the_ledger");
     let workspace = BrWorkspace::new();
@@ -876,7 +848,6 @@ fn e2e_concurrent_sync_lock_holder_skips_flush_without_losing_the_ledger() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    // Concurrent holder: keep the sync lock held across the br update.
     let lock_path = workspace.root.join(".beads").join(".sync.lock");
     let holder = fs::OpenOptions::new()
         .read(true)
@@ -924,8 +895,6 @@ fn e2e_concurrent_sync_lock_holder_skips_flush_without_losing_the_ledger() {
         "skipped flush must not touch the JSONL"
     );
 
-    // The mutation itself committed; the DB flags the flush debt instead of
-    // silently pretending the ledger is current.
     let show = run_br(&workspace, ["show", &issue_id, "--json"], "show");
     assert!(
         show.status.success() && show.stdout.contains("\"priority\":1"),
@@ -937,10 +906,7 @@ fn e2e_concurrent_sync_lock_holder_skips_flush_without_losing_the_ledger() {
 
 #[test]
 fn e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit() {
-    // Regression: `br sync --flush-only` can return early when the DB has
-    // nothing dirty. That early return must not hide unresolved JSONL merge
     // markers, because a user running sync for safety should still be told
-    // the working tree contains an unresolved beads data conflict.
     let _log = common::test_log("e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit");
     let workspace = BrWorkspace::new();
 
@@ -958,16 +924,12 @@ fn e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit() {
         first_flush.stderr
     );
 
-    // Simulate a merge conflict by wrapping the clean JSONL in conflict
-    // markers, as if `git merge` left the file in a half-resolved state.
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let clean = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let conflicted = format!("<<<<<<< HEAD\n{clean}=======\n{clean}>>>>>>> branch\n");
     fs::write(&jsonl_path, &conflicted).expect("write conflicted jsonl");
     let before_size = fs::metadata(&jsonl_path).expect("stat jsonl").len();
 
-    // A subsequent no-op flush must refuse with a conflict-markers error
-    // before taking the "nothing to do" short-circuit.
     let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         !flush.status.success(),
@@ -975,8 +937,6 @@ fn e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit() {
         flush.stdout,
         flush.stderr
     );
-    // Error goes to stderr, not stdout, so check the human-readable text
-    // rather than trying to parse JSON from stdout.
     let lower = flush.stderr.to_lowercase();
     assert!(
         lower.contains("conflict") || lower.contains("marker"),
@@ -984,8 +944,6 @@ fn e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit() {
         flush.stderr
     );
 
-    // The JSONL on disk must still contain the conflict markers: if the
-    // flush had overwritten it, the markers would be gone.
     let after = fs::read_to_string(&jsonl_path).expect("reread jsonl");
     assert!(
         after.contains("<<<<<<<"),
@@ -1001,15 +959,6 @@ fn e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit() {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
-    // Regression: `br sync --import-only --rebuild` on an existing DB used
-    // to lose tombstones that had not yet been flushed to JSONL. The
-    // in-place path preserves them via `snapshot_tombstones` +
-    // `restore_preserved_issues` across `reset_data_tables`, but the new
-    // delegation path to `recover_database_from_jsonl` opens a fresh DB and
-    // imports only what's in the JSONL. Unflushed tombstones therefore
-    // vanished silently, taking their deletion-retention state with them.
-    // The fix snapshots tombstones before delegation and restores them
-    // after.
     let _log =
         common::test_log("e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation");
     let workspace = BrWorkspace::new();
@@ -1017,7 +966,6 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create two issues so the rebuild has content to preserve.
     let keep = run_br(&workspace, ["create", "Keep"], "create_keep");
     assert!(keep.status.success(), "create keep failed: {}", keep.stderr);
     let keep_id = parse_created_id(&keep.stdout);
@@ -1030,7 +978,6 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
     );
     let delete_id = parse_created_id(&delete.stdout);
 
-    // Flush both as open so the JSONL reflects the pre-deletion state.
     let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
@@ -1038,8 +985,6 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
         flush.stderr
     );
 
-    // Delete one issue WITHOUT flushing: the tombstone only lives in the
-    // DB, the JSONL still shows `delete_id` as open.
     let delete_cmd = run_br(
         &workspace,
         ["delete", &delete_id, "--force", "--no-auto-flush"],
@@ -1051,8 +996,6 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
         delete_cmd.stderr
     );
 
-    // Run --rebuild. The delegation path fires because the DB exists, no
-    // rename was requested, and the JSONL is available.
     let rebuild = run_br(
         &workspace,
         ["sync", "--import-only", "--rebuild", "--json"],
@@ -1064,10 +1007,6 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
         rebuild.stderr
     );
 
-    // The surviving tombstone must still be queryable via `br show`. If the
-    // delegation had silently wiped it, `show` would either report
-    // "Issue not found" or return the resurrected-as-open version from the
-    // JSONL.
     let show = run_br(&workspace, ["show", &delete_id, "--json"], "show_tombstone");
     assert!(
         show.status.success(),
@@ -1088,7 +1027,6 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
         "tombstone status was lost across --rebuild: {record}"
     );
 
-    // The kept issue must still be open.
     let show_keep = run_br(&workspace, ["show", &keep_id, "--json"], "show_keep");
     assert!(
         show_keep.status.success(),
@@ -1105,10 +1043,6 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
     .expect("show should return at least one record");
     assert_eq!(record["status"].as_str(), Some("open"));
 
-    // The preserved tombstone must remain dirty so a later flush writes the
-    // deletion back to JSONL instead of incorrectly reporting "Nothing to
-    // export". Without this, the rebuilt DB and JSONL silently diverge until
-    // a future import/rebuild cycle resurrects the supposedly deleted issue.
     let status = run_br(
         &workspace,
         ["sync", "--status", "--json"],
@@ -1197,13 +1131,6 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
 
 #[test]
 fn e2e_sync_rebuild_with_rename_prefix_keeps_renamed_issues() {
-    // Regression: `--rebuild --rename-prefix` used to wipe the DB. The
-    // rebuild's orphan-cleanup pass compares the *raw* JSONL IDs (pre-rename)
-    // against `storage.get_all_ids()` (post-rename). Every renamed issue
-    // therefore looked like a "DB entry not present in JSONL" and got
-    // deleted. The fix is to skip the orphan pass when `--rename-prefix`
-    // rewrote the IDs the import just inserted, since the set-difference
-    // comparison is no longer semantically meaningful.
     let _log = common::test_log("e2e_sync_rebuild_with_rename_prefix_keeps_renamed_issues");
     let workspace = BrWorkspace::new();
 
@@ -1751,7 +1678,6 @@ fn e2e_sync_export_guards() {
     let beads_dir = workspace.root.join(".beads");
     let issues_path = beads_dir.join("issues.jsonl");
 
-    // Empty DB guard: JSONL has content but DB has zero issues.
     fs::write(&issues_path, "{\"id\":\"bd-ghost\"}\n").expect("write jsonl");
     let flush_guard = run_br(&workspace, ["sync", "--flush-only"], "sync_flush_guard");
     assert!(
@@ -1764,10 +1690,8 @@ fn e2e_sync_export_guards() {
             .contains("Refusing to export empty database"),
         "missing empty DB guard message"
     );
-    // Reset JSONL to avoid guard on the seed export.
     fs::write(&issues_path, "").expect("reset jsonl");
 
-    // Stale DB guard: JSONL has an ID missing from DB.
     let create = run_br(&workspace, ["create", "Stale guard issue"], "create_stale");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
@@ -1779,11 +1703,9 @@ fn e2e_sync_export_guards() {
     );
 
     let mut contents = fs::read_to_string(&issues_path).expect("read jsonl");
-    // Use a complete Issue JSON (not just {"id":"bd-missing"}) to avoid parse errors during auto-import
     contents.push_str("{\"id\":\"bd-missing\",\"title\":\"Ghost issue\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\"}\n");
     fs::write(&issues_path, contents).expect("append jsonl");
 
-    // Use --no-auto-import and --allow-stale to prevent bd-missing from being imported into DB
     let create2 = run_br(
         &workspace,
         ["create", "Dirty issue", "--no-auto-import", "--allow-stale"],
@@ -1795,7 +1717,6 @@ fn e2e_sync_export_guards() {
         create2.stderr
     );
 
-    // The flush should fail because JSONL has bd-missing but DB doesn't
     let flush_stale = run_br(&workspace, ["sync", "--flush-only"], "sync_flush_stale");
     assert!(
         !flush_stale.status.success(),
@@ -1828,8 +1749,6 @@ fn e2e_ambiguous_id() {
         let id = parse_created_id(&create.stdout);
         ids.push(id);
 
-        // Check for first-character collisions (matches how the resolver
-        // uses contains() -- a single char matches any hash containing it)
         for i in 0..ids.len() {
             for j in (i + 1)..ids.len() {
                 let hash_i = ids[i].split('-').nth(1).unwrap_or("");
@@ -1915,7 +1834,6 @@ fn e2e_lint_bug_missing_sections_json() {
     );
 
     let json = run_lint_json(&workspace, vec!["lint".to_string()], "lint_bug_json");
-    // Bare P2 bug: both verify and principles warn
     assert_eq!(json["total"].as_u64(), Some(2));
     assert_eq!(json["issues"].as_u64(), Some(1));
     let missing = json["results"][0]["missing"]
@@ -1952,7 +1870,6 @@ fn e2e_lint_multiple_issues_aggregate_warnings() {
     );
 
     let json = run_lint_json(&workspace, vec!["lint".to_string()], "lint_multi_json");
-    // Two bare P2 issues, 2 warnings each (verify + principles)
     assert_eq!(json["issues"].as_u64(), Some(2));
     assert_eq!(json["total"].as_u64(), Some(4));
 }
@@ -2098,8 +2015,6 @@ fn e2e_lint_ids_only_lints_selected() {
 #[test]
 fn e2e_lint_chore_lints_under_one_brief_schema() {
     let _log = common::test_log("e2e_lint_skips_types_without_required_sections");
-    // ADR-0001 §5.2: one brief schema — chores lint under the same typed
-    // rules as every other type (bare chore warns on verify + principles).
     let workspace = BrWorkspace::new();
     let init = run_br(&workspace, ["init"], "lint_skip_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
@@ -2117,18 +2032,13 @@ fn e2e_lint_chore_lints_under_one_brief_schema() {
     assert_eq!(json["total"].as_u64(), Some(2));
 }
 
-// === Structured JSON Error Output Tests ===
-
 /// Parse structured error JSON from stderr.
 /// This handles the case where log lines may precede the JSON output.
 fn parse_error_json(stderr: &str) -> Option<Value> {
-    // First try parsing the whole stderr as JSON
     if let Ok(json) = serde_json::from_str(stderr) {
         return Some(json);
     }
 
-    // If that fails, look for a JSON object starting with '{'
-    // This handles cases where log lines precede the JSON output
     if let Some(start) = stderr.find('{') {
         let json_part = &stderr[start..];
         if let Ok(json) = serde_json::from_str(json_part) {
@@ -2147,7 +2057,6 @@ fn verify_error_structure(json: &Value) -> bool {
     }
     let error = error.unwrap();
 
-    // Required fields
     error.get("code").is_some()
         && error.get("message").is_some()
         && error.get("retryable").is_some()
@@ -2158,7 +2067,6 @@ fn e2e_structured_error_not_initialized() {
     let _log = common::test_log("e2e_structured_error_not_initialized");
     let workspace = BrWorkspace::new();
 
-    // Don't init - test NOT_INITIALIZED error
     let result = run_br(&workspace, ["list", "--json"], "list_not_init_json");
     assert!(!result.status.success());
     assert_eq!(result.status.code(), Some(2), "exit code should be 2");
@@ -2175,16 +2083,6 @@ fn e2e_structured_error_not_initialized() {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn e2e_partially_applied_close_batch_does_not_exit_zero() {
-    // The process-level half of the defect. `br close <blocked> <closeable>`
-    // exited 0 while printing "Warning: Skipped ..." and leaving the blocked
-    // issue untouched, because the terminal error was gated on
-    // `closed_count == 0`. docs/agent/ERRORS.md tells callers to parse stdout
-    // precisely when the exit code is 0, so the transcript — which shows an
-    // unqualified "✓ Closed" and nothing else — was certified authoritative.
-    //
-    // This asserts the real ExitStatus of the real binary, not a Result, and
-    // then reads the record back rather than trusting the output. Under the old
-    // predicate it fails at the exit-code assertion with `Some(0)`.
     let _log = common::test_log("e2e_partially_applied_close_batch_does_not_exit_zero");
     let workspace = BrWorkspace::new();
     let init = run_br(&workspace, ["init"], "partial_close_init");
@@ -2233,7 +2131,6 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
         dep_add.stderr
     );
 
-    // One id is refused, the other closes. The batch is partially applied.
     let close = run_br(
         &workspace,
         [
@@ -2282,7 +2179,6 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
         close.stderr
     );
 
-    // The record is the authority, not the transcript: one closed, one refused.
     let show_blocked = run_br(
         &workspace,
         ["show", &blocked_id, "--json"],
@@ -2518,8 +2414,6 @@ workflow:
     );
     assert!(!rejected.status.success(), "capacity update must fail");
     assert_eq!(rejected.status.code(), Some(4));
-    // Global JSON errors use the same clean stdout channel as successful JSON
-    // output (#336); diagnostics remain isolated on stderr.
     let json = parse_error_json(&rejected.stdout).expect("structured capacity error");
     assert!(verify_error_structure(&json));
     let error = &json["error"];
@@ -2784,9 +2678,6 @@ workflow:
 
 #[test]
 fn e2e_workflow_capacity_leaf_work_excludes_aggregate_parents_and_reports_rollup() {
-    // GitHub #384 phase 3, end to end: an epic -> parent -> child chain
-    // occupies one leaf_work slot, not three, and `br show` reports the
-    // parent's derived rollup without mutating its explicit status.
     let _log = common::test_log(
         "e2e_workflow_capacity_leaf_work_excludes_aggregate_parents_and_reports_rollup",
     );
@@ -2816,8 +2707,6 @@ fn e2e_workflow_capacity_leaf_work_excludes_aggregate_parents_and_reports_rollup
         assert!(dep.status.success(), "dep add failed: {}", dep.stderr);
     }
 
-    // Activate the whole chain before the policy exists so the pre-existing
-    // state is what hierarchy counting has to interpret.
     let activate = run_br(
         &workspace,
         [
@@ -2865,13 +2754,10 @@ workflow:
     let error = &json["error"];
     assert_eq!(error["code"], "WORKFLOW_CAPACITY_EXCEEDED");
     assert_eq!(error["context"]["counting_mode"], "leaf_work");
-    // Three issues are in_progress, but the epic and the parent are
-    // aggregates: only the leaf counts.
     assert_eq!(error["context"]["current"], 1);
     assert_eq!(error["context"]["prospective"], 2);
     assert_eq!(error["context"]["aggregate_parents_excluded"], 2);
 
-    // The rejected transition left no trace.
     let show_fresh = run_br(
         &workspace,
         ["show", &fresh_id, "--json"],
@@ -2881,7 +2767,6 @@ workflow:
         serde_json::from_str(&extract_json_payload(&show_fresh.stdout)).expect("show fresh json");
     assert_eq!(fresh["status"], "open");
 
-    // The parent keeps its own status and gains a derived rollup.
     let show_parent = run_br(
         &workspace,
         ["show", &parent_id, "--json"],
@@ -2893,7 +2778,6 @@ workflow:
     assert_eq!(parent["rollup"]["status"], "in_progress");
     assert_eq!(parent["rollup"]["descendants"]["in_progress"], 1);
 
-    // A childless leaf has no rollup key at all.
     let show_child = run_br(
         &workspace,
         ["show", &child_id, "--json"],
@@ -2946,11 +2830,9 @@ fn e2e_structured_error_cycle_detected() {
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
-    // A depends on B
     let dep_add = run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_add");
     assert!(dep_add.status.success());
 
-    // B depends on A - would create cycle
     let result = run_br(
         &workspace,
         ["dep", "add", &id_b, &id_a, "--json"],
@@ -3008,7 +2890,6 @@ fn e2e_structured_error_ambiguous_id() {
     let mut attempt = 0;
     let mut ambiguous_prefix: Option<String> = None;
 
-    // Create issues until we have ambiguous IDs
     while ambiguous_prefix.is_none() && attempt < 30 {
         let title = format!("Structured test {attempt}");
         let create = run_br(&workspace, ["create", &title], &format!("create_{attempt}"));
@@ -3016,7 +2897,6 @@ fn e2e_structured_error_ambiguous_id() {
         let id = parse_created_id(&create.stdout);
         ids.push(id);
 
-        // Check for prefix collisions
         for i in 0..ids.len() {
             for j in (i + 1)..ids.len() {
                 let hash_i = ids[i].split('-').nth(1).unwrap_or("");
@@ -3064,7 +2944,6 @@ fn e2e_structured_error_jsonl_parse() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create malformed JSONL
     let beads_dir = workspace.root.join(".beads");
     let issues_path = beads_dir.join("issues.jsonl");
     fs::write(&issues_path, "{ not valid json\n").expect("write bad jsonl");
@@ -3075,19 +2954,16 @@ fn e2e_structured_error_jsonl_parse() {
         "import_bad_json",
     );
     assert!(!result.status.success());
-    // JSONL parse errors should be exit code 6 (sync errors) or 7 (config)
     let exit_code = result.status.code().unwrap_or(0);
     assert!(
         exit_code == 6 || exit_code == 7,
         "unexpected exit code: {exit_code}"
     );
 
-    // The error output should be valid JSON
     let json = parse_error_json(&result.stdout);
     if let Some(json) = json {
         assert!(verify_error_structure(&json), "missing required fields");
     }
-    // Note: Some errors may not produce structured JSON yet - that's OK
 }
 
 #[test]
@@ -3098,7 +2974,6 @@ fn e2e_structured_error_conflict_markers() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create JSONL with conflict markers
     let beads_dir = workspace.root.join(".beads");
     let issues_path = beads_dir.join("issues.jsonl");
     fs::write(
@@ -3114,7 +2989,6 @@ fn e2e_structured_error_conflict_markers() {
     );
     assert!(!result.status.success());
 
-    // Should detect conflict markers
     assert!(
         result.stdout.contains("conflict") || result.stdout.contains("CONFLICT"),
         "should detect conflict markers"
@@ -3209,8 +3083,6 @@ fn e2e_custom_type_rejected() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // The IssueType vocabulary is closed (ADR-0035): an undeclared type is a
-    // typed refusal, not a silently-created Custom row.
     let result = run_br(
         &workspace,
         ["create", "Test issue", "--type", "custom_type", "--json"],
@@ -3242,7 +3114,6 @@ fn e2e_structured_error_invalid_priority() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Test invalid priority (out of 0-4 range)
     let result = run_br(
         &workspace,
         ["create", "Test issue", "--priority", "10", "--json"],
@@ -3264,18 +3135,14 @@ fn e2e_structured_error_invalid_priority() {
     );
 }
 
-// === --no-color mode tests for stable snapshots ===
-
 #[test]
 fn e2e_error_text_mode_no_color() {
     let _log = common::test_log("e2e_error_text_mode_no_color");
     let workspace = BrWorkspace::new();
 
-    // Test NOT_INITIALIZED error in no-color mode
     let result = run_br(&workspace, ["list", "--no-color"], "list_not_init_no_color");
     assert!(!result.status.success());
 
-    // Output should not contain ANSI escape codes
     assert!(
         !result.stderr.contains("\x1b["),
         "stderr should not contain ANSI escape codes"
@@ -3294,7 +3161,6 @@ fn e2e_error_text_vs_json_parity() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Same error in text mode
     let text_result = run_br(
         &workspace,
         ["show", "bd-nonexistent", "--no-color"],
@@ -3302,7 +3168,6 @@ fn e2e_error_text_vs_json_parity() {
     );
     assert!(!text_result.status.success());
 
-    // Same error in JSON mode
     let json_result = run_br(
         &workspace,
         ["show", "bd-nonexistent", "--json"],
@@ -3310,21 +3175,18 @@ fn e2e_error_text_vs_json_parity() {
     );
     assert!(!json_result.status.success());
 
-    // Both should have same exit code
     assert_eq!(
         text_result.status.code(),
         json_result.status.code(),
         "text and JSON mode should have same exit code"
     );
 
-    // JSON mode should produce valid structured error
     let json = parse_error_json(&json_result.stdout).expect("JSON mode should produce valid JSON");
     assert!(
         verify_error_structure(&json),
         "JSON error should have required fields"
     );
 
-    // Text mode output should contain error message (not JSON)
     assert!(
         text_result.stderr.contains("not found") || text_result.stderr.contains("No issue"),
         "text mode should contain human-readable error"
@@ -3343,8 +3205,6 @@ fn e2e_error_multiple_errors_same_exit_code() {
     assert!(create.status.success());
     let _id = parse_created_id(&create.stdout);
 
-    // Validation errors should return exit code 4
-    // Note: invalid type is NOT tested here because custom types are allowed
     let invalid_priority = run_br(
         &workspace,
         ["create", "Test", "--priority", "99", "--json"],
@@ -3363,7 +3223,6 @@ fn e2e_error_exit_code_categories() {
     let _log = common::test_log("e2e_error_exit_code_categories");
     let workspace = BrWorkspace::new();
 
-    // Exit code 2: Database/initialization errors
     let not_init = run_br(&workspace, ["list", "--json"], "not_init");
     assert_eq!(
         not_init.status.code(),
@@ -3374,7 +3233,6 @@ fn e2e_error_exit_code_categories() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Exit code 3: Issue errors
     let not_found = run_br(&workspace, ["show", "bd-missing", "--json"], "not_found");
     assert_eq!(
         not_found.status.code(),
@@ -3382,9 +3240,6 @@ fn e2e_error_exit_code_categories() {
         "ISSUE_NOT_FOUND should be exit 3"
     );
 
-    // Exit code 4: Validation errors (already tested above)
-
-    // Exit code 5: Dependency errors
     let create = run_br(&workspace, ["create", "Self dep"], "create_self");
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
@@ -3396,8 +3251,6 @@ fn e2e_error_exit_code_categories() {
         "SELF_DEPENDENCY should be exit 5"
     );
 }
-
-// === Additional Validation + Error Parity Tests ===
 
 #[test]
 fn e2e_structured_error_label_validation() {
@@ -3411,7 +3264,6 @@ fn e2e_structured_error_label_validation() {
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
-    // Test label with invalid characters (spaces not allowed)
     let result = run_br(
         &workspace,
         ["update", &id, "--add-label", "bad label", "--json"],
@@ -3445,7 +3297,6 @@ fn e2e_structured_error_label_too_long() {
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
-    // Create a label that exceeds 50 characters
     let long_label = "a".repeat(60);
     let result = run_br(
         &workspace,
@@ -3474,8 +3325,6 @@ fn e2e_structured_error_dependency_target_not_found() {
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
-    // Try to add dependency on non-existent issue
-    // The implementation returns ISSUE_NOT_FOUND for missing dependency targets
     let result = run_br(
         &workspace,
         ["dep", "add", &id, "bd-nonexistent", "--json"],
@@ -3492,7 +3341,6 @@ fn e2e_structured_error_dependency_target_not_found() {
     assert!(verify_error_structure(&json), "missing required fields");
 
     let error = &json["error"];
-    // Returns ISSUE_NOT_FOUND since the target issue doesn't exist
     assert_eq!(error["code"], "ISSUE_NOT_FOUND");
     assert!(!error["retryable"].as_bool().unwrap());
     assert!(
@@ -3519,11 +3367,9 @@ fn e2e_dependency_idempotent_duplicate() {
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
-    // Add dependency first time - should succeed
     let dep_add = run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_add_first");
     assert!(dep_add.status.success());
 
-    // Add same dependency again - should succeed (idempotent) with status "exists"
     let result = run_br(
         &workspace,
         ["dep", "add", &id_a, &id_b, "--json"],
@@ -3534,7 +3380,6 @@ fn e2e_dependency_idempotent_duplicate() {
         "duplicate dependency should be idempotent"
     );
 
-    // Parse output as success JSON (not error)
     let json: Value = serde_json::from_str(&result.stdout).expect("should be valid JSON");
     assert_eq!(
         json["status"].as_str().unwrap_or(""),
@@ -3662,12 +3507,9 @@ fn e2e_delete_with_dependents_preview() {
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
-    // B depends on A
     let dep_add = run_br(&workspace, ["dep", "add", &id_b, &id_a], "dep_add");
     assert!(dep_add.status.success());
 
-    // Delete A (which has B as dependent) - shows preview mode warning
-    // The command exits 0 (preview mode) but warns about dependents
     let result = run_br(&workspace, ["delete", &id_a], "delete_with_deps");
     assert!(
         result.status.success(),
@@ -3682,7 +3524,6 @@ fn e2e_delete_with_dependents_preview() {
         "should suggest force or cascade options"
     );
 
-    // Issue should still exist after preview
     let show = run_br(&workspace, ["show", &id_a], "show_after_preview");
     assert!(
         show.status.success(),
@@ -4018,7 +3859,6 @@ fn e2e_validation_error_empty_label() {
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
-    // Empty label should fail validation
     let result = run_br(
         &workspace,
         ["update", &id, "--add-label", "", "--json"],
@@ -4040,7 +3880,6 @@ fn e2e_validation_special_characters_in_label() {
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
-    // Valid labels (alphanumeric, hyphen, underscore, colon)
     let valid_labels = ["bug", "feat-1", "scope:subsystem", "test_case"];
     for label in valid_labels {
         let result = run_br(
@@ -4056,12 +3895,10 @@ fn e2e_validation_special_characters_in_label() {
         );
     }
 
-    // Create a new issue for testing invalid labels (to avoid label conflict)
     let create2 = run_br(&workspace, ["create", "Test issue 2"], "create2");
     assert!(create2.status.success());
     let id2 = parse_created_id(&create2.stdout);
 
-    // Invalid labels (special characters not allowed)
     let invalid_labels = ["@mention", "has/slash", "with.dot", "emoji🎉"];
     for label in invalid_labels {
         let result = run_br(
@@ -4089,7 +3926,6 @@ fn e2e_error_text_json_parity_validation() {
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
-    // Same validation error in text mode
     let text_result = run_br(
         &workspace,
         ["update", &id, "--add-label", "bad label", "--no-color"],
@@ -4097,7 +3933,6 @@ fn e2e_error_text_json_parity_validation() {
     );
     assert!(!text_result.status.success());
 
-    // Same validation error in JSON mode
     let json_result = run_br(
         &workspace,
         ["update", &id, "--add-label", "bad label", "--json"],
@@ -4105,14 +3940,12 @@ fn e2e_error_text_json_parity_validation() {
     );
     assert!(!json_result.status.success());
 
-    // Both should have same exit code
     assert_eq!(
         text_result.status.code(),
         json_result.status.code(),
         "text and JSON mode should have same exit code for validation errors"
     );
 
-    // JSON mode should produce valid structured error
     let json = parse_error_json(&json_result.stdout).expect("JSON mode should produce valid JSON");
     assert!(
         verify_error_structure(&json),
@@ -4122,15 +3955,6 @@ fn e2e_error_text_json_parity_validation() {
 
 #[test]
 fn e2e_sync_merge_detects_conflict_markers_in_base_snapshot() {
-    // Regression: `execute_merge` loads `beads.base.jsonl` via
-    // `load_base_snapshot` *before* scanning the main JSONL for conflict
-    // markers. If the base snapshot itself contained unresolved
-    // `<<<<<<<` / `=======` / `>>>>>>>` regions (a rare but possible state
-    // when a user commits the base snapshot against the default gitignore
-    // and then hits a botched `git merge`), the merge would fail with a
-    // cryptic "Invalid JSON in base snapshot at line 1" instead of the
-    // helpful "merge conflict markers detected" diagnostic. The fix
-    // scans the base snapshot for markers before attempting to parse.
     let _log = common::test_log("e2e_sync_merge_detects_conflict_markers_in_base_snapshot");
     let workspace = BrWorkspace::new();
 
@@ -4140,21 +3964,15 @@ fn e2e_sync_merge_detects_conflict_markers_in_base_snapshot() {
     let create = run_br(&workspace, ["create", "Seed"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // First flush so the JSONL is valid and the main sync path won't
-    // short-circuit before the merge code runs.
     let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    // Build a base snapshot that contains merge-conflict markers as if a
-    // user committed `beads.base.jsonl` and then hit a botched `git merge`.
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let clean = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let base_path = workspace.root.join(".beads").join("beads.base.jsonl");
     let conflicted = format!("<<<<<<< HEAD\n{clean}=======\n{clean}>>>>>>> branch\n");
     fs::write(&base_path, &conflicted).expect("write conflicted base snapshot");
 
-    // Merge must refuse with a conflict-markers diagnostic instead of a
-    // generic "Invalid JSON in base snapshot" parse error.
     let merge = run_br(&workspace, ["sync", "--merge"], "sync_merge");
     assert!(
         !merge.status.success(),
@@ -4187,7 +4005,6 @@ fn e2e_json_failure_emits_parseable_json_on_stdout() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // A failing command in --json mode: showing a non-existent issue.
     let show = run_br(
         &workspace,
         ["show", "bd-doesnotexist", "--json"],
@@ -4200,7 +4017,6 @@ fn e2e_json_failure_emits_parseable_json_on_stdout() {
         show.stderr
     );
 
-    // The structured error envelope must be on STDOUT and fully parseable.
     assert!(
         !show.stdout.trim().is_empty(),
         "json-mode error must be emitted on stdout, got empty stdout (stderr={})",
@@ -4213,7 +4029,6 @@ fn e2e_json_failure_emits_parseable_json_on_stdout() {
             show.stdout, show.stderr
         )
     });
-    // Sanity-check the structured envelope shape.
     assert!(
         value.get("error").is_some()
             || value.get("code").is_some()
@@ -4221,7 +4036,6 @@ fn e2e_json_failure_emits_parseable_json_on_stdout() {
         "json error envelope should carry an error/code/message field, got: {value}"
     );
 
-    // The HUMAN-mode counterpart keeps the error on stderr (stdout stays clean).
     let human = run_br(
         &workspace,
         ["show", "bd-doesnotexist"],
@@ -4241,14 +4055,6 @@ fn e2e_json_failure_emits_parseable_json_on_stdout() {
 
 #[test]
 fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
-    // Regression for GitHub #440: on a migrated workspace whose issues.jsonl
-    // mixes legacy `<project>-<n>` ids with `bd-*` ids, ANY path that
-    // re-ingests the workspace's own sidecar (automatic post-write recovery,
-    // `br sync --import-only --rebuild`) used to fail with
-    // "Prefix mismatch at line N: expected 'bd', found issue '<legacy id>'",
-    // blocking every CLI write path. The configured prefix is the default for
-    // NEW ids, not a project-wide invariant: recovery must round-trip mixed
-    // prefixes untouched, exactly like auto-import and reconcile already do.
     let _log = common::test_log("e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming");
     let workspace = BrWorkspace::new();
 
@@ -4274,9 +4080,6 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
         flush.stderr
     );
 
-    // Simulate the migrated workspace: rewrite one issue's id in the sidecar
-    // to a legacy project-scoped prefix that does not match the configured
-    // `bd` prefix.
     let legacy_id = "midas_edge-0077";
     let issues_path = workspace.root.join(".beads").join("issues.jsonl");
     let jsonl = fs::read_to_string(&issues_path).expect("read issues jsonl");
@@ -4286,8 +4089,6 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
     );
     fs::write(&issues_path, jsonl.replace(&original_id, legacy_id)).expect("rewrite jsonl");
 
-    // Delegated rebuild runs the exact same repair path automatic post-write
-    // recovery uses (`recover_database_from_jsonl`).
     let rebuild = run_br(
         &workspace,
         [
@@ -4307,7 +4108,6 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
         rebuild.stderr
     );
 
-    // The legacy id must survive verbatim (no rename), alongside the native id.
     let show_legacy = run_br(&workspace, ["show", legacy_id, "--json"], "show_legacy");
     assert!(
         show_legacy.status.success(),
@@ -4338,7 +4138,6 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
         show_native.stderr
     );
 
-    // And a subsequent write on the mixed-prefix workspace must work.
     let comment = run_br(
         &workspace,
         ["comments", "add", legacy_id, "still writable"],

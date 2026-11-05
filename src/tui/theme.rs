@@ -30,8 +30,6 @@ fn is_256() -> bool {
     std::env::var("TERM").is_ok_and(|v| v.contains("256color"))
 }
 
-// — raw hacker-night constants —
-
 const VOID: Color = Color::Rgb(0x08, 0x08, 0x0e);
 const SELECTION_BG: Color = Color::Rgb(0x24, 0x24, 0x3f);
 const FG: Color = Color::Rgb(0xc8, 0xd0, 0xe8);
@@ -67,7 +65,6 @@ pub fn primary() -> Style {
     if no_color() {
         return Style::new();
     }
-    // hacker-night: vivid cyan on void — neon-on-void header
     Style::new()
         .fg(resolve(CYAN, 44, Color::Cyan))
         .bg(resolve(VOID, 233, Color::Black))
@@ -146,8 +143,6 @@ pub fn border_unfocused() -> Style {
 pub fn selection_bar() -> Style {
     primary_fg()
 }
-
-// — status badges —
 
 /// Open status badge — neon mint.
 #[must_use]

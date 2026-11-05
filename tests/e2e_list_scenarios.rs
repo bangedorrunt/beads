@@ -30,7 +30,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
 
     let mut ids = Vec::new();
 
-    // Issue 1: P0 bug assigned to alice with "critical" label
     let issue1 = run_br(
         &workspace,
         ["create", "Critical login bug", "-p", "0", "-t", "bug"],
@@ -52,7 +51,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id1);
 
-    // Issue 2: P1 feature assigned to bob with "backend" label
     let issue2 = run_br(
         &workspace,
         ["create", "Add user dashboard", "-p", "1", "-t", "feature"],
@@ -74,7 +72,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id2);
 
-    // Issue 3: P2 task assigned to alice with "frontend" label
     let issue3 = run_br(
         &workspace,
         ["create", "Update documentation", "-p", "2", "-t", "task"],
@@ -96,7 +93,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id3);
 
-    // Issue 4: P1 bug unassigned with "backend" and "api" labels
     let issue4 = run_br(
         &workspace,
         ["create", "API rate limiting bug", "-p", "1", "-t", "bug"],
@@ -118,7 +114,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id4);
 
-    // Issue 5: P3 chore unassigned
     let issue5 = run_br(
         &workspace,
         ["create", "Clean up test fixtures", "-p", "3", "-t", "chore"],
@@ -127,7 +122,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     assert!(issue5.status.success());
     ids.push(parse_created_id(&issue5.stdout));
 
-    // Issue 6: Closed P2 bug
     let issue6 = run_br(
         &workspace,
         [
@@ -169,7 +163,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     assert!(close.status.success(), "close failed: {}", close.stderr);
     ids.push(id6);
 
-    // Issue 7: In-progress P1 task
     let issue7 = run_br(
         &workspace,
         ["create", "Implement caching layer", "-p", "1", "-t", "task"],
@@ -191,7 +184,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id7);
 
-    // Issue 8: Deferred P4 feature
     let issue8 = run_br(
         &workspace,
         [
@@ -222,10 +214,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     (workspace, ids)
 }
 
-// =============================================================================
-// STATUS FILTER TESTS
-// =============================================================================
-
 #[test]
 fn list_filter_by_status_open() {
     let (workspace, _ids) = setup_diverse_workspace();
@@ -239,7 +227,6 @@ fn list_filter_by_status_open() {
 
     let json = parse_list_issues(&list.stdout);
 
-    // All returned issues should have status "open"
     for issue in &json {
         assert_eq!(
             issue["status"], "open",
@@ -248,7 +235,6 @@ fn list_filter_by_status_open() {
         );
     }
 
-    // Should find at least 4 open issues (excluding closed, in_progress, deferred)
     assert!(
         json.len() >= 4,
         "Expected at least 4 open issues, got {}",
@@ -317,7 +303,6 @@ fn list_include_closed_shows_all() {
 
     let json = parse_list_issues(&list.stdout);
 
-    // Should include all 8 issues
     assert_eq!(
         json.len(),
         ids.len(),
@@ -326,10 +311,6 @@ fn list_include_closed_shows_all() {
         json.len()
     );
 }
-
-// =============================================================================
-// TYPE FILTER TESTS
-// =============================================================================
 
 #[test]
 fn list_filter_by_type_bug() {
@@ -344,7 +325,6 @@ fn list_filter_by_type_bug() {
 
     let json = parse_list_issues(&list.stdout);
 
-    // All should be bugs
     for issue in &json {
         assert_eq!(
             issue["issue_type"], "bug",
@@ -391,10 +371,6 @@ fn list_filter_by_type_task() {
     assert_eq!(json.len(), 2, "Expected 2 task issues");
 }
 
-// =============================================================================
-// PRIORITY FILTER TESTS
-// =============================================================================
-
 #[test]
 fn list_filter_by_priority_p0() {
     let (workspace, _ids) = setup_diverse_workspace();
@@ -437,7 +413,6 @@ fn list_filter_by_priority_p1() {
 fn list_filter_by_multiple_priorities() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // Filter for P0 and P1
     let list = run_br(
         &workspace,
         ["list", "-p", "0", "-p", "1", "--json"],
@@ -447,7 +422,6 @@ fn list_filter_by_multiple_priorities() {
 
     let json = parse_list_issues(&list.stdout);
 
-    // Should include P0 and P1 issues (excluding closed)
     for issue in &json {
         let priority = issue["priority"].as_u64().expect("priority number");
         assert!(
@@ -457,10 +431,6 @@ fn list_filter_by_multiple_priorities() {
         );
     }
 }
-
-// =============================================================================
-// ASSIGNEE FILTER TESTS
-// =============================================================================
 
 #[test]
 fn list_filter_by_assignee() {
@@ -485,7 +455,6 @@ fn list_filter_by_assignee() {
 fn list_filter_by_unassigned() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // The --unassigned flag filters for issues without an assignee
     let list = run_br(
         &workspace,
         ["list", "--unassigned", "--json"],
@@ -495,7 +464,6 @@ fn list_filter_by_unassigned() {
 
     let json = parse_list_issues(&list.stdout);
 
-    // All returned issues should have no assignee
     for issue in &json {
         assert!(
             issue["assignee"].is_null() || issue["assignee"] == "",
@@ -504,10 +472,6 @@ fn list_filter_by_unassigned() {
         );
     }
 }
-
-// =============================================================================
-// LABEL FILTER TESTS
-// =============================================================================
 
 #[test]
 fn list_filter_by_label_single() {
@@ -529,7 +493,6 @@ fn list_filter_by_label_single() {
 fn list_filter_by_label_multiple() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // Filter for issues with both "backend" AND "api" labels
     let list = run_br(
         &workspace,
         ["list", "--label", "backend", "--label", "api", "--json"],
@@ -539,7 +502,6 @@ fn list_filter_by_label_multiple() {
 
     let json = parse_list_issues(&list.stdout);
 
-    // Should find the one issue with both labels
     assert_eq!(
         json.len(),
         1,
@@ -552,10 +514,6 @@ fn list_filter_by_label_multiple() {
             .contains("API rate limiting")
     );
 }
-
-// =============================================================================
-// COMBINED FILTER TESTS
-// =============================================================================
 
 #[test]
 fn list_combined_filters_type_and_priority() {
@@ -608,10 +566,6 @@ fn list_combined_filters_assignee_and_label() {
     );
 }
 
-// =============================================================================
-// SORT TESTS
-// =============================================================================
-
 #[test]
 fn list_sort_by_priority_asc() {
     let (workspace, _ids) = setup_diverse_workspace();
@@ -625,7 +579,6 @@ fn list_sort_by_priority_asc() {
 
     let json = parse_list_issues(&list.stdout);
 
-    // Verify issues are sorted by priority (ascending = P0 first)
     let priorities: Vec<u64> = json
         .iter()
         .map(|i| i["priority"].as_u64().unwrap())
@@ -673,7 +626,6 @@ fn list_sort_by_priority_desc() {
 fn list_sort_by_created_at_desc() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // Default sort for created_at is descending (newest first) for UX
     let list = run_br(
         &workspace,
         ["list", "--sort", "created_at", "--json"],
@@ -688,7 +640,6 @@ fn list_sort_by_created_at_desc() {
         .map(|i| i["created_at"].as_str().unwrap())
         .collect();
 
-    // Verify descending order (newest first)
     for window in timestamps.windows(2) {
         assert!(
             window[0] >= window[1],
@@ -703,7 +654,6 @@ fn list_sort_by_created_at_desc() {
 fn list_sort_by_created_at_asc() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // Use --reverse to get ascending order (oldest first)
     let list = run_br(
         &workspace,
         ["list", "--sort", "created_at", "--reverse", "--json"],
@@ -718,7 +668,6 @@ fn list_sort_by_created_at_asc() {
         .map(|i| i["created_at"].as_str().unwrap())
         .collect();
 
-    // Verify ascending order (oldest first)
     for window in timestamps.windows(2) {
         assert!(
             window[0] <= window[1],
@@ -728,10 +677,6 @@ fn list_sort_by_created_at_asc() {
         );
     }
 }
-
-// =============================================================================
-// LIMIT AND PAGINATION TESTS
-// =============================================================================
 
 #[test]
 fn list_with_limit() {
@@ -753,7 +698,6 @@ fn list_with_limit() {
 fn list_with_limit_zero_unlimited() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // --limit 0 should return all issues (unlimited)
     let list = run_br(
         &workspace,
         ["list", "--limit", "0", "--json"],
@@ -763,18 +707,12 @@ fn list_with_limit_zero_unlimited() {
 
     let json = parse_list_issues(&list.stdout);
 
-    // Should get all non-closed issues (default excludes closed)
-    // We have 8 total issues, 1 closed, so at least 5 open ones
     assert!(
         json.len() >= 5,
         "Expected at least 5 issues with unlimited limit, got {}",
         json.len()
     );
 }
-
-// =============================================================================
-// OUTPUT FORMAT TESTS
-// =============================================================================
 
 #[test]
 fn list_text_output_format() {
@@ -783,14 +721,12 @@ fn list_text_output_format() {
     let list = run_br(&workspace, ["list"], "list_text");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
-    // Text output should contain at least one of the created issue IDs
     let has_any_id = ids.iter().any(|id| list.stdout.contains(id));
     assert!(
         has_any_id,
         "Text output should contain issue IDs, got: {}",
         list.stdout
     );
-    // Should also contain some issue content
     assert!(!list.stdout.is_empty(), "Text output should not be empty");
 }
 
@@ -803,7 +739,6 @@ fn list_json_output_format() {
 
     let json = parse_list_issues(&list.stdout);
 
-    // Verify JSON structure has expected fields
     if !json.is_empty() {
         let first = &json[0];
         assert!(first.get("id").is_some(), "JSON missing 'id' field");
@@ -830,7 +765,6 @@ fn list_csv_output_format() {
     let lines: Vec<&str> = list.stdout.lines().collect();
     assert!(!lines.is_empty(), "CSV output is empty");
 
-    // First line should be header
     let header = lines[0];
     assert!(header.contains("id"), "CSV header missing 'id'");
     assert!(header.contains("title"), "CSV header missing 'title'");
@@ -860,10 +794,6 @@ fn list_csv_with_custom_fields() {
     );
 }
 
-// =============================================================================
-// EDGE CASES
-// =============================================================================
-
 #[test]
 fn list_empty_workspace() {
     let workspace = BrWorkspace::new();
@@ -883,7 +813,6 @@ fn list_empty_workspace() {
 fn list_filter_no_matches() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // Filter for a type that doesn't exist
     let list = run_br(&workspace, ["list", "-t", "epic", "--json"], "list_no_epic");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
@@ -940,10 +869,6 @@ fn list_before_init_fails() {
     );
 }
 
-// =============================================================================
-// SPECIAL CHARACTER TESTS
-// =============================================================================
-
 #[test]
 fn list_issue_with_special_chars_in_title() {
     let workspace = BrWorkspace::new();
@@ -951,7 +876,6 @@ fn list_issue_with_special_chars_in_title() {
     let init = run_br(&workspace, ["init"], "init_special");
     assert!(init.status.success());
 
-    // Create issue with special characters
     let create = run_br(
         &workspace,
         ["create", "Fix \"quoted\" & <special> chars"],
@@ -959,7 +883,6 @@ fn list_issue_with_special_chars_in_title() {
     );
     assert!(create.status.success());
 
-    // List in JSON format
     let list_json = run_br(&workspace, ["list", "--json"], "list_special_json");
     assert!(list_json.status.success());
 
@@ -974,11 +897,9 @@ fn list_issue_with_special_chars_in_title() {
         "Title should contain angle brackets"
     );
 
-    // List in CSV format
     let list_csv = run_br(&workspace, ["list", "--format", "csv"], "list_special_csv");
     assert!(list_csv.status.success());
 
-    // CSV should properly escape the quotes
     assert!(
         list_csv.stdout.contains("\"\"quoted\"\"") || list_csv.stdout.contains("Fix"),
         "CSV should escape special characters"

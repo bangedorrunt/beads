@@ -81,12 +81,12 @@ fn external_path_descriptor(path: &Path) -> String {
 ///
 /// This list is exhaustive - any file not matching these patterns is rejected.
 pub const ALLOWED_EXTENSIONS: &[&str] = &[
-    "db",         // SQLite database
-    "db-wal",     // SQLite WAL
-    "db-shm",     // SQLite shared memory
-    "db-journal", // SQLite rollback journal
-    "jsonl",      // JSONL export
-    "jsonl.tmp",  // Atomic write temp files (plus pid-scoped .jsonl.<pid>.tmp)
+    "db",
+    "db-wal",
+    "db-shm",
+    "db-journal",
+    "jsonl",
+    "jsonl.tmp",
 ];
 
 /// Files explicitly allowed by exact name within `.beads/`.
@@ -187,12 +187,6 @@ fn symlink_escape_for_existing_ancestor(
     raw_beads_dir: &Path,
 ) -> Option<PathValidation> {
     for ancestor in path.ancestors() {
-        // Only components strictly BETWEEN beads_dir and the file can steer
-        // the path out of the tree. Ancestors shared with beads_dir itself
-        // (e.g. macOS /var -> /private/var under $TMPDIR workspaces) are
-        // common to both sides: canonical_beads already resolves them, so
-        // judging their link targets against beads_dir would reject every
-        // workspace living under a symlinked prefix.
         let in_raw = ancestor.starts_with(raw_beads_dir) && ancestor != raw_beads_dir;
         let in_canonical = ancestor.starts_with(canonical_beads) && ancestor != canonical_beads;
         if !in_raw && !in_canonical {
@@ -207,9 +201,6 @@ fn symlink_escape_for_existing_ancestor(
             continue;
         }
 
-        // Judge the FULLY RESOLVED location of the ancestor, not the raw
-        // link-target text: a chain of links that lands back inside the
-        // tree (or in its canonical prefix) is harmless.
         match canonicalize(ancestor) {
             Ok(resolved) if resolved.starts_with(canonical_beads) => {}
             Ok(resolved) => {
@@ -310,15 +301,12 @@ pub fn validate_no_git_path(path: &Path) -> PathValidation {
             || path_str.ends_with("\\.git")
     }
 
-    // Check raw path first
     if has_git_component(path) {
         return PathValidation::GitPathAttempt {
             path: path.to_path_buf(),
         };
     }
 
-    // Resolve each existing ancestor. The final path or its immediate parent
-    // may not exist yet, but a higher symlinked ancestor can still target .git.
     for ancestor in path.ancestors() {
         let Ok(canonical_ancestor) = canonicalize(ancestor) else {
             continue;
@@ -359,10 +347,8 @@ pub fn validate_no_git_path(path: &Path) -> PathValidation {
 /// ```
 #[allow(clippy::too_many_lines)]
 pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
-    // Log the validation attempt
     debug!(path = %path.display(), beads_dir = %beads_dir.display(), "Validating sync path");
 
-    // CRITICAL: Check for git path access first (hard invariant - NGI-3)
     let git_check = validate_no_git_path(path);
     if !git_check.is_allowed() {
         warn!(
@@ -388,7 +374,6 @@ pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
         return result;
     };
 
-    // Canonicalize the beads directory
     let canonical_beads = match canonicalize(beads_dir) {
         Ok(p) => p,
         Err(e) => {
@@ -431,34 +416,26 @@ pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
         return result;
     }
 
-    // For new files that don't exist yet, we check the parent directory
     let path_to_check = if normalized_path.exists() {
         normalized_path.clone()
     } else {
-        // For non-existent files, verify the parent exists and is valid
         match normalized_path.parent() {
             Some(parent) if parent.exists() => parent.to_path_buf(),
             _ => {
-                // If parent doesn't exist, just check if the path would be under beads_dir
                 if let Ok(relative) = normalized_path.strip_prefix(&canonical_beads) {
-                    // Path is specified relative to beads_dir
                     if !relative.to_string_lossy().contains("..") {
                         return validate_extension_and_name(&normalized_path);
                     }
                 }
-                // Otherwise, try to check as-is
                 normalized_path.clone()
             }
         }
     };
 
-    // Canonicalize the path (or its parent for new files)
     let canonical_path = match canonicalize(&path_to_check) {
         Ok(p) => p,
         Err(e) => {
-            // For non-existent files, we can't canonicalize, so check prefix
             if !normalized_path.exists() {
-                // Check if the path starts with the beads directory
                 if normalized_path.starts_with(beads_dir)
                     || normalized_path.starts_with(&canonical_beads)
                 {
@@ -478,7 +455,6 @@ pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
         }
     };
 
-    // Check if the path is a symlink pointing outside beads_dir
     if normalized_path.is_symlink()
         && let Ok(target) = std::fs::read_link(&normalized_path)
     {
@@ -526,8 +502,6 @@ pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
         }
     }
 
-    // Verify the path is under the beads directory
-    // For existing files, use the canonical path; for new files, use the parent's canonical + filename
     let effective_canonical = if normalized_path.exists() {
         canonical_path
     } else {
@@ -548,7 +522,6 @@ pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
         return result;
     }
 
-    // Validate extension and name
     let extension_result = validate_extension_and_name(&normalized_path);
     if !extension_result.is_allowed() {
         warn!(
@@ -570,7 +543,6 @@ fn validate_extension_and_name(path: &Path) -> PathValidation {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    // Check exact name matches first
     if ALLOWED_EXACT_NAMES.iter().any(|&name| file_name == name) {
         return PathValidation::Allowed;
     }
@@ -579,15 +551,12 @@ fn validate_extension_and_name(path: &Path) -> PathValidation {
         return PathValidation::Allowed;
     }
 
-    // Check extension matches
-    // Handle compound extensions like .jsonl.tmp
     for allowed_ext in ALLOWED_EXTENSIONS {
         if file_name.ends_with(&format!(".{allowed_ext}")) {
             return PathValidation::Allowed;
         }
     }
 
-    // Extract simple extension for error message
     let extension = path
         .extension()
         .map_or_else(|| "none".to_string(), |e| e.to_string_lossy().to_string());
@@ -677,8 +646,6 @@ pub fn validate_sync_path_with_external(
     beads_dir: &Path,
     allow_external: bool,
 ) -> Result<()> {
-    // If a path still points at `.beads/`, keep the stricter internal
-    // allowlist and symlink-escape checks even when external JSONL is enabled.
     let canonical_beads = canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
     let resolved_path = if path.is_relative() {
         std::env::current_dir()
@@ -687,17 +654,7 @@ pub fn validate_sync_path_with_external(
     } else {
         path.to_path_buf()
     };
-    // A dotdot-carrying path that physically resolves inside `.beads/`
-    // (e.g. `--db root/x/../.beads/beads.db`) must classify as internal:
-    // the raw form never prefix-matches the canonicalized beads_dir, and
-    // misclassifying it external refused valid workspaces (#409 routing
-    // cluster). Lexical normalization only widens into the *stricter*
-    // internal branch, whose validate_sync_path re-normalizes and runs the
-    // symlink-escape checks itself.
     let normalized_resolved = normalize_path_lexically(&resolved_path);
-    // A not-yet-existing leaf under a symlinked system prefix (BEADS_JSONL
-    // pointing into a $TMPDIR workspace) still classifies as internal:
-    // resolve the nearest existing ancestor and compare that route.
     let canonical_parent_route =
         std::fs::canonicalize(resolved_path.parent().unwrap_or_else(|| Path::new("/")))
             .ok()
@@ -719,8 +676,6 @@ pub fn validate_sync_path_with_external(
             resolved.starts_with(beads_dir) || resolved.starts_with(&canonical_beads)
         });
 
-    // CRITICAL: Git paths are ALWAYS rejected, even with allow_external. Do
-    // not disclose an absolute external path while reporting that rejection.
     let git_check = validate_no_git_path(path);
     if !git_check.is_allowed() {
         let reason = if is_internal {
@@ -740,7 +695,6 @@ pub fn validate_sync_path_with_external(
         return require_valid_sync_path(path, beads_dir);
     }
 
-    // If external paths are allowed, only validate file type (not containment).
     if allow_external {
         let path_sha256 = external_path_sha256(path);
         tracing::info!(
@@ -763,7 +717,6 @@ fn validate_external_jsonl_path(path: &Path) -> Result<()> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    // Case-sensitive check is intentional: JSONL files should use lowercase .jsonl extension
     #[allow(clippy::case_sensitive_file_extension_comparisons)]
     if !file_name.ends_with(".jsonl") && !is_allowed_jsonl_temp_name(&file_name) {
         return Err(BeadsError::Config(format!(
@@ -816,8 +769,6 @@ pub fn require_safe_sync_overwrite_path(
 ) -> Result<()> {
     let canonical_beads = canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
 
-    // Resolve relative paths against cwd so that `.beads/issues.jsonl.<pid>.tmp`
-    // is correctly recognized as internal when beads_dir is absolute (#238).
     let resolved_path = if path.is_relative() {
         std::env::current_dir()
             .map(|cwd| cwd.join(path))
@@ -922,7 +873,6 @@ pub fn validate_temp_file_path(
         target_path.display().to_string()
     };
 
-    // Git check is always enforced
     let git_check = validate_no_git_path(temp_path);
     if !git_check.is_allowed() {
         let reason = if temp_is_external {
@@ -935,7 +885,6 @@ pub fn validate_temp_file_path(
         return Err(BeadsError::Config(reason));
     }
 
-    // Verify temp file is in the same directory as target (PC-4)
     let temp_parent = temp_path.parent();
     let target_parent = target_path.parent();
 
@@ -1192,8 +1141,6 @@ fn open_jsonl_directory_via_stable_route(
         names.push(name);
     }
 
-    // Only the final component becomes the retained capability; the root and
-    // every ancestor are traversal-only anchors.
     let root_flags = if names.is_empty() {
         STABLE_ROUTE_DIRECTORY_FLAGS
     } else {
@@ -1263,10 +1210,6 @@ fn open_jsonl_directory_via_stable_route(
     }
     volume_root.push(std::path::Component::RootDir.as_os_str());
 
-    // cap-primitives opens directory handles without FILE_SHARE_DELETE on
-    // Windows. Retaining the final handle therefore prevents its namespace
-    // entry from being renamed or deleted underneath capability-relative
-    // operations.
     let mut route =
         open_ambient_dir(&volume_root, ambient_authority()).map_err(|error| {
             BeadsError::Config(format!(
@@ -2050,14 +1993,6 @@ fn absolute_jsonl_source_path(path: &Path) -> Result<PathBuf> {
             )))
         },
         |normalized| {
-            // Resolve symlinked PREFIX components (e.g. macOS /var ->
-            // /private/var under $TMPDIR workspaces) so downstream NOFOLLOW
-            // route walks traverse the real directories instead of rejecting
-            // every workspace that lives under a symlinked system path. The
-            // leaf keeps its raw name, so leaf-symlink rejection upstream is
-            // unaffected. If the parent cannot be resolved here, fall back to
-            // the lexical path and let the route walk produce its precise
-            // error.
             if let Some(parent) = normalized.parent()
                 && let Some(leaf) = normalized.file_name()
                 && let Ok(resolved_parent) = canonicalize(parent)
@@ -2132,9 +2067,6 @@ fn open_jsonl_source_via_stable_route(path: &Path, absolute_path: &Path) -> Resu
 
     let descriptor = external_path_descriptor(path);
     let leaf_flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
-    // Every directory on the way to the leaf is a traversal-only anchor (see
-    // `STABLE_ROUTE_TRAVERSAL_FLAGS`); only the regular-file leaf is opened
-    // for reading.
     let mut route = openat(CWD, "/", STABLE_ROUTE_TRAVERSAL_FLAGS, Mode::empty()).map_err(
         |error| {
             BeadsError::Config(format!(
@@ -2291,8 +2223,6 @@ pub(crate) struct JsonlSourceSnapshot {
     modified: SystemTime,
     size: u64,
     #[cfg(any(unix, windows))]
-    // The Windows receipt integration consumes this once sync/mod.rs enables
-    // native publication; keep the capability witness without a broad allow.
     #[cfg_attr(windows, allow(dead_code))]
     identity: JsonlFileIdentity,
 }
@@ -2337,8 +2267,6 @@ impl JsonlSourceSnapshot {
     }
 
     #[cfg(any(unix, windows))]
-    // See the field-level note: Windows path capture is implemented before
-    // the higher-level publication receipt is wired into sync/mod.rs.
     #[cfg_attr(windows, allow(dead_code))]
     #[must_use]
     pub(crate) const fn identity(&self) -> JsonlFileIdentity {
@@ -2992,7 +2920,6 @@ mod tests {
     #[test]
     fn test_new_file_in_beads_dir() {
         let (_temp, beads_dir) = setup_test_beads_dir();
-        // File doesn't exist yet but is in beads_dir with allowed extension
         let path = beads_dir.join("new.jsonl");
 
         let result = validate_sync_path(&path, &beads_dir);
@@ -3057,11 +2984,9 @@ mod tests {
         let beads_dir = temp.path().join(".beads");
         std::fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Create a target outside beads dir
         let outside_target = temp.path().join("secret.txt");
         std::fs::write(&outside_target, "secret data").expect("write");
 
-        // Create symlink inside beads dir pointing outside
         let symlink_path = beads_dir.join("evil.jsonl");
         symlink(&outside_target, &symlink_path).expect("create symlink");
 
@@ -3237,8 +3162,6 @@ mod tests {
 
     #[test]
     fn test_validation_logs_rejection() {
-        // This test verifies the logging behavior by checking the return value
-        // which includes the reason that would be logged
         let (_temp, beads_dir) = setup_test_beads_dir();
         let path = beads_dir.join("../../../etc/passwd");
 
@@ -3312,9 +3235,7 @@ mod tests {
         );
     }
 
-    // =========================================================================
     // Tests for validate_temp_file_path (PC-4 safety invariant)
-    // =========================================================================
 
     #[test]
     fn test_temp_file_valid_same_directory() {
@@ -3346,7 +3267,7 @@ mod tests {
     fn test_temp_file_rejects_different_directory() {
         let (temp_dir, beads_dir) = setup_test_beads_dir();
         let target = beads_dir.join("issues.jsonl");
-        let temp = temp_dir.path().join("issues.jsonl.tmp"); // Parent dir, not beads_dir
+        let temp = temp_dir.path().join("issues.jsonl.tmp");
 
         let result = validate_temp_file_path(&temp, &target, &beads_dir, false);
         assert!(
@@ -3364,7 +3285,7 @@ mod tests {
     fn test_temp_file_rejects_missing_tmp_extension() {
         let (_temp, beads_dir) = setup_test_beads_dir();
         let target = beads_dir.join("issues.jsonl");
-        let temp = beads_dir.join("issues.jsonl.bak"); // Wrong extension
+        let temp = beads_dir.join("issues.jsonl.bak");
 
         let result = validate_temp_file_path(&temp, &target, &beads_dir, false);
         assert!(
@@ -3562,10 +3483,6 @@ mod tests {
     fn open_jsonl_source_nofollow_resolves_symlinked_parent_to_physical_source() {
         use std::os::unix::fs::symlink;
 
-        // Route-policy note (ADR-0002 R1 repair): symlinked PARENT
-        // components resolve to their physical location; the fail-closed
-        // boundary is the LEAF (it must never be a symlink). The opened
-        // source must be the physical file behind the link, byte-for-byte.
         let (temp, beads_dir) = setup_test_beads_dir();
         let outside = temp.path().join("outside");
         std::fs::create_dir(&outside).expect("create outside directory");
@@ -3624,9 +3541,6 @@ mod tests {
     fn pin_jsonl_target_resolves_symlinked_parent_and_rejects_non_directory_parents() {
         use std::os::unix::fs::symlink;
 
-        // Route-policy note (ADR-0002 R1 repair): symlinked PARENT
-        // components resolve to their physical directory; non-directory
-        // parents still fail closed.
         let temp = TempDir::new().expect("create temp directory");
         let outside = temp.path().join("outside");
         let linked_parent = temp.path().join("linked-parent");
@@ -4153,10 +4067,7 @@ mod tests {
             .expect("rename should succeed after pinned Windows handle closes");
     }
 
-    // ========================================================================
     // beads-yyxo: tests for sync-safety invariants under SYNC_SAFETY_INVARIANTS.md
-    // PC-1, PC-3, PC-RECOVERY (added 2026-05-09 by audit-2026-05-09)
-    // ========================================================================
 
     /// PC-1 / PC-3: a symlink inside `.beads/` whose canonicalized target
     /// escapes via `..` must be rejected as a SymlinkEscape, not silently
@@ -4168,13 +4079,11 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let (temp, beads_dir) = setup_test_beads_dir();
-        // External target outside .beads/
         let external = temp.path().join("external");
         std::fs::create_dir_all(&external).expect("create external");
         let external_target = external.join("escape.jsonl");
         std::fs::write(&external_target, "{}").expect("write external");
 
-        // Create a symlink inside .beads/ that points to the external file
         let symlink_path = beads_dir.join("issues.jsonl");
         symlink(&external_target, &symlink_path).expect("create escape symlink");
 
@@ -4275,7 +4184,6 @@ mod tests {
             "explicit external path must be allowed when allow_external=true; got {result:?}"
         );
 
-        // But .git rejection still applies
         let git_under_external = external_root.join(".git").join("HEAD");
         let git_result = validate_sync_path_with_external(&git_under_external, &beads_dir, true);
         assert!(

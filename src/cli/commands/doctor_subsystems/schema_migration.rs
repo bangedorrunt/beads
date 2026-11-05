@@ -174,7 +174,6 @@ impl From<ReviewedSchemaMigrationEffects> for ReviewedSchemaMigrationEffectsRece
     }
 }
 
-// serde's `skip_serializing_if` contract requires `fn(&T) -> bool`.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 const fn is_false(value: &bool) -> bool {
     !*value
@@ -508,9 +507,6 @@ fn execute_apply(args: &DoctorMigrateSchemaApplyArgs, migration: &MigrationConte
     };
 
     let mut attestation_errors = Vec::new();
-    // Deliberate cross-type comparison: the forecast promises maintenance
-    // (`post_migration_maintenance`) and the effects attest completion
-    // (`post_migration_maintenance_completed`).
     let maintenance_matches_forecast =
         effects.post_migration_maintenance_completed == forecast.post_migration_maintenance;
     if effects.from_version != forecast.from_version
@@ -640,9 +636,6 @@ fn run_post_migration_maintenance(
     let candidate_path = maintenance_candidate_path(db_path, run_dir)?;
     require_absent_family(&candidate_path)?;
 
-    // Build and migrate a replacement database without mutating the live
-    // family.  The live main file and sidecars remain the rollback authority
-    // until the fully attested candidate is atomically installed below.
     let source_conn = Connection::open(db_path.to_string_lossy().into_owned())?;
     let escaped_path = candidate_path.to_string_lossy().replace('\'', "''");
     let candidate_result = source_conn
@@ -1457,13 +1450,6 @@ fn current_runtime_shape_is_canonical(db_path: &Path) -> Result<bool> {
 
 fn logical_witness(db_path: &Path) -> Result<LogicalDatabaseWitness> {
     let conn = open_read_only(db_path)?;
-    // FrankenSQLite's integrity walker intentionally switches to the
-    // transaction's live freelist projection while an explicit transaction is
-    // active.  A read-only DEFERRED transaction can therefore report a false
-    // orphan for a healthy file whose committed freelist is non-empty.  Keep
-    // the schema/content reads in one stable snapshot, but attest integrity on
-    // both sides of that snapshot from autocommit state.  The caller already
-    // holds the database-family write authority for the whole operation.
     let integrity_before = match integrity_check_messages(&conn) {
         Ok(messages) => messages.join("\n"),
         Err(error) => {
@@ -1777,8 +1763,6 @@ fn same_file_identity(expected: &fs::Metadata, opened: &fs::Metadata) -> bool {
     expected.len() == opened.len()
 }
 
-// The `Option` is required by the shared signature: the `#[cfg(not(unix))]`
-// twin below returns `None`.
 #[cfg(unix)]
 #[allow(clippy::unnecessary_wraps)]
 fn unix_file_mode(metadata: &fs::Metadata) -> Option<u32> {

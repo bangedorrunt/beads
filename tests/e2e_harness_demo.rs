@@ -15,12 +15,10 @@ use common::harness::{TestWorkspace, parse_created_id};
 fn harness_full_workflow() {
     let mut ws = TestWorkspace::new("e2e_harness_demo", "full_workflow");
 
-    // Initialize workspace
     let init = ws.run_br(["init"], "init");
     init.assert_success();
     assert!(init.duration.as_secs() < 10, "init too slow");
 
-    // Create an issue
     let create = ws.run_br(
         [
             "create",
@@ -34,11 +32,9 @@ fn harness_full_workflow() {
     );
     create.assert_success();
 
-    // Parse created ID
     let id = parse_created_id(&create.stdout);
     assert!(!id.is_empty(), "missing created id");
 
-    // List issues in JSON mode
     let list = ws.run_br(["list", "--json"], "list_json");
     list.assert_success();
 
@@ -49,15 +45,12 @@ fn harness_full_workflow() {
         "created issue not in list"
     );
 
-    // Update the issue
     let update = ws.run_br(["update", &id, "--status", "in_progress"], "update_status");
     update.assert_success();
 
-    // Show the issue
     let show = ws.run_br(["show", &id, "--json"], "show_json");
     show.assert_success();
 
-    // Close the issue
     let gate = ws.run_br(
         [
             "gate",
@@ -89,7 +82,6 @@ fn harness_full_workflow() {
     );
     close.assert_success();
 
-    // Finalize
     ws.finish(true);
 }
 
@@ -97,15 +89,12 @@ fn harness_full_workflow() {
 fn harness_captures_failure() {
     let mut ws = TestWorkspace::new("e2e_harness_demo", "captures_failure");
 
-    // Initialize
     let init = ws.run_br(["init"], "init");
     init.assert_success();
 
-    // Try an invalid command (show nonexistent issue)
     let show = ws.run_br(["show", "nonexistent-id"], "show_invalid");
     show.assert_failure();
 
-    // Verify error was captured
     assert!(
         !show.stderr.is_empty() || !show.stdout.is_empty(),
         "expected some output on error"
@@ -118,11 +107,9 @@ fn harness_captures_failure() {
 fn harness_env_isolation() {
     let mut ws = TestWorkspace::new("e2e_harness_demo", "env_isolation");
 
-    // Initialize
     let init = ws.run_br(["init"], "init");
     init.assert_success();
 
-    // Run with custom env var
     let result = ws.run_br_env(
         ["info", "--json"],
         [("BR_TEST_VAR", "test_value")],
@@ -137,18 +124,15 @@ fn harness_env_isolation() {
 fn harness_stdin_input() {
     let mut ws = TestWorkspace::new("e2e_harness_demo", "stdin_input");
 
-    // Initialize
     let init = ws.run_br(["init"], "init");
     init.assert_success();
 
-    // Create an issue first
     let create = ws.run_br(["create", "Issue for comment"], "create");
     create.assert_success();
 
     let id = parse_created_id(&create.stdout);
     assert!(!id.is_empty(), "missing created id");
 
-    // Add comment via stdin
     let comment = ws.run_br_stdin(
         ["comments", "add", &id, "-"],
         "This is a comment from stdin",

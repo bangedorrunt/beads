@@ -23,7 +23,6 @@ use tempfile::TempDir;
 
 /// Create sample test artifacts for testing report generation
 fn create_sample_artifacts(base_dir: &std::path::Path) -> std::io::Result<()> {
-    // Create a passing test suite
     let pass_dir = base_dir.join("e2e_basic").join("test_create_issue");
     fs::create_dir_all(&pass_dir)?;
 
@@ -38,7 +37,6 @@ fn create_sample_artifacts(base_dir: &std::path::Path) -> std::io::Result<()> {
 {"timestamp":"2026-01-17T12:00:01Z","event_type":"command","label":"create","binary":"br","args":["create","--title","Test Issue"],"cwd":"/tmp/test1","exit_code":0,"success":true,"duration_ms":120,"stdout_len":200,"stderr_len":0}"#,
     )?;
 
-    // Create another passing test
     let pass_dir2 = base_dir.join("e2e_basic").join("test_list_issues");
     fs::create_dir_all(&pass_dir2)?;
 
@@ -52,7 +50,6 @@ fn create_sample_artifacts(base_dir: &std::path::Path) -> std::io::Result<()> {
         r#"{"timestamp":"2026-01-17T12:01:00Z","event_type":"command","label":"list","binary":"br","args":["list","--json"],"cwd":"/tmp/test2","exit_code":0,"success":true,"duration_ms":80,"stdout_len":500,"stderr_len":0}"#,
     )?;
 
-    // Create a failing test
     let fail_dir = base_dir.join("e2e_sync").join("test_sync_conflict");
     fs::create_dir_all(&fail_dir)?;
 
@@ -87,7 +84,6 @@ fn test_report_indexer_basic() {
     assert_eq!(report.total_failed, 1, "Should have 1 failed");
     assert_eq!(report.suites.len(), 2, "Should have 2 suites");
 
-    // Check suite breakdown
     let basic = report.tests_by_suite("e2e_basic").unwrap();
     assert_eq!(basic.tests.len(), 2);
     assert_eq!(basic.passed_count, 2);
@@ -96,7 +92,6 @@ fn test_report_indexer_basic() {
     assert_eq!(sync.tests.len(), 1);
     assert_eq!(sync.failed_count, 1);
 
-    // Check failed test has failure reason
     let failed = report.failed_tests();
     assert_eq!(failed.len(), 1);
     assert!(failed[0].failure_reason.is_some());
@@ -118,7 +113,6 @@ fn test_markdown_report() {
     let report = indexer.generate_report().unwrap();
     let md = generate_markdown_report(&report);
 
-    // Check structure
     assert!(md.contains("# Test Artifact Report"), "Missing header");
     assert!(md.contains("## Summary"), "Missing summary");
     assert!(md.contains("## Suites"), "Missing suites");
@@ -128,7 +122,6 @@ fn test_markdown_report() {
     );
     assert!(md.contains("## Slowest Tests"), "Missing slowest tests");
 
-    // Check content
     assert!(md.contains("e2e_basic"), "Missing e2e_basic suite");
     assert!(md.contains("e2e_sync"), "Missing e2e_sync suite");
     assert!(
@@ -137,7 +130,6 @@ fn test_markdown_report() {
     );
     assert!(md.contains("Conflict detected"), "Missing failure reason");
 
-    // Check pass/fail indicators
     assert!(md.contains("✅"), "Missing pass indicator");
     assert!(md.contains("❌"), "Missing fail indicator");
 }
@@ -151,18 +143,15 @@ fn test_html_report() {
     let report = indexer.generate_report().unwrap();
     let html = generate_html_report(&report);
 
-    // Check HTML structure
     assert!(html.contains("<!DOCTYPE html>"), "Missing doctype");
     assert!(html.contains("<html>"), "Missing html tag");
     assert!(html.contains("Test Artifact Report"), "Missing title");
     assert!(html.contains("<style>"), "Missing styles");
 
-    // Check content
     assert!(html.contains("e2e_basic"), "Missing e2e_basic");
     assert!(html.contains("e2e_sync"), "Missing e2e_sync");
     assert!(html.contains("test_sync_conflict"), "Missing failed test");
 
-    // Check CSS classes
     assert!(html.contains("status-pass"), "Missing pass class");
     assert!(html.contains("status-fail"), "Missing fail class");
     assert!(
@@ -184,11 +173,9 @@ fn test_write_reports() {
     let report = indexer.generate_report().unwrap();
     let (md_path, html_path) = write_reports(&report, &output_dir).unwrap();
 
-    // Verify files exist
     assert!(md_path.exists(), "Markdown report not created");
     assert!(html_path.exists(), "HTML report not created");
 
-    // Verify content
     let md_content = fs::read_to_string(&md_path).unwrap();
     assert!(md_content.contains("# Test Artifact Report"));
 
@@ -210,7 +197,6 @@ fn test_failures_only_filter() {
     let indexer = ArtifactIndexer::with_config(config);
     let report = indexer.generate_report().unwrap();
 
-    // Should only include the failed test
     assert_eq!(report.total_tests, 1);
     assert_eq!(report.total_failed, 1);
     assert!(report.tests_by_suite("e2e_basic").is_none());

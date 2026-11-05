@@ -123,25 +123,6 @@ fn execute_inner(
     beads_dir: &Path,
     preloaded_storage_ctx: Option<&mut config::OpenStorageResult>,
 ) -> Result<()> {
-    // beads-750p: ordinary orphans scans must auto-import a newer JSONL
-    // before scanning issue state, so JSONL-only closures (e.g. from `git
-    // pull`) are reflected in the orphan list. An explicit read-only fast
-    // open (`--no-auto-import --no-auto-flush`) instead preserves that
-    // contract here: open the current database read-only and do not join the
-    // workspace writer queue. The preloaded path was already handled by
-    // main.rs under the same policy.
-    //
-    // CONCURRENCY NOTE: We do NOT acquire the project's `.write.lock`
-    // explicitly here. This deviates from the audit/close/etc. flows in
-    // sibling commands which acquire the lock before opening writable.
-    // Rationale: orphans is on the read-only-fast-open list; main.rs's
-    // startup path (which DOES acquire the lock) is the canonical
-    // serialization point. The non-preloaded path is exercised in narrow
-    // cases (e.g. dispatch fallback, certain test harnesses) where the
-    // race is bounded by SQLite's per-connection locking. If two orphans
-    // invocations race the auto-import here, SQLite's WAL serializes the
-    // import write; the worst observable outcome is one waiting briefly
-    // for the other's transaction. This is acceptable for a read command
     // and is documented at SYNC_SAFETY_INVARIANTS.md.
     let mut owned_storage_ctx = if preloaded_storage_ctx.is_some() {
         None
@@ -160,15 +141,11 @@ fn execute_inner(
     };
     let storage = &storage_ctx.storage;
 
-    // Get issue prefix from config
     let config_layer = storage_ctx.load_config(cli)?;
     let prefix = config::id_config_from_layer(&config_layer).prefix;
     let render_mode = resolve_render_mode(json, ctx.mode());
     validate_fix_render_mode(args, render_mode)?;
 
-    // Get all open and in_progress issues first. If there are no candidate
-    // issues, no commit reference can become an orphan, so skip the expensive
-    // git history scan entirely.
     let filters = ListFilters {
         statuses: Some(vec![Status::Open, Status::InProgress]),
         ..Default::default()
@@ -187,9 +164,6 @@ fn execute_inner(
         return Ok(());
     };
 
-    // Get git log and extract issue references. Use the candidate issues'
-    // prefixes instead of only the configured default so mixed-prefix imports
-    // and slugged IDs are still discoverable.
     let scan_prefixes = issue_prefixes_for_orphan_scan(&issues, &prefix);
     let commit_refs = get_git_commit_refs_for_prefixes(&scan_prefixes, &repo_root)?;
 
@@ -203,8 +177,6 @@ fn execute_inner(
         return Ok(());
     }
 
-    // Build a map of issue_id -> (commit_hash, commit_message)
-    // We already have latest-first from git log, so first occurrence wins
     let mut issue_commits: HashMap<String, (String, String)> = HashMap::new();
     for (commit_hash, commit_msg, issue_id) in &commit_refs {
         issue_commits
@@ -212,7 +184,6 @@ fn execute_inner(
             .or_insert_with(|| (commit_hash.clone(), commit_msg.clone()));
     }
 
-    // Find orphans: issues that are referenced in commits but still open
     let mut orphans: Vec<OrphanIssue> = Vec::new();
     let mut orphan_issues: Vec<Issue> = Vec::new();
     let mut context_snippets: HashMap<String, String> = HashMap::new();
@@ -238,7 +209,6 @@ fn execute_inner(
         }
     }
 
-    // Sort by issue_id for consistent output
     orphans.sort_by(|a, b| a.issue_id.cmp(&b.issue_id));
     orphan_issues.sort_by(|a, b| a.id.cmp(&b.id));
     debug!(orphan_count = orphans.len(), "Scanning for orphaned issues");
@@ -254,8 +224,6 @@ fn execute_inner(
             if ctx.is_json() {
                 ctx.json_pretty(&orphans);
             } else {
-                // Robot mode requests JSON even though the shared output context only
-                // sees global flags.
                 println!("{}", serde_json::to_string_pretty(&orphans)?);
             }
         }
@@ -332,15 +300,6 @@ fn execute_inner(
             if io::stdin().read_line(&mut input).is_ok() {
                 let input = input.trim().to_lowercase();
                 if input == "y" || input == "yes" {
-                    // ADR-0001 §5.3 fail-closed close: a legal close cites the
-                    // commit whose message references the bead. The orphan scan
-                    // already detected that commit (`latest_commit`) — it is the
-                    // "commit BEFORE close" evidence for this bead, so we use it
-                    // as the ceremony's --commit-sha instead of fabricating
-                    // evidence. Gate rows must still be recorded first (`br gate
-                    // report <id> --gate <name> --provider <verifier> --status
-                    // pass --to closed`); a missing gate refuses the close below
-                    // and the operator is told exactly why.
                     let close_args = CloseArgs {
                         ids: vec![orphan.issue_id.clone()],
                         reason: Some("Implemented (detected by orphans scan)".to_string()),
@@ -348,11 +307,6 @@ fn execute_inner(
                         ..CloseArgs::default()
                     };
 
-                    // Close against the SAME storage context the scan used.
-                    // Re-entering `br close` would deadlock on the workspace
-                    // write lock this command already holds and publish through
-                    // a disconnected context. The close core flushes JSONL
-                    // through this context, so the export cannot lag the DB.
                     if let Err(e) = close::execute_with_storage_ctx(
                         &close_args,
                         false,
@@ -428,10 +382,8 @@ fn get_git_commit_refs_for_prefixes(
 
     let stdout = child.stdout.take().expect("Failed to open git log stdout");
 
-    // Parse the stream as it comes in
     let refs_result = parse_git_log_for_prefixes(BufReader::new(stdout), prefixes);
 
-    // Wait for the process to finish and check status
     let status = child.wait()?;
     if !status.success() {
         let mut stderr = String::new();
@@ -483,11 +435,6 @@ fn parse_git_log_for_prefixes<R: BufRead>(
         return Ok(Vec::new());
     }
 
-    // Pattern matches prefix-id including hierarchical IDs like bd-abc.1.2
-    // We use word boundaries \b to avoid matching suffix/prefix (e.g. abd-123 or bd-123a)
-    // although matching bd-123a is technically valid if 123a is the hash.
-    // The previous regex forced parens: r"\(({}-[a-zA-Z0-9]+(?:\.[0-9]+)?)\)"
-    // Use (?i) for case-insensitive matching (user input in commits varies)
     let pattern = format!(r"(?i)\b((?:{prefix_pattern})-[a-z0-9]+(?:\.[0-9]+)*)\b");
     let re = Regex::new(&pattern)
         .map_err(|e| crate::error::BeadsError::internal(format!("Invalid regex pattern: {e}")))?;
@@ -497,14 +444,12 @@ fn parse_git_log_for_prefixes<R: BufRead>(
     for line in reader.lines() {
         let line = line.map_err(crate::error::BeadsError::Io)?;
 
-        // Each line is: <short_hash> <message>
         let Some((commit_hash, commit_msg)) = line.split_once(' ') else {
             continue;
         };
         let commit_hash = commit_hash.to_string();
         let commit_msg = commit_msg.to_string();
 
-        // Find all issue references in this commit message
         for cap in re.captures_iter(&commit_msg) {
             if let Some(issue_id) = cap.get(1) {
                 results.push((
@@ -543,7 +488,6 @@ fn output_empty(render_mode: OrphanRenderMode, ctx: &OutputContext) -> Result<()
             ctx.render(&panel);
         }
         OrphanRenderMode::Plain => {
-            // Match bd format
             println!("✓ No orphaned issues found");
         }
     }
@@ -664,15 +608,12 @@ ccc Oldest (bd-1)";
 
         let refs = parse_git_log(Cursor::new(log), "bd").unwrap();
 
-        // First occurrence of bd-1 should be from the latest commit
         assert_eq!(refs[0].0, "aaa");
         assert_eq!(refs[0].2, "bd-1");
 
-        // bd-2 is in the middle
         assert_eq!(refs[1].0, "bbb");
         assert_eq!(refs[1].2, "bd-2");
 
-        // Second occurrence of bd-1 is from oldest
         assert_eq!(refs[2].0, "ccc");
         assert_eq!(refs[2].2, "bd-1");
     }

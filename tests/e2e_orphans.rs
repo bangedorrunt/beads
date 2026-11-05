@@ -25,7 +25,6 @@ fn init_git(workspace: &BrWorkspace, label: &str) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Configure git user for commits
     let _ = Command::new("git")
         .current_dir(&workspace.root)
         .args(["config", "user.email", "test@example.com"])
@@ -38,7 +37,6 @@ fn init_git(workspace: &BrWorkspace, label: &str) {
 
 /// Make a git commit with the given message.
 fn git_commit(workspace: &BrWorkspace, message: &str, label: &str) {
-    // Create a dummy file to commit
     let file_path = workspace.root.join(format!("{label}.txt"));
     fs::write(&file_path, format!("Content for {label}")).expect("write file");
 
@@ -104,8 +102,6 @@ fn rewrite_jsonl_issue_as_closed(workspace: &BrWorkspace, issue_id: &str) {
         .collect::<Vec<_>>()
         .join("\n");
 
-    // Ensure coarse filesystem timestamp resolution still makes the edited
-    // JSONL newer than the database for the auto-import contract.
     std::thread::sleep(std::time::Duration::from_millis(25));
     fs::write(&jsonl_path, format!("{rewritten}\n")).expect("write issues.jsonl");
 }
@@ -158,29 +154,21 @@ fn assert_mixed_prefix_dotted_orphans(stdout: &str) {
     );
 }
 
-// =============================================================================
-// Success Path Tests
-// =============================================================================
-
 #[test]
 fn e2e_orphans_no_orphans_empty_list() {
     common::init_test_logging();
     info!("e2e_orphans_no_orphans_empty_list: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue but don't reference it in commits
     let create = run_br(&workspace, ["create", "Unreferenced issue"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Make a commit without issue reference
     git_commit(&workspace, "Add feature without issue ref", "commit_no_ref");
 
-    // Run orphans - should be empty
     let orphans = run_br(&workspace, ["orphans"], "orphans_empty");
     assert!(
         orphans.status.success(),
@@ -201,12 +189,10 @@ fn e2e_orphans_detects_open_issue_in_commit() {
     info!("e2e_orphans_detects_open_issue_in_commit: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(
         &workspace,
         ["create", "Feature to implement"],
@@ -215,11 +201,9 @@ fn e2e_orphans_detects_open_issue_in_commit() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    // Make a commit referencing the issue (with parentheses)
     let commit_msg = format!("Implement feature ({issue_id})");
     git_commit(&workspace, &commit_msg, "commit_with_ref");
 
-    // Run orphans - should detect the open issue
     let orphans = run_br(&workspace, ["orphans"], "orphans_detect");
     assert!(
         orphans.status.success(),
@@ -304,9 +288,6 @@ fn e2e_orphans_fix_auto_flushes_closed_issue_to_jsonl() {
         "commit_ref",
     );
 
-    // The fork's fail-closed close ceremony requires a recorded PASS gate
-    // before closing; the detected commit feeds `--commit-sha`. Report the
-    // gate so the interactive fix can close legally.
     let gate = run_br(
         &workspace,
         [
@@ -357,21 +338,17 @@ fn e2e_orphans_detects_issue_without_parens() {
     info!("e2e_orphans_detects_issue_without_parens: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(&workspace, ["create", "Bug fix needed"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    // Make a commit referencing the issue WITHOUT parentheses
     let commit_msg = format!("Fix bug {issue_id} in auth module");
     git_commit(&workspace, &commit_msg, "commit_no_parens");
 
-    // Run orphans - should detect the issue
     let orphans = run_br(&workspace, ["orphans"], "orphans_no_parens");
     assert!(
         orphans.status.success(),
@@ -393,21 +370,17 @@ fn e2e_orphans_json_output_structure() {
     info!("e2e_orphans_json_output_structure: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(&workspace, ["create", "JSON test issue"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    // Make a commit referencing the issue
     let commit_msg = format!("Implement ({issue_id})");
     git_commit(&workspace, &commit_msg, "commit_ref");
 
-    // Run orphans with --json
     let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_json");
     assert!(
         orphans.status.success(),
@@ -523,22 +496,16 @@ fn e2e_orphans_detects_mixed_prefix_and_dotted_child_refs() {
     info!("e2e_orphans_detects_mixed_prefix_and_dotted_child_refs: assertions passed");
 }
 
-// =============================================================================
-// Filtering Tests
-// =============================================================================
-
 #[test]
 fn e2e_orphans_excludes_closed_issues() {
     common::init_test_logging();
     info!("e2e_orphans_excludes_closed_issues: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create and close an issue
     let create = run_br(&workspace, ["create", "Already done issue"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
@@ -576,11 +543,9 @@ fn e2e_orphans_excludes_closed_issues() {
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    // Make a commit referencing the closed issue
     let commit_msg = format!("Implement ({issue_id})");
     git_commit(&workspace, &commit_msg, "commit_closed");
 
-    // Run orphans - should NOT include closed issue
     let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_closed");
     assert!(
         orphans.status.success(),
@@ -601,12 +566,10 @@ fn e2e_orphans_includes_in_progress_issues() {
     info!("e2e_orphans_includes_in_progress_issues: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue and mark it in_progress
     let create = run_br(&workspace, ["create", "In progress issue"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
@@ -618,11 +581,9 @@ fn e2e_orphans_includes_in_progress_issues() {
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
-    // Make a commit referencing the issue
     let commit_msg = format!("Work on ({issue_id})");
     git_commit(&workspace, &commit_msg, "commit_in_progress");
 
-    // Run orphans - should include in_progress issue
     let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_in_progress");
     assert!(
         orphans.status.success(),
@@ -638,20 +599,14 @@ fn e2e_orphans_includes_in_progress_issues() {
     info!("e2e_orphans_includes_in_progress_issues: assertions passed");
 }
 
-// =============================================================================
-// Edge Case Tests
-// =============================================================================
-
 #[test]
 fn e2e_orphans_before_init_returns_empty() {
     common::init_test_logging();
     info!("e2e_orphans_before_init_returns_empty: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git but NOT beads
     init_git(&workspace, "git_init");
 
-    // Run orphans - should return empty, not error
     let orphans = run_br(&workspace, ["orphans"], "orphans_no_init");
     assert!(
         orphans.status.success(),
@@ -721,15 +676,12 @@ fn e2e_orphans_not_git_repo_returns_empty() {
     info!("e2e_orphans_not_git_repo_returns_empty: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize beads but NOT git
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(&workspace, ["create", "Test issue"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Run orphans - should return empty (no git repo)
     let orphans = run_br(&workspace, ["orphans"], "orphans_no_git");
     assert!(
         orphans.status.success(),
@@ -750,12 +702,10 @@ fn e2e_orphans_multiple_issues_multiple_commits() {
     info!("e2e_orphans_multiple_issues_multiple_commits: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create multiple issues
     let create1 = run_br(&workspace, ["create", "First issue"], "create_1");
     assert!(create1.status.success());
     let id1 = parse_created_id(&create1.stdout);
@@ -768,7 +718,6 @@ fn e2e_orphans_multiple_issues_multiple_commits() {
     assert!(create3.status.success());
     let id3 = parse_created_id(&create3.stdout);
 
-    // Close the third issue
     let gate = run_br(
         &workspace,
         [
@@ -795,7 +744,6 @@ fn e2e_orphans_multiple_issues_multiple_commits() {
     );
     assert!(close.status.success());
 
-    // Make commits referencing all three
     git_commit(&workspace, &format!("Implement ({id1})"), "commit_1");
     git_commit(
         &workspace,
@@ -803,7 +751,6 @@ fn e2e_orphans_multiple_issues_multiple_commits() {
         "commit_2_3",
     );
 
-    // Run orphans - should detect only id1 and id2 (id3 is closed)
     let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_multi");
     assert!(
         orphans.status.success(),
@@ -833,20 +780,16 @@ fn e2e_orphans_robot_flag_json_output() {
     info!("e2e_orphans_robot_flag_json_output: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(&workspace, ["create", "Robot test"], "create_issue");
     assert!(create.status.success());
     let issue_id = parse_created_id(&create.stdout);
 
-    // Make a commit
     git_commit(&workspace, &format!("Implement ({issue_id})"), "commit_ref");
 
-    // Run orphans with --robot (should produce JSON like --json)
     let orphans = run_br(&workspace, ["orphans", "--robot"], "orphans_robot");
     assert!(
         orphans.status.success(),
@@ -911,14 +854,10 @@ fn e2e_orphans_empty_json_array_when_no_orphans() {
     info!("e2e_orphans_empty_json_array_when_no_orphans: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // No issues, no commits with refs
-
-    // Run orphans with --json
     let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_empty_json");
     assert!(
         orphans.status.success(),
@@ -971,21 +910,17 @@ fn e2e_orphans_details_flag_shows_commit_info() {
     info!("e2e_orphans_details_flag_shows_commit_info: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(&workspace, ["create", "Details test issue"], "create_issue");
     assert!(create.status.success());
     let issue_id = parse_created_id(&create.stdout);
 
-    // Make a commit with a distinctive message
     let commit_msg = format!("Implement feature XYZ ({issue_id})");
     git_commit(&workspace, &commit_msg, "commit_ref");
 
-    // Run orphans with --details
     let orphans = run_br(&workspace, ["orphans", "--details"], "orphans_details");
     assert!(
         orphans.status.success(),
@@ -993,7 +928,6 @@ fn e2e_orphans_details_flag_shows_commit_info() {
         orphans.stderr
     );
 
-    // Should show commit info
     assert!(
         orphans.stdout.contains("Commit:"),
         "expected 'Commit:' label with --details, got: {}",
@@ -1013,22 +947,18 @@ fn e2e_orphans_issue_referenced_multiple_times() {
     info!("e2e_orphans_issue_referenced_multiple_times: starting");
     let workspace = BrWorkspace::new();
 
-    // Initialize git and beads
     init_git(&workspace, "git_init");
     let init = run_br(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(&workspace, ["create", "Multi-ref issue"], "create_issue");
     assert!(create.status.success());
     let issue_id = parse_created_id(&create.stdout);
 
-    // Make multiple commits referencing the same issue
     git_commit(&workspace, &format!("Start ({issue_id})"), "commit_1");
     git_commit(&workspace, &format!("Continue ({issue_id})"), "commit_2");
     git_commit(&workspace, &format!("Finish ({issue_id})"), "commit_3");
 
-    // Run orphans - issue should appear only once
     let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_multi_ref");
     assert!(
         orphans.status.success(),
@@ -1043,7 +973,6 @@ fn e2e_orphans_issue_referenced_multiple_times() {
     assert_eq!(arr.len(), 1, "issue should appear only once");
     assert_eq!(arr[0]["issue_id"].as_str(), Some(issue_id.as_str()));
 
-    // Should reference the latest commit (most recent first in git log)
     let commit_msg = arr[0]["latest_commit_message"].as_str().unwrap();
     assert!(
         commit_msg.contains("Finish"),

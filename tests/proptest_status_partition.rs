@@ -152,9 +152,6 @@ proptest! {
 
         let count = specs.len();
 
-        // Explicit enumeration of all statuses to get the true universe,
-        // including tombstones (which list_issues hides by default even with
-        // include_closed=true — by design, since tombstones are soft-deleted).
         let all_issues = storage
             .list_issues(&ListFilters {
                 statuses: Some(ALL_KNOWN_STATUSES.to_vec()),
@@ -165,7 +162,6 @@ proptest! {
             })
             .unwrap();
 
-        // Per-status queries
         let mut partitioned_ids = BTreeSet::new();
         let mut partition_total = 0usize;
 
@@ -201,7 +197,6 @@ proptest! {
 
         let all_ids: BTreeSet<_> = all_issues.iter().map(|i| i.id.clone()).collect();
 
-        // Exhaustive: every issue in "all" appears in exactly one partition
         for id in &all_ids {
             prop_assert!(
                 partitioned_ids.contains(id),
@@ -210,7 +205,6 @@ proptest! {
             );
         }
 
-        // No extras: every partitioned issue appears in "all"
         for id in &partitioned_ids {
             prop_assert!(
                 all_ids.contains(id),
@@ -219,14 +213,12 @@ proptest! {
             );
         }
 
-        // Disjoint: partition_total == partitioned_ids.len() (no duplicates)
         prop_assert_eq!(
             partition_total,
             partitioned_ids.len(),
             "Duplicate issues detected across partitions",
         );
 
-        // Total count matches
         prop_assert_eq!(
             partitioned_ids.len(),
             all_ids.len(),

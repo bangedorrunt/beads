@@ -355,17 +355,6 @@ pub(super) fn auto_import_storage_ctx_if_stale(
     storage_ctx: &mut OpenStorageResult,
     cli: &crate::config::CliOverrides,
 ) -> crate::Result<()> {
-    // Issue #229: skip auto-import in --no-db mode.  The in-memory database
-    // was just populated from the JSONL file during `open_storage_with_cli`,
-    // so there is no staleness to detect.  Running the staleness probe here
-    // is actively harmful because `compute_staleness_refreshing_witnesses`
-    // calls `get_metadata` via `query_row_with_params`, which routes through
-    // frankensqlite's prepared-statement fast path.  On in-memory databases
-    // that fast path can warm up cached root-page references that become
-    // stale after the bulk import's DELETE + INSERT cycle, causing subsequent
-    // `get_issue_from_conn` calls inside write transactions to silently
-    // return zero rows — the mechanism behind the "Issue not found" errors
-    // on `br --no-db update`.
     if storage_ctx.no_db {
         return Ok(());
     }
@@ -561,14 +550,7 @@ where
         Err(operation_err) => {
             if !allow_recovery || !matches!(operation_err, BeadsError::Database(_)) {
                 return Err(operation_err);
-            } // Fail-closed storage transition (upstream 8d5af3a0, adapted):
-            // when a storage-replacement transition could not restore a
-            // verified persistent database handle, surface the transition
-            // error instead of attempting recovery through the in-memory
-            // sentinel. Upstream attached this check to its fsqlite
-            // WAL-certificate quarantine retry arm; the fork's recovery
-            // decision point is here, ahead of
-            // `should_attempt_mutation_jsonl_recovery`.
+            }
             if storage_ctx.database_transition_is_fail_closed() {
                 tracing::error!(
                     command = command,
@@ -673,9 +655,6 @@ mod tests {
         let db_path = beads_dir.join("beads.db");
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Scope the initial storage so the connection is closed before
-        // recovery opens a new one at the same path; a stale connection on a
-        // replaced file causes lock conflicts.
         {
             let mut storage = SqliteStorage::open(&db_path).expect("storage");
             let issue = Issue {
@@ -943,11 +922,6 @@ mod tests {
 
     #[test]
     fn retry_preserves_staged_attribution_across_jsonl_recovery() {
-        // #312 hardening (F1): attribution staged ONCE before the retry helper
-        // must survive a recoverable first-attempt failure and still be stamped
-        // by the post-recovery retry. The attribution is staged exactly once,
-        // OUTSIDE the operation closure, so this genuinely exercises the
-        // take-after-commit fix (not a re-stage workaround).
         let (_temp, mut storage_ctx) = storage_ctx_with_exported_issue();
         let mut attempts = 0;
 
@@ -968,14 +942,10 @@ mod tests {
             |storage| {
                 attempts += 1;
                 if attempts == 1 {
-                    // First attempt: a recoverable corruption error that does NOT
-                    // commit. The staged attribution must NOT be consumed.
                     Err(BeadsError::Database(DbError::DatabaseCorrupt {
                         detail: "synthetic corruption".to_string(),
                     }))
                 } else {
-                    // Post-recovery retry: a real committing mutation that should
-                    // stamp the still-staged attribution onto its event.
                     let update = crate::storage::IssueUpdate {
                         status: Some(crate::model::Status::InProgress),
                         ..Default::default()

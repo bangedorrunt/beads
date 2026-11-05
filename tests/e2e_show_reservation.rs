@@ -26,7 +26,6 @@ fn seed_one_issue(workspace: &BrWorkspace) -> String {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let payload: Value =
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("created issue json");
-    // Pure-success create prints a bare object; batch shapes print arrays.
     if let Some(id) = payload.get("id").and_then(Value::as_str) {
         return id.to_string();
     }
@@ -44,8 +43,6 @@ fn show_reservation_block_reports_holder_and_paths_from_snapshot() {
     let workspace = BrWorkspace::new();
     let id = seed_one_issue(&workspace);
 
-    // The bead's own reason/thread carries the issue id so the shared matcher
-    // attaches this lease to this issue.
     let snapshot = json!({
         "reservations": [
             {
@@ -104,7 +101,6 @@ fn show_reservation_block_reports_holder_and_paths_from_snapshot() {
         json!({"path_pattern": "src/cli/**", "exclusive": true})
     );
 
-    // Read-only contract: no grant/mutation surface is exposed.
     assert!(
         reservation.get("release_command").is_none() && reservation.get("acquire").is_none(),
         "display must not carry lease-mutation affordances"
@@ -130,7 +126,6 @@ fn show_reservation_missing_or_expired_states_are_explicit() {
     let workspace = BrWorkspace::new();
     let id = seed_one_issue(&workspace);
 
-    // Snapshot with no lease matching this issue.
     let empty = write_reservation_snapshot(
         &workspace,
         &json!({
@@ -161,7 +156,6 @@ fn show_reservation_missing_or_expired_states_are_explicit() {
         "explicit state, never silent absence"
     );
 
-    // Expired lease on this issue.
     let expired = write_reservation_snapshot(
         &workspace,
         &json!({

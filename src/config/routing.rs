@@ -205,8 +205,6 @@ pub fn read_redirect(beads_dir: &Path) -> Result<Option<PathBuf>> {
     let resolved = if target_path.is_absolute() {
         target_path
     } else {
-        // Resolve relative to the .beads directory itself so "." stays within
-        // the workspace storage root instead of escaping to the project root.
         beads_dir.join(target_path)
     };
 
@@ -271,7 +269,6 @@ pub fn follow_redirects(start: &Path, max_depth: usize) -> Result<PathBuf> {
             break;
         }
 
-        // Check for loops
         if visited.iter().any(|p| p == &next) {
             return Err(BeadsError::Config(format!(
                 "Redirect loop detected: {} -> {}",
@@ -285,7 +282,6 @@ pub fn follow_redirects(start: &Path, max_depth: usize) -> Result<PathBuf> {
         depth += 1;
     }
 
-    // Verify the final directory exists and still points to a real .beads dir.
     if !current.is_dir() {
         return Err(BeadsError::Config(format!(
             "Redirect target not found: {}",
@@ -327,22 +323,18 @@ fn canonicalize_redirect_path(path: &Path) -> PathBuf {
 /// Returns an error if route files cannot be read or the target doesn't exist.
 pub fn resolve_route(issue_id: &str, local_beads_dir: &Path) -> Result<RoutingResult> {
     let Some(prefix) = extract_prefix(issue_id) else {
-        // No prefix, use local
         return Ok(RoutingResult::local(local_beads_dir.to_path_buf()));
     };
 
-    // Load local routes
     let local_routes_path = local_beads_dir.join("routes.jsonl");
     let local_routes = load_routes(&local_routes_path)?;
 
-    // Route paths are relative to project root (parent of .beads)
     let project_root = local_beads_dir.parent().unwrap_or(local_beads_dir);
 
     if let Some(route) = find_route(&local_routes, &prefix) {
         return resolve_route_entry(route, project_root, local_beads_dir);
     }
 
-    // Find and search town root if different
     if let Some(town_root) = find_town_root(project_root) {
         let town_beads_dir = town_root.join(".beads");
         if town_beads_dir != *local_beads_dir && town_beads_dir.is_dir() {
@@ -355,7 +347,6 @@ pub fn resolve_route(issue_id: &str, local_beads_dir: &Path) -> Result<RoutingRe
         }
     }
 
-    // No route found, use local
     Ok(RoutingResult::local(local_beads_dir.to_path_buf()))
 }
 
@@ -398,7 +389,6 @@ fn resolve_route_entry(
     local_beads_dir: &Path,
 ) -> Result<RoutingResult> {
     let target_path = if route.path == "." {
-        // Town-level beads
         base_dir.join(".beads")
     } else {
         let path = PathBuf::from(&route.path);
@@ -408,7 +398,6 @@ fn resolve_route_entry(
             base_dir.join(path)
         };
 
-        // Check if it's a .beads/_beads directory or a project root
         if resolved.file_name().is_some_and(super::is_beads_dir_name) {
             resolved
         } else {
@@ -416,14 +405,12 @@ fn resolve_route_entry(
         }
     };
 
-    // Follow redirects
     let final_path = follow_redirects(&target_path, 10)?;
     let normalized_final_path =
         crate::sync::path::canonicalize(&final_path).unwrap_or_else(|_| final_path.clone());
     let normalized_local_beads_dir = crate::sync::path::canonicalize(local_beads_dir)
         .unwrap_or_else(|_| local_beads_dir.to_path_buf());
 
-    // Determine if external
     let is_external = normalized_final_path != normalized_local_beads_dir;
 
     if is_external {
@@ -556,10 +543,7 @@ mod tests {
         fs::write(&redirect_path, "../other/.beads").unwrap();
 
         let result = read_redirect(&beads_dir).unwrap().unwrap();
-        // The path contains "../other" which resolves correctly but isn't canonicalized
-        // Just verify it ends with "other/.beads"
         assert!(result.ends_with("other/.beads"));
-        // And starts with the temp dir base
         let result_str = result.to_string_lossy();
         assert!(result_str.contains(".beads"));
     }
@@ -718,8 +702,8 @@ mod tests {
     fn is_external_id_check() {
         assert!(is_external_id("fe-abc", "bd-"));
         assert!(!is_external_id("bd-abc", "bd-"));
-        assert!(!is_external_id("BD-abc", "bd-")); // case insensitive
-        assert!(!is_external_id("nohyphen", "bd-")); // no prefix
+        assert!(!is_external_id("BD-abc", "bd-"));
+        assert!(!is_external_id("nohyphen", "bd-"));
     }
 
     #[test]
@@ -748,21 +732,16 @@ mod tests {
     fn resolve_route_with_local_route() {
         let dir = TempDir::new().unwrap();
 
-        // Create local beads dir under "current" project
         let local_beads = dir.path().join("current/.beads");
         fs::create_dir_all(&local_beads).unwrap();
 
-        // Create target beads dir as sibling to "current" project
         let target_beads = dir.path().join("frontend/.beads");
         fs::create_dir_all(&target_beads).unwrap();
 
-        // Create routes.jsonl with path relative to "current" project root
-        // "../frontend" goes from "current" to "frontend"
         let routes_path = local_beads.join("routes.jsonl");
         fs::write(&routes_path, r#"{"prefix":"fe-","path":"../frontend"}"#).unwrap();
 
         let result = resolve_route("fe-abc", &local_beads).unwrap();
-        // Canonicalize for comparison since paths may contain ".."
         let result_canonical = crate::sync::path::canonicalize(&result.beads_dir).unwrap();
         let target_canonical = crate::sync::path::canonicalize(&target_beads).unwrap();
         assert_eq!(result_canonical, target_canonical);
@@ -864,12 +843,10 @@ mod tests {
     fn find_town_root_test() {
         let dir = TempDir::new().unwrap();
 
-        // Create town structure
         let town_root = dir.path().join("town");
         fs::create_dir_all(town_root.join("mayor")).unwrap();
         fs::write(town_root.join("mayor/town.json"), "{}").unwrap();
 
-        // Create a project within the town
         let project = town_root.join("projects/myproject");
         fs::create_dir_all(&project).unwrap();
 

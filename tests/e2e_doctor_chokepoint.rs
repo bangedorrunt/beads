@@ -43,10 +43,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tempfile::TempDir;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Make a fresh `br` invocation rooted at `cwd` with a hermetic env so
 /// tests don't pick up the developer's shell config.
 fn br_cmd(cwd: &Path) -> Command {
@@ -55,11 +51,7 @@ fn br_cmd(cwd: &Path) -> Command {
     cmd.env("NO_COLOR", "1");
     cmd.env("RUST_LOG", "warn");
     cmd.env("HOME", cwd);
-    // Hermetic $PATH: a developer host with two `br` installs (install
-    // script + cargo install) otherwise trips the `br_path_dupes` doctor
-    // warning inside every spawned doctor run (beads-ozdh).
     cmd.env("PATH", common::cli::deduplicated_br_path());
-    // Strip any inherited beads / bd env that might redirect storage.
     for (key, _) in std::env::vars_os() {
         let key_s = key.to_string_lossy();
         if key_s.starts_with("BD_") || key_s.starts_with("BEADS_") {
@@ -101,12 +93,6 @@ fn walk_workspace_hashes(dir: &Path, root: &Path, out: &mut BTreeMap<PathBuf, St
     for entry in fs::read_dir(dir).expect("read_dir") {
         let entry = entry.expect("dir entry");
         let path = entry.path();
-        // Skip the doctor artifact tree and the persistent advisory lock
-        // sidecars — the locks are runtime artifacts whose existence
-        // depends on whether anything has acquired workspace/DB-family
-        // authority (every locking command materializes them lazily and
-        // they are never removed by design; see GH #412) and are not part
-        // of the workspace state we want to round-trip.
         let rel = path.strip_prefix(root).unwrap();
         if rel.starts_with(".doctor") {
             continue;
@@ -128,9 +114,6 @@ fn walk_workspace_hashes(dir: &Path, root: &Path, out: &mut BTreeMap<PathBuf, St
 /// first lock acquisition and intentionally never deletes: `.write.lock`,
 /// `.sync.lock`, and the per-family `.br-db-write-<sha>.lock` /
 /// `.br-jsonl-write-<sha>.lock` authority sidecars (GH #412).
-// The runtime emits these sidecar names as fixed lowercase literals, so
-// exact-case `ends_with` is the correct semantic (clippy would prefer a
-// case-insensitive Path::extension() comparison).
 #[allow(clippy::case_sensitive_file_extension_comparisons)]
 fn is_runtime_lock_sidecar_name(rel: &Path) -> bool {
     let Some(name) = rel.file_name().and_then(|name| name.to_str()) else {
@@ -181,9 +164,6 @@ fn read_actions(run_dir: &Path) -> Vec<Value> {
 /// Extract the trailing JSON object from a stdout that may have been
 /// preceded by prose lines.
 fn parse_trailing_json(stdout: &str) -> Value {
-    // The doctor's --json variants emit a JSON object on the last
-    // contentful line. Strategy: scan for the first '{' and parse from
-    // there to end-of-string.
     let trimmed = stdout.trim_end();
     let start = trimmed
         .find('{')
@@ -192,8 +172,6 @@ fn parse_trailing_json(stdout: &str) -> Value {
         .unwrap_or_else(|e| panic!("parse JSON failed ({e}): {}", &trimmed[start..]))
 }
 
-// Retained helper: not referenced by the current test set (pre-existing on
-// main; kept per the suite's convention for shared doctor fixture helpers).
 #[allow(dead_code)]
 fn doctor_check<'a>(payload: &'a Value, name: &str) -> &'a Value {
     payload["checks"]
@@ -213,9 +191,6 @@ fn seed_blocked_cache_db(db_path: &Path, blocked_by: &str) {
         )",
     )
     .unwrap();
-    // The canonical schema declares blocked_issues_cache.issue_id as a
-    // foreign key into issues(id) and apply_schema enables enforcement on
-    // this connection, so the cache row needs a real parent issue.
     conn.execute("INSERT INTO issues(id, title) VALUES ('bd-1', 'chokepoint seed issue')")
         .unwrap();
     conn.execute(&format!(
@@ -316,10 +291,6 @@ fn single_cache_row(db_path: &Path) -> (String, String) {
     (issue_id, blocked_by)
 }
 
-// ---------------------------------------------------------------------------
-// Test 1 — Round-trip: corrupt → repair → undo == byte-identical
-// ---------------------------------------------------------------------------
-
 /// The contract this test enforces is the chokepoint's *core* safety
 /// guarantee:
 ///
@@ -347,7 +318,6 @@ fn chokepoint_round_trip_gitignore() {
     br_init(&root);
     corrupt_root_gitignore(&root);
 
-    // Step 1: --repair
     let out = br_cmd(&root)
         .args(["doctor", "--repair", "--json"])
         .output()
@@ -360,7 +330,6 @@ fn chokepoint_round_trip_gitignore() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // Step 2: a single run-dir was created with all required artifacts.
     let run_dir = single_run_dir(&root);
     let report_json_path = run_dir.join("report.json");
     let actions_path = run_dir.join("actions.jsonl");
@@ -368,14 +337,12 @@ fn chokepoint_round_trip_gitignore() {
     assert!(report_json_path.is_file(), "report.json missing");
     assert!(actions_path.is_file(), "actions.jsonl missing");
     assert!(backups_dir.is_dir(), "backups/ missing");
-    // backups/ must be non-empty (the gitignore path was repaired).
     let backup_count = fs::read_dir(&backups_dir)
         .expect("read backups/")
         .filter_map(std::result::Result::ok)
         .count();
     assert!(backup_count >= 1, "backups/ is empty");
 
-    // Step 3: every action.jsonl line carries the contract fields.
     let actions = read_actions(&run_dir);
     assert!(
         !actions.is_empty(),
@@ -398,15 +365,12 @@ fn chokepoint_round_trip_gitignore() {
                 "actions[{idx}] missing field `{key}`: {action}"
             );
         }
-        // before/after hashes are sha256:<64 hex>.
         let bh = action["before_hash"].as_str().expect("before_hash str");
         let ah = action["after_hash"].as_str().expect("after_hash str");
         assert!(bh.starts_with("sha256:") && bh.len() == 71, "bh={bh}");
         assert!(ah.starts_with("sha256:") && ah.len() == 71, "ah={ah}");
     }
 
-    // Step 4: workspace is now healthy by br doctor's reckoning, at
-    // least with respect to the gitignore.beads_inner check.
     let post_repair_doctor = br_cmd(&root)
         .args(["doctor", "--json"])
         .output()
@@ -418,10 +382,8 @@ fn chokepoint_round_trip_gitignore() {
         "post-repair doctor still warns about gitignore: {body}"
     );
 
-    // Step 5: capture post-repair state for diffing AFTER undo.
     let post_repair_hashes = hash_workspace(&root);
 
-    // Step 6: undo by run-id.
     let run_id = run_dir
         .file_name()
         .and_then(|s| s.to_str())
@@ -449,10 +411,6 @@ fn chokepoint_round_trip_gitignore() {
         "undo had failures: {undo_envelope}"
     );
 
-    // Step 7: every backed-up file action now hashes to its recorded
-    // before_hash. DbExec actions restore logical table snapshots rather
-    // than byte-restoring the SQLite file; those are covered by the
-    // dedicated DbExec round-trip assertions in this harness.
     let mut checked_file_restores = 0usize;
     for action in &actions {
         if action["op"].as_str() == Some("db_exec") {
@@ -485,9 +443,6 @@ fn chokepoint_round_trip_gitignore() {
         "expected at least one byte-restored file action; actions={actions:#?}"
     );
 
-    // Step 8: files the chokepoint did NOT touch are byte-identical to
-    // their post-repair state (i.e. undo did not regress unrelated
-    // files).
     let post_undo_hashes = hash_workspace(&root);
     let touched: std::collections::HashSet<PathBuf> = actions
         .iter()
@@ -508,10 +463,6 @@ fn chokepoint_round_trip_gitignore() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Test 1b — Repair fails closed if no reversible run-dir can be created
-// ---------------------------------------------------------------------------
 
 #[test]
 fn repair_refuses_when_run_dir_creation_fails() {
@@ -555,24 +506,6 @@ fn repair_refuses_when_run_dir_creation_fails() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 2 — Dry-run writes no files
-//
-// IGNORED: WP3 is not yet complete. The current `--repair --dry-run` path
-// still creates repair-session scaffolding before it knows the run will
-// remain a pure dry-run:
-//
-//   - `create_run_dir` itself writes `.doctor/runs/<id>/...` and may
-//     append `.doctor/` to the root `.gitignore` *before* any chokepoint
-//     mutation runs. That mutation is unconditional.
-//
-// The dry-run contract is part of the WP3+WP4 mutate() chokepoint plan;
-// landing it requires deferring repair-session/run-dir creation and the
-// `ensure_doctor_in_gitignore` write until after the dry-run preflight
-// confirms an actual repair is needed. Until that lands, this test fails
-// before it reaches any database repair path.
-// ---------------------------------------------------------------------------
-
 #[test]
 #[ignore = "WP3 incomplete: --dry-run still creates repair run-dir/gitignore scaffolding before pure dry-run preflight"]
 fn chokepoint_dry_run_writes_no_files() {
@@ -592,7 +525,6 @@ fn chokepoint_dry_run_writes_no_files() {
         out.status
     );
 
-    // No run-dir should have been laid down.
     let runs = root.join(".doctor").join("runs");
     if runs.exists() {
         let count = fs::read_dir(&runs)
@@ -610,10 +542,6 @@ fn chokepoint_dry_run_writes_no_files() {
     assert_eq!(pre, post, "dry-run mutated the workspace");
 }
 
-// ---------------------------------------------------------------------------
-// Test 3 — Idempotence: second --repair is a no-op
-// ---------------------------------------------------------------------------
-
 #[test]
 fn chokepoint_idempotence() {
     let tmp = TempDir::new().expect("tempdir");
@@ -621,7 +549,6 @@ fn chokepoint_idempotence() {
     br_init(&root);
     corrupt_root_gitignore(&root);
 
-    // First repair: must do at least one action.
     let out1 = br_cmd(&root)
         .args(["doctor", "--repair", "--json"])
         .output()
@@ -646,11 +573,6 @@ fn chokepoint_idempotence() {
         "repair 1 should have recorded actions"
     );
 
-    // Second repair: the run_id includes ISO seconds, so we sleep just
-    // over a second to force a distinct id. (The chokepoint's
-    // create_run_dir already handles same-second collisions via the
-    // sha-of-pid prefix, but we still want to assert we get a new
-    // directory rather than a re-entered existing one.)
     std::thread::sleep(std::time::Duration::from_millis(1100));
 
     let out2 = br_cmd(&root)
@@ -686,10 +608,6 @@ fn chokepoint_idempotence() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 4 — `undo latest` resolves and marks report.json
-// ---------------------------------------------------------------------------
-
 #[test]
 fn chokepoint_undo_latest_resolves() {
     let tmp = TempDir::new().expect("tempdir");
@@ -719,8 +637,6 @@ fn chokepoint_undo_latest_resolves() {
     assert_eq!(envelope["schema_version"], "br.doctor.undo.v1");
     assert_eq!(envelope["dry_run"], false);
 
-    // The original run's report.json carries an `undone_at` timestamp
-    // marker after `mark_report_undone` runs.
     let report_path = run_dir.join("report.json");
     let report_body = fs::read_to_string(&report_path).expect("read report.json");
     let report: Value = serde_json::from_str(&report_body)
@@ -731,15 +647,10 @@ fn chokepoint_undo_latest_resolves() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 5 — `capabilities` envelope conforms to br.doctor.capabilities.v1
-// ---------------------------------------------------------------------------
-
 #[test]
 fn chokepoint_capabilities_envelope_v1() {
     let tmp = TempDir::new().expect("tempdir");
     let root = tmp.path().to_path_buf();
-    // capabilities is repo-independent; we just need a cwd.
 
     let out = br_cmd(&root)
         .args(["doctor", "capabilities", "--format", "json"])
@@ -789,10 +700,6 @@ fn chokepoint_capabilities_envelope_v1() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 6 — `--robot-triage` envelope conforms to br.doctor.triage.v1
-// ---------------------------------------------------------------------------
-
 #[test]
 fn chokepoint_robot_triage_envelope_v1() {
     let tmp = TempDir::new().expect("tempdir");
@@ -804,8 +711,6 @@ fn chokepoint_robot_triage_envelope_v1() {
         .output()
         .expect("robot-triage spawned");
     let exit = out.status.code().unwrap_or(-1);
-    // A freshly initialized workspace should remain triage-operable. A verbose
-    // ambient RUST_LOG may still produce an advisory finding.
     assert!(
         matches!(exit, 0 | 1),
         "unexpected triage exit {exit}; stderr={}",
@@ -848,24 +753,6 @@ fn chokepoint_robot_triage_envelope_v1() {
     assert_eq!(env["robot_docs_command"], "br doctor robot-docs");
 }
 
-// ---------------------------------------------------------------------------
-// Test 7 — WP4 chokepoint round-trip for `Op::DbExec`
-//
-// Drives the chokepoint directly (instead of the CLI) because:
-//   - The legacy `repair_*` paths still bypass the chokepoint for DB
-//     work in WP4; CLI-level invocations of `--repair` route the cache
-//     rebuild through the non-chokepointed code, so a CLI test would
-//     not exercise the new `Op::DbExec` path.
-//   - The chokepoint is published as `pub` from the `mutate` module; a
-//     direct integration test pins down the contract end-to-end
-//     (capabilities advertises it; mutate() executes it; backups land
-//     in `<run-dir>/backups/db/`; actions.jsonl records the op).
-//
-// The companion `chokepoint_db_exec_undo_replay` test below exercises
-// the reverse path: `doctor undo` reads those JSON snapshots and
-// restores the table state in reverse action order.
-// ---------------------------------------------------------------------------
-
 #[test]
 #[allow(clippy::too_many_lines)]
 fn chokepoint_db_exec_round_trip() {
@@ -875,26 +762,17 @@ fn chokepoint_db_exec_round_trip() {
     fs::create_dir_all(&beads_dir).expect("mkdir .beads");
     let db_path = beads_dir.join("beads.db");
 
-    // Build a minimal DB with the cache table and intentionally-corrupt
-    // contents (a row whose blocked_by is wrong on purpose).
     seed_blocked_cache_db(&db_path, "[\"WRONG\"]");
 
-    // Build a chokepoint context rooted at `root`.
     let run_id = "wp4-db-exec-roundtrip";
     let (run_dir, ctx) = db_exec_context(&root, run_id);
     let actions_path = run_dir.join("actions.jsonl");
 
-    // Forward path: rebuild the cache via DELETE + INSERT inside the
-    // chokepoint. We do TWO DbExec ops because a single op would only
-    // accepts one statement per call.
     mutate_cache_rebuild(&ctx, &db_path);
 
-    // The cache now has the corrected row.
     let (_issue_id, blocked_by) = single_cache_row(&db_path);
     assert_eq!(blocked_by, "[\"bd-2\"]");
 
-    // actions.jsonl: two `db_exec` lines, each with the snapshot
-    // fingerprint we configured.
     let log = fs::read_to_string(&actions_path).expect("read actions.jsonl");
     let lines: Vec<&str> = log.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(
@@ -925,8 +803,6 @@ fn chokepoint_db_exec_round_trip() {
         );
     }
 
-    // Snapshots: both DbExec calls get their own JSON snapshot, and
-    // one captures the pre-DELETE state (blocked_by="[\"WRONG\"]").
     let snap_dir = run_dir.join("backups/db");
     let snap_files: Vec<PathBuf> = fs::read_dir(&snap_dir)
         .expect("read backups/db")
@@ -959,16 +835,6 @@ fn chokepoint_db_exec_round_trip() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 8 — undo of `Op::DbExec` re-inserts JSON snapshots
-//
-// Drives the same DELETE+INSERT shape Test 7 uses to PROVE the forward
-// path; then invokes `br doctor undo <run-id>` and asserts the cache
-// table is byte-equivalent to the pre-DELETE state (the corrupt row
-// reappears, the corrected row is gone). This proves the chokepoint
-// round-trip works for DB ops, not just file ops.
-// ---------------------------------------------------------------------------
-
 #[test]
 fn chokepoint_db_exec_undo_replay() {
     let tmp = TempDir::new().expect("tempdir");
@@ -977,25 +843,18 @@ fn chokepoint_db_exec_undo_replay() {
     fs::create_dir_all(&beads_dir).expect("mkdir .beads");
     let db_path = beads_dir.join("beads.db");
 
-    // Build the DB with a corrupt cache row.
     seed_blocked_cache_db(&db_path, "[\"WRONG\"]");
 
-    // Build a chokepoint context rooted at `root`.
     let run_id = "wp4-db-exec-undo-replay";
     let (_run_dir, ctx) = db_exec_context(&root, run_id);
 
-    // Forward: DELETE then INSERT a corrected row (mirroring Test 7).
     mutate_cache_rebuild(&ctx, &db_path);
 
-    // Sanity: post-forward DB has the corrected row, not the corrupt one.
     let (_issue_id, blocked_by) = single_cache_row(&db_path);
     assert_eq!(blocked_by, "[\"bd-2\"]");
 
-    // Drop the actions file so the chokepoint flushes to disk and the
-    // undo path can re-open it for read.
     drop(ctx);
 
-    // Now invoke `br doctor undo <run-id>` against the workspace.
     let bin_path = env!("CARGO_BIN_EXE_br");
     let output = std::process::Command::new(bin_path)
         .args(["doctor", "undo", run_id, "--json"])
@@ -1012,11 +871,6 @@ fn chokepoint_db_exec_undo_replay() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // The undo replays actions in REVERSE: the INSERT action's
-    // snapshot (empty pre-INSERT state) is replayed first, leaving an
-    // empty table; then the DELETE action's snapshot (containing the
-    // pre-DELETE corrupt row) is replayed, restoring it. Net effect:
-    // only the original corrupt row is present.
     let (issue_id, blocked_by) = single_cache_row(&db_path);
     assert_eq!(issue_id, "bd-1");
     assert_eq!(
@@ -1025,40 +879,16 @@ fn chokepoint_db_exec_undo_replay() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 9 (round-3 fresh-eyes follow-through, bead `beads-sexc`):
-// `br doctor --repair` must serialize against concurrent mutating br
-// invocations via the workspace `.beads/.write.lock`. The detection
-// surface is the structured `ConcurrencyLost` exit code (5) from
-// `doctor_subsystems::exit_codes`, NOT the generic `BeadsError::Config`
-// (1) used pre-fix.
-//
-// We hold the lock from THIS test process by opening
-// `.beads/.write.lock` and `try_lock()`-ing the resulting `File`. That
-// installs the same advisory exclusive lock `blocking_write_lock_with_timeout`
-// installs, but from a different process than the subordinate `br`
-// child we then spawn — proving the cross-process serialization
-// contract from the bead.
-// ---------------------------------------------------------------------------
-
 #[test]
 fn chokepoint_repair_acquires_workspace_lock() {
     let tmp = TempDir::new().expect("tempdir");
     let root = tmp.path().to_path_buf();
 
-    // Init a real workspace so .beads/.write.lock has a parent that
-    // exists and metadata.json is in place. Without `br init` the
-    // doctor short-circuits with "missing .beads directory" and exits
-    // BEFORE the lock guard runs, which is not the contention path we
-    // want to test.
     br_init(&root);
 
     let beads_dir = root.join(".beads");
     let lock_path = beads_dir.join(".write.lock");
 
-    // Hold the workspace write lock from the test process. The br
-    // child below sees this as "another process holds the lock" and
-    // must refuse with exit code 5.
     let lock_file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -1070,8 +900,6 @@ fn chokepoint_repair_acquires_workspace_lock() {
         .try_lock()
         .expect("test should be uncontended at this point");
 
-    // Use a tiny lock_timeout so the child gives up quickly instead of
-    // burning the default 30s timeout per the env's setting.
     let bin_path = env!("CARGO_BIN_EXE_br");
     let output = std::process::Command::new(bin_path)
         .args(["--lock-timeout", "200", "doctor", "--repair", "--json"])
@@ -1084,8 +912,6 @@ fn chokepoint_repair_acquires_workspace_lock() {
         .output()
         .expect("invoke br doctor --repair");
 
-    // Exit code must be the structured ConcurrencyLost (5), per the
-    // doctor_subsystems::exit_codes contract.
     let code = output.status.code();
     assert_eq!(
         code,
@@ -1096,9 +922,6 @@ fn chokepoint_repair_acquires_workspace_lock() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // The refusal envelope must mention the .write.lock path so agent
-    // scripts can match on it. JSON callers should also see
-    // code=concurrency_lost / exit_code=5 explicitly.
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -1115,10 +938,6 @@ fn chokepoint_repair_acquires_workspace_lock() {
         "refusal output should be recognizable: {combined}"
     );
 
-    // Sanity: release the lock and prove the SUT was never blocked
-    // permanently — a second invocation after we drop the guard should
-    // either succeed (exit 0) or report normal findings (exit 1), but
-    // never repeat the ConcurrencyLost refusal.
     drop(lock_file);
     let output2 = std::process::Command::new(bin_path)
         .args(["--lock-timeout", "5000", "doctor", "--repair", "--json"])
@@ -1138,19 +957,6 @@ fn chokepoint_repair_acquires_workspace_lock() {
         String::from_utf8_lossy(&output2.stderr)
     );
 }
-
-// ---------------------------------------------------------------------------
-// Test 9b (Phase-10 cold-prober follow-through, bead `beads-mbpq`):
-// `br doctor --repair --dry-run` (and `--repair` in general) must refuse
-// IMMEDIATELY with exit 5 when another process holds the workspace lock,
-// NOT block up to --lock-timeout. The agent contract is "try-lock or
-// refuse"; the timing of the refusal is part of the contract.
-//
-// The pre-fix behavior was a silent 30s wait that contradicted both
-// capabilities --format json and robot-docs. This test enforces the
-// timing bound: the refusal must arrive within 2 seconds of the child
-// being spawned, regardless of --lock-timeout default.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn chokepoint_repair_dry_run_refuses_on_lock_contention() {
@@ -1175,10 +981,6 @@ fn chokepoint_repair_dry_run_refuses_on_lock_contention() {
         .expect("test should be uncontended at this point");
 
     let bin_path = env!("CARGO_BIN_EXE_br");
-    // Note: no `--lock-timeout` flag — relying on the doctor's default
-    // try-once behavior introduced by the mbpq fix. If the fix
-    // regresses, the child will wait for the 30s default and this
-    // test will trip the 2s timing assertion below.
     let start = Instant::now();
     let output = std::process::Command::new(bin_path)
         .args(["doctor", "--repair", "--dry-run", "--json"])
@@ -1235,8 +1037,6 @@ fn chokepoint_refuse_gate_blocks_downgrade() {
     let tmp = TempDir::new().expect("tempdir");
     let root = tmp.path().to_path_buf();
 
-    // Real init so .beads/.write.lock + metadata.json + a real DB
-    // (with a real, lower user_version) all exist.
     br_init(&root);
 
     let db_path = root.join(".beads").join("beads.db");
@@ -1246,10 +1046,6 @@ fn chokepoint_refuse_gate_blocks_downgrade() {
         db_path.display()
     );
 
-    // Patch bytes 60-63 of the SQLite header (big-endian
-    // `user_version`) to a value far above any plausible
-    // CURRENT_SCHEMA_VERSION the binary supports. This is the same
-    // surface refuse_gates::header_user_version reads, so the gate
     // must observe the planted version regardless of any cached PRAGMA.
     let bumped: u32 = 9_999;
     {
@@ -1259,7 +1055,6 @@ fn chokepoint_refuse_gate_blocks_downgrade() {
             .write(true)
             .open(&db_path)
             .expect("open beads.db for header patch");
-        // Sanity: confirm we are looking at a real SQLite file.
         let mut magic = [0_u8; 16];
         f.read_exact(&mut magic).expect("read sqlite magic");
         assert_eq!(
@@ -1272,13 +1067,8 @@ fn chokepoint_refuse_gate_blocks_downgrade() {
         f.sync_data().expect("fsync patched header");
     }
 
-    // Hash the workspace AFTER the header patch so the pre-state
-    // reflects what the doctor will actually observe. Any change
-    // post-refusal is then attributable to the gate not honoring its
-    // pure-read contract.
     let pre_state = hash_workspace(&root);
 
-    // Drive `br doctor --repair --json` and capture exit + stdout.
     let bin_path = env!("CARGO_BIN_EXE_br");
     let output = std::process::Command::new(bin_path)
         .args(["doctor", "--repair", "--json"])
@@ -1301,8 +1091,6 @@ fn chokepoint_refuse_gate_blocks_downgrade() {
         output.status.code()
     );
 
-    // Parse the JSON envelope and confirm it carries the structured
-    // refusal contract.
     let parsed = parse_trailing_json(&stdout);
     assert_eq!(parsed["ok"], Value::Bool(false));
     assert_eq!(parsed["exit_code"], Value::from(4));
@@ -1329,10 +1117,6 @@ fn chokepoint_refuse_gate_blocks_downgrade() {
         "refusal message should mention schema_version: {message}"
     );
 
-    // The gate is pure-read; the workspace must be byte-identical to
-    // the pre-refusal state. (The refuse_gates path predates run-dir
-    // creation, so there is no `.doctor/runs/<id>/` artifact to
-    // exclude — any change at all is a contract violation.)
     let post_state = hash_workspace(&root);
     assert_eq!(
         pre_state, post_state,
@@ -1423,20 +1207,10 @@ fn chokepoint_repair_indexes_refuse_gate_blocks_downgrade() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 11 (Phase-10 cold-prober follow-through, bead `beads-s7nx`):
-// `br doctor` (flat, no --repair) in a directory that does not contain a
-// `.beads/` workspace must exit with code 66 (`no_input`) per the
-// documented exit-code dictionary — NOT exit 0 or 1. The companion
-// `br doctor health` already handles this case cleanly; this test
-// asserts the flat path agrees.
-// ---------------------------------------------------------------------------
-
 #[test]
 fn chokepoint_doctor_in_non_beads_dir_exits_no_input() {
     let tmp = TempDir::new().expect("tempdir");
     let root = tmp.path().to_path_buf();
-    // Intentionally NO `br init` — this dir has no `.beads/`.
     assert!(!root.join(".beads").exists());
 
     let bin_path = env!("CARGO_BIN_EXE_br");
@@ -1461,20 +1235,6 @@ fn chokepoint_doctor_in_non_beads_dir_exits_no_input() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 12 (bead `beads-8fud`): remaining legacy DB repair paths
-// (VACUUM, REINDEX, blocked-cache rebuild) route through the
-// chokepoint's `record_legacy_op` helper, so any disk mutation under
-// those fixers must produce a `legacy_op` line in `actions.jsonl` with
-// a `fixer_id` that names the legacy fn AND a verbatim backup under
-// `<run-dir>/backups/<rel-path>` whose SHA-256 matches the recorded
-// `before_hash`.
-//
-// We exercise the VACUUM path because it is the one most likely to
-// rewrite the DB file in ways that defeat naive byte-equality undo;
-// proving the audit + backup exist is the minimum-viable contract per
-// the bead's pitfall note.
-// ---------------------------------------------------------------------------
 #[test]
 #[allow(clippy::too_many_lines)]
 fn legacy_op_audit_for_vacuum_via_page_corruption() {
@@ -1482,7 +1242,6 @@ fn legacy_op_audit_for_vacuum_via_page_corruption() {
     let root = tmp.path().to_path_buf();
     br_init(&root);
 
-    // Seed at least one row so the DB has user pages to corrupt.
     let seed = br_cmd(&root)
         .args([
             "create",
@@ -1512,28 +1271,16 @@ fn legacy_op_audit_for_vacuum_via_page_corruption() {
         .expect("br sync spawned");
     assert!(flush.status.success(), "br sync --flush-only failed");
 
-    // Force any WAL contents into the main DB before we corrupt the page,
-    // otherwise the corrupted page may be masked by an uncheckpointed
-    // overlay.
     let db_path = root.join(".beads").join("beads.db");
     let _ = fs::remove_file(root.join(".beads").join("beads.db-wal"));
     let _ = fs::remove_file(root.join(".beads").join("beads.db-shm"));
 
-    // Inject orphan pages (engine-agnostic): append zero-filled pages and
     // stamp the header page-count so `PRAGMA integrity_check` reports benign
-    // "Page N is never used" findings — WARN-level residue that routes to
-    // `repair_via_vacuum`. Writing junk into a fixed byte offset is not
-    // engine-agnostic: under real SQLite, offset 4096 is the issues table's
-    // root page, which flips integrity_check to ERROR and reroutes repair to
-    // a JSONL rebuild instead of the VACUUM flow this test exercises.
     inject_orphan_pages(&db_path);
 
-    // Capture the pre-VACUUM SHA-256 so we can compare to the backup.
     let pre_repair_db_bytes = fs::read(&db_path).expect("read corrupted db");
     let pre_repair_db_hash = sha256_hex(&pre_repair_db_bytes);
 
-    // Run `br doctor --repair --json`. We don't assert exit 0 because
-    // page-malformed corruption may still surface non-fatal warnings.
     let out = br_cmd(&root)
         .args(["doctor", "--repair", "--json"])
         .output()
@@ -1549,8 +1296,6 @@ fn legacy_op_audit_for_vacuum_via_page_corruption() {
     let run_dir = single_run_dir(&root);
     let actions = read_actions(&run_dir);
 
-    // There must be at least one `legacy_op` action whose `fixer_id`
-    // names one of the remaining legacy DB fixers.
     let legacy_actions: Vec<&Value> = actions
         .iter()
         .filter(|a| a["op"].as_str() == Some("legacy_op"))
@@ -1573,8 +1318,6 @@ fn legacy_op_audit_for_vacuum_via_page_corruption() {
             allowed_fixers.contains(fid),
             "unexpected legacy_op fixer_id={fid}; allowed={allowed_fixers:?}"
         );
-        // Every legacy_op line must carry the chokepoint's stable
-        // contract fields.
         for key in &[
             "path",
             "before_hash",
@@ -1591,11 +1334,6 @@ fn legacy_op_audit_for_vacuum_via_page_corruption() {
         }
     }
 
-    // At least one of the legacy_op lines targets `.beads/beads.db`;
-    // its verbatim backup must exist under `<run-dir>/backups/` AND its
-    // bytes must hash to the captured pre-VACUUM SHA-256. This proves
-    // the chokepoint took the snapshot BEFORE the legacy fixer rewrote
-    // the file.
     let db_action = legacy_actions
         .iter()
         .find(|a| a["path"].as_str() == Some(".beads/beads.db"))
@@ -1628,11 +1366,6 @@ fn legacy_op_audit_for_vacuum_via_page_corruption() {
         backup_path.display()
     );
 
-    // Run `br doctor undo` and verify it does not fault on legacy_op
-    // entries. The byte-exact post-VACUUM restoration may not match
-    // pre-VACUUM (VACUUM rewrites the file at the page level so the
-    // post-VACUUM hash differs even after a notional roundtrip), but
-    // undo must not surface as a hard failure for the legacy_op rows.
     let run_id = run_dir
         .file_name()
         .and_then(|s| s.to_str())
@@ -1649,17 +1382,6 @@ fn legacy_op_audit_for_vacuum_via_page_corruption() {
         String::from_utf8_lossy(&undo.stderr)
     );
 }
-
-// ---------------------------------------------------------------------------
-// GitHub #394 — dirty unflushed issues must survive recovery rebuilds.
-//
-// Reproduction shape from the report: one issue flushed to JSONL, a second
-// created with `--no-auto-flush` (dirty, DB-only), then the main DB gets
-// page-level corruption. Both implicit rebuild families — `doctor --repair`'s
-// JSONL rebuild and the startup auto-recovery probe — replay only the JSONL,
-// so before the fix the DB-only issue vanished silently while the repair
-// reported `repaired:true, verified:true`.
-// ---------------------------------------------------------------------------
 
 /// Seed the #394 workspace: `flushed fine` in DB+JSONL, `db-only issue`
 /// dirty in the DB only, then corrupt page 2 of the checkpointed DB.
@@ -1724,21 +1446,10 @@ fn seed_dirty_issue_and_corrupt_db(root: &Path) -> String {
         .expect("dirty issue id")
         .to_string();
 
-    // Drop any WAL/SHM sidecars so the corruption lands in the
-    // authoritative main DB file rather than being masked by an
-    // uncheckpointed overlay. (This does not checkpoint anything — br
-    // checkpoints on clean close, so the rows are already in the main
-    // file; removal just discards the empty sidecars.)
     let db_path = root.join(".beads").join("beads.db");
     let _ = fs::remove_file(root.join(".beads").join("beads.db-wal"));
     let _ = fs::remove_file(root.join(".beads").join("beads.db-shm"));
-    // Corrupt a SECONDARY index page, resolved live from the schema
-    // (engine-agnostic). A fixed offset would be a layout gamble: under
-    // real SQLite offset 4096 is the issues TABLE's root page, whose loss
-    // makes every row unreadable and turns rebuild preservation into a no-op.
     // Index-page corruption still flips `PRAGMA integrity_check` to ERROR
-    // (triggering the rebuild flow under test) while table rows — including
-    // the unflushed dirty issue this test protects — stay readable.
     corrupt_secondary_index_page(&db_path);
 
     dirty_id
@@ -1801,7 +1512,7 @@ fn inject_orphan_pages(db_path: &Path) {
 
     let file_len = fs::metadata(db_path).expect("stat db").len();
     let total_pages =
-        usize::try_from(file_len / page_size as u64).expect("page count fits usize") + 2; // 2 appended pages
+        usize::try_from(file_len / page_size as u64).expect("page count fits usize") + 2;
 
     let mut f = fs::OpenOptions::new()
         .write(true)
@@ -1810,7 +1521,6 @@ fn inject_orphan_pages(db_path: &Path) {
     f.seek(SeekFrom::End(0)).expect("seek to end");
     f.write_all(&vec![0u8; page_size * 2][..])
         .expect("append orphan pages");
-    // Header field at offset 28: database size in pages (big-endian).
     f.seek(SeekFrom::Start(28))
         .expect("seek to header page-count field");
     f.write_all(
@@ -1852,7 +1562,6 @@ fn repair_rebuild_preserves_dirty_unflushed_issue() {
         "repair payload must name the preserved issue id {dirty_id}: {repair}"
     );
 
-    // The preserved issue is alive in the rebuilt store...
     let show = br_cmd(&root)
         .args(["show", &dirty_id, "--json"])
         .output()
@@ -1863,7 +1572,6 @@ fn repair_rebuild_preserves_dirty_unflushed_issue() {
         String::from_utf8_lossy(&show.stderr)
     );
 
-    // ...still marked dirty, and the next flush exports it to the JSONL.
     let status = br_cmd(&root)
         .args(["sync", "--status", "--json"])
         .output()
@@ -1888,9 +1596,6 @@ fn repair_rebuild_preserves_dirty_unflushed_issue() {
 
 #[test]
 fn startup_auto_recovery_preserves_dirty_unflushed_issue() {
-    // Same corruption, but recovered by the startup probe's automatic
-    // rebuild (config-layer `rebuild_with_tombstone_preservation`) when a
-    // plain read command opens the workspace — no doctor involved.
     let tmp = TempDir::new().expect("tempdir");
     let root = tmp.path().to_path_buf();
     let dirty_id = seed_dirty_issue_and_corrupt_db(&root);
@@ -2101,18 +1806,6 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Dry-run honesty — `--repair --dry-run` must not expire stale drafts
-// ---------------------------------------------------------------------------
-//
-// The stale-draft expiry was the one legacy fixer still calling straight
-// through to `expire_stale_drafts`, so `--repair --dry-run` flipped a draft
-// to `tombstone` and rewrote the database while the flag promised it would
-// not (measured: db sha256 changed, `close_reason` stamped, envelope said
-// `repaired: true`). The unit fence next to the fixer cannot see a call site
-// that forgets to hand the fixer its session, so this test drives the real
-// binary and fences the CLI wiring end to end.
-
 /// Seed one draft, backdated past `STALE_DRAFT_DAYS`, and return its id.
 fn seed_backdated_draft(root: &Path) -> String {
     br_init(root);
@@ -2149,9 +1842,6 @@ fn seed_backdated_draft(root: &Path) -> String {
         .expect("issue id")
         .to_string();
 
-    // The CLI has no transition from `open` into `draft` (the workflow
-    // policy refuses it) and `q` is quick-capture only, so the fixture is
-    // written straight into the row.
     let db_path = root.join(".beads/beads.db");
     let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open database");
     conn.execute(&format!(
@@ -2182,7 +1872,6 @@ fn chokepoint_dry_run_does_not_expire_stale_drafts() {
     let root = tmp.path().to_path_buf();
     let id = seed_backdated_draft(&root);
 
-    // Precondition: the draft is visible to the check that gates the fixer.
     let diagnose = br_cmd(&root)
         .arg("doctor")
         .output()
@@ -2224,10 +1913,6 @@ fn chokepoint_dry_run_does_not_expire_stale_drafts() {
         "a dry run must not rewrite the database file"
     );
     let mut after = hash_workspace(&root);
-    // The pre-WP3 dry run still materializes the root `.gitignore` before the
-    // chokepoint preflight. That is a separate defect with its own fence (the
-    // ignored `chokepoint_dry_run_writes_no_files`), so exclude exactly that
-    // path and hold everything else to byte-equality.
     after.remove(Path::new(".gitignore"));
     assert_eq!(
         before, after,
@@ -2239,9 +1924,6 @@ fn chokepoint_dry_run_does_not_expire_stale_drafts() {
         "a dry run must leave the stale draft alone"
     );
 
-    // Vacuity guard: the same fixture under a real repair DOES expire the
-    // draft, so the dry run's no-op is the fixer being held back rather
-    // than a fixer that never runs at all.
     let real = br_cmd(&root)
         .args(["doctor", "--repair", "--json"])
         .output()

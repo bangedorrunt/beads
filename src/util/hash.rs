@@ -131,25 +131,23 @@ pub fn content_hash_from_parts(
     writer.field_flag(pinned, "pinned");
     writer.field_flag(is_template, "template");
 
-    // Keep placeholders for reserved fields so the field set remains explicit
-    // and future additions have stable slots.
-    writer.field(""); // quality_score nil
+    writer.field("");
     writer.field_flag(false, "crystallizes");
-    writer.field(""); // await_type
-    writer.field(""); // await_id
-    writer.field("0"); // timeout duration
-    writer.field(""); // holder
-    writer.field(""); // hook_bead
-    writer.field(""); // role_bead
-    writer.field(""); // agent_state
-    writer.field(""); // role_type
-    writer.field(""); // rig
-    writer.field(""); // mol_type
-    writer.field(""); // work_type
-    writer.field(""); // event_kind
-    writer.field(""); // actor
-    writer.field(""); // target
-    writer.field(""); // payload
+    writer.field("");
+    writer.field("");
+    writer.field("0");
+    writer.field("");
+    writer.field("");
+    writer.field("");
+    writer.field("");
+    writer.field("");
+    writer.field("");
+    writer.field("");
+    writer.field("");
+    writer.field("");
+    writer.field("");
+    writer.field("");
+    writer.field("");
 
     writer.finalize()
 }
@@ -266,7 +264,7 @@ mod tests {
         let issue = make_test_issue();
         let hash = content_hash(&issue);
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_eq!(hash.len(), 64); // SHA256 = 32 bytes = 64 hex chars
+        assert_eq!(hash.len(), 64);
     }
 
     #[test]

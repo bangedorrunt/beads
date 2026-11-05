@@ -15,10 +15,6 @@ use beads::model::{DependencyType, Status};
 use beads::storage::{IssueUpdate, ReadyFilters, ReadySortPolicy, SqliteStorage};
 use common::{fixtures, test_db};
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn blocked_ids(storage: &SqliteStorage) -> Vec<String> {
     storage
         .get_blocked_issues()
@@ -44,10 +40,6 @@ fn status_update(status: Status) -> IssueUpdate {
     }
 }
 
-// ===========================================================================
-// 1. Reopen blocker → re-blocks dependent
-// ===========================================================================
-
 #[test]
 fn reopen_blocker_re_blocks_dependent() {
     let mut storage = test_db();
@@ -67,13 +59,11 @@ fn reopen_blocker_re_blocks_dependent() {
         )
         .unwrap();
 
-    // Dependent should be blocked
     assert!(
         blocked_ids(&storage).contains(&dependent.id),
         "dependent should be blocked initially"
     );
 
-    // Close blocker → dependent unblocked
     storage
         .update_issue(&blocker.id, &status_update(Status::Closed), "tester")
         .unwrap();
@@ -82,7 +72,6 @@ fn reopen_blocker_re_blocks_dependent() {
         "dependent should be unblocked after closing blocker"
     );
 
-    // Reopen blocker → dependent blocked again
     storage
         .update_issue(&blocker.id, &status_update(Status::Open), "tester")
         .unwrap();
@@ -91,10 +80,6 @@ fn reopen_blocker_re_blocks_dependent() {
         "dependent should be re-blocked after reopening blocker"
     );
 }
-
-// ===========================================================================
-// 2. Chain dependencies (A blocks B, B blocks C)
-// ===========================================================================
 
 #[test]
 fn chain_dependency_blocks_downstream() {
@@ -108,12 +93,10 @@ fn chain_dependency_blocks_downstream() {
     storage.create_issue(&b, "tester").unwrap();
     storage.create_issue(&c, "tester").unwrap();
 
-    // A blocks B
     storage
         .add_dependency(&b.id, &a.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
 
-    // B blocks C
     storage
         .add_dependency(&c.id, &b.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
@@ -122,7 +105,6 @@ fn chain_dependency_blocks_downstream() {
     assert!(ids.contains(&b.id), "B should be blocked by A");
     assert!(ids.contains(&c.id), "C should be blocked by B");
 
-    // Close A → B unblocked, but C still blocked by B (B is open, not closed)
     storage
         .update_issue(&a.id, &status_update(Status::Closed), "tester")
         .unwrap();
@@ -131,7 +113,6 @@ fn chain_dependency_blocks_downstream() {
     assert!(!ids.contains(&b.id), "B should be unblocked after A closed");
     assert!(ids.contains(&c.id), "C should still be blocked by open B");
 
-    // Close B → C finally unblocked
     storage
         .update_issue(&b.id, &status_update(Status::Closed), "tester")
         .unwrap();
@@ -139,10 +120,6 @@ fn chain_dependency_blocks_downstream() {
     let ids = blocked_ids(&storage);
     assert!(!ids.contains(&c.id), "C should be unblocked after B closed");
 }
-
-// ===========================================================================
-// 3. Multiple blockers — partial close leaves blocked
-// ===========================================================================
 
 #[test]
 fn multiple_blockers_partial_close() {
@@ -175,7 +152,6 @@ fn multiple_blockers_partial_close() {
 
     assert!(blocked_ids(&storage).contains(&dependent.id));
 
-    // Close only blocker1 → still blocked by blocker2
     storage
         .update_issue(&blocker1.id, &status_update(Status::Closed), "tester")
         .unwrap();
@@ -184,7 +160,6 @@ fn multiple_blockers_partial_close() {
         "still blocked by blocker2"
     );
 
-    // Close blocker2 → fully unblocked
     storage
         .update_issue(&blocker2.id, &status_update(Status::Closed), "tester")
         .unwrap();
@@ -193,10 +168,6 @@ fn multiple_blockers_partial_close() {
         "unblocked after all blockers closed"
     );
 }
-
-// ===========================================================================
-// 4. Mixed dependency types (blocks, conditional-blocks, waits-for)
-// ===========================================================================
 
 #[test]
 fn mixed_dependency_types_all_block() {
@@ -228,7 +199,6 @@ fn mixed_dependency_types_all_block() {
         "target should be blocked by all three dependency types"
     );
 
-    // Close all blockers
     for blocker_id in [&b1.id, &b2.id, &b3.id] {
         storage
             .update_issue(blocker_id, &status_update(Status::Closed), "tester")
@@ -240,10 +210,6 @@ fn mixed_dependency_types_all_block() {
         "target unblocked after all mixed deps closed"
     );
 }
-
-// ===========================================================================
-// 5. Closing the blocked issue itself → removed from cache
-// ===========================================================================
 
 #[test]
 fn closing_blocked_issue_removes_from_cache() {
@@ -266,23 +232,16 @@ fn closing_blocked_issue_removes_from_cache() {
 
     assert!(blocked_ids(&storage).contains(&blocked_issue.id));
 
-    // Close the blocked issue itself (not the blocker)
     storage
         .update_issue(&blocked_issue.id, &status_update(Status::Closed), "tester")
         .unwrap();
 
-    // Closed issues should not appear in blocked cache
-    // (blocked cache only tracks open/in_progress issues)
     let ids = blocked_ids(&storage);
     assert!(
         !ids.contains(&blocked_issue.id),
         "closed issue should not appear in blocked cache"
     );
 }
-
-// ===========================================================================
-// 6. Delete issue → cache cleaned
-// ===========================================================================
 
 #[test]
 fn delete_issue_cleans_cache() {
@@ -305,8 +264,6 @@ fn delete_issue_cleans_cache() {
 
     assert!(blocked_ids(&storage).contains(&blocked_issue.id));
 
-    // Delete the blocker → blocked_issue should become unblocked
-    // (tombstoned issues are terminal, so dependency no longer active)
     storage
         .delete_issue(&blocker.id, "tester", "test cleanup", None)
         .unwrap();
@@ -317,10 +274,6 @@ fn delete_issue_cleans_cache() {
         "deleting blocker should unblock dependent"
     );
 }
-
-// ===========================================================================
-// 7. Remove all dependencies → cache cleared
-// ===========================================================================
 
 #[test]
 fn remove_all_dependencies_clears_cache() {
@@ -363,10 +316,6 @@ fn remove_all_dependencies_clears_cache() {
     );
 }
 
-// ===========================================================================
-// 8. Transitive parent-child blocking
-// ===========================================================================
-
 #[test]
 fn parent_child_transitive_blocking() {
     let mut storage = test_db();
@@ -379,7 +328,6 @@ fn parent_child_transitive_blocking() {
     storage.create_issue(&parent, "tester").unwrap();
     storage.create_issue(&child, "tester").unwrap();
 
-    // blocker blocks parent
     storage
         .add_dependency(
             &parent.id,
@@ -389,7 +337,6 @@ fn parent_child_transitive_blocking() {
         )
         .unwrap();
 
-    // child is child of parent
     storage
         .add_dependency(&child.id, &parent.id, "parent-child", "tester")
         .unwrap();
@@ -401,7 +348,6 @@ fn parent_child_transitive_blocking() {
         "child transitively blocked via parent"
     );
 
-    // Close blocker → parent unblocked → child also unblocked
     storage
         .update_issue(&blocker.id, &status_update(Status::Closed), "tester")
         .unwrap();
@@ -410,10 +356,6 @@ fn parent_child_transitive_blocking() {
     assert!(!ids.contains(&parent.id), "parent unblocked");
     assert!(!ids.contains(&child.id), "child transitively unblocked");
 }
-
-// ===========================================================================
-// 9. Remove parent → child unblocked if parent was sole reason
-// ===========================================================================
 
 #[test]
 fn remove_parent_unblocks_child() {
@@ -444,7 +386,6 @@ fn remove_parent_unblocks_child() {
         "child blocked via parent"
     );
 
-    // Remove parent-child link
     storage
         .remove_dependency(&child.id, &parent.id, "tester")
         .unwrap();
@@ -454,10 +395,6 @@ fn remove_parent_unblocks_child() {
         "child should be unblocked after parent link removed"
     );
 }
-
-// ===========================================================================
-// 10. Ready/blocked cross-consistency
-// ===========================================================================
 
 #[test]
 fn ready_and_blocked_are_disjoint() {
@@ -483,7 +420,6 @@ fn ready_and_blocked_are_disjoint() {
     let ready = ready_ids(&storage);
     let blocked = blocked_ids(&storage);
 
-    // Blocked issues must not appear in ready list
     for id in &blocked {
         assert!(
             !ready.contains(id),
@@ -491,17 +427,11 @@ fn ready_and_blocked_are_disjoint() {
         );
     }
 
-    // Free issue should be in ready list
     assert!(ready.contains(&free_issue.id), "free issue should be ready");
 
-    // Blocked issue must be in blocked list, not ready
     assert!(blocked.contains(&blocked_issue.id));
     assert!(!ready.contains(&blocked_issue.id));
 }
-
-// ===========================================================================
-// 11. is_blocked matches get_blocked_ids
-// ===========================================================================
 
 #[test]
 fn is_blocked_matches_get_blocked_ids() {
@@ -526,7 +456,6 @@ fn is_blocked_matches_get_blocked_ids() {
 
     let blocked_set = storage.get_blocked_ids().unwrap();
 
-    // is_blocked should agree with get_blocked_ids for every issue
     assert_eq!(
         storage.is_blocked(&blocked_issue.id).unwrap(),
         blocked_set.contains(&blocked_issue.id),
@@ -543,10 +472,6 @@ fn is_blocked_matches_get_blocked_ids() {
         "is_blocked should match for blocker (not blocked itself)"
     );
 }
-
-// ===========================================================================
-// 12. Blocker metadata format
-// ===========================================================================
 
 #[test]
 fn blocked_cache_stores_blocker_metadata() {
@@ -573,17 +498,12 @@ fn blocked_cache_stores_blocker_metadata() {
         .find(|(issue, _)| issue.id == blocked_issue.id)
         .expect("blocked entry should exist");
 
-    // Blocker references should contain the blocker's ID
     assert!(
         entry.1.iter().any(|r| r.contains(&blocker.id)),
         "blocker references should contain blocker ID, got: {:?}",
         entry.1
     );
 }
-
-// ===========================================================================
-// 13. In-progress blocker still blocks
-// ===========================================================================
 
 #[test]
 fn in_progress_blocker_still_blocks() {
@@ -604,7 +524,6 @@ fn in_progress_blocker_still_blocks() {
         )
         .unwrap();
 
-    // Move blocker to in_progress → should still block
     storage
         .update_issue(&blocker.id, &status_update(Status::InProgress), "tester")
         .unwrap();
@@ -614,10 +533,6 @@ fn in_progress_blocker_still_blocks() {
         "in_progress blocker should still block dependent"
     );
 }
-
-// ===========================================================================
-// 14. Force rebuild produces same result as auto-rebuild
-// ===========================================================================
 
 #[test]
 fn force_rebuild_matches_auto_rebuild() {
@@ -640,10 +555,8 @@ fn force_rebuild_matches_auto_rebuild() {
         )
         .unwrap();
 
-    // Capture auto-rebuild state
     let auto_blocked = storage.get_blocked_ids().unwrap();
 
-    // Force rebuild and compare
     storage.rebuild_blocked_cache(true).unwrap();
     let force_blocked = storage.get_blocked_ids().unwrap();
 
@@ -680,10 +593,6 @@ fn force_rebuild_with_direct_blocker_dependency_succeeds() {
     );
 }
 
-// ===========================================================================
-// 15. Deep transitive parent-child chain
-// ===========================================================================
-
 #[test]
 fn deep_parent_child_chain_blocking() {
     let mut storage = test_db();
@@ -700,7 +609,6 @@ fn deep_parent_child_chain_blocking() {
     storage.create_issue(&p3, "tester").unwrap();
     storage.create_issue(&leaf, "tester").unwrap();
 
-    // blocker blocks p1
     storage
         .add_dependency(
             &p1.id,
@@ -710,7 +618,6 @@ fn deep_parent_child_chain_blocking() {
         )
         .unwrap();
 
-    // p2 is child of p1, p3 is child of p2, leaf is child of p3
     storage
         .add_dependency(&p2.id, &p1.id, "parent-child", "tester")
         .unwrap();
@@ -727,7 +634,6 @@ fn deep_parent_child_chain_blocking() {
     assert!(ids.contains(&p3.id), "p3 transitively blocked");
     assert!(ids.contains(&leaf.id), "leaf transitively blocked");
 
-    // Close blocker → entire chain unblocked
     storage
         .update_issue(&blocker.id, &status_update(Status::Closed), "tester")
         .unwrap();
@@ -738,10 +644,6 @@ fn deep_parent_child_chain_blocking() {
     assert!(!ids.contains(&p3.id), "p3 unblocked");
     assert!(!ids.contains(&leaf.id), "leaf unblocked");
 }
-
-// ===========================================================================
-// 16. Regression: >50 parent-child levels must propagate correctly (#154)
-// ===========================================================================
 
 /// Before the fix for issue #154, transitive blocked-cache propagation was
 /// capped at `MAX_DEPTH = 50`, causing descendants beyond that depth to
@@ -754,11 +656,9 @@ fn deep_chain_beyond_50_levels_blocks_all_descendants() {
     const CHAIN_LEN: usize = 75;
     let mut storage = test_db();
 
-    // Create the blocker issue that will block the root of the chain
     let blocker = fixtures::issue("deep75-blocker");
     storage.create_issue(&blocker, "tester").unwrap();
 
-    // Build a chain of CHAIN_LEN issues: node-0 -> node-1 -> ... -> node-(CHAIN_LEN-1)
     let mut chain_issues: Vec<beads::model::Issue> = Vec::with_capacity(CHAIN_LEN);
     for i in 0..CHAIN_LEN {
         let issue = fixtures::issue(&format!("deep75-node-{i}"));
@@ -766,7 +666,6 @@ fn deep_chain_beyond_50_levels_blocks_all_descendants() {
         chain_issues.push(issue);
     }
 
-    // blocker blocks node-0
     storage
         .add_dependency(
             &chain_issues[0].id,
@@ -776,7 +675,6 @@ fn deep_chain_beyond_50_levels_blocks_all_descendants() {
         )
         .unwrap();
 
-    // node-1 is child of node-0, node-2 is child of node-1, etc.
     for i in 1..CHAIN_LEN {
         storage
             .add_dependency(
@@ -788,7 +686,6 @@ fn deep_chain_beyond_50_levels_blocks_all_descendants() {
             .unwrap();
     }
 
-    // Every issue in the chain should be blocked
     let ids = blocked_ids(&storage);
     for (i, issue) in chain_issues.iter().enumerate() {
         assert!(
@@ -799,7 +696,6 @@ fn deep_chain_beyond_50_levels_blocks_all_descendants() {
         );
     }
 
-    // Close the blocker → entire chain should unblock
     storage
         .update_issue(&blocker.id, &status_update(Status::Closed), "tester")
         .unwrap();

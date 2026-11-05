@@ -200,7 +200,6 @@ fn graph_single(
     direction: GraphDirection,
     ctx: &OutputContext,
 ) -> Result<()> {
-    // Verify the root issue exists
     let root_issue = storage
         .get_issue(root_id)?
         .ok_or_else(|| BeadsError::IssueNotFound {
@@ -213,12 +212,6 @@ fn graph_single(
 
     let traversal = collect_single_graph(storage, root_id, &root_issue, direction)?;
     let root_nodes = [root_id.to_string()];
-    // `calculate_depths_from_dependency_edges` measures distance from the
-    // dependency side of each edge, which is "distance from the root" only for
-    // the dependents walk. Walking dependencies puts the root at the dependent
-    // end, so feed that direction reversed edges to keep depth meaning
-    // "hops from the root". The edges reported in the output stay in their
-    // canonical `(dependent, dependency)` orientation either way.
     let depth_edges: Vec<(String, String)> = match direction {
         GraphDirection::Dependents => traversal.edges.clone(),
         GraphDirection::Dependencies => traversal
@@ -235,7 +228,6 @@ fn graph_single(
     let mut nodes = build_graph_nodes(&traversal.traversal_order, &traversal.issues_by_id, &depths);
     sort_single_graph_nodes(&mut nodes, root_id);
 
-    // DOT/Graphviz output takes precedence over text/JSON rendering.
     if dot {
         print!(
             "{}",
@@ -259,7 +251,6 @@ fn graph_single(
         return Ok(());
     }
 
-    // Text output
     if nodes.len() == 1 {
         if matches!(ctx.mode(), OutputMode::Rich) {
             render_no_dependents_rich(root_id, &root_issue, direction, ctx);
@@ -298,7 +289,6 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
         return Ok(());
     }
 
-    // Get all nonterminal issues
     let filters = ListFilters {
         include_closed: false,
         include_deferred: true,
@@ -331,22 +321,18 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
         return Ok(());
     }
 
-    // Build issue lookup and adjacency lists
     let issue_set: HashSet<String> = issues.iter().map(|i| i.id.clone()).collect();
     let issue_map: HashMap<String, &crate::model::Issue> =
         issues.iter().map(|i| (i.id.clone(), i)).collect();
 
-    // Build adjacency list (both directions for connected components)
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     let mut blocking_edges: Vec<(String, String)> = Vec::new();
 
-    // Optimize: fetch all dependencies once
     let all_dependencies = storage.get_all_dependency_records()?;
 
     for issue in &issues {
         adj.entry(issue.id.clone()).or_default();
 
-        // Get dependencies from bulk map
         if let Some(deps) = all_dependencies.get(&issue.id) {
             for dependency in deps {
                 if !dependency.dep_type.affects_ready_work() {
@@ -360,7 +346,6 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
                 } else {
                     (issue.id.as_str(), dependency.depends_on_id.as_str())
                 };
-                // Only include edges within our issue set
                 if issue_set.contains(dependency_id) && issue_set.contains(dependent_id) {
                     adj.entry(dependent_id.to_string())
                         .or_default()
@@ -374,7 +359,6 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
         }
     }
 
-    // Find connected components using BFS
     let mut visited: HashSet<String> = HashSet::new();
     let mut components: Vec<ConnectedComponent> = Vec::new();
 
@@ -383,7 +367,6 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
             continue;
         }
 
-        // BFS to find all nodes in this component
         let mut component_nodes: Vec<String> = Vec::new();
         let mut queue: VecDeque<String> = VecDeque::new();
 
@@ -403,13 +386,10 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
             }
         }
 
-        // Calculate depths using longest path from roots
-        // Roots are issues with no unsatisfied dependencies within the component
         let component_set: HashSet<&str> = component_nodes.iter().map(String::as_str).collect();
         let (mut depths, mut roots) =
             calculate_depths(&all_dependencies, &component_nodes, &component_set);
 
-        // Build component output
         let mut nodes: Vec<GraphNode> = Vec::new();
 
         for node_id in &component_nodes {
@@ -425,7 +405,6 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
             }
         }
 
-        // Sort by depth, priority, id
         nodes.sort_by(|a, b| {
             a.depth
                 .cmp(&b.depth)
@@ -434,7 +413,6 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
         });
         roots.sort();
 
-        // Filter edges to this component
         let component_edges: Vec<(String, String)> = blocking_edges
             .iter()
             .filter(|(from, to)| {
@@ -450,12 +428,10 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
         });
     }
 
-    // Sort components by size (largest first)
     components.sort_by_key(|b| std::cmp::Reverse(b.nodes.len()));
 
     let total_nodes: usize = components.iter().map(|c| c.nodes.len()).sum();
 
-    // DOT/Graphviz output takes precedence over text/JSON rendering.
     if dot {
         print!("{}", format_all_graph_dot(&components));
         return Ok(());
@@ -475,7 +451,6 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
         return Ok(());
     }
 
-    // Text output
     match human_graph_render_mode(ctx.mode(), compact) {
         HumanGraphRenderMode::Rich => render_all_graph_rich(&components, total_nodes, ctx),
         HumanGraphRenderMode::Compact | HumanGraphRenderMode::Plain => {
@@ -493,7 +468,6 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
 
             for (i, component) in components.iter().enumerate() {
                 if render_compact {
-                    // Compact: one line per component
                     let ids = format_id_iter(component.nodes.iter().map(|node| node.id.as_str()));
                     println!("Component {}: {}", i + 1, ids);
                 } else {
@@ -503,7 +477,6 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
                         format_id_list(&component.roots)
                     };
                     let parent_map = build_parent_map(&component.edges);
-                    // Detailed view
                     println!(
                         "Component {} ({} issues, roots: {}, by depth):",
                         i + 1,
@@ -540,7 +513,6 @@ fn graph_all(storage: &SqliteStorage, compact: bool, dot: bool, ctx: &OutputCont
     Ok(())
 }
 
-// Calculate depths for nodes using longest path from roots.
 ///
 /// Returns both the computed depths and the component roots. Roots are issues
 /// with no dependencies within the component. Depth is the longest path from
@@ -600,10 +572,6 @@ fn collect_single_graph(
     root_issue: &Issue,
     direction: GraphDirection,
 ) -> Result<SingleGraphTraversal> {
-    // DFS traversal producing first-visit order so rendered subtrees stay contiguous.
-    // Cycle prevention uses expanded_nodes (fully processed) and queued_nodes (on stack)
-    // — together they prevent any node from being pushed twice, making the per-entry
-    // path Vec unnecessary.
     let mut traversal_order: Vec<String> = Vec::new();
     let mut issues_by_id: HashMap<String, Issue> = HashMap::new();
     let mut edges: Vec<(String, String)> = Vec::new();
@@ -643,9 +611,6 @@ fn collect_single_graph(
         dependents.sort_by(|a, b| a.priority.0.cmp(&b.priority.0).then(a.id.cmp(&b.id)));
 
         for dep in dependents.into_iter().rev() {
-            // Edges are always recorded as `(dependent, dependency)` — the
-            // orientation `calculate_depths_from_dependency_edges` and the
-            // renderers expect — whichever way we walked to discover them.
             let edge = match direction {
                 GraphDirection::Dependents => (dep.id.clone(), current_id.clone()),
                 GraphDirection::Dependencies => (current_id.clone(), dep.id.clone()),
@@ -1161,10 +1126,6 @@ fn render_single_graph_plain(
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Graphviz DOT Output Rendering
-// ─────────────────────────────────────────────────────────────
-
 /// Escape a string for use inside a double-quoted Graphviz DOT literal.
 ///
 /// First strips terminal control sequences (sharing the same hardening as the
@@ -1272,10 +1233,6 @@ fn format_all_graph_dot(components: &[ConnectedComponent]) -> String {
     out
 }
 
-// ─────────────────────────────────────────────────────────────
-// Rich Output Rendering
-// ─────────────────────────────────────────────────────────────
-
 /// Render single graph with rich formatting.
 fn render_single_graph_rich(
     nodes: &[GraphNode],
@@ -1291,7 +1248,6 @@ fn render_single_graph_rich(
 
     let mut content = Text::new("");
 
-    // Header with root info
     content.append_styled("Root: ", theme.dimmed.clone());
     content.append_styled(&graph_display_text(&root_issue.id), theme.issue_id.clone());
     content.append(" ");
@@ -1301,7 +1257,6 @@ fn render_single_graph_rich(
     );
     content.append("\n\n");
 
-    // Neighbour count, in whichever direction was walked.
     let dep_count = nodes.len() - 1;
     let noun = direction.neighbour_noun();
     content.append_styled(
@@ -1320,11 +1275,9 @@ fn render_single_graph_rich(
         theme.dimmed.clone(),
     );
 
-    // Render tree
     for node in nodes {
         let indent = "  ".repeat(node.depth);
 
-        // Depth indicator
         if node.id == root_issue.id {
             content.append_styled("● ", theme.success.clone());
         } else {
@@ -1332,20 +1285,16 @@ fn render_single_graph_rich(
             content.append_styled("← ", theme.dimmed.clone());
         }
 
-        // ID
         content.append_styled(&graph_display_text(&node.id), theme.issue_id.clone());
         content.append(" ");
 
-        // Title
         content.append(sanitize_terminal_inline(&node.title).as_ref());
         content.append(" ");
 
-        // Priority badge
         let priority_style = priority_style(node.priority, theme);
         content.append_styled(&format!("[P{}]", node.priority), priority_style);
         content.append(" ");
 
-        // Status badge
         let status_style = status_style(&node.status, theme);
         content.append_styled(
             &format!("[{}]", sanitize_terminal_inline(&node.status)),
@@ -1410,7 +1359,6 @@ fn render_all_graph_rich(
 
     let mut content = Text::new("");
 
-    // Summary header
     content.append_styled(
         &format!(
             "{} issue{} in {} component{}\n",
@@ -1426,12 +1374,10 @@ fn render_all_graph_rich(
         theme.dimmed.clone(),
     );
 
-    // Render each component
     for (i, component) in components.iter().enumerate() {
         content.append("\n");
         let parent_map = build_parent_map(&component.edges);
 
-        // Component header
         content.append_styled(&format!("Component {}", i + 1), theme.emphasis.clone());
         let roots = if component.roots.is_empty() {
             "none".to_string()
@@ -1448,17 +1394,13 @@ fn render_all_graph_rich(
             theme.dimmed.clone(),
         );
 
-        // Render nodes in component
         for node in &component.nodes {
             let indent = "  ".repeat(node.depth + 1);
             content.append(&indent);
 
-            // ID
             content.append_styled(&graph_display_text(&node.id), theme.issue_id.clone());
             content.append(" ");
 
-            // Title (truncate if too long for all-graph view to avoid messy panels)
-            // Use visual width for the check to be consistent with truncate_title
             let title = if UnicodeWidthStr::width(node.title.as_str()) > 40 {
                 crate::format::truncate_title(&node.title, 40)
             } else {
@@ -1467,12 +1409,10 @@ fn render_all_graph_rich(
             content.append(&title);
             content.append(" ");
 
-            // Priority badge
             let priority_style = priority_style(node.priority, theme);
             content.append_styled(&format!("[P{}]", node.priority), priority_style);
             content.append(" ");
 
-            // Status badge
             let status_style = status_style(&node.status, theme);
             content.append_styled(
                 &format!("[{}]", sanitize_terminal_inline(&node.status)),
@@ -1626,10 +1566,6 @@ mod tests {
         assert!(json.contains("\"roots\":[\"bd-001\"]"));
     }
 
-    // ============================================================
-    // Additional tests for comprehensive graph module coverage
-    // ============================================================
-
     #[test]
     fn test_all_graph_output_serialization() {
         let output = AllGraphOutput {
@@ -1689,7 +1625,6 @@ mod tests {
 
         let json = serde_json::to_string(&node).unwrap();
 
-        // Parse back to verify all fields
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["id"], "beads-abc123");
         assert_eq!(parsed["title"], "Complex title with special chars: <>&");
@@ -1708,7 +1643,6 @@ mod tests {
             "depth": 0
         }"#;
 
-        // GraphNode doesn't derive Deserialize, but we can verify the JSON is valid
         let parsed: serde_json::Value = serde_json::from_str(json).unwrap();
         assert_eq!(parsed["id"], "bd-test");
         assert_eq!(parsed["priority"], 2);
@@ -1750,11 +1684,9 @@ mod tests {
         let json = serde_json::to_string(&component).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        // Check roots array has both
         let roots = parsed["roots"].as_array().unwrap();
         assert_eq!(roots.len(), 2);
 
-        // Check edges array has both edges
         let edges = parsed["edges"].as_array().unwrap();
         assert_eq!(edges.len(), 2);
     }
@@ -1826,7 +1758,6 @@ mod tests {
 
     #[test]
     fn test_graph_node_priority_boundaries() {
-        // Test P0 (critical)
         let p0_node = GraphNode {
             id: "bd-p0".to_string(),
             title: "Critical".to_string(),
@@ -1837,7 +1768,6 @@ mod tests {
         let json = serde_json::to_string(&p0_node).unwrap();
         assert!(json.contains("\"priority\":0"));
 
-        // Test P4 (backlog)
         let p4_node = GraphNode {
             id: "bd-p4".to_string(),
             title: "Backlog".to_string(),
@@ -1975,9 +1905,6 @@ mod tests {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = chrono::Utc::now();
 
-        // IssueValidator requires the prefix-hash ID format, so use
-        // bd-root / bd-1 / bd-2 rather than the bare "root" the test
-        // historically used.
         let root = Issue {
             id: "bd-root".to_string(),
             title: "Root".to_string(),
@@ -2025,10 +1952,8 @@ mod tests {
             ))
             .unwrap();
 
-        let ctx = OutputContext::from_flags(true, false, true); // JSON mode
+        let ctx = OutputContext::from_flags(true, false, true);
 
-        // This should not hang even with root feeding into cycle
-        // If it hangs, the test runner will timeout
         let result = graph_all(&storage, false, false, &ctx);
         assert!(result.is_ok());
     }
@@ -2434,7 +2359,6 @@ mod tests {
 
         let dot = format_single_graph_dot(&nodes, &edges, "bd-001");
 
-        // Structural well-formedness.
         assert!(dot.starts_with("digraph dependencies {"));
         assert!(dot.trim_end().ends_with('}'));
         assert_eq!(
@@ -2443,17 +2367,14 @@ mod tests {
             "DOT braces must be balanced: {dot}"
         );
 
-        // Both nodes declared and the dependency edge present.
         assert!(dot.contains("\"bd-001\" [label="));
         assert!(dot.contains("\"bd-002\" [label="));
         assert!(dot.contains("\"bd-002\" -> \"bd-001\";"));
 
-        // Root carries the heavier border; status drives fill color.
         assert!(dot.contains("penwidth=2"));
         assert!(dot.contains("fillcolor=\"lightblue\""));
         assert!(dot.contains("fillcolor=\"lightcoral\""));
 
-        // Quotes inside titles are escaped, never emitted raw.
         assert!(dot.contains("Root \\\"issue\\\""));
         assert!(!dot.contains("Root \"issue\""));
     }
@@ -2565,7 +2486,6 @@ mod tests {
             };
             storage.create_issue(&issue, "test").unwrap();
         }
-        // A depends on B depends on C.
         storage
             .add_dependency("bd-a", "bd-b", "blocks", "tester")
             .unwrap();
@@ -2576,14 +2496,11 @@ mod tests {
         let a = storage.get_issue("bd-a").unwrap().expect("a exists");
         let c = storage.get_issue("bd-c").unwrap().expect("c exists");
 
-        // Default direction from the most-blocked issue finds nothing: A
-        // blocks no one. This is the behavior that surprised users.
         let from_a_default =
             collect_single_graph(&storage, "bd-a", &a, GraphDirection::Dependents).unwrap();
         assert_eq!(from_a_default.traversal_order, vec!["bd-a".to_string()]);
         assert!(from_a_default.edges.is_empty());
 
-        // `--dependencies` from the same issue walks the whole blocker chain.
         let from_a_deps =
             collect_single_graph(&storage, "bd-a", &a, GraphDirection::Dependencies).unwrap();
         assert_eq!(
@@ -2599,8 +2516,6 @@ mod tests {
             "edges stay (dependent, dependency) regardless of walk direction"
         );
 
-        // Walking dependents from the deepest blocker reaches the same set,
-        // with the same edge orientation, in the opposite traversal order.
         let from_c_default =
             collect_single_graph(&storage, "bd-c", &c, GraphDirection::Dependents).unwrap();
         let mut deps_nodes = from_a_deps.traversal_order.clone();

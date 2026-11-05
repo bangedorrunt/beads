@@ -25,8 +25,6 @@ fn e2e_queries_ready_stale_count_search() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Wave-gated dispatch (ADR-0001): ready only returns beads with a VERIFY
-    // command and a principles citation, so fixture issues must carry both.
     let blocker = run_br(
         &workspace,
         [
@@ -158,10 +156,6 @@ fn e2e_queries_ready_stale_count_search() {
         defer_issue.stderr
     );
 
-    // beads#301: `br update --status closed` is rejected; use the
-    // dedicated `br close` command so close-policy is enforced uniformly.
-    // The fail-closed ceremony requires a recorded PASS gate plus the
-    // commit SHA whose message cites the bead id.
     let gate_issue = run_br(
         &workspace,
         [
@@ -421,7 +415,6 @@ fn e2e_stats_command() {
     let init = run_br(&workspace, ["init"], "stats_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create a few issues with different types and priorities
     let task1 = run_br(
         &workspace,
         ["create", "Task one", "-t", "task", "-p", "1"],
@@ -447,7 +440,6 @@ fn e2e_stats_command() {
         feature1.stderr
     );
 
-    // Test stats text output
     let stats_text = run_br(&workspace, ["stats"], "stats_text");
     assert!(
         stats_text.status.success(),
@@ -467,7 +459,6 @@ fn e2e_stats_command() {
         "stats text missing open count"
     );
 
-    // Test stats JSON output
     let stats_json = run_br(&workspace, ["stats", "--json"], "stats_json");
     assert!(
         stats_json.status.success(),
@@ -480,7 +471,6 @@ fn e2e_stats_command() {
     assert_eq!(stats_parsed["summary"]["total_issues"], 3);
     assert!(stats_parsed["summary"]["open_issues"].as_u64().is_some());
 
-    // Test stats with --by-type
     let stats_by_type = run_br(&workspace, ["stats", "--by-type"], "stats_by_type");
     assert!(
         stats_by_type.status.success(),
@@ -496,7 +486,6 @@ fn e2e_stats_command() {
         "stats by-type missing task type"
     );
 
-    // Test stats with --by-priority
     let stats_by_priority = run_br(&workspace, ["stats", "--by-priority"], "stats_by_priority");
     assert!(
         stats_by_priority.status.success(),
@@ -512,7 +501,6 @@ fn e2e_stats_command() {
         "stats by-priority missing priority levels"
     );
 
-    // Test stats with multiple breakdowns
     let stats_combined = run_br(
         &workspace,
         ["stats", "--by-type", "--by-priority", "--json"],
@@ -528,13 +516,11 @@ fn e2e_stats_command() {
         serde_json::from_str(&combined_payload).expect("stats combined json parse");
     assert!(combined_parsed["summary"].is_object());
 
-    // Check breakdowns array
     let breakdowns = combined_parsed["breakdowns"]
         .as_array()
         .expect("breakdowns array");
     assert!(!breakdowns.is_empty());
 
-    // Verify specific breakdowns are present
     let has_type = breakdowns.iter().any(|b| b["dimension"] == "type");
     let has_priority = breakdowns.iter().any(|b| b["dimension"] == "priority");
 
@@ -551,38 +537,31 @@ fn e2e_config_command() {
     let init = run_br(&workspace, ["init"], "config_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Test config list subcommand
     let config_list = run_br(&workspace, ["config", "list"], "config_list");
     assert!(
         config_list.status.success(),
         "config list failed: {}",
         config_list.stderr
     );
-    // Config list output contains various settings sections
     assert!(
         config_list.stdout.contains("prefix")
             || config_list.stdout.contains("issue_prefix")
             || config_list.stdout.contains("Configuration"),
         "config list missing expected keys"
     );
-    // Should show settings sections
     assert!(
         config_list.stdout.contains("settings")
             || config_list.stdout.contains("Current configuration"),
         "config list missing settings section"
     );
 
-    // Test config get subcommand - use json key which is a startup setting
     let config_get = run_br(&workspace, ["config", "get", "json"], "config_get");
-    // Config get for existing key should either succeed or return a structured error
-    // (exit 1 = general error, exit 7 = config error). Verify it doesn't crash.
     assert!(
         matches!(config_get.status.code(), Some(0 | 1 | 7)),
         "config get returned unexpected exit code: {:?}",
         config_get.status.code()
     );
 
-    // Test config path subcommand
     let config_path = run_br(&workspace, ["config", "path"], "config_path");
     assert!(
         config_path.status.success(),
@@ -595,14 +574,12 @@ fn e2e_config_command() {
         "config path missing expected output"
     );
 
-    // Test config list with --json output
     let config_json = run_br(&workspace, ["config", "list", "--json"], "config_json");
     assert!(
         config_json.status.success(),
         "config json failed: {}",
         config_json.stderr
     );
-    // Should output valid JSON
     let config_payload = extract_json_payload(&config_json.stdout);
     let _: Value = serde_json::from_str(&config_payload).expect("config json parse");
 }
@@ -617,7 +594,6 @@ fn e2e_reopen_command() {
     let init = run_br(&workspace, ["init"], "reopen_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(
         &workspace,
         ["create", "Issue to reopen", "-p", "2"],
@@ -627,7 +603,6 @@ fn e2e_reopen_command() {
     let issue_id = parse_created_id(&create.stdout);
     assert!(!issue_id.is_empty(), "failed to parse created ID");
 
-    // Close the issue (fail-closed ceremony: gate row + commit SHA)
     let gate = run_br(
         &workspace,
         [
@@ -661,7 +636,6 @@ fn e2e_reopen_command() {
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    // Verify it's closed
     let show_closed = run_br(
         &workspace,
         ["show", &issue_id, "--json"],
@@ -676,15 +650,12 @@ fn e2e_reopen_command() {
     let show_closed_json: Value =
         serde_json::from_str(&show_closed_payload).expect("show closed json");
 
-    // br show returns a list, so we access the first element
     if show_closed_json.is_array() {
         assert_eq!(show_closed_json[0]["status"], "closed");
     } else {
-        // Fallback if behavior changes to return object for single ID
         assert_eq!(show_closed_json["status"], "closed");
     }
 
-    // Reopen the issue
     let reopen = run_br(
         &workspace,
         ["reopen", &issue_id, "--reason", "Need more work"],
@@ -696,7 +667,6 @@ fn e2e_reopen_command() {
         "reopen text missing confirmation"
     );
 
-    // Verify it's open again
     let show_reopened = run_br(
         &workspace,
         ["show", &issue_id, "--json"],
@@ -717,7 +687,6 @@ fn e2e_reopen_command() {
         assert_eq!(show_reopened_json["status"], "open");
     }
 
-    // Test reopen with JSON output (re-close needs the fail-closed ceremony)
     let gate_again = run_br(
         &workspace,
         [
@@ -765,7 +734,6 @@ fn e2e_reopen_command() {
     let reopen_payload = extract_json_payload(&reopen_json.stdout);
     let reopen_parsed: Value = serde_json::from_str(&reopen_payload).expect("reopen json parse");
 
-    // Check reopened array
     let reopened = reopen_parsed["reopened"]
         .as_array()
         .expect("reopened array");
@@ -921,11 +889,9 @@ fn e2e_saved_queries_lifecycle() {
     let _log = common::test_log("e2e_saved_queries_lifecycle");
     let workspace = BrWorkspace::new();
 
-    // Initialize workspace
     let init = run_br(&workspace, ["init"], "saved_query_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create test issues with different types and priorities
     let bug = run_br(
         &workspace,
         ["create", "Critical bug", "-t", "bug", "-p", "0"],
@@ -951,7 +917,6 @@ fn e2e_saved_queries_lifecycle() {
         feature.stderr
     );
 
-    // Test query save - save a query for bugs only
     let save_bugs = run_br(
         &workspace,
         [
@@ -975,7 +940,6 @@ fn e2e_saved_queries_lifecycle() {
         "save output missing confirmation"
     );
 
-    // Test query save with JSON output
     let save_p0 = run_br(
         &workspace,
         ["query", "save", "critical", "--priority", "0", "--json"],
@@ -992,7 +956,6 @@ fn e2e_saved_queries_lifecycle() {
     assert_eq!(save_p0_json["name"], "critical");
     assert_eq!(save_p0_json["action"], "saved");
 
-    // Test query list - text output
     let list_text = run_br(&workspace, ["query", "list"], "saved_query_list_text");
     assert!(
         list_text.status.success(),
@@ -1009,7 +972,6 @@ fn e2e_saved_queries_lifecycle() {
         "list missing description"
     );
 
-    // Test query list - JSON output
     let list_json = run_br(
         &workspace,
         ["query", "list", "--json"],
@@ -1035,7 +997,6 @@ fn e2e_saved_queries_lifecycle() {
     assert!(queries.iter().any(|q| q["name"] == "my-bugs"));
     assert!(queries.iter().any(|q| q["name"] == "critical"));
 
-    // Test query run - run the bugs query
     let run_bugs = run_br(
         &workspace,
         ["query", "run", "my-bugs", "--json"],
@@ -1047,7 +1008,6 @@ fn e2e_saved_queries_lifecycle() {
         run_bugs.stderr
     );
     let run_bugs_json = extract_issues_array(&run_bugs.stdout);
-    // Should only return bug type issues
     assert_eq!(run_bugs_json.len(), 1);
     assert_eq!(run_bugs_json[0]["issue_type"], "bug");
     assert!(
@@ -1057,7 +1017,6 @@ fn e2e_saved_queries_lifecycle() {
             .contains("Critical bug")
     );
 
-    // Test query run - run critical priority query
     let run_critical = run_br(
         &workspace,
         ["query", "run", "critical", "--json"],
@@ -1069,12 +1028,9 @@ fn e2e_saved_queries_lifecycle() {
         run_critical.stderr
     );
     let run_critical_json = extract_issues_array(&run_critical.stdout);
-    // Should only return P0 issues
     assert_eq!(run_critical_json.len(), 1);
     assert_eq!(run_critical_json[0]["priority"], 0);
 
-    // Test CLI override - run bugs query but filter further by priority
-    // (The bug has P0, so filtering by P1 should return empty)
     let run_override = run_br(
         &workspace,
         ["query", "run", "my-bugs", "--priority", "1", "--json"],
@@ -1086,13 +1042,11 @@ fn e2e_saved_queries_lifecycle() {
         run_override.stderr
     );
     let run_override_json = extract_issues_array(&run_override.stdout);
-    // CLI priority filter (P1) overrides, so no P0 bugs returned
     assert!(
         run_override_json.is_empty(),
         "expected empty result when CLI priority overrides saved"
     );
 
-    // Test query delete - text output
     let delete_text = run_br(
         &workspace,
         ["query", "delete", "my-bugs"],
@@ -1108,7 +1062,6 @@ fn e2e_saved_queries_lifecycle() {
         "delete output missing confirmation"
     );
 
-    // Test query delete - JSON output
     let delete_json = run_br(
         &workspace,
         ["query", "delete", "critical", "--json"],
@@ -1125,7 +1078,6 @@ fn e2e_saved_queries_lifecycle() {
     assert_eq!(delete_parsed["name"], "critical");
     assert_eq!(delete_parsed["action"], "deleted");
 
-    // Verify queries are deleted
     let list_empty = run_br(&workspace, ["query", "list"], "saved_query_list_empty");
     assert!(
         list_empty.status.success(),
@@ -1218,11 +1170,9 @@ fn e2e_saved_queries_errors() {
     let _log = common::test_log("e2e_saved_queries_errors");
     let workspace = BrWorkspace::new();
 
-    // Initialize workspace
     let init = run_br(&workspace, ["init"], "saved_query_error_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create a query first
     let save = run_br(
         &workspace,
         ["query", "save", "test-query", "--status", "open"],
@@ -1230,7 +1180,6 @@ fn e2e_saved_queries_errors() {
     );
     assert!(save.status.success(), "query save failed: {}", save.stderr);
 
-    // Test duplicate name error
     let save_dup = run_br(
         &workspace,
         ["query", "save", "test-query", "--status", "closed"],
@@ -1242,7 +1191,6 @@ fn e2e_saved_queries_errors() {
         "error should mention query already exists"
     );
 
-    // Test run nonexistent query
     let run_missing = run_br(
         &workspace,
         ["query", "run", "nonexistent"],
@@ -1254,7 +1202,6 @@ fn e2e_saved_queries_errors() {
         "error should mention query not found"
     );
 
-    // Test delete nonexistent query
     let delete_missing = run_br(
         &workspace,
         ["query", "delete", "nonexistent"],
@@ -1269,7 +1216,6 @@ fn e2e_saved_queries_errors() {
         "error should mention query not found"
     );
 
-    // Test invalid query name (contains ':')
     let save_invalid = run_br(
         &workspace,
         ["query", "save", "bad:name", "--status", "open"],
@@ -1337,7 +1283,6 @@ fn e2e_saved_queries_run_with_overrides() {
     let init = run_br(&workspace, ["init"], "override_init");
     assert!(init.status.success());
 
-    // Create issues with different types
     let id_bug = {
         let c = run_br(&workspace, ["create", "Login crash"], "override_bug");
         assert!(c.status.success());
@@ -1360,7 +1305,6 @@ fn e2e_saved_queries_run_with_overrides() {
         "override_set_feat",
     );
 
-    // Save a query that filters by type=bug
     let save = run_br(
         &workspace,
         ["query", "save", "bugs-only", "--type", "bug"],
@@ -1368,7 +1312,6 @@ fn e2e_saved_queries_run_with_overrides() {
     );
     assert!(save.status.success(), "save failed: {}", save.stderr);
 
-    // Run saved query - should return only bugs
     let run_default = run_br(
         &workspace,
         ["query", "run", "bugs-only", "--json"],
@@ -1382,7 +1325,6 @@ fn e2e_saved_queries_run_with_overrides() {
         "saved query should only return bugs"
     );
 
-    // Run with CLI override: type=feature should override saved type=bug
     let run_override = run_br(
         &workspace,
         ["query", "run", "bugs-only", "--type", "feature", "--json"],

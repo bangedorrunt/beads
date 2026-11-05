@@ -520,13 +520,10 @@ fn edit_config() -> Result<()> {
         crate::error::BeadsError::Config("HOME environment variable not set".to_string())
     })?;
 
-    // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // Create the default file if needed, and reject symlinked or non-file paths
-    // before passing the config path to an editor.
     let default_content = r"# br configuration
 # See `br config list` for available options
 
@@ -541,15 +538,11 @@ fn edit_config() -> Result<()> {
 ";
     create_default_config_if_missing(&config_path, default_content)?;
 
-    // Get editor
     let editor = env::var("EDITOR")
         .or_else(|_| env::var("VISUAL"))
         .unwrap_or_else(|_| "vi".to_string());
     let (program, editor_args) = parse_editor_command(&editor)?;
 
-    // Open an allowlisted editor. EDITOR/VISUAL may carry flags, but the
-    // executable itself is constrained so a poisoned environment cannot turn
-    // `br config edit` into a generic process launcher.
     let mut command = AllowedEditor::from_program(&program)?.command();
     let status = command.args(&editor_args).arg(&config_path).status()?;
 
@@ -753,11 +746,6 @@ fn get_config_value(
             "key": key,
             "value": value,
         });
-        // For the `db` key, surface the RESOLVED canonical DB path that `br`
-        // actually uses at runtime (the discovered `.beads/beads.db`), even
-        // when there is no explicit override (`value` is null). Robot callers
-        // querying `config get db --json` need the effective path, not just
-        // the raw override, plus whether that file currently exists. #339
         if canonical_key == "db" {
             let (effective_path, exists) = resolve_effective_db_path(beads_dir, overrides);
             if let Some(obj) = output.as_object_mut() {
@@ -826,7 +814,6 @@ fn set_config_value(
         normalize_configured_prefix(value)?;
     }
 
-    // Determine target config file
     let (config_path, is_project) =
         if let Some(beads_dir) = discover_optional_beads_dir_with_cli(overrides)? {
             (beads_dir.join("config.yaml"), true)
@@ -837,21 +824,16 @@ fn set_config_value(
             (path, false)
         };
 
-    // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // Load existing config or create new.
-    // Files with only YAML comments parse as Null, which we treat as an empty mapping.
     let mut config = load_mutable_yaml_config(&config_path)?;
 
-    // Set the value
     let parts: Vec<&str> = key.split('.').collect();
     let old_value = get_yaml_value(&config, &parts);
     set_yaml_value(&mut config, &parts, parse_scalar_config_value(value));
 
-    // Write back atomically (temp file + rename) to prevent corruption on crash
     let yaml_str = serde_yml::to_string(&config)?;
     write_config_atomically(&config_path, &yaml_str)?;
 
@@ -1014,8 +996,6 @@ fn delete_config_value(
     overrides: &CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    // Pre-validate YAML targets before any mutation so malformed config files
-    // do not cause a failed command after the DB value was already deleted.
     let beads_dir = discover_optional_beads_dir_with_cli(overrides)?;
     let prepared_project_delete = beads_dir
         .as_ref()
@@ -1031,7 +1011,6 @@ fn delete_config_value(
         .transpose()?
         .flatten();
 
-    // 1. Delete from DB
     let mut db_deleted = false;
 
     if let Some(dir) = &beads_dir
@@ -1044,10 +1023,8 @@ fn delete_config_value(
         storage_ctx.flush_no_db_if_dirty()?;
     }
 
-    // 2. Delete from Project YAML
     let project_deleted = apply_prepared_yaml_delete(prepared_project_delete)?;
 
-    // 3. Delete from User YAML
     let user_deleted = apply_prepared_yaml_delete(prepared_user_delete)?;
     let legacy_user_deleted = apply_prepared_yaml_delete(prepared_legacy_user_delete)?;
 
@@ -1135,7 +1112,6 @@ fn apply_prepared_yaml_delete(prepared: Option<PreparedYamlDelete>) -> Result<bo
         return Ok(false);
     };
 
-    // Atomic write: temp file + rename to prevent corruption on crash
     write_config_atomically(&prepared.path, &prepared.yaml)?;
     Ok(true)
 }
@@ -1183,7 +1159,6 @@ fn show_config(
     ctx: &OutputContext,
 ) -> Result<()> {
     if project_only {
-        // Show only project config
         if let Some(dir) = beads_dir {
             let layer = load_project_config(dir)?;
             output_layer(&layer, ConfigSource::Project, json_mode, ctx);
@@ -1210,17 +1185,14 @@ fn show_config(
     }
 
     if user_only {
-        // Show only user config
         let layer = load_user_config()?;
         output_layer(&layer, ConfigSource::User, json_mode, ctx);
         return Ok(());
     }
 
-    // Show merged config
     let layers = build_layers(beads_dir, overrides)?;
     let layer = merge_layers(&layers);
 
-    // Compute derived values
     let id_config = id_config_from_layer(&layer);
     let actor = resolve_actor(&layer);
 
@@ -1234,7 +1206,6 @@ fn show_config(
             all_keys.insert(k.clone(), json!(v));
         }
 
-        // Add computed values
         all_keys.insert("_computed.prefix".to_string(), json!(id_config.prefix));
         all_keys.insert(
             "_computed.min_hash_length".to_string(),
@@ -1285,7 +1256,6 @@ fn show_config(
         println!("Current configuration (merged):");
         println!();
 
-        // Group by category
         let mut runtime_keys: Vec<_> = layer.runtime.keys().collect();
         runtime_keys.sort();
 
@@ -1334,7 +1304,6 @@ fn output_layer(layer: &ConfigLayer, source: ConfigSource, _json_mode: bool, ctx
         }
         ctx.json_pretty(&all_keys);
     } else if ctx.is_quiet() {
-        // Nothing to output in quiet mode
     } else if ctx.is_rich() {
         let mut all_keys: Vec<_> = layer.runtime.keys().chain(layer.startup.keys()).collect();
         all_keys.sort();
@@ -1405,7 +1374,6 @@ mod tests {
 
     #[test]
     fn test_user_config_path_format() {
-        // This test may fail if HOME is not set, which is fine
         if let Some(path) = get_user_config_path() {
             assert!(path.ends_with("config.yaml"));
             let path_str = path.to_string_lossy();
@@ -1418,7 +1386,6 @@ mod tests {
 
     #[test]
     fn test_set_config_invalid_format() {
-        // Test with empty HOME - will fail with proper error
         let args = vec!["no_equals_sign".to_string()];
         let ctx = OutputContext::from_flags(false, false, true);
         let result = set_config_value(&args, false, &CliOverrides::default(), &ctx);
@@ -1427,7 +1394,6 @@ mod tests {
 
     #[test]
     fn test_nested_key_parsing() {
-        // Test the key parsing logic - "display.color" should have 2 parts
         let parts: Vec<&str> = "display.color".split('.').collect();
         assert_eq!(parts.as_slice(), ["display", "color"]);
     }
@@ -1681,14 +1647,10 @@ mod tests {
 
     #[test]
     fn test_resolve_effective_db_path_reports_discovered_path_and_existence() {
-        // #339: `config get db --json` must expose the RESOLVED canonical DB
-        // path even with no explicit override, plus whether it exists.
         let dir = tempfile::TempDir::new().unwrap();
         let beads_dir = dir.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
 
-        // No override, no DB file yet: effective path points at the discovered
-        // `.beads` DB location, and `exists` is false.
         let (path, exists) = resolve_effective_db_path(Some(&beads_dir), &CliOverrides::default());
         let path = path.expect("effective DB path resolved for discovered workspace");
         assert!(
@@ -1699,14 +1661,12 @@ mod tests {
         );
         assert!(!exists, "DB does not exist yet");
 
-        // Create the DB at the resolved path; `exists` flips to true.
         crate::storage::SqliteStorage::open(&path).unwrap();
         let (path2, exists2) =
             resolve_effective_db_path(Some(&beads_dir), &CliOverrides::default());
         assert_eq!(path2.as_ref(), Some(&path));
         assert!(exists2, "DB now exists at the resolved effective path");
 
-        // No discovered workspace: returns (None, false).
         let (none_path, none_exists) = resolve_effective_db_path(None, &CliOverrides::default());
         assert!(none_path.is_none());
         assert!(!none_exists);
@@ -1752,8 +1712,6 @@ mod tests {
 
         let layers = build_layers(Some(&beads_dir), &CliOverrides::default()).unwrap();
 
-        // Verify the JSONL layer directly to avoid interference from user
-        // config files (~/.config/bd/config.yaml) that may override the prefix.
         let jsonl_layer = layers
             .iter()
             .find(|l| matches!(l.source, ConfigSource::Jsonl))

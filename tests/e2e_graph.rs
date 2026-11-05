@@ -56,7 +56,6 @@ fn e2e_graph_single_issue_with_dependents() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create blocking issue (root)
     let blocker = run_br(&workspace, ["create", "Blocker issue"], "create_blocker");
     assert!(
         blocker.status.success(),
@@ -65,7 +64,6 @@ fn e2e_graph_single_issue_with_dependents() {
     );
     let blocker_id = parse_created_id(&blocker.stdout);
 
-    // Create blocked issue (dependent)
     let blocked = run_br(&workspace, ["create", "Blocked issue"], "create_blocked");
     assert!(
         blocked.status.success(),
@@ -74,7 +72,6 @@ fn e2e_graph_single_issue_with_dependents() {
     );
     let blocked_id = parse_created_id(&blocked.stdout);
 
-    // Add dependency: blocked depends on blocker
     let dep_add = run_br(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id],
@@ -86,7 +83,6 @@ fn e2e_graph_single_issue_with_dependents() {
         dep_add.stderr
     );
 
-    // Graph blocker - should show blocked as dependent
     let graph = run_br(&workspace, ["graph", &blocker_id], "graph_blocker");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
     assert!(
@@ -249,7 +245,6 @@ fn e2e_graph_single_issue_compact() {
     );
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
 
-    // Compact format: root <- dependent
     assert!(
         graph.stdout.contains(&format!("{blocker_id} <-")),
         "Expected compact format with root, got: {}",
@@ -294,8 +289,6 @@ fn e2e_graph_all_includes_custom_status_issues() {
     )
     .expect("write workflow policy");
 
-    // The Status vocabulary is closed (ADR-0035); `blocked` is the real
-    // non-terminal status outside the default ready group.
     let review = run_br(&workspace, ["create", "Blocked issue"], "create_blocked");
     assert!(
         review.status.success(),
@@ -340,7 +333,6 @@ fn e2e_graph_all_with_connected_components() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create first connected component: A -> B
     let issue_a = run_br(&workspace, ["create", "Issue A"], "create_a");
     assert!(
         issue_a.status.success(),
@@ -360,7 +352,6 @@ fn e2e_graph_all_with_connected_components() {
     let dep_ab = run_br(&workspace, ["dep", "add", &id_b, &id_a], "dep_ab");
     assert!(dep_ab.status.success(), "dep add failed: {}", dep_ab.stderr);
 
-    // Create second isolated issue (separate component)
     let issue_c = run_br(&workspace, ["create", "Issue C"], "create_c");
     assert!(
         issue_c.status.success(),
@@ -372,7 +363,6 @@ fn e2e_graph_all_with_connected_components() {
     let graph = run_br(&workspace, ["graph", "--all"], "graph_all");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
 
-    // Should show both components
     assert!(
         graph.stdout.contains("2 component"),
         "Expected 2 components, got: {}",
@@ -469,7 +459,6 @@ fn e2e_graph_chain_depth() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create chain: A -> B -> C (C depends on B, B depends on A)
     let issue_a = run_br(&workspace, ["create", "Root issue A"], "create_a");
     assert!(
         issue_a.status.success(),
@@ -494,15 +483,12 @@ fn e2e_graph_chain_depth() {
     );
     let id_c = parse_created_id(&issue_c.stdout);
 
-    // B depends on A
     let dep_ba = run_br(&workspace, ["dep", "add", &id_b, &id_a], "dep_ba");
     assert!(dep_ba.status.success(), "dep add failed: {}", dep_ba.stderr);
 
-    // C depends on B
     let dep_cb = run_br(&workspace, ["dep", "add", &id_c, &id_b], "dep_cb");
     assert!(dep_cb.status.success(), "dep add failed: {}", dep_cb.stderr);
 
-    // Graph from A should show B at depth 1, C at depth 2
     let graph = run_br(&workspace, ["graph", &id_a, "--json"], "graph_chain");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
 

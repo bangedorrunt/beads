@@ -87,9 +87,6 @@ fn close_issue_for_fixture(root: &Path, id: &str) {
             "report",
             id,
             "--gate",
-            // The workspace policy created by `br init` admits only
-            // `command-verified` for this bead; any other gate name is
-            // refused with "no legal PASS gate row is recorded".
             "command-verified",
             "--provider",
             "beads",
@@ -164,10 +161,6 @@ fn create_issue(
             description,
             "--labels",
             labels,
-            // `br create` is fail-closed: without these two the seed is
-            // refused outright and the panel assertions below never run. This
-            // file keeps its own runner rather than going through
-            // `common::cli`, so it does not inherit the harness create gate.
             "--verify",
             "cargo test --test golden_rich_panels",
             "--principle",
@@ -280,10 +273,6 @@ fn run_rich_br_with_env(
 
     let mut cmd = Command::new("script");
     cmd.current_dir(root);
-    // Portable pseudo-terminal invocation: BSD script(1) (macOS) has no
-    // -c/-e flags; both GNU and BSD accept `script -q FILE sh -c LINE`.
-    // Child failures surface via the golden comparison below instead of
-    // script's exit status.
     cmd.args(["-q", "/dev/null", "sh", "-c", &command_line]);
     clear_inherited_br_env(&mut cmd);
     cmd.env("HOME", root);
@@ -377,9 +366,6 @@ fn replace_preserving_width(input: &str, regex: &Regex, placeholder: &str) -> St
 
 fn normalize_rich_output(raw: &str) -> String {
     let normalized_newlines = raw.replace("\r\n", "\n").replace('\r', "\n");
-    // BSD script(1) (macOS) writes a literal "^D" caret marker plus
-    // backspace (0x08) erasures where GNU script emits nothing; strip both
-    // before width-sensitive asserts.
     let without_eot = normalized_newlines.replace('\u{08}', "");
     let without_caret_d = without_eot
         .lines()
@@ -499,8 +485,6 @@ fn empty_no_color_keeps_rich_layout_on_a_real_pty() {
         &[("TERM", "xterm-256color"), ("NO_COLOR", "1")],
         &args,
     );
-    // The helper checks raw ANSI before normalization; compare layout and
-    // retained content here as well.
     assert!(!plain.contains('│') && !plain.contains('╭') && !plain.contains('─'));
     assert!(plain.contains("Alpha layout regression"));
 }
@@ -528,8 +512,6 @@ fn plain_terminal_controls_preserve_diagnostics_without_ansi() {
             ],
             &args,
         );
-        // The helper rejects raw ANSI before normalization. Require logs
-        // and issue content too, so disabling diagnostics cannot pass.
         assert!(plain.contains("DEBUG"), "diagnostics missing: {plain}");
         assert!(plain.contains("Alpha layout regression"));
     }
@@ -554,8 +536,6 @@ fn human_errors_honor_terminal_color_controls() {
         );
         let mut cmd = Command::new("script");
         cmd.current_dir(&fixture.root);
-        // Portable pseudo-terminal invocation (see run_rich_br_with_env):
-        // BSD script(1) (macOS) has no -c/-e flags.
         cmd.args(["-q", "/dev/null", "sh", "-c", &command_line]);
         clear_inherited_br_env(&mut cmd);
         cmd.env("HOME", &fixture.root);

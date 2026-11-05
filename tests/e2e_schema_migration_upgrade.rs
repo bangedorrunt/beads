@@ -60,9 +60,6 @@ fn header_user_version(db_path: &Path) -> u32 {
 }
 
 fn db_declares_table(db_path: &Path, table: &str) -> bool {
-    // The sqlite_schema table stores the verbatim CREATE TABLE DDL (with or
-    // without IF NOT EXISTS), so a raw byte scan is a connection-free
-    // existence witness good enough for a test.
     let bytes = fs::read(db_path).expect("read db");
     [
         format!("CREATE TABLE {table}"),
@@ -94,7 +91,6 @@ fn upgrade_fixture_end_to_end(
         "{label}: fixture must genuinely be at schema {expected_from}"
     );
 
-    // 1. Ordinary commands refuse and print the reviewed-migration remediation.
     let stats = run_br(
         &workspace,
         ["stats", "--json", "--no-auto-flush", "--no-auto-import"],
@@ -111,7 +107,6 @@ fn upgrade_fixture_end_to_end(
         "{label}: SCHEMA_MISMATCH remediation must name `br doctor migrate-schema plan`; got: {refusal}"
     );
 
-    // 2. Follow the remediation: plan must accept the fixture.
     let plan = run_br(
         &workspace,
         [
@@ -147,7 +142,6 @@ fn upgrade_fixture_end_to_end(
         .expect("plan token")
         .to_string();
 
-    // 3. Apply migrates atomically to the current schema.
     let apply = run_br(
         &workspace,
         [
@@ -188,7 +182,6 @@ fn upgrade_fixture_end_to_end(
         );
     }
 
-    // 4. Tracker data survives and ordinary commands work again.
     let stats_after = run_br(
         &workspace,
         ["stats", "--json", "--no-auto-flush", "--no-auto-import"],
@@ -224,8 +217,6 @@ fn upgrade_fixture_end_to_end(
         list.stderr
     );
 
-    // 5. The consumed receipt is stale: re-plan reports nothing to do, and
-    //    re-applying the old token must be rejected without mutating.
     let replan = run_br(
         &workspace,
         [
@@ -276,8 +267,6 @@ fn upgrade_fixture_end_to_end(
         "{label}: rejected stale apply must not mutate the database"
     );
 
-    // 6. Undo restores the exact pre-migration family, and the migration can
-    //    be re-planned and re-applied afterwards.
     let undo = run_br(
         &workspace,
         [
@@ -353,10 +342,6 @@ fn upgrade_fixture_end_to_end(
         "{label}: re-apply after undo"
     );
 
-    // 7. Fail-closed contract: the binary that refused writes pre-apply
-    //    accepts ordinary writes post-apply, and they land at the current
-    //    schema (beads_rust-migrate-17-18). Kept after the undo/re-apply
-    //    cycle so the undo freshness check still sees an unchanged database.
     let create_after = run_br(
         &workspace,
         [

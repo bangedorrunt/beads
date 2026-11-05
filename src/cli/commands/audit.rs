@@ -89,7 +89,6 @@ struct AuditLabelOutput {
     label: String,
 }
 
-// New structs for Log/Summary JSON output
 #[derive(Debug, Serialize)]
 struct AuditLogOutput {
     issue_id: String,
@@ -108,7 +107,6 @@ struct AuditEventOutput {
     new_value: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     comment: Option<String>,
-    // Tier 1 attribution (issue #312, Layer 3 capture-only). Recorded only.
     #[serde(skip_serializing_if = "Option::is_none")]
     agent_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -848,7 +846,6 @@ fn audit_entry_exists(beads_dir: &Path, entry_id: &str) -> Result<bool> {
         if line.trim().is_empty() {
             continue;
         }
-        // Fast path string check before paying JSON parse cost
         if !line.contains(&id_pattern) {
             continue;
         }
@@ -883,7 +880,6 @@ fn new_audit_id() -> String {
     hasher.update(pid.to_le_bytes());
 
     let digest = hasher.finalize();
-    // Use 8 bytes (16 hex chars) for much lower collision probability
     let bytes = &digest[..8];
     format!(
         "int-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
@@ -900,7 +896,6 @@ fn render_audit_log_rich(issue_id: &str, events: &[crate::model::Event], ctx: &O
     content.append("\n");
 
     for event in events {
-        // Timestamp + Actor
         let time_str = event.created_at.format("%Y-%m-%d %H:%M").to_string();
         content.append_styled(&time_str, theme.dimmed.clone());
         content.append("  ");
@@ -910,12 +905,10 @@ fn render_audit_log_rich(issue_id: &str, events: &[crate::model::Event], ctx: &O
         );
         content.append("  ");
 
-        // Event Type
         let type_style = event_type_style(&event.event_type, theme);
         content.append_styled(&format!("{:<15}", event.event_type.as_str()), type_style);
         content.append("\n");
 
-        // Details
         let mut details = String::new();
         if let Some(old) = &event.old_value {
             if let Some(new) = &event.new_value {
@@ -1030,7 +1023,6 @@ fn render_audit_summary_rich(
 
     let mut content = Text::new("");
 
-    // Header row
     content.append_styled(
         &format!(
             "{:<15} {:>8} {:>8} {:>8} {:>8} {:>8}\n",
@@ -1040,7 +1032,6 @@ fn render_audit_summary_rich(
     );
     content.append_styled(&format!("{}\n", "─".repeat(60)), theme.dimmed.clone());
 
-    // Rows
     for actor in actors {
         content.append_styled(&format!("{:<15}", actor.actor), theme.accent.clone());
         content.append(&format!(

@@ -105,9 +105,7 @@ impl IdGenerator {
         let max_prob = self.config.max_collision_prob;
 
         for len in self.config.min_hash_length..=self.config.max_hash_length {
-            // Base36 has 36^len possible values
             let space = 36_f64.powi(len as i32);
-            // Birthday problem: P(collision) ≈ 1 - e^(-n²/2d)
             let prob = 1.0 - (-n * n / (2.0 * space)).exp();
             if prob < max_prob {
                 return len;
@@ -167,8 +165,6 @@ impl IdGenerator {
         }
 
         let mut length = self.optimal_length(input.issue_count);
-        // Cap how much we extend the hash before we fall back to the
-        // hash-only path; max_hash_length is bounded by parser limits.
         loop {
             for nonce in 0..10 {
                 let seed = generate_id_seed(
@@ -187,9 +183,6 @@ impl IdGenerator {
             if length < self.config.max_hash_length {
                 length += 1;
             } else {
-                // Saturated the hash length budget for the slug path. Drop
-                // the slug (preserves uniqueness via the standard fallback)
-                // rather than producing an oversized prefix.
                 return self.generate(
                     input.title,
                     input.description,
@@ -228,7 +221,6 @@ impl IdGenerator {
         let mut length = self.optimal_length(issue_count);
 
         loop {
-            // Try nonces 0..10 at this length
             for nonce in 0..10 {
                 let id =
                     self.generate_candidate(title, description, creator, created_at, nonce, length);
@@ -237,13 +229,9 @@ impl IdGenerator {
                 }
             }
 
-            // All nonces collided, increase length
             if length < self.config.max_hash_length {
                 length += 1;
             } else {
-                // The normal adaptive range is exhausted. Widen to a
-                // 12-character hash and try a bounded nonce range. Every
-                // returned candidate must have passed the caller's lookup.
                 for nonce in 0..MAX_FALLBACK_NONCE {
                     let seed = generate_id_seed(title, description, creator, created_at, nonce);
                     let hash_str = compute_id_hash(&seed, FALLBACK_HASH_LENGTH);
@@ -308,7 +296,6 @@ pub fn compute_id_hash(input: &str, length: usize) -> String {
     hasher.update(input.as_bytes());
     let result = hasher.finalize();
 
-    // Use first 8 bytes for a 64-bit integer
     let mut num = 0u64;
     for &byte in result.iter().take(8) {
         num = (num << 8) | u64::from(byte);
@@ -316,14 +303,11 @@ pub fn compute_id_hash(input: &str, length: usize) -> String {
 
     let encoded = base36_encode(num);
 
-    // Pad with '0' if too short (unlikely for u64 but possible)
     let mut s = encoded;
     if s.len() < length {
         s = format!("{s:0>length$}");
     }
 
-    // Take the last `length` characters to ensure full entropy from
-    // the least significant digits of the base36 encoding.
     let start = s.len().saturating_sub(length);
     s.chars().skip(start).collect()
 }
@@ -340,10 +324,6 @@ fn base36_encode(mut num: u64) -> String {
     }
     chars.into_iter().rev().collect()
 }
-
-// ============================================================================
-// Child ID Helpers
-// ============================================================================
 
 /// Generate child ID from parent.
 ///
@@ -370,7 +350,6 @@ pub(crate) fn split_prefix_remainder(id: &str) -> Option<(&str, &str)> {
 /// Check if an ID is a child ID (contains a dot after the hash).
 #[must_use]
 pub fn is_child_id(id: &str) -> bool {
-    // Only check after the prefix-hash part
     split_prefix_remainder(id).map_or_else(
         || id.contains('.'),
         |(_, remainder)| remainder.contains('.'),
@@ -382,16 +361,11 @@ pub fn is_child_id(id: &str) -> bool {
 /// Top-level IDs have depth 0, first-level children have depth 1, etc.
 #[must_use]
 pub fn id_depth(id: &str) -> usize {
-    // Count dots after the prefix-hash part
     split_prefix_remainder(id).map_or_else(
         || id.matches('.').count(),
         |(_, remainder)| remainder.matches('.').count(),
     )
 }
-
-// ============================================================================
-// ID Parsing and Validation
-// ============================================================================
 
 use crate::error::{BeadsError, Result};
 
@@ -477,7 +451,6 @@ fn format_child_path(path: &[u32]) -> String {
 ///
 /// Returns `InvalidId` if the ID format is invalid.
 pub fn parse_id(id: &str) -> Result<ParsedId> {
-    // Find the prefix-hash separator (supports hyphenated prefixes)
     let Some((prefix, remainder)) = split_prefix_remainder(id) else {
         return Err(BeadsError::InvalidId { id: id.to_string() });
     };
@@ -498,7 +471,6 @@ pub fn parse_id(id: &str) -> Result<ParsedId> {
         return Err(BeadsError::InvalidId { id: id.to_string() });
     }
 
-    // Split remainder by '.' to get hash and child path
     let parts: Vec<&str> = remainder.split('.').collect();
     let hash = parts[0].to_string();
 
@@ -506,7 +478,6 @@ pub fn parse_id(id: &str) -> Result<ParsedId> {
         return Err(BeadsError::InvalidId { id: id.to_string() });
     }
 
-    // Validate hash is base36 (lowercase alphanumeric)
     if !hash
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
@@ -514,7 +485,6 @@ pub fn parse_id(id: &str) -> Result<ParsedId> {
         return Err(BeadsError::InvalidId { id: id.to_string() });
     }
 
-    // Parse child path segments
     let mut child_path = Vec::new();
     for part in parts.iter().skip(1) {
         if part.is_empty() || !part.chars().all(|c| c.is_ascii_digit()) {
@@ -651,8 +621,6 @@ pub fn normalize_slug(slug: &str) -> String {
         }
     }
 
-    // Trim trailing hyphen that any final non-alphanumeric run may have
-    // appended, and cap length.
     while out.ends_with('-') {
         out.pop();
     }
@@ -727,10 +695,6 @@ pub fn abbreviate_prefix(prefix: &str) -> String {
 pub fn is_valid_id_format(id: &str) -> bool {
     parse_id(id).is_ok()
 }
-
-// ============================================================================
-// ID Resolution
-// ============================================================================
 
 /// Configuration for ID resolution.
 #[derive(Debug, Clone)]
@@ -859,10 +823,8 @@ impl IdResolver {
             return Err(BeadsError::InvalidId { id: String::new() });
         }
 
-        // Normalize input to lowercase
         let normalized = normalize_id(input);
 
-        // Step 1: Try exact match
         if exists_fn(&normalized) {
             return Ok(ResolvedId {
                 id: normalized,
@@ -871,7 +833,6 @@ impl IdResolver {
             });
         }
 
-        // Step 2: If no dash (missing prefix), prepend default prefix and retry
         if !normalized.contains('-') {
             let with_prefix = format!("{}-{}", self.config.default_prefix, normalized);
             if exists_fn(&with_prefix) {
@@ -883,9 +844,7 @@ impl IdResolver {
             }
         }
 
-        // Step 3: Substring match on hash portion
         if self.config.allow_substring_match {
-            // Extract the potential hash portion (after dash, or entire input if no dash)
             let (prefix, hash_pattern) = split_prefix_remainder(&normalized)
                 .map_or((None, normalized.as_str()), |(p, r)| (Some(p), r));
 
@@ -899,7 +858,6 @@ impl IdResolver {
 
                 match matches.len() {
                     0 => {
-                        // No matches found
                     }
                     1 => {
                         return Ok(ResolvedId {
@@ -909,7 +867,6 @@ impl IdResolver {
                         });
                     }
                     _ => {
-                        // Multiple matches - ambiguous
                         return Err(BeadsError::AmbiguousId {
                             partial: input.to_string(),
                             matches,
@@ -919,7 +876,6 @@ impl IdResolver {
             }
         }
 
-        // Step 4: No match found
         Err(BeadsError::IssueNotFound {
             id: input.to_string(),
         })
@@ -1160,9 +1116,6 @@ fn is_numeric_child_path(tail: &str) -> bool {
 /// of `IdResolver::resolve`. The caller provides the list of all known IDs.
 #[must_use]
 pub fn find_matching_ids(all_ids: &[String], hash_substring: &str) -> Vec<String> {
-    // Split search pattern into base hash and optional child path so that
-    // searching for "64up6.4" correctly matches "bd-64up6.4" instead of
-    // stripping the child suffix from the candidate and failing.
     let (search_base, search_child) = match hash_substring.split_once('.') {
         Some((base, child)) => (base, Some(child)),
         None => (hash_substring, None),
@@ -1228,17 +1181,13 @@ where
 mod tests {
     use super::*;
 
-    // ========================================================================
-    // ID Resolution Tests
-    // ========================================================================
-
     fn mock_db() -> Vec<String> {
         vec![
             "br-abc123".to_string(),
             "br-abd456".to_string(),
             "br-xyz789".to_string(),
-            "br-abc123.1".to_string(),  // child
-            "other-def111".to_string(), // different prefix
+            "br-abc123.1".to_string(),
+            "other-def111".to_string(),
         ]
     }
 
@@ -1273,7 +1222,6 @@ mod tests {
     #[test]
     fn test_resolve_substring_match() {
         let resolver = IdResolver::with_defaults();
-        // "xyz" should uniquely match "br-xyz789"
         let result = resolver
             .resolve("xyz", exists_in_mock, substring_in_mock)
             .unwrap();
@@ -1284,7 +1232,6 @@ mod tests {
     #[test]
     fn test_resolve_ambiguous() {
         let resolver = IdResolver::with_defaults();
-        // "ab" matches both "br-abc123" and "br-abd456"
         let result = resolver.resolve("ab", exists_in_mock, substring_in_mock);
         assert!(result.is_err());
         if let Err(BeadsError::AmbiguousId { partial, matches }) = result {
@@ -1385,7 +1332,6 @@ mod tests {
         let ids = mock_db();
         let matches = find_matching_ids(&ids, "abc");
         assert!(matches.contains(&"br-abc123".to_string()));
-        // Note: br-abc123.1 is a child and its base hash contains "abc"
         assert!(matches.contains(&"br-abc123.1".to_string()));
     }
 
@@ -1395,10 +1341,6 @@ mod tests {
         let matches = find_matching_ids(&ids, "zzz");
         assert!(matches.is_empty());
     }
-
-    // ========================================================================
-    // Original Tests
-    // ========================================================================
 
     #[test]
     fn test_base36_encode() {
@@ -1453,8 +1395,6 @@ mod tests {
 
     #[test]
     fn test_parse_id_hyphenated_prefix_word_like_hash() {
-        // "my-proj" is prefix. "abcd" is hash (4 chars, no digits).
-        // Previously failed because "abcd" was deemed unlikely hash, causing split at first dash.
         let parsed = parse_id("my-proj-abcd").unwrap();
         assert_eq!(parsed.prefix, "my-proj");
         assert_eq!(parsed.hash, "abcd");
@@ -1505,8 +1445,6 @@ mod tests {
 
     #[test]
     fn test_parse_id_long_hash() {
-        // Fallback generates 12 chars + potential nonce.
-        // parse_id used to limit to 8, but now allows up to MAX_ID_HASH_LEN.
         let long_id = "bd-abc123456789";
         let parsed = parse_id(long_id).unwrap();
         assert_eq!(parsed.hash, "abc123456789");
@@ -1583,18 +1521,16 @@ mod tests {
         assert!(is_valid_id_format("bd-abc123"));
         assert!(is_valid_id_format("bd-abc123.1.2"));
         assert!(!is_valid_id_format("invalid"));
-        assert!(!is_valid_id_format("bd-ABC")); // uppercase
+        assert!(!is_valid_id_format("bd-ABC"));
     }
 
     #[test]
     fn test_id_generator_optimal_length() {
         let id_gen = IdGenerator::with_defaults();
 
-        // Small DB should use minimum length
         assert_eq!(id_gen.optimal_length(0), 3);
         assert_eq!(id_gen.optimal_length(10), 3);
 
-        // Large DB should need more characters
         let len_1000 = id_gen.optimal_length(1000);
         assert!(len_1000 >= 3);
         assert!(len_1000 <= 8);
@@ -1627,13 +1563,11 @@ mod tests {
 
         let mut generated = std::collections::HashSet::new();
 
-        // Generate first ID
         let id1 = id_gen
             .generate("Test", None, None, now, 0, |id| Ok(generated.contains(id)))
             .expect("collision lookup succeeds");
         generated.insert(id1.clone());
 
-        // Generate second ID - should get different one due to collision check
         let id2 = id_gen
             .generate("Test", None, None, now, 0, |id| Ok(generated.contains(id)))
             .expect("collision lookup succeeds");
@@ -1690,8 +1624,6 @@ mod tests {
 
     #[test]
     fn test_normalize_slug_collapses_unicode_and_caps_length() {
-        // Non-ASCII characters are dropped (not transliterated). Long inputs
-        // are capped at MAX_SLUG_LEN with no trailing hyphen.
         assert_eq!(normalize_slug("café-résumé"), "caf-r-sum");
         let long = "a".repeat(100);
         let out = normalize_slug(&long);
@@ -1711,7 +1643,6 @@ mod tests {
             issue_count: 10,
         };
 
-        // Slug present → ID embeds the slug between prefix and hash.
         let id = id_gen
             .generate_with_slug(input, "survey-my-thing", |_| Ok(false))
             .expect("collision lookup succeeds");
@@ -1723,16 +1654,12 @@ mod tests {
         assert_eq!(parsed.prefix, "br-survey-my-thing");
         assert!(!parsed.hash.is_empty(), "hash suffix must be present");
 
-        // Empty slug → falls back to hash-only generation.
         let id = id_gen
             .generate_with_slug(input, "", |_| Ok(false))
             .expect("collision lookup succeeds");
         let parsed = parse_id(&id).expect("hash-only ID should parse");
         assert_eq!(parsed.prefix, "br");
 
-        // Slug-only collision falls through hash-extension. Force exactly the
-        // very first candidate to "exist" and confirm the generator still
-        // produces a slug-shaped ID by retrying with a different nonce.
         let calls = std::cell::Cell::new(0u32);
         let id = id_gen
             .generate_with_slug(input, "survey-my-thing", |_candidate| {
@@ -1795,11 +1722,6 @@ mod tests {
         assert_eq!(parsed.prefix, prefix);
     }
 
-    // ========================================================================
-    // beads-l6xl: post-`--slug` audit unit tests (added 2026-05-09)
-    // Per the bead's required NEW unit tests.
-    // ========================================================================
-
     /// l6xl AC: `--slug "Hello World!"` → `<prefix>-hello-world-<hash>`.
     /// Asserts case-folding, single-hyphen collapsing, leading/trailing
     /// non-ASCII strip, and that the hash suffix is always present.
@@ -1814,7 +1736,6 @@ mod tests {
             issue_count: 10,
         };
 
-        // Mixed-case + spaces + punctuation → lowercased, single-hyphenated
         let id = id_gen
             .generate_with_slug(input, "Hello World!", |_| Ok(false))
             .expect("collision lookup succeeds");
@@ -1826,7 +1747,6 @@ mod tests {
         assert_eq!(parsed.prefix, "br-hello-world");
         assert!(!parsed.hash.is_empty(), "hash suffix must be present");
 
-        // Multiple non-alphanumeric runs collapse to a single hyphen
         let id2 = id_gen
             .generate_with_slug(input, "a   b/c.d!!e", |_| Ok(false))
             .expect("collision lookup succeeds");
@@ -1835,11 +1755,9 @@ mod tests {
             "expected b-c-d-e collapsed; got {id2}"
         );
 
-        // Pure-Unicode (non-ASCII) characters strip out
         let id3 = id_gen
             .generate_with_slug(input, "café-résumé", |_| Ok(false))
             .expect("collision lookup succeeds");
-        // After normalize_slug: "caf-r-sum" (drops é, kept letters around hyphens)
         assert!(id3.starts_with("br-caf-r-sum-"), "got {id3}");
     }
 
@@ -1856,7 +1774,6 @@ mod tests {
             issue_count: 10,
         };
 
-        // 60-char input → 48-char normalized cap (not counting prefix/hash)
         let long_slug = "a".repeat(60);
         let id = id_gen
             .generate_with_slug(input, &long_slug, |_| Ok(false))
@@ -1869,13 +1786,11 @@ mod tests {
             slug_part.len()
         );
 
-        // Slug that ends with a hyphen due to truncation must have it stripped
-        let trailing_hyphen_slug = format!("{}!!!", "x".repeat(MAX_SLUG_LEN - 2)); // becomes 48 chars then trailing hyphen risk
+        let trailing_hyphen_slug = format!("{}!!!", "x".repeat(MAX_SLUG_LEN - 2));
         let id2 = id_gen
             .generate_with_slug(input, &trailing_hyphen_slug, |_| Ok(false))
             .expect("collision lookup succeeds");
         assert!(!id2.starts_with("br--"), "double-hyphen leak in {id2}");
-        // Find the slug portion: between "br-" and the last "-<hash>" segment
         let parsed2 = parse_id(&id2).expect("must parse");
         let slug2 = parsed2
             .prefix
@@ -1913,8 +1828,6 @@ mod tests {
         let parsed = parse_id(&id).expect("must parse");
         assert_eq!(parsed.prefix, "myproj-feature-x");
         assert!(!parsed.hash.is_empty(), "hash suffix must be present");
-        // Hash suffix grows with issue_count; at least 3 chars at issue_count=5
-        // (per IdGenerator::optimal_length)
         assert!(
             parsed.hash.len() >= 3,
             "hash suffix too short: {} (expected >= 3)",
@@ -1936,7 +1849,6 @@ mod tests {
             issue_count: 10,
         };
 
-        // Various inputs that all normalize to empty
         for empty_yielding in ["!!!", "...", "   ", "$%^&*()", "", "/\\/\\"] {
             let id = id_gen
                 .generate_with_slug(input, empty_yielding, |_| Ok(false))

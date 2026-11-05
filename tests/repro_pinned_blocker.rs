@@ -61,29 +61,22 @@ fn make_issue(id: &str, title: &str, status: Status) -> Issue {
 
 #[test]
 fn test_pinned_status_blocks_dependents() {
-    // This test verifies that an issue with Status::Pinned DOES block issues that depend on it.
-    // Current hypothesis: rebuild_blocked_cache_impl misses 'pinned' in its status filter.
 
     let mut storage = SqliteStorage::open_memory().unwrap();
 
-    // 1. Create Pinned Issue A
     let issue_a = make_issue("bd-a", "Pinned Blocker", Status::Pinned);
     storage.create_issue(&issue_a, "setup").unwrap();
 
-    // 2. Create Issue B that depends on A
     let issue_b = make_issue("bd-b", "Blocked Task", Status::Open);
     storage.create_issue(&issue_b, "setup").unwrap();
     storage
         .add_dependency("bd-b", "bd-a", "blocks", "setup")
         .unwrap();
 
-    // 3. Rebuild cache (add_dependency does this, but let's be explicit)
     storage.rebuild_blocked_cache(true).unwrap();
 
-    // 4. Verify B is blocked
     let is_blocked = storage.is_blocked("bd-b").unwrap();
 
-    // Debug info
     if !is_blocked {
         let blockers = storage.get_blocked_issues().unwrap();
         println!("Blocked issues in cache: {:?}", blockers.len());
@@ -97,7 +90,6 @@ fn test_pinned_status_blocks_dependents() {
 
 #[test]
 fn test_deferred_status_blocks_dependents() {
-    // Verify that a non-terminal known status also blocks
     let mut storage = SqliteStorage::open_memory().unwrap();
 
     let issue_a = make_issue("bd-a", "Custom Blocker", Status::Deferred);

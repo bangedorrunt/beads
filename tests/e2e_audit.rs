@@ -28,21 +28,15 @@ fn read_interactions(workspace: &BrWorkspace) -> Vec<Value> {
         .collect()
 }
 
-// =============================================================================
-// SUCCESS PATH TESTS
-// =============================================================================
-
 #[test]
 fn e2e_audit_record_single_event() {
     common::init_test_logging();
     info!("e2e_audit_record_single_event: start");
     let workspace = BrWorkspace::new();
 
-    // Initialize workspace
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Record a single audit event
     let record = run_br(
         &workspace,
         ["audit", "record", "--kind", "llm_call"],
@@ -54,11 +48,9 @@ fn e2e_audit_record_single_event() {
         record.stderr
     );
 
-    // Verify ID was returned
     let id = record.stdout.trim();
     assert!(id.starts_with("int-"), "ID should start with int-: {id}");
 
-    // Verify entry was written to interactions.jsonl
     let entries = read_interactions(&workspace);
     assert_eq!(entries.len(), 1, "should have exactly one entry");
     assert_eq!(entries[0]["id"], id);
@@ -75,7 +67,6 @@ fn e2e_audit_record_multiple_events_preserve_order() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Record multiple events in sequence
     let record_a = run_br(
         &workspace,
         ["audit", "record", "--kind", "llm_call"],
@@ -100,7 +91,6 @@ fn e2e_audit_record_multiple_events_preserve_order() {
     assert!(record_c.status.success(), "record C failed");
     let id_c = record_c.stdout.trim().to_string();
 
-    // Verify order is preserved
     let entries = read_interactions(&workspace);
     assert_eq!(entries.len(), 3, "should have 3 entries");
     assert_eq!(entries[0]["id"], id_a);
@@ -121,7 +111,6 @@ fn e2e_audit_record_with_all_optional_fields() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Record with all optional fields
     let record = run_br(
         &workspace,
         [
@@ -155,7 +144,6 @@ fn e2e_audit_record_with_all_optional_fields() {
     assert_eq!(entries[0]["model"], "claude-3-opus");
     assert_eq!(entries[0]["prompt"], "What is 2+2?");
     assert_eq!(entries[0]["response"], "The answer is 4.");
-    // Empty string should not be stored
     assert!(entries[0]["error"].is_null());
     info!("e2e_audit_record_with_all_optional_fields: done");
 }
@@ -169,7 +157,6 @@ fn e2e_audit_record_tool_call_fields() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Record a tool call with tool-specific fields
     let record = run_br(
         &workspace,
         [
@@ -207,7 +194,6 @@ fn e2e_audit_record_json_output() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Record with --json flag
     let record = run_br(
         &workspace,
         ["audit", "record", "--kind", "llm_call", "--json"],
@@ -219,7 +205,6 @@ fn e2e_audit_record_json_output() {
         record.stderr
     );
 
-    // Parse JSON output
     let payload = extract_json_payload(&record.stdout);
     let json: Value = serde_json::from_str(&payload).expect("parse json output");
     assert!(json["id"].is_string(), "id should be string");
@@ -236,7 +221,6 @@ fn e2e_audit_label_existing_entry() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // First record an entry
     let record = run_br(
         &workspace,
         ["audit", "record", "--kind", "llm_call"],
@@ -245,7 +229,6 @@ fn e2e_audit_label_existing_entry() {
     assert!(record.status.success(), "record failed: {}", record.stderr);
     let parent_id = record.stdout.trim();
 
-    // Label the entry
     let label = run_br(
         &workspace,
         ["audit", "label", parent_id, "--label", "good"],
@@ -258,11 +241,9 @@ fn e2e_audit_label_existing_entry() {
         "label ID should start with int-"
     );
 
-    // Verify both entries exist
     let entries = read_interactions(&workspace);
     assert_eq!(entries.len(), 2, "should have record and label entries");
 
-    // Find the label entry
     let label_entry = entries.iter().find(|e| e["kind"] == "label").unwrap();
     assert_eq!(label_entry["parent_id"], parent_id);
     assert_eq!(label_entry["label"], "good");
@@ -278,7 +259,6 @@ fn e2e_audit_label_with_reason() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Record and label with reason
     let record = run_br(
         &workspace,
         ["audit", "record", "--kind", "llm_call"],
@@ -349,17 +329,12 @@ fn e2e_audit_label_json_output() {
     info!("e2e_audit_label_json_output: done");
 }
 
-// =============================================================================
-// ERROR CASE TESTS
-// =============================================================================
-
 #[test]
 fn e2e_audit_record_before_init_fails() {
     common::init_test_logging();
     info!("e2e_audit_record_before_init_fails: start");
     let workspace = BrWorkspace::new();
 
-    // Try to record without init
     let record = run_br(
         &workspace,
         ["audit", "record", "--kind", "llm_call"],
@@ -388,13 +363,11 @@ fn e2e_audit_record_without_kind_fails() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Record without --kind
     let record = run_br(&workspace, ["audit", "record"], "record_no_kind");
     assert!(
         !record.status.success(),
         "audit record without kind should fail"
     );
-    // Check either stderr or that validation error occurred
     let combined = format!("{}{}", record.stdout, record.stderr);
     assert!(
         combined.contains("kind") || combined.contains("required"),
@@ -420,7 +393,6 @@ fn e2e_audit_label_without_label_fails() {
     assert!(record.status.success());
     let parent_id = record.stdout.trim();
 
-    // Label without --label flag
     let label = run_br(
         &workspace,
         ["audit", "label", parent_id],
@@ -465,10 +437,6 @@ fn e2e_audit_label_missing_parent_fails() {
     info!("e2e_audit_label_missing_parent_fails: done");
 }
 
-// =============================================================================
-// EDGE CASE TESTS
-// =============================================================================
-
 #[test]
 fn e2e_audit_record_very_long_text() {
     common::init_test_logging();
@@ -478,7 +446,6 @@ fn e2e_audit_record_very_long_text() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create very long prompt and response text
     let long_prompt = "a".repeat(10_000);
     let long_response = "b".repeat(10_000);
 
@@ -518,7 +485,6 @@ fn e2e_audit_record_special_characters() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Unicode, quotes, newlines, etc.
     let special_prompt = "Hello\nWorld\t\"quoted\" 'single' emoji: \u{1F600}";
 
     let record = run_br(
@@ -554,7 +520,6 @@ fn e2e_audit_record_via_stdin() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create JSON input
     let json_input = r#"{"kind": "llm_call", "model": "gpt-4", "prompt": "stdin test"}"#;
 
     let output = run_br_with_stdin(
@@ -842,13 +807,11 @@ fn e2e_audit_record_created_at_auto_set() {
     let entries = read_interactions(&workspace);
     assert_eq!(entries.len(), 1);
 
-    // Verify created_at was set
     assert!(
         entries[0]["created_at"].is_string(),
         "created_at should be set"
     );
     let created_at = entries[0]["created_at"].as_str().unwrap();
-    // Should be a valid ISO 8601 timestamp
     assert!(
         created_at.contains('T') && created_at.contains('Z'),
         "created_at should be ISO 8601: {created_at}"
@@ -865,7 +828,6 @@ fn e2e_audit_unique_ids() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create many entries quickly
     let mut ids: Vec<String> = Vec::new();
     for i in 0..20 {
         let record = run_br(
@@ -877,7 +839,6 @@ fn e2e_audit_unique_ids() {
         ids.push(record.stdout.trim().to_string());
     }
 
-    // Verify all IDs are unique
     let unique_count = {
         let mut sorted = ids.clone();
         sorted.sort();
@@ -897,11 +858,9 @@ fn e2e_audit_interactions_file_created() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Verify interactions.jsonl doesn't exist yet
     let path = workspace.root.join(".beads").join("interactions.jsonl");
     assert!(!path.exists(), "interactions.jsonl should not exist yet");
 
-    // Record an entry
     let record = run_br(
         &workspace,
         ["audit", "record", "--kind", "test"],
@@ -909,7 +868,6 @@ fn e2e_audit_interactions_file_created() {
     );
     assert!(record.status.success());
 
-    // Now it should exist
     assert!(
         path.exists(),
         "interactions.jsonl should exist after first record"
@@ -926,7 +884,6 @@ fn e2e_audit_with_actor_override() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Record with actor override
     let record = run_br(
         &workspace,
         [
@@ -959,7 +916,6 @@ fn e2e_audit_log_for_issue() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create an issue
     let create = run_br(
         &workspace,
         [
@@ -977,7 +933,6 @@ fn e2e_audit_log_for_issue() {
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
-    // Update it to generate events
     let update = run_br(
         &workspace,
         ["update", &id, "--priority", "0"],
@@ -999,10 +954,6 @@ fn e2e_audit_log_for_issue() {
             "pass",
             "--to",
             "closed",
-            // The close below is authorised by this PASS row (ADR-0001 §5.3):
-            // a note that leads with `task=<id> verdict=<id>`. A named sha
-            // would have to resolve and cite the bead, and this harness has
-            // no commit to cite.
             "--note",
             "task=e2e-audit-task verdict=e2e-audit-verdict",
         ],
@@ -1026,7 +977,6 @@ fn e2e_audit_log_for_issue() {
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    // Check log
     let log = run_br(&workspace, ["audit", "log", &id], "audit_log");
     assert!(log.status.success(), "audit log failed: {}", log.stderr);
     assert!(log.stdout.contains("created"), "should show created event");
@@ -1037,7 +987,6 @@ fn e2e_audit_log_for_issue() {
     assert!(log.stdout.contains("closed"), "should show closed event");
     assert!(log.stdout.contains("Done"), "should show close reason");
 
-    // Check JSON log
     let log_json = run_br(
         &workspace,
         ["audit", "log", &id, "--json"],
@@ -1059,7 +1008,6 @@ fn e2e_audit_summary() {
     let workspace = BrWorkspace::new();
     run_br(&workspace, ["init"], "init");
 
-    // Generate activity
     run_br(
         &workspace,
         [
@@ -1089,7 +1037,6 @@ fn e2e_audit_summary() {
         "create2",
     );
 
-    // Get ID of Issue 1
     let list = run_br(&workspace, ["list", "--json"], "list");
     let json: Value = serde_json::from_str(&extract_json_payload(&list.stdout)).unwrap();
     let id1 = json["issues"]
@@ -1115,10 +1062,6 @@ fn e2e_audit_summary() {
             "pass",
             "--to",
             "closed",
-            // The close below is authorised by this PASS row (ADR-0001 §5.3):
-            // a note that leads with `task=<id> verdict=<id>`. A named sha
-            // would have to resolve and cite the bead, and this harness has
-            // no commit to cite.
             "--note",
             "task=e2e-audit-task verdict=e2e-audit-verdict",
         ],
@@ -1139,7 +1082,6 @@ fn e2e_audit_summary() {
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    // Check summary
     let summary = run_br(&workspace, ["audit", "summary"], "audit_summary");
     assert!(
         summary.status.success(),
@@ -1152,7 +1094,6 @@ fn e2e_audit_summary() {
     );
     assert!(summary.stdout.contains("TOTAL"), "should show totals");
 
-    // Check JSON summary
     let summary_json = run_br(
         &workspace,
         ["audit", "summary", "--json"],

@@ -274,9 +274,6 @@ impl CapacityPolicy {
     /// Whether any capacity behavior is configured.
     #[must_use]
     pub fn is_active(&self) -> bool {
-        // Any declared scope key counts, even one with no limits yet:
-        // an empty scope must fail validation loudly rather than lie
-        // dormant until the operator adds its first threshold.
         !self.statuses.is_empty()
             || !self.groups.is_empty()
             || !self.admission.is_empty()
@@ -943,7 +940,6 @@ pub fn cited_report_artifacts(reason: Option<&str>) -> Vec<String> {
         }
         value = value.trim();
         if value.is_empty() {
-            // Spaced `kind: value` form — the value is the next token.
             if index + 1 < tokens.len() {
                 index += 1;
                 value = tokens[index].trim();
@@ -1046,10 +1042,8 @@ pub fn evaluate_require_legal_close(
     let mut pass_kinds: Vec<&'static str> = Vec::new();
     for result in results {
         let Some(kind) = crate::verify::VerdictKind::from_gate_name(&result.gate) else {
-            continue; // non-verdict provider gates are out of scope here
+            continue;
         };
-        // Only kinds that would legally authorize this close are relevant;
-        // anything else recorded against the transition is loop noise.
         if !legal_names.contains(&kind.gate_name()) {
             continue;
         }
@@ -1498,9 +1492,6 @@ pub fn evaluate_transition_required_fields(
                     continue;
                 }
 
-                // This value comes from the dedicated acceptance_criteria
-                // column, so every checklist item in it is a criterion even
-                // when operators organize the field with custom headings.
                 let unchecked = find_unchecked_checklist_items(criteria);
                 if !unchecked.is_empty() {
                     violations.push(PolicyViolation {
@@ -1748,8 +1739,6 @@ impl Workflow {
     /// Returns a validation error when strict enforcement is configured and a
     /// member of the ready group is not in `workflow.statuses`.
     pub fn validate_ready_status_group(&self) -> Result<()> {
-        // Only validate an explicitly-configured group; the implicit `[open]`
-        // default is never rejected.
         if self.status_groups.ready.is_empty() {
             return Ok(());
         }
@@ -1788,10 +1777,6 @@ impl Workflow {
     /// a name/list is empty, thresholds are zero or inverted, or admission rule
     /// names collide case-insensitively.
     pub fn validate_capacity(&self) -> Result<()> {
-        // Counting configuration is validated even when no limit is active:
-        // a typo'd weights block must fail loudly rather than lie dormant
-        // until an operator adds their first hard limit. Exemption
-        // authorization gets the same treatment.
         validate_capacity_counting(&self.capacity.counting)?;
         validate_capacity_exemptions(&self.capacity.exemptions)?;
         if !self.capacity.is_active() {
@@ -2493,9 +2478,6 @@ fn extract_typed_references(text: &str) -> Vec<(String, String)> {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        // Find start of a candidate kind: alpha character preceded
-        // either by start-of-string, whitespace, or a punctuation
-        // boundary character (so we don't pick up `xyz` in `foo-xyz:`).
         let preceding_ok =
             i == 0 || matches!(bytes[i - 1], b' ' | b'\n' | b'\t' | b'(' | b'[' | b',');
         if !preceding_ok {
@@ -2517,7 +2499,7 @@ fn extract_typed_references(text: &str) -> Vec<(String, String)> {
             continue;
         }
         let kind = &text[kind_start..i];
-        i += 1; // skip the ':'
+        i += 1;
         let value_start = i;
         while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b',' {
             i += 1;
@@ -2651,8 +2633,6 @@ fn evaluate_close_reason(
 }
 
 fn evaluate_acceptance_criteria(evidence: &CloseEvidence<'_>, out: &mut Vec<PolicyViolation>) {
-    // Pull from every body field so users with criteria in description (legacy)
-    // are still gated. acceptance_criteria column is the canonical home.
     let candidates = [
         evidence.acceptance_criteria,
         evidence.description,
@@ -2664,8 +2644,6 @@ fn evaluate_acceptance_criteria(evidence: &CloseEvidence<'_>, out: &mut Vec<Poli
     for body in candidates.into_iter().flatten() {
         unchecked.extend(find_unchecked_acceptance_criteria(body));
     }
-    // De-dupe across fields: copy/paste between description and
-    // acceptance_criteria shouldn't double-count.
     unchecked.sort();
     unchecked.dedup();
 
@@ -2695,8 +2673,6 @@ fn evaluate_acceptance_criteria(evidence: &CloseEvidence<'_>, out: &mut Vec<Poli
 
 fn evaluate_self_close(evidence: &CloseEvidence<'_>, out: &mut Vec<PolicyViolation>) {
     let Some(in_progress_actor) = evidence.in_progress_actor else {
-        // No in_progress transition recorded — gate is satisfied by definition
-        // (open → closed is unconstrained for this rule).
         return;
     };
     if in_progress_actor.is_empty() || evidence.close_actor.is_empty() {
@@ -2745,8 +2721,6 @@ pub fn deferred_dependents_violation(
         return None;
     }
 
-    // Stable, de-duplicated ordering so the message and detail are
-    // deterministic regardless of query/iteration order.
     let mut ids: Vec<String> = deferred_dependent_ids.to_vec();
     ids.sort();
     ids.dedup();
@@ -2785,8 +2759,6 @@ pub fn find_unchecked_acceptance_criteria(body: &str) -> Vec<String> {
     let mut found_header = false;
     let mut out: Vec<String> = Vec::new();
 
-    // If the body has no markdown headers, treat the whole body as the
-    // acceptance criteria section. acceptance_criteria column flow.
     let has_any_header = has_markdown_heading_outside_fences(body);
     if !has_any_header {
         in_section = true;
@@ -2799,16 +2771,12 @@ pub fn find_unchecked_acceptance_criteria(body: &str) -> Vec<String> {
         }
         let trimmed = line.trim_start();
         if let Some(header_text) = markdown_heading_text(trimmed) {
-            // Determine if this header opens / closes the acceptance criteria block.
             let lower = header_text.to_ascii_lowercase();
-            // Match a header that contains "acceptance criteria" (allows variants
-            // like "Acceptance Criteria (Phase 1)").
             if lower.contains("acceptance criteria") {
                 in_section = true;
                 found_header = true;
                 continue;
             }
-            // Any other header closes the section once we have entered it.
             if found_header {
                 in_section = false;
             }
@@ -2903,7 +2871,6 @@ fn parse_unchecked_box(line: &str) -> Option<String> {
     if !matches!(bullet, '-' | '*' | '+') {
         return None;
     }
-    // Skip whitespace between bullet and `[`.
     while let Some(&c) = chars.peek() {
         if c.is_whitespace() {
             chars.next();
@@ -2914,7 +2881,6 @@ fn parse_unchecked_box(line: &str) -> Option<String> {
     if chars.next()? != '[' {
         return None;
     }
-    // Inner char must be whitespace/empty for "unchecked".
     let inner = chars.next()?;
     let inner_is_unchecked = inner.is_whitespace() || inner == ' ';
     if !inner_is_unchecked {
@@ -3000,12 +2966,6 @@ pub fn resolve_effective_workflow(beads_dir: &Path) -> Result<Workflow> {
     let document = load_for_beads_dir(beads_dir)?;
     let mut workflow = document.workflow;
     if workflow_gating_unconfigured(&workflow) {
-        // The project configured its own workflow - its statuses, its
-        // transitions - but no gate rules. The ADR default's TRANSITIONS must
-        // not leak into it (the project governs its own workflow); its GATE
-        // RULES must, or "strict" is a lie: with no rule the close demanded
-        // no verdict AND `br gate report --to closed` found nothing to record
-        // one against (ADR-0001 §5.3).
         workflow.gates = default_fail_closed_workflow().gates.clone();
     }
     Ok(workflow)
@@ -3023,10 +2983,6 @@ pub fn load_for_beads_dir(beads_dir: &Path) -> Result<PolicyDocument> {
     document.workflow.validate_capacity()?;
     document.workflow.validate_required_fields()?;
 
-    // ADR-0001 §5.3: `require_all` of the five ADR-0019 verdict names is
-    // ILLEGAL in this fork — the legal-close table chooses the gate per bead;
-    // demanding all five demands mutually exclusive proofs. Every command
-    // that loads policy refuses such a file, so `br doctor` surfaces it.
     let illegal = detect_illegal_require_all(&document.workflow);
     if !illegal.is_empty() {
         return Err(BeadsError::Config(format!(
@@ -3037,12 +2993,6 @@ pub fn load_for_beads_dir(beads_dir: &Path) -> Result<PolicyDocument> {
         )));
     }
 
-    // Re-parse the raw YAML into a free-form value tree so we can diff it
-    // against the typed schema and surface unknown fields without failing
-    // the load. Failure to re-parse as a `Value` is impossible here (the
-    // typed parse above already succeeded), but if it ever did, we'd
-    // rather skip the warning than spurious-error the load — that's the
-    // whole point of #302.
     if let Ok(raw_value) = serde_yml::from_str::<serde_yml::Value>(&raw) {
         let unknown = detect_unknown_policy_fields(&raw_value);
         if !unknown.is_empty() {
@@ -3137,17 +3087,9 @@ impl PolicyNode {
                 ("strict", Self::Scalar),
                 ("statuses", Self::Scalar),
                 ("transitions", Self::Scalar),
-                // The gate rules are a free-form map of `"from -> to"` keys to
-                // gate specs; we don't descend into them for unknown-field
-                // detection (their shape is validated at parse time by the
-                // typed `GateRule`/`GateSpec` deserialisers).
                 ("gates", Self::Scalar),
                 ("required_fields", Self::Scalar),
                 ("status_groups", Self::StatusGroups),
-                // Capacity owns a strict typed schema with
-                // `deny_unknown_fields`; its nested keys are validated by
-                // serde plus `Workflow::validate_capacity` rather than the
-                // legacy permissive unknown-field walker.
                 ("capacity", Self::Scalar),
             ],
             Self::StatusGroups => &[("ready", Self::Scalar)],
@@ -3241,15 +3183,12 @@ mod tests {
 
     #[test]
     fn ready_status_group_defaults_to_open() {
-        // #354: unconfigured workflow → ready group is [open].
         let workflow = Workflow::default();
         assert_eq!(workflow.ready_status_group(), vec!["open".to_string()]);
     }
 
     #[test]
     fn ready_status_group_uses_configured_values_normalized() {
-        // #354: configured group is normalized (lowercased, trimmed, de-duped,
-        // source order preserved).
         let mut workflow = Workflow::default();
         workflow.status_groups.ready = vec![
             "Open".to_string(),
@@ -3264,8 +3203,6 @@ mod tests {
 
     #[test]
     fn transition_required_fields_compose_exact_and_target_rules() {
-        // Required fields are opt-in by the presence of the map itself. They
-        // intentionally do not depend on strict status-vocabulary enforcement.
         let mut workflow = Workflow::default();
         workflow.required_fields.insert(
             "in_review".to_string(),
@@ -3367,7 +3304,6 @@ mod tests {
 
     #[test]
     fn validate_ready_group_accepts_subset_when_strict() {
-        // #354: strict mode, group is a subset of statuses → ok.
         let mut workflow = Workflow {
             strict: true,
             statuses: vec![
@@ -3383,8 +3319,6 @@ mod tests {
 
     #[test]
     fn validate_ready_group_rejects_out_of_vocab_when_strict() {
-        // #354: strict mode, group has a status outside statuses → rejected with
-        // a clear error naming the offending value.
         let mut workflow = Workflow {
             strict: true,
             statuses: vec!["open".to_string(), "closed".to_string()],
@@ -3403,8 +3337,6 @@ mod tests {
 
     #[test]
     fn validate_ready_group_accepts_anything_when_not_strict() {
-        // #354: without strict (or without a statuses vocabulary), the group is
-        // accepted as-is.
         let mut workflow = Workflow {
             strict: false,
             statuses: vec!["open".to_string()],
@@ -3413,7 +3345,6 @@ mod tests {
         workflow.status_groups.ready = vec!["open".to_string(), "rework".to_string()];
         assert!(workflow.validate_ready_status_group().is_ok());
 
-        // strict but empty statuses → enforcement off → accepted.
         workflow.strict = true;
         workflow.statuses = vec![];
         assert!(workflow.validate_ready_status_group().is_ok());
@@ -3421,8 +3352,6 @@ mod tests {
 
     #[test]
     fn status_groups_parse_from_yaml_and_not_flagged_unknown() {
-        // #354: the new keys deserialize and are recognized by the
-        // unknown-field detector.
         let raw = "workflow:\n  status_groups:\n    ready: [open, rework]\n";
         let doc: PolicyDocument = serde_yml::from_str(raw).unwrap();
         assert_eq!(
@@ -3464,7 +3393,6 @@ mod tests {
         policy.require_close_reason.enabled = true;
         policy.require_close_reason.min_length = 4;
 
-        // 4 emoji = 4 chars (16 bytes UTF-8). Must satisfy a 4-char minimum.
         let violations = evaluate(&policy, &evidence_with_reason("😀😀😀😀", "bd-1"));
         assert!(violations.is_empty(), "{:?}", violations);
     }
@@ -3634,8 +3562,6 @@ mod tests {
     fn acceptance_criteria_dedupes_across_fields() {
         let mut policy = ClosePolicy::default();
         policy.require_acceptance_criteria_satisfied.enabled = true;
-        // Same item in description AND acceptance_criteria column — should
-        // count once, not twice.
         let mut evidence = evidence_with_reason("done done done done done", "bd-1");
         evidence.description = Some("## Acceptance Criteria\n- [ ] First\n");
         evidence.acceptance_criteria = Some("- [ ] First\n");
@@ -3651,7 +3577,6 @@ mod tests {
         let mut policy = ClosePolicy::default();
         policy.require_acceptance_criteria_satisfied.enabled = true;
         let mut evidence = evidence_with_reason("done done done done done", "bd-1");
-        // The acceptance_criteria column is dedicated — there's no `##` header.
         evidence.acceptance_criteria = Some("- [x] First\n- [ ] Second\n");
 
         let violations = evaluate(&policy, &evidence);
@@ -3694,10 +3619,6 @@ mod tests {
         assert!(evaluate(&policy, &evidence).is_empty());
     }
 
-    // =========================================================================
-    // Deferred-dependents gate (beads#303)
-    // =========================================================================
-
     #[test]
     fn deferred_dependents_gate_default_off() {
         let policy = ClosePolicy::default();
@@ -3725,7 +3646,6 @@ mod tests {
             deferred_dependents_violation("bd-1", &["bd-3".to_string(), "bd-2".to_string()])
                 .expect("violation expected");
         assert_eq!(violation.gate, GATE_FORBID_CLOSE_WITH_DEFERRED_DEPENDENTS);
-        // IDs are sorted deterministically and both are named.
         assert!(violation.message.contains("bd-2"), "{}", violation.message);
         assert!(violation.message.contains("bd-3"), "{}", violation.message);
         assert!(
@@ -3733,7 +3653,6 @@ mod tests {
             "{}",
             violation.message
         );
-        // Remediation guidance is present.
         assert!(
             violation.message.contains("br update <dep> --status=open"),
             "{}",
@@ -3777,7 +3696,6 @@ mod tests {
         let values = AttributionValues::resolve(Some("cli-agent"), Some("cli-harness"), None, &env);
         assert_eq!(values.agent_name.as_deref(), Some("cli-agent"));
         assert_eq!(values.harness.as_deref(), Some("cli-harness"));
-        // Falls back to env when CLI absent.
         assert_eq!(values.model.as_deref(), Some("env-model"));
     }
 
@@ -4006,10 +3924,6 @@ close_policy:
         assert!(parse_unchecked_box("- not a box").is_none());
     }
 
-    // =========================================================================
-    // Typed-references gate (capability #3 of issue #274)
-    // =========================================================================
-
     #[test]
     fn extract_typed_references_finds_kind_value_pairs() {
         let refs = extract_typed_references("Fixed in commit:abc123 per reviewer:bob");
@@ -4033,7 +3947,6 @@ close_policy:
 
     #[test]
     fn extract_typed_references_skips_prose_with_colons() {
-        // `note:` followed by whitespace is prose, not a typed reference.
         let refs = extract_typed_references("note: this is a regular sentence");
         assert!(refs.is_empty(), "got {refs:?}");
     }
@@ -4285,10 +4198,6 @@ close_policy:
         );
     }
 
-    // =========================================================================
-    // Status-workflow policy (issue #311)
-    // =========================================================================
-
     fn strict_workflow() -> Workflow {
         Workflow {
             strict: true,
@@ -4305,7 +4214,6 @@ close_policy:
     fn workflow_default_is_not_enforced() {
         let workflow = Workflow::default();
         assert!(!workflow.is_enforced());
-        // With enforcement off every status is permitted.
         assert!(workflow.validate_status("anything-at-all").is_ok());
     }
 
@@ -4328,7 +4236,6 @@ close_policy:
             .expect_err("out-of-set status must be rejected");
         let message = err.to_string();
         assert!(message.contains("completed"), "{message}");
-        // The error names the allowed values so the user can self-correct.
         assert!(message.contains("open"), "{message}");
         assert!(message.contains("in_progress"), "{message}");
         assert!(message.contains("closed"), "{message}");
@@ -4390,8 +4297,6 @@ workflow:
     #[test]
     fn loader_absent_workflow_section_is_permissive() {
         let dir = tempfile::tempdir().expect("tempdir");
-        // A policy.yaml that configures close gates but NO workflow section
-        // must not enforce any status set.
         let yaml = "close_policy:\n  forbid_self_close_after_in_progress:\n    enabled: true\n";
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
         let policy = load_for_beads_dir(dir.path()).expect("load");
@@ -4522,8 +4427,6 @@ capacity:
         let error = workflow.validate_capacity().unwrap_err();
         assert!(error.to_string().contains("max_ttl_seconds"), "{error}");
 
-        // An exemptions block alone (no limits) must still validate loudly
-        // rather than lie dormant, mirroring the counting block.
         let workflow: Workflow = serde_yml::from_str(
             r"
 capacity:
@@ -4668,8 +4571,6 @@ capacity:
         .unwrap_err();
         assert!(error.to_string().contains("leafwork"), "{error}");
 
-        // Weights without `hierarchy: weighted` are a silent no-op unless
-        // validation rejects them.
         let workflow: Workflow = serde_yml::from_str(
             r"
 statuses: [open, in_progress]
@@ -4693,7 +4594,6 @@ capacity:
             "{error}"
         );
 
-        // Counting is validated even with no limits configured at all.
         let workflow: Workflow = serde_yml::from_str(
             r"
 statuses: [open, in_progress]
@@ -4880,7 +4780,6 @@ capacity:
             "{rendered}"
         );
 
-        // Repository-scope evidence keeps the pre-scope text byte-stable.
         let mut repository = violation;
         repository.scope = "repository".to_string();
         repository.scope_key = None;
@@ -4892,10 +4791,6 @@ capacity:
         );
         assert!(!rendered.contains("for '"), "{rendered}");
     }
-
-    // =========================================================================
-    // Status-transition rules (issue #312, layer 1)
-    // =========================================================================
 
     fn transition_workflow() -> Workflow {
         let mut transitions = std::collections::BTreeMap::new();
@@ -4920,7 +4815,6 @@ capacity:
     fn transitions_default_is_not_enforced() {
         let workflow = Workflow::default();
         assert!(!workflow.transitions_enforced());
-        // With enforcement off every transition is permitted.
         assert!(workflow.validate_transition(Some("open"), "bogus").is_ok());
         assert!(workflow.validate_transition(None, "bogus").is_ok());
     }
@@ -4930,7 +4824,6 @@ capacity:
         let mut workflow = transition_workflow();
         workflow.strict = false;
         assert!(!workflow.transitions_enforced());
-        // Not strict => transitions advisory only, nothing rejected.
         assert!(
             workflow
                 .validate_transition(Some("open"), "deferred")
@@ -4956,12 +4849,6 @@ capacity:
 
     #[test]
     fn default_policy_lets_a_quick_capture_leave_draft() {
-        // `br q` creates status=draft (ADR-0035) and `br init` writes
-        // DEFAULT_FAIL_CLOSED_POLICY_YAML, so if that default omits draft the
-        // quick-capture feature is a dead end in every fresh workspace: every
-        // transition out of draft reports "Valid next statuses from 'draft':
-        // (none)". Parsed from the shipped constant, not a fixture, so this
-        // fails if the default ever drifts again.
         let workflow = default_fail_closed_workflow();
         assert!(
             workflow.transitions_enforced(),
@@ -5003,7 +4890,6 @@ capacity:
             .validate_transition(Some("open"), "in_review")
             .expect_err("open -> in_review is not configured");
         let message = err.to_string();
-        // Names current, attempted, and the valid next statuses.
         assert!(message.contains("'open'"), "{message}");
         assert!(message.contains("'in_review'"), "{message}");
         assert!(message.contains("in_progress"), "{message}");
@@ -5014,7 +4900,6 @@ capacity:
     #[test]
     fn transition_from_status_with_no_rule_rejects_with_none_targets() {
         let workflow = transition_workflow();
-        // `blocked` has no entry and there is no `any` wildcard.
         let err = workflow
             .validate_transition(Some("blocked"), "open")
             .expect_err("blocked has no allowed targets");
@@ -5025,9 +4910,7 @@ capacity:
     #[test]
     fn transition_no_op_is_always_allowed() {
         let workflow = transition_workflow();
-        // Same status, even when there is no explicit self-loop rule.
         assert!(workflow.validate_transition(Some("open"), "open").is_ok());
-        // Even for a status with no rule at all.
         assert!(
             workflow
                 .validate_transition(Some("blocked"), "blocked")
@@ -5051,8 +4934,6 @@ capacity:
         workflow
             .transitions
             .insert("any".to_string(), vec!["deferred".to_string()]);
-        // `deferred` now allowed from any from-status, including ones with
-        // their own rules and ones with none.
         assert!(
             workflow
                 .validate_transition(Some("open"), "deferred")
@@ -5063,7 +4944,6 @@ capacity:
                 .validate_transition(Some("blocked"), "deferred")
                 .is_ok()
         );
-        // Wildcard targets are merged into the error message's "valid next".
         let err = workflow
             .validate_transition(Some("open"), "bogus")
             .expect_err("bogus is not reachable");
@@ -5077,7 +4957,6 @@ capacity:
             "initial".to_string(),
             vec!["open".to_string(), "draft".to_string()],
         );
-        // No prior status => validated against `initial`.
         assert!(workflow.validate_transition(None, "open").is_ok());
         assert!(workflow.validate_transition(None, "draft").is_ok());
         let err = workflow
@@ -5092,8 +4971,6 @@ capacity:
 
     #[test]
     fn transition_absent_initial_key_accepts_any_initial_status() {
-        // `transition_workflow()` has no `initial` key — any starting status
-        // is accepted since there is no prior state to validate against.
         let workflow = transition_workflow();
         assert!(workflow.validate_transition(None, "open").is_ok());
         assert!(workflow.validate_transition(None, "anything").is_ok());
@@ -5102,13 +4979,11 @@ capacity:
     #[test]
     fn allowed_targets_from_dedupes_and_merges_wildcard() {
         let mut workflow = transition_workflow();
-        // Overlap between explicit `open` targets and the wildcard.
         workflow.transitions.insert(
             "any".to_string(),
             vec!["closed".to_string(), "deferred".to_string()],
         );
         let targets = workflow.allowed_targets_from("open");
-        // explicit: in_progress, closed; wildcard adds deferred (closed deduped).
         assert_eq!(
             targets,
             vec![
@@ -5145,13 +5020,11 @@ workflow:
                 .validate_transition(Some("open"), "in_review")
                 .is_err()
         );
-        // `any: [closed]` allows close from a from-status without an explicit rule.
         assert!(
             workflow
                 .validate_transition(Some("blocked"), "closed")
                 .is_ok()
         );
-        // `initial` gates creates.
         assert!(workflow.validate_transition(None, "open").is_ok());
         assert!(workflow.validate_transition(None, "closed").is_err());
     }
@@ -5159,8 +5032,6 @@ workflow:
     #[test]
     fn loader_absent_transitions_is_not_enforced() {
         let dir = tempfile::tempdir().expect("tempdir");
-        // Strict status enforcement but NO transitions map: status moves are
-        // unconstrained (backward compatible with #311-only configs).
         let yaml = "workflow:\n  strict: true\n  statuses: [open, in_progress, closed]\n";
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
         let policy = load_for_beads_dir(dir.path()).expect("load");
@@ -5185,10 +5056,6 @@ workflow:
         let raw: serde_yml::Value = serde_yml::from_str(yaml).unwrap();
         assert!(detect_unknown_policy_fields(&raw).is_empty());
     }
-
-    // =========================================================================
-    // Workflow gate engine (issue #312, layer 2 / beads#319)
-    // =========================================================================
 
     /// Parse the full gate schema from the issue spec and assert it round-trips
     /// into the typed structs (named gates, min_reviewers, conditional gates by
@@ -5232,12 +5099,10 @@ workflow:
 
     #[test]
     fn gates_disabled_when_strict_false_or_empty() {
-        // strict false → not enforced even with a gate rule
         let yaml =
             "workflow:\n  strict: false\n  gates:\n    \"a -> b\":\n      require_all: [ci]\n";
         let doc: PolicyDocument = serde_yml::from_str(yaml).unwrap();
         assert!(!doc.workflow.gates_enforced());
-        // strict true but no gates → not enforced (backward compatible)
         let doc2: PolicyDocument = serde_yml::from_str("workflow:\n  strict: true\n").unwrap();
         assert!(!doc2.workflow.gates_enforced());
     }
@@ -5299,7 +5164,6 @@ gates:
                 .map(GateSpec::id)
                 .any(|id| id == "p0_sign_off")
         );
-        // Non-P0 does not pick it up.
         let required_p3 = workflow.required_gates_for("in_review", "closed", &[], 3);
         assert!(
             !required_p3
@@ -5313,7 +5177,6 @@ gates:
     fn evaluate_gates_blocks_when_required_named_gate_missing() {
         let workflow = gate_workflow();
         let violations = evaluate_gates(&workflow, "bd-1", "in_review", "closed", &[], 3, &[]);
-        // ci_green (missing) + min_reviewers (0 reviewers) both fire.
         let gate_ids: Vec<&str> = violations.iter().map(|v| v.gate.as_str()).collect();
         assert!(gate_ids.contains(&"gate_ci_green"));
         assert!(gate_ids.contains(&"gate_min_reviewers"));
@@ -5351,7 +5214,6 @@ gates:
         }];
         let violations = evaluate_gates(&workflow, "bd-1", "in_review", "closed", &[], 3, &results);
         assert!(violations.iter().any(|v| v.gate == "gate_ci_green"));
-        // The message should name the failing provider for actionability.
         let ci_violation = violations
             .iter()
             .find(|v| v.gate == "gate_ci_green")
@@ -5368,7 +5230,6 @@ gates:
         let yaml =
             "strict: true\ngates:\n  \"a -> b\":\n    require_all:\n      - min_reviewers: 2\n";
         let workflow: Workflow = serde_yml::from_str(yaml).unwrap();
-        // One distinct reviewer → still short.
         let one = vec![GateResult {
             gate: "min_reviewers".to_string(),
             provider: "reviewer:alice".to_string(),
@@ -5379,7 +5240,6 @@ gates:
             evaluate_gates(&workflow, "bd-1", "a", "b", &[], 0, &one).len(),
             1
         );
-        // Two distinct reviewers → satisfied.
         let two = vec![
             GateResult {
                 gate: "min_reviewers".to_string(),
@@ -5402,7 +5262,6 @@ gates:
         let yaml =
             "strict: true\ngates:\n  \"a -> b\":\n    require_all:\n      - min_reviewers: 2\n";
         let workflow: Workflow = serde_yml::from_str(yaml).unwrap();
-        // Same reviewer reporting twice counts once.
         let dupes = vec![
             GateResult {
                 gate: "min_reviewers".to_string(),
@@ -5430,16 +5289,14 @@ gates:
         assert!(is_reviewer_provider("reviewer-bob"));
         assert!(is_reviewer_provider("Reviewer:Carol"));
         assert!(!is_reviewer_provider("ci"));
-        assert!(!is_reviewer_provider("reviewers")); // no separator
+        assert!(!is_reviewer_provider("reviewers"));
     }
 
     #[test]
     fn evaluate_gates_no_rule_is_backward_compatible() {
         let workflow = gate_workflow();
-        // No rule guards open -> in_progress → no violations regardless of state.
         let violations = evaluate_gates(&workflow, "bd-1", "open", "in_progress", &[], 0, &[]);
         assert!(violations.is_empty());
-        // A default (no gates) workflow never produces violations.
         let empty = Workflow::default();
         assert!(evaluate_gates(&empty, "bd-1", "in_review", "closed", &[], 0, &[]).is_empty());
     }
@@ -5466,8 +5323,6 @@ workflow:
 
     #[test]
     fn report_close_gate_extracts_cited_artifacts() {
-        // ADR-0005 §2: the close witness cites the artifact via a typed
-        // kind:value reference. All three kinds count; prose does not.
         let cited = cited_report_artifacts(Some(
             "survey done. artifact:docs/survey.md result_path: out/report.md",
         ));
@@ -5478,14 +5333,11 @@ workflow:
         assert_eq!(spaced, vec!["out/r.md"]);
         assert!(cited_report_artifacts(None).is_empty());
         assert!(cited_report_artifacts(Some("fixed the bug, no witness")).is_empty());
-        // A bare prose "path:" with no path-like value is not a citation.
         assert!(cited_report_artifacts(Some("the path: forward is unclear")).is_empty());
     }
 
     #[test]
     fn report_close_gate_uncited_report_close_is_violation() {
-        // ADR-0005 §2: a report close whose witness cites nothing has no
-        // evidence — fails even with no verdict rows recorded.
         let violations = report_close_violations("t-1", "open", &[], &|_| true, false);
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("cites no artifact"));
@@ -5518,15 +5370,10 @@ workflow:
 
     #[test]
     fn report_close_gate_refuses_unit_test_verified() {
-        // ADR-0005 §2: unit-test-verified is a false witness for report
-        // beads — any recorded row for the closing transition is refused.
-        // (The wiring reports presence regardless of pass/fail; a FAIL row
-        // is equally a verdict about code under test.)
         let violations =
             report_close_violations("t-1", "open", &["docs/adr.md".to_string()], &|_| true, true);
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("unit-test-verified"));
-        // No row recorded, artifact present: clean.
         let violations = report_close_violations(
             "t-1",
             "open",
@@ -5535,7 +5382,6 @@ workflow:
             false,
         );
         assert!(violations.is_empty());
-        // Missing artifact plus refused verdict: both fire.
         let violations =
             report_close_violations("t-1", "open", &["gone.md".to_string()], &|_| false, true);
         assert_eq!(violations.len(), 2);
@@ -5547,9 +5393,6 @@ mod legal_close_predicate_tests {
     use super::*;
 
     fn workflow_with_legal_close_rule() -> Workflow {
-        // open -> closed carries the flag; in_review -> closed has a gate rule
-        // WITHOUT it. The pair is the whole test: conflating the two is the
-        // drift this predicate exists to prevent.
         let yaml = r"
 workflow:
   gates:
@@ -5570,8 +5413,6 @@ workflow:
             transition_requires_legal_close(&workflow, "open", "closed"),
             "the rule names open -> closed, so that exact pair must answer true"
         );
-        // Case-insensitive: the workflow map lowercases its keys, and a caller
-        // may hold a status in any case.
         assert!(
             transition_requires_legal_close(&workflow, "OPEN", "Closed"),
             "the lookup is case-insensitive"

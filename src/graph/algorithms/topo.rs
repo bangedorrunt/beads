@@ -32,10 +32,8 @@ pub fn topological_sort(graph: &DiGraph) -> Option<Vec<usize>> {
         return Some(Vec::new());
     }
 
-    // Compute in-degrees
     let mut in_degree: Vec<usize> = (0..n).map(|i| graph.in_degree(i)).collect();
 
-    // Min-heap for deterministic ordering (process lowest index first)
     let mut heap: BinaryHeap<Reverse<usize>> =
         (0..n).filter(|&i| in_degree[i] == 0).map(Reverse).collect();
 
@@ -55,7 +53,7 @@ pub fn topological_sort(graph: &DiGraph) -> Option<Vec<usize>> {
     if order.len() == n {
         Some(order)
     } else {
-        None // Cycle detected
+        None
     }
 }
 
@@ -101,7 +99,6 @@ mod tests {
 
     #[test]
     fn test_linear_chain() {
-        // a -> b -> c
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");
@@ -110,16 +107,11 @@ mod tests {
         g.add_edge(b, c);
 
         let result = topological_sort(&g).unwrap();
-        assert_eq!(result, vec![0, 1, 2]); // a, b, c
+        assert_eq!(result, vec![0, 1, 2]);
     }
 
     #[test]
     fn test_diamond() {
-        //     a
-        //    / \
-        //   b   c
-        //    \ /
-        //     d
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");
@@ -131,17 +123,13 @@ mod tests {
         g.add_edge(c, d);
 
         let result = topological_sort(&g).unwrap();
-        // Valid orders: [a, b, c, d] or [a, c, b, d]
-        // With min-heap, should be [a, b, c, d]
-        assert_eq!(result[0], a); // a first
-        assert_eq!(result[3], d); // d last
-        // b before c due to min-heap ordering
+        assert_eq!(result[0], a);
+        assert_eq!(result[3], d);
         assert_eq!(result, vec![0, 1, 2, 3]);
     }
 
     #[test]
     fn test_cycle_detection() {
-        // a -> b -> c -> a
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");
@@ -156,7 +144,6 @@ mod tests {
 
     #[test]
     fn test_self_loop() {
-        // a -> a
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         g.add_edge(a, a);
@@ -167,7 +154,6 @@ mod tests {
 
     #[test]
     fn test_disconnected() {
-        // Two separate components: a->b, c->d
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");
@@ -177,14 +163,10 @@ mod tests {
         g.add_edge(c, d);
 
         let result = topological_sort(&g).unwrap();
-        // With min-heap: [0, 2, 1, 3] - process by index
-        // a (0) and c (2) have in-degree 0, min-heap pops 0 first
         assert_eq!(result.len(), 4);
-        // a comes before b
         let a_pos = result.iter().position(|&x| x == a).unwrap();
         let b_pos = result.iter().position(|&x| x == b).unwrap();
         assert!(a_pos < b_pos);
-        // c comes before d
         let c_pos = result.iter().position(|&x| x == c).unwrap();
         let d_pos = result.iter().position(|&x| x == d).unwrap();
         assert!(c_pos < d_pos);
@@ -208,12 +190,10 @@ mod tests {
 
     #[test]
     fn test_deterministic() {
-        // Run multiple times, should always get same result
         let mut g = DiGraph::new();
         for i in 0..10 {
             g.add_node(&format!("node{}", i));
         }
-        // Add some edges
         g.add_edge(0, 5);
         g.add_edge(1, 5);
         g.add_edge(2, 6);

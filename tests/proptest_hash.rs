@@ -139,11 +139,11 @@ fn length_prefixed_reference_content_hash(issue: &Issue) -> String {
     push_length_prefixed_field(&mut hasher, issue.source_system.as_deref().unwrap_or(""));
     push_length_prefixed_field(&mut hasher, if issue.pinned { "pinned" } else { "" });
     push_length_prefixed_field(&mut hasher, if issue.is_template { "template" } else { "" });
-    push_length_prefixed_field(&mut hasher, ""); // quality_score nil
-    push_length_prefixed_field(&mut hasher, ""); // crystallizes false
-    push_length_prefixed_field(&mut hasher, ""); // await_type
-    push_length_prefixed_field(&mut hasher, ""); // await_id
-    push_length_prefixed_field(&mut hasher, "0"); // timeout duration
+    push_length_prefixed_field(&mut hasher, "");
+    push_length_prefixed_field(&mut hasher, "");
+    push_length_prefixed_field(&mut hasher, "");
+    push_length_prefixed_field(&mut hasher, "");
+    push_length_prefixed_field(&mut hasher, "0");
     for _ in 0..12 {
         push_length_prefixed_field(&mut hasher, "");
     }
@@ -184,7 +184,6 @@ proptest! {
             hash.chars().all(|c: char| c.is_ascii_hexdigit()),
             "Hash must be valid hex: {hash}"
         );
-        // SHA256 hex uses lowercase
         prop_assert!(
             hash.chars().all(|c: char| !c.is_ascii_uppercase()),
             "Hash should be lowercase hex: {hash}"
@@ -327,7 +326,6 @@ proptest! {
         let mut issue = make_issue(&title, None);
         let hash1 = content_hash(&issue);
 
-        // Change timestamps
         issue.updated_at = Utc::now();
         let hash2 = content_hash(&issue);
 

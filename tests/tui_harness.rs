@@ -9,8 +9,6 @@ use beads::model::Issue;
 use beads::tui::{Focus, Key, TuiApp};
 
 fn fixture_issues() -> Vec<Issue> {
-    // Minimal id-sorted set; the state machine only reads ids/status for
-    // rendering, so serde defaults suffice via JSON like the other suites.
     ["fx-a", "fx-b", "fx-c"]
         .iter()
         .map(|id| {
@@ -125,7 +123,7 @@ fn any_other_key_cancels_quit_confirm() {
 fn status_message_clears_on_next_keypress() {
     let mut app = app();
     app.handle_key(Key::Esc);
-    app.handle_key(Key::Esc); // cancel -> sets "quit cancelled"
+    app.handle_key(Key::Esc);
     assert!(app.status_message().is_some());
     app.handle_key(Key::Up);
     assert!(
@@ -153,9 +151,6 @@ fn ctrl_c_quits_from_any_layer() {
 
 #[test]
 fn scroll_to_bottom_in_every_view_does_not_panic() {
-    // beads_rust-5ob1t: operator hit unreachable! at app.rs:451:40 scrolling
-    // to panel bottom. Every view focus must accept End/PageDown without
-    // panicking (handle_view_nav now owns stray keys).
     for open_key in [
         Key::Char('b'),
         Key::Char('g'),
@@ -171,7 +166,6 @@ fn scroll_to_bottom_in_every_view_does_not_panic() {
         assert_eq!(app.selected(), 2, "End clamps to last row");
     }
 
-    // Detail panel scroll to bottom (MAX/2 sentinel, clamped in draw) and back.
     let mut app = app();
     app.handle_key(Key::Enter);
     app.handle_key(Key::End);
@@ -183,8 +177,6 @@ fn scroll_to_bottom_in_every_view_does_not_panic() {
 
 #[test]
 fn responsive_layout_threshold_is_width_based() {
-    // beads_rust-5ob1t: phone-width terminal kept the 2-panel split. The
-    // split decision is width>100; set_size must flip it at both ends.
     let mut app = app();
     app.set_size(120, 40);
     assert!(app.is_split(), "default wide terminal splits");
@@ -198,10 +190,6 @@ fn responsive_layout_threshold_is_width_based() {
 
 #[test]
 fn list_keeps_open_and_in_progress_visible() {
-    // beads_rust-5ob1t regression: open/in_progress missing while
-    // `br list --status open --json` returned them. TuiApp::new sorts by
-    // status rank (open first), never filters — verify both statuses land
-    // in visible_indices and sort before closed.
     let mut issues = fixture_issues();
     let mut closed = serde_json::from_str::<Issue>(
         r#"{"id": "fx-z", "title": "done", "status": "closed",

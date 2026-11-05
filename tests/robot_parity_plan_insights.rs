@@ -44,9 +44,6 @@ fn strip_volatile(value: &Value) -> Value {
 const FLOAT_TOLERANCE: f64 = 1e-9;
 
 fn collect_mismatches(actual: &Value, golden: &Value, path: &str, out: &mut Vec<String>) {
-    // For metric maps where engine implementation differs from Go bv in
-    // exact float values or ordering (HITS/pagerank etc.), only the
-    // rank-stability test below checks IDs; structural values are not pinned.
     if path.starts_with("/Bottlenecks")
         || path.starts_with("/Hubs")
         || path.starts_with("/Authorities")
@@ -253,7 +250,6 @@ fn robot_plan_marks_phase2_metrics_skipped_with_reasons() {
     let workspace = workspace_with_fixture();
     let actual = run_robot_json(&workspace, &["plan", "--json"]);
 
-    // ADR-0003 §3.1: plan keeps Phase-2 metrics off with explicit skip reasons.
     for metric in ["PageRank", "Betweenness", "Eigenvector", "HITS"] {
         let status = actual
             .pointer(&format!("/status/{metric}"))
@@ -278,7 +274,6 @@ fn robot_insights_matches_bv_golden_shape_and_metric_ranking() {
         "`br insights --json` must be structurally identical to the bv golden",
     );
 
-    // Rank stability on the flywheel-critical maps (ADR-0003 §3.1 scores note).
     for map in [
         "Bottlenecks",
         "Keystones",

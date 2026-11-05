@@ -74,7 +74,6 @@ pub fn execute(
                 rows.push(HoldRow::from(hold));
             }
         }
-        // Lazy re-surface: expiries re-surface on read, never drop.
         let _ = storage_ctx
             .storage
             .resurface_expired_captain_holds(&actor)?;

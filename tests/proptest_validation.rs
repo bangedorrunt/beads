@@ -106,7 +106,6 @@ proptest! {
         init_test_logging();
         info!("proptest_valid_issue: title_len={len}", len = title.len());
 
-        // Skip if title is whitespace-only after generation
         prop_assume!(!title.trim().is_empty());
 
         let issue = make_valid_issue(&title);
@@ -224,8 +223,6 @@ proptest! {
     #[test]
     fn large_description_validates(extra_bytes in 1usize..1000usize) {
         init_test_logging();
-        // Sample size well past the prior 100KB cap to lock in the
-        // unbounded contract.
         let len = 600_000 + extra_bytes;
         info!("proptest_large_desc: len={len}");
 

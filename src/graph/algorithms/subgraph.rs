@@ -26,11 +26,9 @@ pub fn extract_subgraph(graph: &DiGraph, node_indices: &[usize]) -> DiGraph {
         return DiGraph::new();
     }
 
-    // Create mapping: old index -> new index
     let mut index_map: HashMap<usize, usize> = HashMap::with_capacity(node_indices.len());
     let mut new_graph = DiGraph::with_capacity(node_indices.len(), node_indices.len() * 2);
 
-    // Add nodes to new graph
     for &old_idx in node_indices {
         if old_idx < n {
             if let Some(id) = graph.node_id(old_idx) {
@@ -40,7 +38,6 @@ pub fn extract_subgraph(graph: &DiGraph, node_indices: &[usize]) -> DiGraph {
         }
     }
 
-    // Add edges between retained nodes
     for &old_from in node_indices {
         if let Some(&new_from) = index_map.get(&old_from) {
             for &old_to in graph.successors_slice(old_from) {
@@ -173,8 +170,6 @@ mod tests {
 
     #[test]
     fn test_subgraph_preserves_edges() {
-        // a -> b -> c -> d
-        // Subgraph [b, c] should have edge b->c
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -191,8 +186,6 @@ mod tests {
 
     #[test]
     fn test_subgraph_drops_external_edges() {
-        // a -> b -> c
-        // Subgraph [a, c] should have no edges (b is dropped)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -207,11 +200,6 @@ mod tests {
 
     #[test]
     fn test_subgraph_diamond() {
-        //     a
-        //    / \
-        //   b   c
-        //    \ /
-        //     d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -222,15 +210,13 @@ mod tests {
         graph.add_edge(b, d);
         graph.add_edge(c, d);
 
-        // Full subgraph should preserve structure
         let sub = extract_subgraph(&graph, &[a, b, c, d]);
         assert_eq!(sub.node_count(), 4);
         assert_eq!(sub.edge_count(), 4);
 
-        // Partial subgraph [a, b, d] loses a->c and c->d
         let sub2 = extract_subgraph(&graph, &[a, b, d]);
         assert_eq!(sub2.node_count(), 3);
-        assert_eq!(sub2.edge_count(), 2); // a->b and b->d
+        assert_eq!(sub2.edge_count(), 2);
     }
 
     #[test]
@@ -249,10 +235,6 @@ mod tests {
 
     #[test]
     fn test_reachable_from() {
-        // a -> b -> c
-        //      |
-        //      v
-        //      d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -263,21 +245,20 @@ mod tests {
         graph.add_edge(b, d);
 
         let from_a = reachable_from(&graph, a);
-        assert_eq!(from_a.len(), 4); // a, b, c, d
+        assert_eq!(from_a.len(), 4);
 
         let from_b = reachable_from(&graph, b);
-        assert_eq!(from_b.len(), 3); // b, c, d
+        assert_eq!(from_b.len(), 3);
         assert!(from_b.contains(&b));
         assert!(from_b.contains(&c));
         assert!(from_b.contains(&d));
 
         let from_c = reachable_from(&graph, c);
-        assert_eq!(from_c.len(), 1); // just c
+        assert_eq!(from_c.len(), 1);
     }
 
     #[test]
     fn test_reachable_to() {
-        // a -> b -> c
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -286,22 +267,17 @@ mod tests {
         graph.add_edge(b, c);
 
         let to_c = reachable_to(&graph, c);
-        assert_eq!(to_c.len(), 3); // c, b, a
+        assert_eq!(to_c.len(), 3);
 
         let to_b = reachable_to(&graph, b);
-        assert_eq!(to_b.len(), 2); // b, a
+        assert_eq!(to_b.len(), 2);
 
         let to_a = reachable_to(&graph, a);
-        assert_eq!(to_a.len(), 1); // just a
+        assert_eq!(to_a.len(), 1);
     }
 
     #[test]
     fn test_dependency_cone() {
-        //     a
-        //     |
-        //     b (target)
-        //    / \
-        //   c   d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -312,16 +288,11 @@ mod tests {
         graph.add_edge(b, d);
 
         let cone = dependency_cone(&graph, b);
-        assert_eq!(cone.len(), 4); // a, b, c, d
+        assert_eq!(cone.len(), 4);
     }
 
     #[test]
     fn test_reachable_subgraph() {
-        // a -> b -> c
-        //      |
-        //      v
-        //      d
-        // e (disconnected)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -333,13 +304,12 @@ mod tests {
         graph.add_edge(b, d);
 
         let sub = reachable_subgraph_from(&graph, a);
-        assert_eq!(sub.node_count(), 4); // a, b, c, d (not e)
-        assert_eq!(sub.edge_count(), 3); // a->b, b->c, b->d
+        assert_eq!(sub.node_count(), 4);
+        assert_eq!(sub.edge_count(), 3);
     }
 
     #[test]
     fn test_subgraph_runs_algorithms() {
-        // Verify that algorithms work on extracted subgraphs
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -349,12 +319,10 @@ mod tests {
 
         let sub = extract_subgraph(&graph, &[a, b, c]);
 
-        // Should be able to run pagerank on subgraph
         use crate::graph::algorithms::pagerank::pagerank_default;
         let pr = pagerank_default(&sub);
         assert_eq!(pr.len(), 3);
 
-        // Should be a DAG
         use crate::graph::algorithms::topo::is_dag;
         assert!(is_dag(&sub));
     }
@@ -365,7 +333,6 @@ mod tests {
         graph.add_node("a");
         graph.add_node("b");
 
-        // Invalid indices should be ignored
         let sub = extract_subgraph(&graph, &[0, 999, 1]);
         assert_eq!(sub.node_count(), 2);
     }
@@ -377,9 +344,7 @@ mod tests {
         graph.add_node("b");
         graph.add_edge(0, 1);
 
-        // Duplicate indices should be handled
         let sub = extract_subgraph(&graph, &[0, 0, 1, 1]);
-        // add_node is idempotent, so we should still get 2 nodes
         assert_eq!(sub.node_count(), 2);
         assert_eq!(sub.edge_count(), 1);
     }

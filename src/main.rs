@@ -25,8 +25,6 @@ fn maybe_rewrite_robot_args() -> Option<Vec<OsString>> {
     let pos = raw
         .iter()
         .position(|a| a.to_string_lossy().starts_with("--robot-"))?;
-    // ADR-0003 §3.4: only rewrite bare `br --robot-X` (bv compat).
-    // Leave `br <subcommand> --robot-X` alone (e.g. `doctor --robot-triage`).
     if raw[1..pos]
         .iter()
         .any(|a| !a.to_string_lossy().starts_with('-'))
@@ -34,10 +32,6 @@ fn maybe_rewrite_robot_args() -> Option<Vec<OsString>> {
         return None;
     }
     let flag = raw[pos].to_string_lossy().to_string();
-    // Preserve an explicit `doctor` command: its `--robot-triage` flag
-    // produces the doctor-specific envelope, while the bare legacy flag maps
-    // to the general triage command. Re-prepending `triage` here would turn
-    // `br doctor --robot-triage` into the invalid `br triage doctor`.
     if raw.iter().skip(1).any(|arg| arg == "doctor") {
         return Some(raw);
     }
@@ -93,8 +87,6 @@ fn space_form_optional_value_refusal(
         Commands::Update(_) => &["--wave", "--defer"],
         _ => return Ok(()),
     };
-    // `--` ends flag parsing; later tokens are positional values that may
-    // legitimately spell a flag name.
     let mut flags = true;
     for (index, arg) in args.iter().enumerate() {
         let Some(token) = arg.to_str() else { continue };
@@ -105,8 +97,6 @@ fn space_form_optional_value_refusal(
         if !flags || token.contains('=') || !guarded.contains(&token) {
             continue;
         }
-        // A following flag (or nothing) is the bare form; clap already refuses
-        // a missing value loudly, so only a bare token needs this guard.
         let Some(value) = args.get(index + 1).and_then(|next| next.to_str()) else {
             continue;
         };
@@ -124,20 +114,9 @@ fn space_form_optional_value_refusal(
 fn main() {
     CompleteEnv::with_factory(Cli::command).complete();
 
-    // Install SIGINT/SIGTERM/SIGHUP handlers before any storage opens so
-    // an interrupt during a long-running command unwinds through main
-    // and lets `SqliteStorage::Drop` flush the WAL (#270). The handler
-    // is process-global and idempotent, so calling it from clap's
-    // completion subprocess (above) would also be safe.
     beads::shutdown::install();
 
-    // ADR-0003 §3.4 bv compat: `bv --robot-X` (or `br --robot-X`) maps to the
-    // native `br <subcommand>` shape. Unknown --robot-* fails closed with a
-    // JSON envelope on stderr and exit 2, never clap help text.
     let robot_rewritten = maybe_rewrite_robot_args();
-    // Bare `br` in a TTY opens the TUI (ADR-0003 §3.3 bare-br entry). Any
-    // argument at all — including global flags — falls through to clap, and
-    // non-TTY stdout keeps the classic help text. Robot invocations skip TUI.
     let cli = if let Some(rewritten) = robot_rewritten {
         Cli::parse_from(rewritten)
     } else {
@@ -150,9 +129,6 @@ fn main() {
         }
         Cli::parse()
     };
-    // Fail-loud space-form guard: clap has already resolved shapes, so the raw
-    // argv is the only place the `--wave 6` / `--defer <ts>` ambiguity is
-    // still visible; refuse before any dispatch can mutate state.
     if let Err(refusal) =
         space_form_optional_value_refusal(&std::env::args_os().collect::<Vec<_>>(), &cli.command)
     {
@@ -165,12 +141,9 @@ fn main() {
     let is_mutating = is_mutating_command(&cli.command);
     let command_supports_auto_import = should_auto_import(&cli.command);
 
-    // Initialize logging
     if let Err(e) = init_logging(cli.verbose, cli.quiet, cli.no_color, None) {
         eprintln!("Failed to initialize logging: {e}");
     }
-    // Text-mode commands are Unix filters: a reader that closes the pipe
-    // early must end the process quietly, not as a SIGABRT core dump (#434).
     if should_restore_default_sigpipe(&cli, json_error_mode) {
         beads::shutdown::restore_default_sigpipe();
     }
@@ -182,7 +155,6 @@ fn main() {
 
     let mut overrides = build_cli_overrides(&cli);
 
-    // Phase 1: Startup & Discovery (One-time)
     let mut ctx = match StartupContext::init(&overrides) {
         Ok(ctx) => ctx,
         Err(e) => {
@@ -208,12 +180,6 @@ fn main() {
     let command_needs_write_lock = needs_write_lock(&cli.command);
     let no_db_jsonl_write = ctx.no_db() && no_db_jsonl_write_intent(&cli.command);
 
-    // A committed merge is a durable multi-artifact saga. This pre-lock check
-    // is advisory only: it can conservatively disable automatic sync early,
-    // but the permitting decision is repeated below under inode-bound
-    // database-family authority immediately before any storage open. The merge
-    // command itself is the sole mutation allowed to resume that state; doctor
-    // owns a richer dedicated finding/refusal surface.
     let pending_merge_disposition = pending_merge_startup_disposition(&cli.command);
     let mut pending_merge_warning_emitted = false;
     if ctx.is_initialized()
@@ -227,11 +193,6 @@ fn main() {
             Ok(Some(state)) => {
                 emit_pending_sync_merge_warning(&state, json_error_mode);
                 pending_merge_warning_emitted = true;
-                // Read-only commands remain available, but their convenience
-                // auto-import and every command-local storage fallback must
-                // not advance either side of the saga. Force current-schema
-                // read-only storage even when the user did not pass the
-                // normal explicit stale/flush opt-outs.
                 should_auto_import_now = false;
                 force_pending_merge_read_only_mode(&mut overrides, &mut ctx);
                 should_preopen_storage =
@@ -248,18 +209,6 @@ fn main() {
         }
     }
 
-    // Phase 1.5: Acquire exclusive write lock before any DB-family open that
-    // may apply schema, recover, quarantine sidecars, write metadata, or read
-    // while another process is in a write transaction.
-    //
-    // Issue #243: concurrent writes to the same database file from multiple
-    // processes must be serialized. Serialize all mutating
-    // operations through a blocking flock on `.beads/.write.lock`. Normal
-    // storage open is not guaranteed read-only in recovery/schema paths, so
-    // DB-family commands hold authority even when they first try the
-    // current-schema read-only fast-open path. That keeps the pending-saga
-    // verdict stable and prevents a fast-open miss from entering writable
-    // recovery without a definitive gate.
     let ordinary_database_authority_required = should_acquire_startup_write_lock(
         command_needs_write_lock,
         should_preopen_storage,
@@ -289,12 +238,6 @@ fn main() {
             }) {
             Some(Ok(lock)) => Some(lock),
             Some(Err(e)) => {
-                // Round-3 fresh-eyes (`beads-sexc`): when the
-                // contended command is `br doctor --repair`, surface the
-                // structured `ConcurrencyLost` (exit code 5) documented
-                // in `doctor_subsystems::exit_codes` instead of the
-                // generic `BeadsError::Config` exit code. Other commands
-                // still flow through `handle_error` unchanged.
                 if let Commands::Doctor(doctor_args) = &cli.command {
                     let lock_path = ctx
                         .beads_dir
@@ -321,8 +264,6 @@ fn main() {
                                 "detail": e.to_string(),
                                 "lock_path": lock_display,
                             });
-                            // #336: structured JSON errors go to STDOUT in json
-                            // mode so robot callers get one clean parseable stream.
                             println!(
                                 "{}",
                                 serde_json::to_string_pretty(&payload)
@@ -364,13 +305,6 @@ fn main() {
     } else {
         None
     };
-    // Every non-merge DB-family caller inspects only after startup has obtained
-    // its database-family write lock. This prevents a concurrent merge from
-    // changing the receipt between the gate decision and storage open. Read
-    // commands may continue on a classified pending receipt, but only in
-    // current-schema read-only mode with automatic sync disabled. Inspection
-    // uncertainty fails closed because a fast-open fallback could otherwise
-    // recover or migrate the database before the command executes.
     if ctx.is_initialized()
         && ctx.no_db()
         && (no_db_jsonl_write || pending_merge_mutation_gate_required)
@@ -415,10 +349,6 @@ fn main() {
             || pending_merge_mutation_gate_required)
         && pending_merge_disposition != PendingMergeStartupDisposition::Resume
         && !matches!(cli.command, Commands::Doctor(_))
-        // Read-only fast-open runs without the family authority; the
-        // advisory path-only inspection above already classified pending
-        // state for it, and a fast-open miss reacquires the authority (and
-        // with it this definitive gate) before any writable fallback.
         && !(write_lock.is_none() && ctx.overrides.read_only_fast_open)
         && let Some(paths) = ctx.paths.as_ref()
     {
@@ -476,7 +406,6 @@ fn main() {
         overrides.mark_database_family_lock_held(beads_dir, write_lock);
     }
 
-    // Phase 2: Open Storage (One-time)
     let mut storage_result = if should_preopen_storage {
         match open_storage_from_ctx(&mut ctx, write_lock.as_ref()) {
             Ok(res) => Some(res),
@@ -491,10 +420,6 @@ fn main() {
         None
     };
 
-    // Phase 3: Auto-Import. Normal staleness probes can opportunistically
-    // refresh JSONL witness metadata. Read-only startup probes skip that
-    // refresh and reopen writable storage only when an import is actually
-    // needed.
     if let Some(paths) = ctx.paths.as_ref()
         && should_auto_import_now
         && storage_result.is_some()
@@ -557,14 +482,6 @@ fn main() {
                 };
             }
 
-            // The first read-only probe is deliberately advisory: JSONL or
-            // the pending-merge receipt can change before we join the writer
-            // queue. Reclassify both under the database-family authority
-            // before dropping the read-only handle or opening anything that
-            // can recover, migrate, or import. A pending/uncertain receipt
-            // fails closed to the already-open read-only command; a JSONL
-            // change that disappeared while waiting avoids the writable
-            // reopen entirely.
             if ctx.overrides.read_only_fast_open
                 && let (Some(res), Some(authority)) =
                     (storage_result.as_ref(), auto_import_write_lock.as_ref())
@@ -640,11 +557,9 @@ fn main() {
                     handle_error(&e, json_error_mode, color_error_mode);
                 }
             }
-            // sync_lock drops here, releasing the advisory lock before command execution
         }
     }
 
-    // Phase 4: Command Execution
     let result = match cli.command {
         Commands::Init {
             prefix,
@@ -971,28 +886,18 @@ fn main() {
         }
     };
 
-    // Handle command result
     if let Err(e) = result {
-        // handle_error terminates the process; drop the storage family first
-        // so `SqliteStorage::Drop` checkpoints and removes -wal/-shm instead
-        // of leaking them beside the database (#270).
         drop(storage_result);
         drop(write_lock);
         handle_error(&e, json_error_mode, color_error_mode);
     }
 
-    // Cooperative shutdown: if a SIGINT/SIGTERM/SIGHUP arrived while
-    // the command was executing, skip the auto-flush phase and let
-    // every local — including `storage_result` — drop on the way out
-    // of `main`, so `SqliteStorage::Drop` checkpoints the WAL before
-    // the process exits (#270).
     if let Some(exit_code) = beads::shutdown::exit_code() {
         drop(storage_result);
         drop(write_lock);
         beads::shutdown::exit_process(exit_code);
     }
 
-    // Phase 5: Auto-Flush (with advisory flock to serialize concurrent access)
     if is_mutating
         && !ctx.no_auto_flush()
         && let (Some(res), Some(paths)) = (storage_result.as_mut(), ctx.paths.as_ref())
@@ -1025,12 +930,6 @@ fn main() {
         };
 
         if let Some(_sync_lock) = sync_lock {
-            // DB sessions route through `OpenStorageResult` so a recovered
-            // session reuses its retained JSONL-family authority: re-acquiring
-            // the same flock sidecar on a fresh descriptor in-process blocks on
-            // itself and times out. No-DB sessions keep the legacy bare flush,
-            // which is a no-op once their `flush_no_db_then` wrapper has
-            // already persisted.
             let flush_result = if res.no_db {
                 auto_flush(
                     &mut res.storage,
@@ -1061,12 +960,6 @@ fn main() {
         beads::shutdown::exit_process(err.exit_code());
     }
 
-    // Successful exit goes through the same funnel as every other exit
-    // path (#439): on Windows, letting `main` return would reach the CRT
-    // `exit()` teardown, where an atexit/TLS destructor joining a thread
-    // that `ExitProcess` already terminated aborts with 0xC0000409 and
-    // corrupts the exit code of a command that worked. Storage is dropped
-    // first so `SqliteStorage::Drop` checkpoints the WAL (#270).
     drop(storage_result);
     drop(write_lock);
     let exit_code = beads::output::take_pending_exit_code().unwrap_or(0);
@@ -1086,7 +979,6 @@ impl StartupContext {
         let beads_dir = config::discover_beads_dir_with_cli(overrides)?;
         let startup = config::load_startup_config_with_paths(&beads_dir, overrides.db.as_ref())?;
 
-        // Merge startup config with CLI overrides to form the effective bootstrap config
         let mut final_config = startup.merged_config.clone();
         final_config.merge_from(&overrides.as_layer());
         let paths = startup.paths.clone();
@@ -1226,19 +1118,9 @@ const fn should_acquire_startup_write_lock(
     should_preopen_storage: bool,
     read_only_fast_open: bool,
 ) -> bool {
-    // Read-only fast-open commands try the current-schema read-only engine
-    // path before joining the writer-lock queue (1b75961a, reverted by the
-    // 251b501b rescue merge and restored here). A fast-open miss clears
-    // `read_only_fast_open` and reacquires the family authority inside
-    // config before any recovery or writable fallback, and pending-merge
-    // mutation gates still force the lock through
-    // `startup_database_authority_required`.
     !read_only_fast_open && (command_needs_write_lock || should_preopen_storage)
 }
 
-// The startup gate genuinely composes four independent boolean facts; a
-// struct would only rename them without adding meaning at the single call
-// site.
 #[allow(clippy::fn_params_excessive_bools)]
 const fn startup_database_authority_required(
     no_db: bool,
@@ -1418,11 +1300,6 @@ fn pending_sync_merge_no_db_refusal_error(
 fn inspect_pending_sync_merge_for_startup(
     db_path: &Path,
 ) -> Result<Option<commands::doctor::PendingSyncMergeState>> {
-    // A missing database is the normal pre-import state for a JSONL-only
-    // checkout and cannot contain a pending merge receipt, so the advisory
-    // startup inspection must not push such workspaces into degraded
-    // read-only mode (#414, #409 cluster A). Doctor still reports the
-    // missing database as a finding through its stricter public inspector.
     match fs::symlink_metadata(db_path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         _ => commands::doctor::inspect_pending_sync_merge_at_path(db_path),
@@ -1433,10 +1310,6 @@ fn inspect_pending_sync_merge_for_startup_under_authority(
     db_path: &Path,
     authority: &Arc<beads::sync::DatabaseFamilyWriteLock>,
 ) -> Result<Option<commands::doctor::PendingSyncMergeState>> {
-    // Binding an exactly absent database under the held family authority
-    // makes that absence definitive for the startup gate. The subsequent
-    // writable open may then initialize/import it without leaving an
-    // unchecked replacement window.
     if authority.bind_database_inode_for_mutation()? {
         authority.verify_database_authority()?;
         return Ok(None);
@@ -1547,30 +1420,6 @@ const fn needs_write_lock(cmd: &Commands) -> bool {
         return true;
     }
     match cmd {
-        // Every command in this arm can open or snapshot the SQLite DB family.
-        // Serialize them before command execution so `--allow-stale`,
-        // `--no-auto-import`, and direct command-local open paths do not bypass
-        // the startup lock that protects recovery/schema/default metadata work.
-        //
-        // Every explicit DB-backed sync mode must open storage inside
-        // `sync::execute`.
-        // `--flush-only` looks like a "just rewrite JSONL" path but also calls
-        // `finalize_export` inside a `with_write_transaction`, updating dirty
-        // flags, export hashes, and metadata (jsonl_content_hash,
-        // last_export_time, needs_flush). Without the `.write.lock`, a
-        // concurrent `br sync --flush-only` racing with another process's
-        // auto-flush (or a second `--flush-only`) can corrupt shared state;
-        // this lock was specifically added to prevent that (issue #243).
-        // `--status` only renders status after open,
-        // but opening storage can still apply schema/runtime defaults or
-        // recover the DB family, so it must also serialize before open.
-        // `br sync --witness` hashes JSONL and returns before opening SQLite, so
-        // it also should not block behind DB writers. Bare `br sync` is invalid
-        // and fails validation before storage open, so it should not block on
-        // `.write.lock` just to report an argument error.
-        // Doctor inspects a live SQLite DB family via snapshot copy + rollback
-        // write probe, so it must serialize with writers — merged into this arm
-        // (identical body as Sync/Init) to satisfy clippy::match_same_arms.
         Commands::List(_)
         | Commands::Show(_)
         | Commands::Search(_)
@@ -1643,11 +1492,6 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::Epic { .. }
         | Commands::Gate { .. }
         | Commands::Query { .. }
-        // beads-750p: orphan SCANS auto-import a newer JSONL through the
-        // startup probe path (the scan itself stays read-only until a probe
-        // proves staleness). `--fix` never reaches this arm: it is mutating
-        // (`is_mutating_command`) and keeps the ordinary writable startup
-        // path so its nested close shares one storage authority.
         | Commands::Orphans(beads::cli::OrphansArgs { fix: false, .. }) => true,
 
         Commands::Init { .. }
@@ -1662,12 +1506,9 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::VcsStatus(_)
         | Commands::Completions(_)
         | Commands::Audit { .. }
-        // `--fix` is a mutating interactive close path; it never benefits from
-        // a startup auto-import probe and must share one writable context.
         | Commands::Orphans(beads::cli::OrphansArgs { fix: true, .. })
         | Commands::Config { .. }
         | Commands::History(_)
-        // wave-5 strip: agents/capacity/changelog no longer parse.
         => false,
 
         Commands::Plan(_) | Commands::Insights(_) | Commands::Triage(_) | Commands::Next(_) => {
@@ -1681,8 +1522,6 @@ const fn should_auto_import(cmd: &Commands) -> bool {
 
 const fn supports_read_only_fast_open(cmd: &Commands) -> bool {
     match cmd {
-        // `--reconcile --dry-run` is read-only by contract: it plans without
-        // opening a write transaction, so it may share the status fast path.
         Commands::Sync(args) => args.status || (args.reconcile && args.dry_run),
         Commands::Stats(_)
         | Commands::Status(_)
@@ -1880,19 +1719,12 @@ fn handle_error(err: &BeadsError, json_mode: bool, color_mode: bool) -> ! {
     let exit_code = structured.code.exit_code();
 
     if json_mode {
-        // #336: In `--json` mode, route the structured JSON error envelope to
-        // STDOUT (where success JSON already goes) so robot callers read ONE
-        // clean, parseable stream. tracing/log lines stay on stderr (see
-        // `logging::init_logging`, which writes to `std::io::stderr`), so the
-        // stdout JSON is never interleaved with diagnostic noise.
         let json = structured.to_json();
         println!(
             "{}",
             serde_json::to_string_pretty(&json).unwrap_or_else(|_| json.to_string())
         );
     } else {
-        // Human mode: errors stay on stderr so stdout remains usable for the
-        // command's normal (non-error) output and pipelines.
         eprintln!("{}", structured.to_human(color_mode));
     }
 
@@ -2214,13 +2046,6 @@ fn lock_mode_octal(_lock_path: &Path) -> Option<String> {
 }
 
 fn build_cli_overrides(cli: &Cli) -> config::CliOverrides {
-    // `--lock-timeout` deliberately does NOT disable the fast path. The
-    // timeout governs how long to wait *when a lock is required*, and a
-    // read-only fast open acquires none; on a fast-open miss the fallback
-    // still takes the write lock and honors the timeout. Gating on it meant
-    // any scripted caller that passed `--lock-timeout` silently lost lock-free
-    // reads and serialized every read command behind an exclusive flock,
-    // which shows up as spurious lock-timeout failures under parallel reads.
     let read_only_fast_open = !cli.no_db
         && !read_only_fast_open_disabled_for_cli()
         && supports_read_only_fast_open(&cli.command)
@@ -2230,9 +2055,6 @@ fn build_cli_overrides(cli: &Cli) -> config::CliOverrides {
     let mut overrides = config::CliOverrides::default();
     overrides.db.clone_from(&cli.db);
     overrides.actor.clone_from(&cli.actor);
-    // Only set bool overrides when the CLI flag was explicitly provided.
-    // Eagerly setting Some(false) would override config-file values with the
-    // CLI default, preventing users from setting these via config.
     overrides.json = cli.json.then_some(true);
     overrides.display_color = if cli.no_color { Some(false) } else { None };
     overrides.quiet = cli.quiet.then_some(true);
@@ -2358,10 +2180,7 @@ mod tests {
             vec!["br", "update", "abc-1", "--wave=6"],
             vec!["br", "update", "abc-1", "--wave="],
             vec!["br", "update", "abc-1", "--defer=2100-01-01T00:00:00Z"],
-            // `--` ends flag parsing: `--wave` is a positional id there.
             vec!["br", "update", "--", "--wave", "6"],
-            // The guard is scoped to the command that owns the optional-value
-            // flag; create's typed `--wave` keeps its required-value space form.
             vec!["br", "create", "Title", "--wave", "6"],
         ] {
             let cli = Cli::try_parse_from(&argv)
@@ -2432,9 +2251,6 @@ mod tests {
         let cli = Cli::parse_from(["br", "list"]);
         let overrides = build_cli_overrides(&cli);
 
-        // Absent CLI bool flags must not produce Some(false) overrides — that
-        // would silently clobber any config-file value (e.g. `sync.auto_flush:
-        // false` would be ignored because the CLI's default `false` wins).
         assert_eq!(overrides.json, None);
         assert_eq!(overrides.quiet, None);
         assert_eq!(overrides.no_db, None);
@@ -2979,11 +2795,6 @@ mod tests {
 
     #[test]
     fn read_only_fast_open_covers_non_fix_orphans_scan() {
-        // beads-750p: orphan SCANS may use the read-only fast-open path with
-        // its freshness probe (a stale JSONL reopens writable under authority
-        // before scanning). `--fix` is mutating and keeps the ordinary
-        // writable startup path so the nested close shares one storage
-        // authority with the scan.
         let orphans = Cli::parse_from(["br", "--no-auto-import", "--no-auto-flush", "orphans"]);
         assert!(build_cli_overrides(&orphans).read_only_fast_open);
 
@@ -3467,19 +3278,6 @@ mod tests {
 
     #[test]
     fn sync_modes_require_write_lock_before_storage_open() {
-        // Regression: `br sync --flush-only` calls `finalize_export` inside a
-        // `with_write_transaction` (clears dirty flags, updates
-        // jsonl_content_hash + last_export_time + needs_flush metadata, writes
-        // export hashes). That makes it a write-side operation. Previously the
-        // `needs_write_lock` match arm excluded `--flush-only`, leaving two
-        // concurrent `br sync --flush-only` invocations — or one racing a
-        // mutating command's auto-flush — to hit the concurrent-write deadlock
-        // that the
-        // `.write.lock` was specifically introduced (issue #243) to prevent.
-        //
-        // `br sync --status` is read-only after storage is open, but the open
-        // path can apply runtime metadata defaults, recover from JSONL, or move
-        // sidecars. It must therefore serialize before entering `sync::execute`.
         let flush_only = Cli::parse_from(["br", "sync", "--flush-only"]).command;
         let status = Cli::parse_from(["br", "sync", "--status"]).command;
         let witness = Cli::parse_from(["br", "sync", "--witness"]).command;
@@ -3586,9 +3384,6 @@ mod tests {
     #[test]
     fn orphans_scan_auto_imports_but_defers_write_lock() {
         let command = Cli::parse_from(["br", "orphans"]).command;
-        // beads-750p: an orphan SCAN must see JSONL-only closures, so it
-        // auto-imports a newer JSONL through the read-only fast-open probe
-        // (the scan itself stays read-only until a probe proves staleness).
         assert!(should_auto_import(&command));
         assert!(supports_auto_import_read_only_probe(&command));
         assert!(supports_read_only_fast_open(&command));
@@ -3694,10 +3489,6 @@ mod tests {
 
         let storage_ctx = open_storage_from_ctx(&mut ctx, None).expect("preopened storage");
 
-        // br reports configured routes through their physical location;
-        // resolve the expected path the same way (canonical parent + leaf,
-        // since first.jsonl itself may not exist yet) so symlinked system
-        // prefixes (/var -> /private/var) don't fail the reuse assertion.
         let mut expected_first = beads_dir.canonicalize().expect("canonical beads dir");
         expected_first.push("first.jsonl");
         assert_eq!(storage_ctx.paths.jsonl_path, expected_first);

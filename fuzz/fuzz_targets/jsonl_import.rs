@@ -215,12 +215,6 @@ fn assert_storage_invariants(storage: &SqliteStorage) -> Result<(), Box<dyn Erro
 fn assert_import_validation(storage: &SqliteStorage) -> Result<(), Box<dyn Error>> {
     for issue in storage.get_all_issues_for_export()? {
         if let Err(errors) = IssueValidator::validate(&issue) {
-            // The import pipeline intentionally accepts data from external
-            // systems (Go bd, manual JSONL, etc.) that may not conform to
-            // all IssueValidator rules. Filter to violations that indicate
-            // corrupted import behavior, not just permissive acceptance.
-            // Skipped: id (external IDs), priority (not clamped on import),
-            //   updated_at/closed_at (external timestamps), external_ref.
             let import_violations: Vec<_> = errors
                 .into_iter()
                 .filter(|e| {

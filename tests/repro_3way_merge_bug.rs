@@ -25,14 +25,11 @@ fn create_issue_id(workspace: &BrWorkspace, title: &str, label: &str) -> String 
 fn repro_3way_merge_data_loss() {
     let workspace = BrWorkspace::new();
 
-    // 1. Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
-    // 2. Create an issue
     let issue_id = create_issue_id(&workspace, "Test issue", "create");
 
-    // 3. Sync to JSONL (creates base snapshot)
     let sync1 = run_br(&workspace, ["sync", "--flush-only"], "sync1");
     assert!(sync1.status.success(), "sync1 failed");
     let beads_dir = workspace.root.join(".beads");
@@ -41,8 +38,6 @@ fn repro_3way_merge_data_loss() {
     let base_jsonl = fs::read_to_string(&jsonl_path).expect("read base jsonl");
     fs::write(&base_snapshot_path, &base_jsonl).expect("seed base snapshot");
 
-    // 4. Modify labels LOCALLY (Left side of merge), keeping JSONL at the base
-    // snapshot so this is a true local-only relation change.
     let label_local = run_br(
         &workspace,
         ["--no-auto-flush", "label", "add", &issue_id, "local-tag"],
@@ -54,24 +49,15 @@ fn repro_3way_merge_data_loss() {
         label_local.stderr
     );
 
-    // 5. Modify description EXTERNALLY (Right side of merge)
-    // We simulate this by directly editing the JSONL.
     let jsonl_content = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let mut issue: serde_json::Value =
         serde_json::from_str(jsonl_content.trim()).expect("parse jsonl");
 
-    // Change description - this WILL change the content_hash
     issue["description"] = serde_json::Value::String("External description".to_string());
     issue["updated_at"] = serde_json::Value::String("2999-01-01T00:00:00Z".to_string());
 
     let modified_jsonl = serde_json::to_string(&issue).expect("serialize modified issue");
     fs::write(&jsonl_path, format!("{}\n", modified_jsonl)).expect("write modified jsonl");
-
-    // 6. Run 3-way merge
-    // At this point:
-    // Base: labels=[], desc=""
-    // Left (DB): labels=["local-tag"], desc=""
-    // Right (JSONL): labels=[], desc="External description"
 
     let merge = run_br(&workspace, ["sync", "--merge"], "merge");
     assert!(
@@ -86,9 +72,6 @@ fn repro_3way_merge_data_loss() {
         merge.stderr
     );
 
-    // 7. Verify the failed merge preserved both sides for explicit operator
-    // resolution: DB still has the local tag, JSONL still has the external
-    // description.
     let show = run_br(
         &workspace,
         ["--allow-stale", "show", &issue_id, "--json"],

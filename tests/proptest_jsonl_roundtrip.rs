@@ -311,8 +311,6 @@ fn jsonl_import_normalizes_mixed_case_known_status_and_issue_type() {
 
 #[test]
 fn jsonl_import_rejects_unknown_status_and_issue_type() {
-    // bd-bqyb: QaReview/Odd_Type no longer normalize to Custom — the import
-    // fails loud at the typed boundary.
     let temp = TempDir::new().unwrap();
     let input_path = temp.path().join("unknown.jsonl");
     fs::write(

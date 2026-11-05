@@ -40,31 +40,24 @@ pub fn pagerank(graph: &DiGraph, config: &PageRankConfig) -> Vec<f64> {
     let d = config.damping;
     let base = (1.0 - d) / n as f64;
 
-    // Initialize with uniform distribution
     let mut scores = vec![1.0 / n as f64; n];
     let mut new_scores = vec![0.0; n];
 
-    // Pre-compute out-degrees
     let out_degrees: Vec<usize> = (0..n).map(|i| graph.out_degree(i)).collect();
 
     for _ in 0..config.max_iterations {
-        // Reset new scores to base value
         new_scores.fill(base);
 
-        // Handle dangling nodes (no outgoing edges)
-        // Their rank "leaks" and is distributed uniformly
         let dangling_sum: f64 = (0..n)
             .filter(|&i| out_degrees[i] == 0)
             .map(|i| scores[i])
             .sum();
         let dangling_contrib = d * dangling_sum / n as f64;
 
-        // Add dangling contribution to all nodes
         for s in &mut new_scores {
             *s += dangling_contrib;
         }
 
-        // Accumulate contributions from predecessors
         for (v, score) in new_scores.iter_mut().enumerate() {
             for &u in graph.predecessors_slice(v) {
                 if out_degrees[u] > 0 {
@@ -73,7 +66,6 @@ pub fn pagerank(graph: &DiGraph, config: &PageRankConfig) -> Vec<f64> {
             }
         }
 
-        // Check convergence
         let diff: f64 = scores
             .iter()
             .zip(new_scores.iter())
@@ -112,14 +104,11 @@ mod tests {
         graph.add_node("a");
         let scores = pagerank(&graph, &PageRankConfig::default());
         assert_eq!(scores.len(), 1);
-        // Single node should have all probability mass
         assert!((scores[0] - 1.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_pagerank_chain() {
-        // a -> b -> c
-        // c should have highest rank (sink)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -134,7 +123,6 @@ mod tests {
 
     #[test]
     fn test_pagerank_cycle() {
-        // a -> b -> c -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -144,14 +132,12 @@ mod tests {
         graph.add_edge(c, a);
 
         let scores = pagerank(&graph, &PageRankConfig::default());
-        // Scores should be roughly equal in a cycle
         let diff = (scores[a] - scores[b]).abs() + (scores[b] - scores[c]).abs();
         assert!(diff < 0.01, "Scores in cycle should be roughly equal");
     }
 
     #[test]
     fn test_pagerank_star() {
-        // a -> b, a -> c, a -> d (a is central)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -162,12 +148,9 @@ mod tests {
         graph.add_edge(a, d);
 
         let scores = pagerank(&graph, &PageRankConfig::default());
-        // b, c, d are sinks with equal incoming from a
-        // They should have roughly equal scores
         let sink_diff = (scores[b] - scores[c]).abs() + (scores[c] - scores[d]).abs();
         assert!(sink_diff < 0.01, "Sink nodes should have equal scores");
 
-        // Sinks should have higher rank than the source (due to damping)
         assert!(
             scores[b] > scores[a],
             "Sink should have higher rank than source"
@@ -176,9 +159,6 @@ mod tests {
 
     #[test]
     fn test_pagerank_two_chains() {
-        // Chain 1: a -> b -> c
-        // Chain 2: d -> e
-        // Longer chain should have higher max score
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -190,13 +170,11 @@ mod tests {
         graph.add_edge(d, e);
 
         let scores = pagerank(&graph, &PageRankConfig::default());
-        // c is the deepest sink, should have highest score
         assert!(scores[c] > scores[e], "Deeper sink should have higher rank");
     }
 
     #[test]
     fn test_pagerank_sum_to_one() {
-        // PageRank scores should sum to approximately 1.0
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -216,13 +194,11 @@ mod tests {
 
     #[test]
     fn test_pagerank_dangling_nodes() {
-        // a -> b, c is isolated (dangling)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
         let c = graph.add_node("c");
         graph.add_edge(a, b);
-        // c has no edges - it's a dangling node
 
         let scores = pagerank(&graph, &PageRankConfig::default());
         assert!(scores[c] > 0.0, "Dangling node should have positive score");
@@ -237,16 +213,13 @@ mod tests {
 
     #[test]
     fn test_pagerank_convergence() {
-        // Large enough graph to test convergence
         let mut graph = DiGraph::new();
         for i in 0..20 {
             graph.add_node(&format!("node{}", i));
         }
-        // Create some edges
         for i in 0..19 {
             graph.add_edge(i, i + 1);
         }
-        // Add some cross edges
         graph.add_edge(0, 10);
         graph.add_edge(5, 15);
         graph.add_edge(10, 0);
@@ -263,11 +236,6 @@ mod tests {
 
     #[test]
     fn test_pagerank_diamond() {
-        //     a
-        //    / \
-        //   b   c
-        //    \ /
-        //     d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -279,10 +247,8 @@ mod tests {
         graph.add_edge(c, d);
 
         let scores = pagerank(&graph, &PageRankConfig::default());
-        // d should have highest score (most incoming paths)
         assert!(scores[d] > scores[b], "d should have higher rank than b");
         assert!(scores[d] > scores[c], "d should have higher rank than c");
-        // b and c should have equal scores (symmetric)
         assert!(
             (scores[b] - scores[c]).abs() < 0.001,
             "b and c should have equal scores"

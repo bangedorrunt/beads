@@ -55,28 +55,23 @@ pub fn coverage_set(graph: &DiGraph, limit: usize) -> CoverageResult {
         };
     }
 
-    // Track covered edges using a HashSet for O(E) memory
-    // Instead of O(V^2) with a matrix
     let mut covered: HashSet<(usize, usize)> = HashSet::new();
     let mut selected: Vec<CoverageItem> = Vec::with_capacity(limit.min(n));
     let mut edges_covered = 0;
 
     for _ in 0..limit {
-        // Find node covering most uncovered edges
         let mut best_node: Option<usize> = None;
         let mut best_count = 0;
 
         for v in 0..n {
             let mut count = 0;
 
-            // Count uncovered outgoing edges (v -> w)
             for &w in graph.successors_slice(v) {
                 if !covered.contains(&(v, w)) {
                     count += 1;
                 }
             }
 
-            // Count uncovered incoming edges (u -> v)
             for &u in graph.predecessors_slice(v) {
                 if !covered.contains(&(u, v)) {
                     count += 1;
@@ -91,11 +86,9 @@ pub fn coverage_set(graph: &DiGraph, limit: usize) -> CoverageResult {
 
         match best_node {
             Some(node) if best_count > 0 => {
-                // Mark edges as covered - outgoing
                 for &w in graph.successors_slice(node) {
                     covered.insert((node, w));
                 }
-                // Mark edges as covered - incoming
                 for &u in graph.predecessors_slice(node) {
                     covered.insert((u, node));
                 }
@@ -106,7 +99,7 @@ pub fn coverage_set(graph: &DiGraph, limit: usize) -> CoverageResult {
                 });
                 edges_covered += best_count;
             }
-            _ => break, // No more uncovered edges or no more nodes
+            _ => break,
         }
     }
 
@@ -169,7 +162,6 @@ mod tests {
         let g = make_graph(&[(0, 1)]);
         let result = coverage_set(&g, 5);
 
-        // Either node 0 or 1 should be selected, covering the single edge
         assert_eq!(result.items.len(), 1);
         assert_eq!(result.edges_covered, 1);
         assert_eq!(result.total_edges, 1);
@@ -178,11 +170,9 @@ mod tests {
 
     #[test]
     fn test_star_graph() {
-        // Center node 0 with edges to 1, 2, 3
         let g = make_graph(&[(0, 1), (0, 2), (0, 3)]);
         let result = coverage_set(&g, 5);
 
-        // Node 0 should be selected first as it covers all 3 edges
         assert!(!result.items.is_empty());
         assert_eq!(result.items[0].node, 0);
         assert_eq!(result.items[0].edges_added, 3);
@@ -192,11 +182,9 @@ mod tests {
 
     #[test]
     fn test_chain_graph() {
-        // Chain: 0 -> 1 -> 2 -> 3
         let g = make_graph(&[(0, 1), (1, 2), (2, 3)]);
         let result = coverage_set(&g, 5);
 
-        // Node 1 or 2 should be selected first (each covers 2 edges)
         assert!(!result.items.is_empty());
         let first_node = result.items[0].node;
         assert!(first_node == 1 || first_node == 2);
@@ -205,7 +193,6 @@ mod tests {
 
     #[test]
     fn test_limit_respected() {
-        // Larger graph
         let g = make_graph(&[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]);
         let result = coverage_set(&g, 2);
 
@@ -214,10 +201,9 @@ mod tests {
 
     #[test]
     fn test_coverage_ratio() {
-        let g = make_graph(&[(0, 1), (2, 3), (4, 5)]); // 3 disconnected edges
+        let g = make_graph(&[(0, 1), (2, 3), (4, 5)]);
         let result = coverage_set(&g, 1);
 
-        // With limit 1, we cover at most 1 edge
         assert_eq!(result.items.len(), 1);
         assert_eq!(result.edges_covered, 1);
         assert!((result.coverage_ratio - 1.0 / 3.0).abs() < 0.001);
@@ -225,11 +211,9 @@ mod tests {
 
     #[test]
     fn test_bidirectional_edges() {
-        // A <-> B (mutual dependency)
         let g = make_graph(&[(0, 1), (1, 0)]);
         let result = coverage_set(&g, 5);
 
-        // One node should cover both edges
         assert_eq!(result.items.len(), 1);
         assert_eq!(result.edges_covered, 2);
         assert_eq!(result.total_edges, 2);

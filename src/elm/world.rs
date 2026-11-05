@@ -63,9 +63,6 @@ impl<'a> SqliteLedger<'a> {
     }
 
     /// The port as a service value.
-    // shortcut: not `Send`/`Sync` because the `rusqlite` store behind it is
-    // `RefCell`-backed. Upgrade path: give the store a `Sync` handle
-    // (connection pool or `Mutex` guard) and the bound drops in.
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn service(storage: &'a crate::storage::SqliteStorage) -> Arc<dyn LedgerPort + 'a> {
         Arc::new(Self::new(storage))
@@ -113,7 +110,6 @@ impl<'a> CloseFold<'a> {
     }
 
     /// Boot the fold against the store.
-    // `Self<'a>` is not a legal spelling, so the name is spelled out.
     #[allow(clippy::use_self)]
     #[must_use]
     pub fn over_storage(storage: &'a crate::storage::SqliteStorage) -> CloseFold<'a> {
@@ -177,8 +173,6 @@ impl<'a> CloseFold<'a> {
             let reply = self.run_one(&cmd);
             let next = BeadsCore::update(&self.model, &reply);
             self.model = next.model;
-            // A reply can itself carry commands; the bridge keeps folding
-            // until nothing is left, in command order, one at a time.
             queue.extend(next.commands);
         }
     }

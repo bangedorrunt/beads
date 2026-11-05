@@ -39,7 +39,6 @@ fn show_json(workspace: &BrWorkspace, id: &str) -> serde_json::Value {
     assert!(out.status.success(), "show failed: {}", out.stderr);
     let parsed: serde_json::Value =
         serde_json::from_str(&extract_json_payload(&out.stdout)).expect("valid show JSON");
-    // `br show --json` emits a details array; the target is its only entry.
     match parsed {
         serde_json::Value::Array(items) => items
             .into_iter()
@@ -82,7 +81,6 @@ fn e2e_create_typed_flags_round_trip() {
     assert_eq!(issue["pin"].as_str(), Some("CalmLantern"));
     assert_eq!(issue["commit_sha"].as_str(), Some("abc1234"));
     assert_eq!(issue["blast"].as_str(), Some("normal"));
-    // ac_shape default: checkable when verify is present.
     assert_eq!(issue["ac_shape"].as_str(), Some("checkable"));
 }
 
@@ -132,9 +130,6 @@ fn e2e_update_principle_appends_citation() {
 
     let id = create_issue(&workspace, &["Citation bead"], "create_plain");
 
-    // Start from an empty citation set so the two appends below are the only
-    // ones counted. The harness create gate pre-seeds one otherwise, and this
-    // test is about append semantics from empty.
     let clear = run_br(
         &workspace,
         ["update", &id, "--clear-principles"],
@@ -225,7 +220,6 @@ fn e2e_lint_does_not_require_acceptance_criteria_heading() {
         "create_heading_free",
     );
 
-    // P3 + non-empty verify: no warnings despite zero markdown headings.
     let lint = run_br(&workspace, ["lint", "--json"], "lint_clean");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
     let payload: serde_json::Value =
@@ -238,15 +232,11 @@ fn e2e_lint_does_not_require_acceptance_criteria_heading() {
         "heading-free bead must not warn: {results:?}"
     );
 
-    // Same bead missing verify warns on `verify`, never on a heading section.
     let bare = create_issue(
         &workspace,
         &["Bare bug", "--type", "bug", "--priority", "3"],
         "create_bare",
     );
-    // This bead exists precisely to be the one that warns on a missing
-    // VERIFY, and the harness create gate would supply one. Step back out
-    // through the documented clearing flag.
     let strip = run_br(
         &workspace,
         ["update", &bare, "--verify", ""],

@@ -22,8 +22,6 @@ use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 
-// Large default-visible structured pages are faster through the existing full
-// scan/relation path; smaller pages keep the medium-page relation queries.
 const LARGE_STRUCTURED_LIST_FULL_SCAN_THRESHOLD: usize = 96;
 
 /// Execute the list command.
@@ -38,7 +36,6 @@ pub fn execute(
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
 ) -> Result<()> {
-    // Open storage (--db flag allows working from any directory)
     let beads_dir = config::discover_beads_dir_with_cli(cli)?;
     let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
     execute_inner(args, cli, outer_ctx, &storage_ctx)
@@ -67,11 +64,9 @@ fn execute_inner(
 ) -> Result<()> {
     let storage = &storage_ctx.storage;
 
-    // Build filter from args
     let mut filters = build_filters(args)?;
     let client_filters = needs_client_filters(args);
 
-    // Determine output format early so we know whether to run a count query.
     let output_format = resolve_output_format_with_outer_mode(
         args.format,
         outer_ctx.inherited_output_mode(),
@@ -79,7 +74,6 @@ fn execute_inner(
     );
     let is_json_output = matches!(output_format, OutputFormat::Json | OutputFormat::Toon);
 
-    // The effective limit and offset from the user's request.
     let user_limit = args.limit.unwrap_or(DEFAULT_LIST_LIMIT);
     let user_offset = args.offset.unwrap_or(DEFAULT_LIST_OFFSET);
     let use_full_default_visible_structured_scan = should_use_full_default_visible_structured_scan(
@@ -94,11 +88,6 @@ fn execute_inner(
         filters.offset = Some(0);
     }
 
-    // For paginated structured SQL-path queries, run a COUNT(*) query using the
-    // same filters (without LIMIT/OFFSET) so we can include pagination metadata.
-    // Unlimited output already materializes the full matching set, so its exact
-    // total is the issue vector length after the list query.
-    // For client-filter path, the total count is determined after filtering in Rust.
     let needs_sql_total = is_json_output
         && !client_filters
         && !use_full_default_visible_structured_scan
@@ -109,17 +98,11 @@ fn execute_inner(
         None
     };
 
-    // Extract user limit for both paths so we can detect truncation.
     let limit_for_truncation = if client_filters {
-        // Remove LIMIT and OFFSET from the SQL query — the client-filter path
-        // must fetch all issues, apply Rust-side filters, and then apply
-        // offset + limit in Rust to get correct pagination.
         filters.limit.take();
         filters.offset.take();
         Some(user_limit)
     } else {
-        // Bump SQL limit by 1 to detect whether results were truncated (text output).
-        // For JSON output, we already have the exact total from the count query.
         let ul = if use_full_default_visible_structured_scan {
             Some(user_limit)
         } else {
@@ -134,7 +117,6 @@ fn execute_inner(
         ul
     };
 
-    // Validate sort key before query
     validate_sort_key(args.sort.as_deref())?;
 
     let use_projected_text_rows = matches!(output_format, OutputFormat::Text)
@@ -142,7 +124,6 @@ fn execute_inner(
         && !args.pretty
         && !client_filters;
 
-    // Query issues
     let mut issues = if use_projected_text_rows {
         storage.list_text_issues_for_command_output(&filters)?
     } else {
@@ -152,17 +133,12 @@ fn execute_inner(
         issues = apply_client_filters(issues, args)?;
     }
 
-    // For JSON output, determine the total matching count.
-    // For client-filter path, we now know the exact total before truncation.
     let json_total: usize = if is_json_output {
         sql_total.unwrap_or(issues.len())
     } else {
-        0 // unused for text/csv output
+        0
     };
 
-    // For client-filter path, apply offset here (after filtering) since it
-    // was removed from the SQL query.  SQL-path offset is already applied by
-    // the database engine.
     if client_filters && user_offset > 0 {
         if user_offset >= issues.len() {
             issues.clear();
@@ -171,9 +147,6 @@ fn execute_inner(
         }
     }
 
-    // Detect and apply truncation.
-    // For client-filter path we know the exact pre-truncation count.
-    // For SQL path we only know "more than limit" (we fetched limit+1 for text output).
     let total_before = issues.len();
     let truncated = if let Some(limit) = limit_for_truncation
         && limit > 0
@@ -188,17 +161,14 @@ fn execute_inner(
     let quiet = cli.quiet.unwrap_or(false);
     let early_ctx = OutputContext::from_output_format(output_format, quiet, true);
 
-    // Warn on stderr when results were truncated (skip for structured output)
     if truncated && !quiet && !matches!(output_format, OutputFormat::Json | OutputFormat::Toon) {
         if client_filters {
-            // Exact total known from client-side filtering
             eprintln!(
                 "[note] Showing {} of {} issues. Use --limit 0 for all results.",
                 issues.len(),
                 total_before,
             );
         } else {
-            // SQL-side truncation: we only know there are more
             eprintln!(
                 "[note] Output truncated to {} issues. Use --limit 0 for all results.",
                 issues.len(),
@@ -209,7 +179,6 @@ fn execute_inner(
         return Ok(());
     }
 
-    // Output
     match output_format {
         OutputFormat::Json | OutputFormat::Toon => {
             let ctx = OutputContext::from_output_format(output_format, quiet, true);
@@ -309,7 +278,6 @@ fn execute_inner(
             } else if args.long {
                 render_long_text_issues(&ctx, &issues, format_options);
             } else {
-                // Note: bd outputs nothing when no issues found, matching that for conformance
                 for issue in &issues {
                     let line = format_issue_line_with(issue, format_options);
                     println!("{line}");
@@ -441,8 +409,6 @@ fn issue_with_batched_relation_metadata(
 /// like `--status zzzz` errors instead of silently matching zero issues.
 /// Convert CLI args to storage filter.
 fn build_filters(args: &ListArgs) -> Result<ListFilters> {
-    // Parse status strings to Status enums. `--status all` is the same
-    // meta-value `br lint` accepts: no status filter, every status included.
     let all_statuses = super::status_filter_requests_all(&args.status);
     let statuses = if args.status.is_empty() || all_statuses {
         None
@@ -455,7 +421,6 @@ fn build_filters(args: &ListArgs) -> Result<ListFilters> {
         )
     };
 
-    // Parse type strings to IssueType enums
     let types = if args.type_.is_empty() {
         None
     } else {
@@ -467,7 +432,6 @@ fn build_filters(args: &ListArgs) -> Result<ListFilters> {
         )
     };
 
-    // Parse priority values (invalid values should error, not be silently dropped)
     let priorities = if args.priority.is_empty() {
         None
     } else {
@@ -485,8 +449,6 @@ fn build_filters(args: &ListArgs) -> Result<ListFilters> {
             .as_ref()
             .is_some_and(|parsed| parsed.iter().any(Status::is_terminal));
 
-    // Deferred issues are included by default (consistent with "open" status semantics).
-    // They are only excluded when explicitly filtering by status that doesn't include deferred.
     let include_deferred = args.deferred
         || args.all
         || statuses.is_none()
@@ -600,8 +562,6 @@ fn apply_client_filters(
     let max_priority = args.priority_max.map(i32::from);
     let desc_needle = args.desc_contains.as_deref().map(str::to_lowercase);
     let notes_needle = args.notes_contains.as_deref().map(str::to_lowercase);
-    // Deferred issues are included by default when no status filter is specified,
-    // except `--overdue` keeps deferred work hidden unless requested.
     let include_deferred = args.deferred
         || args.all
         || (!args.overdue && args.status.is_empty())
@@ -667,8 +627,6 @@ fn render_long_text_issues(
     format_options: TextFormatOptions,
 ) {
     for (index, issue) in issues.iter().enumerate() {
-        // The formatter sanitizes every untrusted field itself; the colour
-        // it adds afterwards is trusted and must not be re-escaped.
         ctx.print_styled_line(&format_issue_long_with(issue, format_options));
         if index + 1 != issues.len() {
             ctx.print_line("");
@@ -683,7 +641,6 @@ fn render_pretty_text_issues(
     include_extended: bool,
 ) {
     for (index, issue) in issues.iter().enumerate() {
-        // Same trusted-styling contract as the long renderer above.
         ctx.print_styled_line(&format_issue_pretty_with(
             issue,
             format_options,
@@ -765,8 +722,6 @@ mod tests {
     #[test]
     fn test_build_filters_status_all_matches_every_status() {
         init_logging();
-        // `--status all` must never silently parse as the custom status
-        // literal `Custom("all")` and match nothing (beads-6ilv).
         for value in ["all", "ALL", " All "] {
             let args = cli::ListArgs {
                 status: vec![value.to_string()],
@@ -778,7 +733,6 @@ mod tests {
             assert!(filters.include_deferred, "'{value}' includes deferred");
         }
 
-        // Mixed with explicit statuses, `all` still wins.
         let args = cli::ListArgs {
             status: vec!["all".to_string(), "open".to_string()],
             ..Default::default()
@@ -808,8 +762,6 @@ mod tests {
         init_logging();
         let filters = build_filters(&ListArgs::default()).expect("build filters");
 
-        // #349: list is COMPLETE by default — the default limit is unlimited
-        // (`0`), not a silent cap. `Some(0)` is the query layer's "no LIMIT".
         assert_eq!(DEFAULT_LIST_LIMIT, 0, "list default must be unlimited");
         assert_eq!(filters.limit, Some(0));
         assert_eq!(filters.limit, Some(DEFAULT_LIST_LIMIT));

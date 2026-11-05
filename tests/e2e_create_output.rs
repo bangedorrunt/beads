@@ -45,14 +45,12 @@ fn test_create_with_title_flag() {
 
     let bin = assert_cmd::cargo::cargo_bin!("br");
 
-    // Init
     Command::new(bin.as_os_str())
         .current_dir(path)
         .arg("init")
         .assert()
         .success();
 
-    // Create issue using --title flag (not positional argument)
     let output = Command::new(bin.as_os_str())
         .current_dir(path)
         .arg("create")
@@ -89,14 +87,12 @@ fn test_create_positional_vs_title_flag() {
 
     let bin = assert_cmd::cargo::cargo_bin!("br");
 
-    // Init
     Command::new(bin.as_os_str())
         .current_dir(path)
         .arg("init")
         .assert()
         .success();
 
-    // Create with positional
     let output1 = Command::new(bin.as_os_str())
         .current_dir(path)
         .arg("create")
@@ -114,7 +110,6 @@ fn test_create_positional_vs_title_flag() {
     assert!(output1.status.success());
     let json1: serde_json::Value = serde_json::from_slice(&output1.stdout).unwrap();
 
-    // Create with --title flag
     let output2 = Command::new(bin.as_os_str())
         .current_dir(path)
         .arg("create")
@@ -133,7 +128,6 @@ fn test_create_positional_vs_title_flag() {
     assert!(output2.status.success());
     let json2: serde_json::Value = serde_json::from_slice(&output2.stdout).unwrap();
 
-    // Both should have proper titles
     assert_eq!(json1["title"].as_str(), Some("Positional Title"));
     assert_eq!(json2["title"].as_str(), Some("Flag Title"));
 }
@@ -203,14 +197,12 @@ fn test_create_json_output_includes_labels_and_deps() {
 
     let bin = assert_cmd::cargo::cargo_bin!("br");
 
-    // Init
     Command::new(bin.as_os_str())
         .current_dir(path)
         .arg("init")
         .assert()
         .success();
 
-    // Create blocking issue first
     let output = Command::new(bin.as_os_str())
         .current_dir(path)
         .arg("create")
@@ -233,7 +225,6 @@ fn test_create_json_output_includes_labels_and_deps() {
     let blocker_json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let blocker_id = blocker_json["id"].as_str().unwrap();
 
-    // Create issue with label and dep
     let output = Command::new(bin.as_os_str())
         .current_dir(path)
         .arg("create")
@@ -258,7 +249,6 @@ fn test_create_json_output_includes_labels_and_deps() {
     );
 
     let issue_json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    // Verify fields
     let labels = issue_json["labels"]
         .as_array()
         .expect("labels should be an array");

@@ -134,7 +134,6 @@ impl SavedFilters {
             reverse: self.reverse,
             deferred: self.deferred,
             overdue: self.overdue,
-            // Output-related fields use defaults
             long: false,
             pretty: false,
             wrap: false,
@@ -151,12 +150,10 @@ impl SavedFilters {
         let (assignee, unassigned) = match (&cli.assignee, cli.unassigned) {
             (Some(assignee), false) => (Some(assignee.clone()), false),
             (None, true) => (None, true),
-            // Preserve explicitly contradictory CLI input; the caller asked for both.
             (Some(assignee), true) => (Some(assignee.clone()), true),
             (None, false) => (base.assignee.clone(), base.unassigned),
         };
         ListArgs {
-            // Vec fields: CLI overrides if non-empty
             status: if cli.status.is_empty() {
                 base.status
             } else {
@@ -187,7 +184,6 @@ impl SavedFilters {
             } else {
                 cli.priority.clone()
             },
-            // Option fields: CLI overrides if Some
             assignee,
             priority_min: cli.priority_min.or(base.priority_min),
             priority_max: cli.priority_max.or(base.priority_max),
@@ -197,13 +193,11 @@ impl SavedFilters {
             limit: cli.limit.or(base.limit),
             offset: cli.offset.or(base.offset),
             sort: cli.sort.clone().or(base.sort),
-            // Bool fields: CLI true overrides saved
             unassigned,
             all: cli.all || base.all,
             reverse: cli.reverse || base.reverse,
             deferred: cli.deferred || base.deferred,
             overdue: cli.overdue || base.overdue,
-            // Output fields from CLI only
             long: cli.long,
             pretty: cli.pretty,
             wrap: cli.wrap,
@@ -293,7 +287,6 @@ fn query_save(
 ) -> Result<()> {
     let name = args.name.trim();
 
-    // Validate name
     if name.is_empty() {
         return Err(BeadsError::validation("name", "Query name cannot be empty"));
     }
@@ -306,7 +299,6 @@ fn query_save(
 
     let key = format!("{QUERY_KEY_PREFIX}{name}");
 
-    // Check if query already exists
     if storage.get_config(&key)?.is_some() {
         return Err(BeadsError::validation(
             "name",
@@ -378,12 +370,10 @@ fn query_run(
 
     debug!(name, "Loaded saved query");
 
-    // Merge saved filters with CLI overrides
     let merged_args = saved_query.filters.merge_with_cli(&args.filters);
 
     debug!(?merged_args, "Merged filters");
 
-    // Execute list command with merged args
     super::list::execute_with_storage(&merged_args, cli, ctx, storage_ctx)
 }
 
@@ -410,7 +400,6 @@ fn query_list(storage: &crate::storage::SqliteStorage, ctx: &OutputContext) -> R
         }
     }
 
-    // Sort by name
     queries.sort_by(|a, b| a.name.cmp(&b.name));
 
     if matches!(ctx.mode(), OutputMode::Quiet) {
@@ -486,10 +475,6 @@ fn query_delete(
     Ok(())
 }
 
-// ─────────────────────────────────────────────────────────────
-// Rich Output Rendering
-// ─────────────────────────────────────────────────────────────
-
 fn query_display_text(value: &str) -> String {
     sanitize_terminal_inline(value).into_owned()
 }
@@ -549,7 +534,6 @@ fn render_query_list_rich(queries: &[QueryListItem], ctx: &OutputContext) {
     if queries.is_empty() {
         content.append_styled("No saved queries\n", theme.dimmed.clone());
     } else {
-        // Find longest name for alignment
         let rendered_queries: Vec<(String, Option<String>)> = queries
             .iter()
             .map(|query| {
@@ -667,16 +651,16 @@ mod tests {
         };
 
         let cli = ListArgs {
-            status: vec!["closed".to_string()], // Override
-            assignee: None,                     // Keep saved
-            limit: Some(20),                    // Override
+            status: vec!["closed".to_string()],
+            assignee: None,
+            limit: Some(20),
             ..Default::default()
         };
 
         let merged = saved.merge_with_cli(&cli);
-        assert_eq!(merged.status, vec!["closed"]); // CLI wins
-        assert_eq!(merged.assignee, Some("alice".to_string())); // Saved retained
-        assert_eq!(merged.limit, Some(20)); // CLI wins
+        assert_eq!(merged.status, vec!["closed"]);
+        assert_eq!(merged.assignee, Some("alice".to_string()));
+        assert_eq!(merged.limit, Some(20));
     }
 
     #[test]
@@ -795,10 +779,6 @@ mod tests {
         }
     }
 
-    // ============================================================
-    // Additional tests for comprehensive query module coverage
-    // ============================================================
-
     #[test]
     fn test_saved_filters_default() {
         let filters = SavedFilters::default();
@@ -879,7 +859,6 @@ mod tests {
         };
 
         let merged = saved.merge_with_cli(&cli);
-        // Boolean merge is OR: saved true + cli false = true
         assert!(merged.unassigned);
         assert!(merged.all);
         assert!(merged.reverse);
@@ -933,7 +912,6 @@ mod tests {
             ..Default::default()
         };
 
-        // CLI with all empty vecs - saved values preserved
         let cli = ListArgs::default();
         let merged = saved.merge_with_cli(&cli);
         assert_eq!(merged.status, vec!["open"]);
@@ -943,7 +921,6 @@ mod tests {
         assert_eq!(merged.label_any, vec!["maybe"]);
         assert_eq!(merged.priority, vec!["1", "2"]);
 
-        // CLI with non-empty vecs - cli values win
         let cli2 = ListArgs {
             status: vec!["closed".to_string()],
             type_: vec!["feature".to_string()],
@@ -977,7 +954,6 @@ mod tests {
             ..Default::default()
         };
 
-        // CLI with None values - saved preserved
         let cli = ListArgs::default();
         let merged = saved.merge_with_cli(&cli);
         assert_eq!(merged.assignee, Some("alice".to_string()));
@@ -990,7 +966,6 @@ mod tests {
         assert_eq!(merged.offset, Some(5));
         assert_eq!(merged.sort, Some("priority".to_string()));
 
-        // CLI with Some values - cli wins
         let cli2 = ListArgs {
             assignee: Some("bob".to_string()),
             priority_min: Some(2),
@@ -1025,7 +1000,6 @@ mod tests {
         };
 
         let json = serde_json::to_string(&query).unwrap();
-        // description should be skipped when None
         assert!(!json.contains("description"));
 
         let parsed: SavedQuery = serde_json::from_str(&json).unwrap();
@@ -1038,7 +1012,6 @@ mod tests {
         let filters = SavedFilters::default();
         let json = serde_json::to_string(&filters).unwrap();
 
-        // Default values should be skipped by serde
         assert!(!json.contains("\"status\""));
         assert!(!json.contains("\"type_\""));
         assert!(!json.contains("\"assignee\""));
@@ -1046,7 +1019,6 @@ mod tests {
         assert!(!json.contains("\"all\""));
         assert!(!json.contains("\"reverse\""));
 
-        // Should be minimal JSON
         assert_eq!(json, "{}");
     }
 
@@ -1109,7 +1081,6 @@ mod tests {
 
         let args = filters.to_list_args();
 
-        // Output-related fields should have defaults
         assert!(!args.long);
         assert!(!args.pretty);
         assert!(args.format.is_none());
@@ -1129,8 +1100,6 @@ mod tests {
 
         let filters = SavedFilters::from(&args);
 
-        // Saved filters should not contain output-related fields
-        // They're simply not part of the SavedFilters struct
         assert_eq!(filters.status, vec!["open"]);
     }
 

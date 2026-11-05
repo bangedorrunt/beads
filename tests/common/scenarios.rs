@@ -169,7 +169,6 @@ impl NormalizationRules {
     fn normalize_value(&self, value: &mut Value, path: &str, log: &mut Vec<String>) {
         match value {
             Value::Object(map) => {
-                // Remove fields
                 for field in &self.remove_fields {
                     if map.remove(field).is_some() && self.log_normalization {
                         let removed_path = if path.is_empty() {
@@ -181,7 +180,6 @@ impl NormalizationRules {
                     }
                 }
 
-                // Mask and normalize fields
                 for (key, val) in map.iter_mut() {
                     let field_path = if path.is_empty() {
                         key.clone()
@@ -208,7 +206,6 @@ impl NormalizationRules {
                             }
                         }
                     } else if self.normalize_paths && self.path_fields.contains(key) {
-                        // Normalize path separators (Windows backslash to Unix forward slash)
                         if let Some(s) = val.as_str()
                             && s.contains('\\')
                         {
@@ -218,7 +215,6 @@ impl NormalizationRules {
                             }
                             *val = Value::String(normalized);
                         }
-                        // Also apply line ending normalization if enabled
                         if self.normalize_line_endings
                             && let Some(s) = val.as_str()
                             && s.contains("\r\n")
@@ -236,7 +232,6 @@ impl NormalizationRules {
                     self.normalize_value(item, &format!("{path}[{i}]"), log);
                 }
                 if self.sort_arrays && !arr.is_empty() {
-                    // Sort by JSON string representation for determinism
                     arr.sort_by(|a, b| {
                         serde_json::to_string(a)
                             .unwrap_or_default()
@@ -245,7 +240,6 @@ impl NormalizationRules {
                 }
             }
             Value::String(s) if self.normalize_line_endings && s.contains("\r\n") => {
-                // Normalize line endings for all string values
                 let normalized = s.replace("\r\n", "\n");
                 if self.log_normalization {
                     log.push(format!("Normalized line endings: {path}"));
@@ -654,7 +648,7 @@ impl Default for BenchmarkConfig {
             measure_rss: std::env::var("BENCH_MEASURE_RSS").map_or(true, |v| v != "0"),
             measure_io: std::env::var("BENCH_MEASURE_IO").map_or(true, |v| v != "0"),
             min_duration_ms: 0,
-            max_duration_ms: 300_000, // 5 minutes
+            max_duration_ms: 300_000,
         }
     }
 }
@@ -740,10 +734,6 @@ pub struct RunStatistics {
     pub median_rss_bytes: Option<u64>,
 }
 
-// ============================================================================
-// BENCHMARK HELPERS (beads-owu6)
-// ============================================================================
-
 /// Measure peak RSS from /proc/<pid>/status on Linux.
 /// Returns `VmHWM` (high water mark) which is the peak resident set size.
 #[cfg(target_os = "linux")]
@@ -753,13 +743,12 @@ pub fn measure_peak_rss(pid: u32) -> Option<u64> {
     let content = fs::read_to_string(&status_path).ok()?;
 
     for line in content.lines() {
-        // VmHWM is the peak RSS (high water mark)
         if line.starts_with("VmHWM:") {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2
                 && let Ok(kb) = parts[1].parse::<u64>()
             {
-                return Some(kb * 1024); // Convert KB to bytes
+                return Some(kb * 1024);
             }
         }
     }
@@ -776,10 +765,8 @@ pub fn measure_peak_rss(_pid: u32) -> Option<u64> {
 pub fn measure_io_sizes(workspace_root: &std::path::Path) -> (Option<u64>, Option<u64>) {
     let beads_dir = workspace_root.join(".beads");
 
-    // Database size
     let db_size = beads_dir.join("beads.db").metadata().ok().map(|m| m.len());
 
-    // JSONL size (issues.jsonl)
     let jsonl_size = beads_dir
         .join("issues.jsonl")
         .metadata()
@@ -805,7 +792,6 @@ pub fn compute_statistics(durations: &[u128], rss_values: &[Option<u64>]) -> Run
         };
     }
 
-    // Sort for min/max/median
     let mut sorted = durations.to_vec();
     sorted.sort_unstable();
 
@@ -817,11 +803,9 @@ pub fn compute_statistics(durations: &[u128], rss_values: &[Option<u64>]) -> Run
         sorted[n / 2]
     };
 
-    // Mean
     let sum: u128 = sorted.iter().sum();
     let mean_ms = sum as f64 / n as f64;
 
-    // Standard deviation
     let variance: f64 = sorted
         .iter()
         .map(|&x| {
@@ -832,14 +816,12 @@ pub fn compute_statistics(durations: &[u128], rss_values: &[Option<u64>]) -> Run
         / n as f64;
     let stddev_ms = variance.sqrt();
 
-    // Coefficient of variation
     let cv = if mean_ms > 0.0 {
         stddev_ms / mean_ms
     } else {
         0.0
     };
 
-    // Median RSS
     let median_rss_bytes = {
         let mut rss_vals: Vec<u64> = rss_values.iter().filter_map(|&v| v).collect();
         if rss_vals.is_empty() {
@@ -918,12 +900,10 @@ impl BenchmarkRunner {
 
         let total_iterations = self.config.warmup_iterations + self.config.measured_iterations;
 
-        // Run all iterations (warmup + measured)
         for i in 0..total_iterations {
             let is_warmup = i < self.config.warmup_iterations;
             let iteration = i + 1;
 
-            // Create a fresh workspace for each iteration
             if let Some(metrics) =
                 self.run_benchmark_iteration_br_only(scenario, iteration, is_warmup, &mut notes)
             {
@@ -1010,11 +990,9 @@ impl BenchmarkRunner {
         all_runs: Vec<BenchmarkMetrics>,
         mut notes: Vec<String>,
     ) -> BenchmarkSummary {
-        // Separate warmup from measured runs
         let measured_runs: Vec<&BenchmarkMetrics> =
             all_runs.iter().filter(|m| !m.is_warmup).collect();
 
-        // Compute statistics for measured runs only
         let br_durations: Vec<u128> = measured_runs.iter().map(|m| m.br_duration_ms).collect();
         let br_rss: Vec<Option<u64>> = measured_runs.iter().map(|m| m.br_peak_rss_bytes).collect();
         let br_stats = compute_statistics(&br_durations, &br_rss);
@@ -1041,7 +1019,6 @@ impl BenchmarkRunner {
             }
         });
 
-        // Check for high variance
         if br_stats.cv > 0.15 {
             notes.push(format!(
                 "High variance detected (CV={:.2}%). Consider increasing iterations or reducing system load.",
@@ -1049,7 +1026,6 @@ impl BenchmarkRunner {
             ));
         }
 
-        // Build summary
         BenchmarkSummary {
             scenario: scenario.name.clone(),
             config: self.config.clone(),
@@ -1072,16 +1048,13 @@ impl BenchmarkRunner {
             use std::fs;
             use std::io::Write;
 
-            // Ensure directory exists
             fs::create_dir_all(artifacts_dir)?;
 
-            // Write summary JSON
             let summary_path = artifacts_dir.join(format!("{}_summary.json", scenario.name));
             let mut file = fs::File::create(&summary_path)?;
             let json = serde_json::to_string_pretty(&summary).map_err(std::io::Error::other)?;
             file.write_all(json.as_bytes())?;
 
-            // Write per-run JSONL
             let runs_path = artifacts_dir.join(format!("{}_runs.jsonl", scenario.name));
             let mut runs_file = fs::File::create(&runs_path)?;
             for run in &summary.runs {
@@ -1209,10 +1182,6 @@ impl Scenario {
     }
 }
 
-// ============================================================================
-// SCENARIO FILTER (beads-o1az)
-// ============================================================================
-
 /// Filter for selecting scenarios by tags.
 ///
 /// Supports include/exclude logic:
@@ -1321,19 +1290,16 @@ impl ScenarioFilter {
 
     /// Check if a scenario matches this filter.
     pub fn matches(&self, scenario: &Scenario) -> bool {
-        // Check exclude tags first (takes precedence)
         for tag in &self.exclude_tags {
             if scenario.has_tag(tag) {
                 return false;
             }
         }
 
-        // If no include tags specified, match all (that weren't excluded)
         if self.include_tags.is_empty() {
             return true;
         }
 
-        // Check include tags based on match mode
         match self.match_mode {
             TagMatchMode::Any => scenario.has_any_tag(&self.include_tags),
             TagMatchMode::All => scenario.has_all_tags(&self.include_tags),
@@ -1430,7 +1396,6 @@ impl ScenarioRunner {
     pub fn run_filtered(&self, scenarios: &[Scenario]) -> Vec<(String, ScenarioResult)> {
         let selected: Vec<_> = scenarios.iter().filter(|s| self.should_run(s)).collect();
 
-        // Log filter selection
         if !self.filter.is_empty() {
             eprintln!(
                 "Filter: {} ({}/{} scenarios selected)",
@@ -1495,7 +1460,6 @@ impl ScenarioRunner {
             None
         };
 
-        // Setup
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
             let init = workspace.init_br();
             if !init.success {
@@ -1512,7 +1476,6 @@ impl ScenarioRunner {
             }
         }
 
-        // Run setup commands
         let setup_commands = collect_setup_commands(scenario);
         for cmd in &setup_commands {
             let result = run_scenario_command(&mut workspace, cmd, None);
@@ -1530,10 +1493,8 @@ impl ScenarioRunner {
             }
         }
 
-        // Run test command
         let br_result = run_scenario_command(&mut workspace, &scenario.test_command, None);
 
-        // Check invariants
         let mut invariant_failures = check_invariants(&scenario.invariants, &br_result);
         if let (true, Some(before)) = (scenario.invariants.path_confinement, baseline_snapshot) {
             let after = snapshot_workspace(&workspace.root);
@@ -1649,7 +1610,6 @@ impl ScenarioRunner {
     }
 
     fn run_benchmark(&self, scenario: &Scenario) -> ScenarioResult {
-        // For now, benchmark mode is like E2E but captures timing metrics
         let mut workspace = TestWorkspace::new("benchmark", &scenario.name);
 
         if let ScenarioSetup::Dataset(dataset) = scenario.setup
@@ -1764,7 +1724,6 @@ fn check_invariants(invariants: &Invariants, result: &CommandResult) -> Vec<Stri
     }
 
     if invariants.no_git_ops {
-        // Check for git command patterns in logs
         let git_patterns = ["git commit", "git push", "git add", "git checkout"];
         for pattern in git_patterns {
             if result.stderr.contains(pattern) || result.stdout.contains(pattern) {
@@ -1786,7 +1745,6 @@ fn compare_outputs(
 ) -> (ComparisonResult, Vec<String>) {
     let mut normalization_log = Vec::new();
 
-    // Extract JSON payloads
     let br_json_str = extract_json_payload(&br_result.stdout);
     let bd_json_str = extract_json_payload(&bd_result.stdout);
 
@@ -1861,15 +1819,11 @@ fn compare_outputs(
                 normalization_log.extend(tolerance_issues.iter().cloned());
             }
 
-            // Apply normalization
             let br_log = normalization.apply(&mut br);
             let bd_log = normalization.apply(&mut bd);
             normalization_log.extend(br_log.into_iter().map(|s| format!("br: {s}")));
             normalization_log.extend(bd_log.into_iter().map(|s| format!("bd: {s}")));
 
-            // For NormalizedJson mode, timestamps are masked so tolerance issues
-            // are logged for visibility but don't affect the match result.
-            // The normalized values are what matter.
             let matched = br == bd;
             (
                 ComparisonResult {
@@ -1877,7 +1831,6 @@ fn compare_outputs(
                     br_json: Some(br),
                     bd_json: Some(bd),
                     diff_description: if matched {
-                        // Log tolerance info even on match for debugging visibility
                         if tolerance_issues.is_empty() {
                             None
                         } else {
@@ -2654,10 +2607,6 @@ fn parse_timestamp(value: &str) -> Result<DateTime<FixedOffset>, chrono::ParseEr
     DateTime::parse_from_rfc3339(value)
 }
 
-// ============================================================================
-// PREDEFINED SCENARIOS
-// ============================================================================
-
 /// Module containing predefined scenarios for common operations.
 pub mod catalog {
     use super::*;
@@ -2723,9 +2672,6 @@ pub mod catalog {
     }
 
     /// ADR-0001 §5.3: record a legal PASS row before a fail-closed close.
-    // `action` is reserved by callers ("close_root", "stress-close", ...) to
-    // distinguish steps; the step builder has nowhere to carry it yet, so it
-    // stays unused until the harness grows an action slot.
     /// The task/verdict pair that authorises a close without a commit.
     ///
     /// ADR-0001 §5.3 gives a close two proofs: the commit that carries the
@@ -2840,13 +2786,6 @@ pub mod catalog {
             format!("{{{issue_alias}}}"),
             "--reason".to_string(),
             seeded_reason(seed, action),
-            // ADR-0001 §5.3: a close is authorised either by the commit that
-            // carries the bead id or by a PASS gate note that leads with
-            // `task=<id> verdict=<id>`. The replay harness cites the second:
-            // it has no git history to point at, and a named sha that
-            // resolves nowhere is refused (a proof nobody can check is not a
-            // proof). The gate row recorded before this step names the SAME
-            // pair - see `seeded_proof`.
             "--task-id".to_string(),
             task,
             "--verdict-id".to_string(),
@@ -3120,15 +3059,6 @@ pub mod catalog {
             "where_after_stress",
         ));
         steps.push(sync_flush_step("flush_after_stress"));
-        // Per the post-#292 doctor contract (commits 96c3fad2, 1c3c4fe1):
-        // any non-OK check — WARN or ERROR — now flips `ok` to false and
-        // exits 1. The stress harness legitimately produces WARN-level
-        // finding (RUST_LOG=beads=debug set by the test runner).
-        // This does not degrade the
-        // workspace's semantic health, so the e2e test asserts
-        // `workspace_health == "healthy"` on the JSON payload rather
-        // than exit-code success; the step itself is `allow_either`
-        // so the workspace-evolution executor doesn't trip on exit 1.
         steps.push(WorkspaceEvolutionStep::command(
             WorkspaceEvolutionCommand::new(
                 ScenarioCommand::new(["doctor", "--json"]).with_label("doctor_after_stress"),
@@ -3152,10 +3082,6 @@ pub mod catalog {
         ]
     }
 }
-
-// ============================================================================
-// TESTS
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -3330,10 +3256,6 @@ mod tests {
         assert!(comparison.matched);
     }
 
-    // ========================================================================
-    // ScenarioFilter tests (beads-o1az)
-    // ========================================================================
-
     #[test]
     fn test_scenario_filter_empty_matches_all() {
         let filter = ScenarioFilter::new();
@@ -3387,7 +3309,7 @@ mod tests {
 
         assert!(filter.matches(&quick));
         assert!(!filter.matches(&slow));
-        assert!(!filter.matches(&stress)); // excluded even though has "quick"
+        assert!(!filter.matches(&stress));
     }
 
     #[test]
@@ -3402,7 +3324,7 @@ mod tests {
             Scenario::new("slow", ScenarioCommand::new(["list"])).with_tags(["test", "slow"]);
 
         assert!(filter.matches(&quick_test));
-        assert!(!filter.matches(&slow_test)); // excluded takes precedence
+        assert!(!filter.matches(&slow_test));
     }
 
     #[test]
@@ -3473,10 +3395,6 @@ mod tests {
         assert!(!scenario.has_all_tags(&["quick".to_string(), "slow".to_string()]));
     }
 
-    // ========================================================================
-    // Cross-platform normalization tests (beads-lsht)
-    // ========================================================================
-
     #[test]
     fn test_path_separator_normalization() {
         let rules = NormalizationRules::cross_platform();
@@ -3489,13 +3407,10 @@ mod tests {
 
         let log = rules.apply(&mut value);
 
-        // Path fields should have backslashes converted to forward slashes
         assert_eq!(value["path"], "C:/Users/test/project/.beads");
         assert_eq!(value["file_path"], "src/main.rs");
         assert_eq!(value["db_path"], "data/beads.db");
-        // Non-path fields should not be modified
         assert_eq!(value["title"], "Not a path with \\ backslash");
-        // Should log the normalizations
         assert!(log.iter().any(|l| l.contains("Normalized path")));
     }
 
@@ -3509,10 +3424,8 @@ mod tests {
 
         let log = rules.apply(&mut value);
 
-        // Already Unix-style paths should remain unchanged
         assert_eq!(value["path"], "/home/user/project/.beads");
         assert_eq!(value["file_path"], "src/main.rs");
-        // No path normalization should be logged
         assert!(!log.iter().any(|l| l.contains("Normalized path")));
     }
 
@@ -3526,11 +3439,8 @@ mod tests {
 
         let log = rules.apply(&mut value);
 
-        // CRLF should be converted to LF
         assert_eq!(value["description"], "Line 1\nLine 2\nLine 3");
-        // Single line should remain unchanged
         assert_eq!(value["notes"], "Single line no CRLF");
-        // Should log line ending normalization
         assert!(log.iter().any(|l| l.contains("Normalized line endings")));
     }
 
@@ -3546,7 +3456,6 @@ mod tests {
 
         let log = rules.apply(&mut value);
 
-        // Nested strings should also have CRLF normalized
         assert_eq!(value["issues"][0]["description"], "First\nitem");
         assert_eq!(value["issues"][1]["description"], "Second\nitem");
         assert!(!log.is_empty());
@@ -3563,7 +3472,6 @@ mod tests {
         assert!(rules.path_fields.contains("file_path"));
         assert!(rules.path_fields.contains("db_path"));
         assert!(rules.path_fields.contains("workspace_root"));
-        // Should not have timestamp masking
         assert!(rules.mask_fields.is_empty());
         assert!(!rules.normalize_ids);
     }
@@ -3572,18 +3480,15 @@ mod tests {
     fn test_conformance_default_includes_cross_platform() {
         let rules = NormalizationRules::conformance_default();
 
-        // conformance_default should include cross-platform normalization
         assert!(rules.normalize_paths);
         assert!(rules.normalize_line_endings);
         assert!(rules.path_fields.contains("path"));
-        // Plus the regular conformance features
         assert!(rules.mask_fields.contains("created_at"));
         assert!(rules.normalize_ids);
     }
 
     #[test]
     fn test_path_field_with_line_endings() {
-        // Path fields should also have line endings normalized
         let rules = NormalizationRules::cross_platform();
         let mut value = serde_json::json!({
             "path": "C:\\Users\\test\r\n\\project"
@@ -3591,7 +3496,6 @@ mod tests {
 
         rules.apply(&mut value);
 
-        // Both backslashes and CRLF should be normalized
         assert_eq!(value["path"], "C:/Users/test\n/project");
     }
 
@@ -3599,17 +3503,10 @@ mod tests {
     fn test_strict_no_cross_platform() {
         let rules = NormalizationRules::strict();
 
-        // strict() should not have cross-platform normalization
         assert!(!rules.normalize_paths);
         assert!(!rules.normalize_line_endings);
         assert!(rules.path_fields.is_empty());
     }
-
-    // ========================================================================
-    // Scenario DSL + Normalization + Comparator tests (beads-nh50)
-    // ========================================================================
-
-    // --- Array Sorting Tests ---
 
     #[test]
     fn test_array_sorting_normalization() {
@@ -3623,7 +3520,6 @@ mod tests {
 
         rules.apply(&mut value);
 
-        // Arrays should be sorted by JSON string representation
         let items = value["items"].as_array().unwrap();
         assert_eq!(items[0]["name"], "apple");
         assert_eq!(items[1]["name"], "mango");
@@ -3645,7 +3541,6 @@ mod tests {
 
         rules.apply(&mut value);
 
-        // Nested arrays should also be sorted
         let outer = value["outer"].as_array().unwrap();
         assert_eq!(outer[0]["inner"], serde_json::json!([1, 2, 3]));
         assert_eq!(outer[1]["inner"], serde_json::json!([4, 5, 6]));
@@ -3663,11 +3558,8 @@ mod tests {
 
         rules.apply(&mut value);
 
-        // Arrays should remain in original order
         assert_eq!(value["items"], serde_json::json!([3, 1, 2]));
     }
-
-    // --- Field Removal Tests ---
 
     #[test]
     fn test_field_removal() {
@@ -3706,12 +3598,9 @@ mod tests {
 
         rules.apply(&mut value);
 
-        // Nested field should be removed
         assert!(value["user"].get("token").is_none());
         assert_eq!(value["user"]["name"], "Alice");
     }
-
-    // --- Timestamp Masking Tests ---
 
     #[test]
     fn test_timestamp_masking() {
@@ -3726,7 +3615,6 @@ mod tests {
 
         let log = rules.apply(&mut value);
 
-        // All timestamp fields should be masked
         assert_eq!(value["created_at"], "NORMALIZED_TIMESTAMP");
         assert_eq!(value["updated_at"], "NORMALIZED_TIMESTAMP");
         assert_eq!(value["defer_until"], "NORMALIZED_TIMESTAMP");
@@ -3745,12 +3633,9 @@ mod tests {
 
         let log = rules.apply(&mut value);
 
-        // Empty string should be masked without logging
         assert_eq!(value["created_at"], "NORMALIZED_TIMESTAMP");
         assert!(!log.iter().any(|l| l.contains("Masked timestamp")));
     }
-
-    // --- ID Normalization Tests ---
 
     #[test]
     fn test_id_normalization() {
@@ -3763,7 +3648,6 @@ mod tests {
 
         let log = rules.apply(&mut value);
 
-        // IDs should have hash portion masked
         assert_eq!(value["id"], "bd-HASH"); // invariant: NormalizationRules placeholder
         assert_eq!(value["parent_id"], "bd-HASH"); // invariant: NormalizationRules placeholder
         assert_eq!(value["blocked_by_id"], "bd-HASH"); // invariant: NormalizationRules placeholder
@@ -3779,7 +3663,6 @@ mod tests {
 
         rules.apply(&mut value);
 
-        // Prefix before last dash should be preserved
         assert_eq!(value["id"], "beads-task-HASH");
     }
 
@@ -3792,7 +3675,6 @@ mod tests {
 
         rules.apply(&mut value);
 
-        // ID without dash should remain unchanged
         assert_eq!(value["id"], "nodash");
     }
 
@@ -3808,11 +3690,8 @@ mod tests {
 
         rules.apply(&mut value);
 
-        // ID should remain unchanged when normalize_ids is false
         assert_eq!(value["id"], "bd-abc123"); // invariant: fixture round-trip when normalize_ids=false
     }
-
-    // --- Clock Tolerance / Timestamp Tolerance Tests ---
 
     #[test]
     fn test_timestamp_tolerance_within_range() {
@@ -3826,12 +3705,11 @@ mod tests {
             "created_at": "2026-01-17T10:00:00Z"
         });
         let bd = serde_json::json!({
-            "created_at": "2026-01-17T10:00:05Z"  // 5 seconds later
+            "created_at": "2026-01-17T10:00:05Z"
         });
 
         let issues = check_timestamp_tolerance(&br, &bd, &rules);
 
-        // 5 seconds is within 10 second tolerance
         assert!(issues.is_empty());
     }
 
@@ -3847,12 +3725,11 @@ mod tests {
             "created_at": "2026-01-17T10:00:00Z"
         });
         let bd = serde_json::json!({
-            "created_at": "2026-01-17T10:00:10Z"  // 10 seconds later
+            "created_at": "2026-01-17T10:00:10Z"
         });
 
         let issues = check_timestamp_tolerance(&br, &bd, &rules);
 
-        // 10 seconds exceeds 5 second tolerance
         assert!(!issues.is_empty());
         assert!(issues[0].contains("timestamp drift"));
     }
@@ -3874,18 +3751,15 @@ mod tests {
         let bd = serde_json::json!({
             "issues": [
                 {"updated_at": "2026-01-17T10:00:30Z"},
-                {"updated_at": "2026-01-17T11:02:00Z"}  // 2 minutes drift
+                {"updated_at": "2026-01-17T11:02:00Z"}
             ]
         });
 
         let issues = check_timestamp_tolerance(&br, &bd, &rules);
 
-        // Second timestamp exceeds tolerance
         assert_eq!(issues.len(), 1);
         assert!(issues[0].contains("issues[1]"));
     }
-
-    // --- Comparator Behavior Tests ---
 
     #[test]
     fn compare_mode_exact_json_matches() {
@@ -3969,7 +3843,6 @@ mod tests {
             &NormalizationRules::conformance_default(),
         );
 
-        // After normalization (masking timestamps and IDs), should match
         assert!(comparison.matched);
         assert!(!log.is_empty());
     }
@@ -3999,7 +3872,6 @@ mod tests {
             &NormalizationRules::strict(),
         );
 
-        // Only id and title are compared, extra is ignored
         assert!(comparison.matched);
     }
 
@@ -4092,8 +3964,6 @@ mod tests {
         assert!(comparison.diff_description.unwrap().contains("Exit code"));
     }
 
-    // --- Scenario Validation Tests ---
-
     #[test]
     fn test_scenario_supports_mode() {
         let scenario = Scenario::new("test", ScenarioCommand::new(["list"]))
@@ -4108,7 +3978,6 @@ mod tests {
     fn test_scenario_default_modes() {
         let scenario = Scenario::new("test", ScenarioCommand::new(["list"]));
 
-        // Default includes E2E and Conformance but not Benchmark
         assert!(scenario.supports_mode(ExecutionMode::E2E));
         assert!(scenario.supports_mode(ExecutionMode::Conformance));
         assert!(!scenario.supports_mode(ExecutionMode::Benchmark));
@@ -4131,7 +4000,6 @@ mod tests {
     fn test_scenario_command_default_label() {
         let cmd = ScenarioCommand::new(["list", "--json"]);
 
-        // Default label is first argument
         assert_eq!(cmd.label, "list");
     }
 
@@ -4184,11 +4052,8 @@ mod tests {
         let stdout = "Plain text with no JSON";
         let json = extract_json_payload(stdout);
 
-        // Returns trimmed input when no JSON found
         assert_eq!(json, "Plain text with no JSON");
     }
-
-    // --- JSON Comparison Edge Cases ---
 
     #[test]
     fn compare_mode_handles_parse_errors() {
@@ -4227,7 +4092,6 @@ mod tests {
         let a_shape = structure_only(&a);
         let b_shape = structure_only(&b);
 
-        // Structure should match even with different values
         assert_eq!(a_shape, b_shape);
         assert_eq!(a_shape["name"], serde_json::Value::Null);
         assert_eq!(a_shape["count"], serde_json::Value::Null);
@@ -4285,9 +4149,6 @@ mod tests {
             .get("issues")
             .and_then(Value::as_array)
             .expect("ready pagination object with issues array");
-        // Fail-closed create (bd-h8d6) stamps every bead with a typed
-        // VERIFY, so `captured_create_step` children are dispatchable as
-        // soon as they are unblocked (the old no-verify narrowing is gone).
         assert!(
             ready_items
                 .iter()

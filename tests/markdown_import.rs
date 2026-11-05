@@ -7,14 +7,10 @@ use std::fs;
 fn test_markdown_import() {
     let workspace = BrWorkspace::new();
 
-    // Initialize
     let output = run_br(&workspace, ["init"], "init");
     assert!(output.status.success(), "init failed");
 
-    // Create markdown file
     let md_path = workspace.root.join("issues.md");
-    // We use content_safe below. The logic validation of dependencies is commented out
-    // because we can't easily refer to new issue IDs in markdown import without placeholders.
 
     let content_safe = r"## First Issue
 ### Priority
@@ -31,7 +27,6 @@ feature
 
     fs::write(&md_path, content_safe).expect("write md");
 
-    // Run create --file
     let output = run_br(&workspace, ["create", "--file", "issues.md"], "create_md");
     println!("stdout:\n{}", output.stdout);
     println!("stderr:\n{}", output.stderr);
@@ -47,23 +42,12 @@ feature
         output.stdout
     );
 
-    // Verify list
     let output = run_br(&workspace, ["list"], "list");
     assert!(output.status.success());
     assert!(output.stdout.contains("First Issue"));
     assert!(output.stdout.contains("Second Issue"));
-    assert!(output.stdout.contains("P1]")); // Priority 1 (format: [● P1])
+    assert!(output.stdout.contains("P1]"));
 
-    // Verify labels on First Issue using JSON output.
-    //
-    // beads-44rc rewrite (2026-05-09): originally pinned the
-    // pretty-printed JSON format `"title": "First Issue"` (with a space
-    // after `:`). After commit `f26bf73f fix(output): fail on stdout
-    // serialization errors` and the streaming-perf migration in
-    // `src/output/context.rs::json` (`serde_json::to_writer`, compact
-    // format), the JSON has no whitespace between key and value. Switched
-    // to semantic JSON parse + invariant checks so the test is robust to
-    // format changes.
     let output = run_br(&workspace, ["list", "--json"], "list_json");
     assert!(output.status.success());
 
@@ -193,7 +177,6 @@ task
         "agent_context must be omitted from JSON when unset, got: {without_ctx}"
     );
 
-    // Confirm persistence: `br show --json` echoes the stored agent_context.
     let with_id = with_ctx
         .get("id")
         .and_then(Value::as_str)
@@ -252,7 +235,6 @@ bug
 
     let payload = extract_json_payload(&list.stdout);
     let json: serde_json::Value = serde_json::from_str(&payload).expect("json parse");
-    // Handle both bare array and paginated {"issues": [...]} formats
     let issues = if let Some(arr) = json.as_array() {
         arr.clone()
     } else {
@@ -302,8 +284,6 @@ task
     );
 }
 
-// `br create --dry-run --file <md>` validates the bulk import file and reports
-// what would be created without persisting to storage or JSONL. (#300)
 #[test]
 fn test_markdown_import_dry_run_validates_without_persisting() {
     let workspace = BrWorkspace::new();
@@ -340,7 +320,6 @@ bug
     assert!(output.stdout.contains("DryRun Issue"));
     assert!(output.stdout.contains("Second DryRun Issue"));
 
-    // Storage side-effects: nothing should be persisted.
     let list = run_br(&workspace, ["list"], "list_after_dry_run");
     assert!(list.status.success());
     assert!(
@@ -350,8 +329,6 @@ bug
     );
 }
 
-// Dry-run JSON output must still emit the would-create payload so callers can
-// pipe it into validation tools — even though nothing is persisted. (#300)
 #[test]
 fn test_markdown_import_dry_run_emits_json() {
     let workspace = BrWorkspace::new();
@@ -453,7 +430,6 @@ task
 ";
     fs::write(&md_path, content).expect("write md");
 
-    // --parent with --file sets a global default parent for imported issues
     let output = run_br(
         &workspace,
         [
@@ -477,7 +453,6 @@ task
     let issues = json.as_array().expect("json array");
     assert_eq!(issues.len(), 1);
 
-    // Verify the imported issue has a parent-child dependency on the parent
     let deps = issues[0]["dependencies"]
         .as_array()
         .expect("dependencies array");
@@ -801,7 +776,6 @@ fn test_markdown_import_standin_id_dependency_resolution() {
     let output = run_br(&workspace, ["init"], "init_standin");
     assert!(output.status.success(), "init failed");
 
-    // Create a markdown file where issues reference each other via stand-in IDs
     let md_path = workspace.root.join("issues.md");
     let content = r"## Build Database Schema
 ### ID
@@ -835,7 +809,6 @@ feature
     let issues = json.as_array().expect("json array");
     assert_eq!(issues.len(), 2);
 
-    // The second issue (API Endpoints) should depend on the first (Database Schema)
     let db_id = issues[0]["id"].as_str().expect("db issue id");
     let api_deps = issues[1]["dependencies"]
         .as_array()
@@ -860,7 +833,6 @@ fn test_markdown_import_title_based_dependency_resolution() {
     let output = run_br(&workspace, ["init"], "init_title_dep");
     assert!(output.status.success(), "init failed");
 
-    // Create a markdown file where issues reference each other by title (bulleted)
     let md_path = workspace.root.join("issues.md");
     let content = r"## Build API Endpoints
 ### Type
@@ -890,8 +862,6 @@ task
     let issues = json.as_array().expect("json array");
     assert_eq!(issues.len(), 2);
 
-    // The first issue (API Endpoints) should depend on the second (Database Schema)
-    // This tests forward-reference resolution (dep target defined later in file)
     let db_id = issues[1]["id"].as_str().expect("db issue id");
     let api_deps = issues[0]["dependencies"]
         .as_array()
@@ -916,7 +886,6 @@ fn test_markdown_import_title_with_colon_dependency_resolution() {
     let output = run_br(&workspace, ["init"], "init_colon_title");
     assert!(output.status.success(), "init failed");
 
-    // Titles containing colons must not be misinterpreted as typed deps
     let md_path = workspace.root.join("issues.md");
     let content = r"## Step 1: Setup Database
 ### Type

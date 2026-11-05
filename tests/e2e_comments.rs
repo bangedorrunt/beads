@@ -29,11 +29,9 @@ fn e2e_comments_add_single_and_list() {
     let _log = common::test_log("e2e_comments_add_single_and_list");
     let workspace = BrWorkspace::new();
 
-    // Initialize workspace
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(
         &workspace,
         [
@@ -52,7 +50,6 @@ fn e2e_comments_add_single_and_list() {
     let id = parse_created_id(&create.stdout);
     assert!(!id.is_empty(), "missing created id");
 
-    // Add a comment
     let add = run_br(
         &workspace,
         ["comments", "add", &id, "This is my first comment"],
@@ -60,7 +57,6 @@ fn e2e_comments_add_single_and_list() {
     );
     assert!(add.status.success(), "add comment failed: {}", add.stderr);
 
-    // List comments
     let list = run_br(&workspace, ["comments", "list", &id], "list_comments");
     assert!(
         list.status.success(),
@@ -99,7 +95,6 @@ fn e2e_comments_add_multiple_verify_order() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Add three comments
     let add1 = run_br(
         &workspace,
         ["comments", "add", &id, "First comment"],
@@ -133,10 +128,6 @@ fn e2e_comments_add_multiple_verify_order() {
         add3.stderr
     );
 
-    // Regression for #461: each `comments add` auto-flush must preserve the
-    // earlier comment rows instead of repeating the newest row into every
-    // pre-existing slot. Validate the published ledger directly so agreement
-    // between two damaged query surfaces cannot make this test pass.
     let jsonl = std::fs::read_to_string(workspace.root.join(".beads/issues.jsonl"))
         .expect("read issues.jsonl");
     let exported_issue = jsonl
@@ -165,7 +156,6 @@ fn e2e_comments_add_multiple_verify_order() {
         ["First comment", "Second comment", "Third comment"]
     );
 
-    // List comments in JSON format to verify order
     let list = run_br(&workspace, ["comments", "list", &id, "--json"], "list_json");
     assert!(list.status.success(), "list json failed: {}", list.stderr);
 
@@ -174,7 +164,6 @@ fn e2e_comments_add_multiple_verify_order() {
 
     assert_eq!(comments.len(), 3, "should have 3 comments");
 
-    // Verify comments are in order (first, second, third)
     let texts: Vec<&str> = comments.iter().filter_map(|c| c["text"].as_str()).collect();
     assert_eq!(texts[0], "First comment");
     assert_eq!(texts[1], "Second comment");
@@ -207,7 +196,6 @@ fn e2e_comments_list_json_structure() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Add a comment with explicit author
     let add = run_br(
         &workspace,
         [
@@ -222,7 +210,6 @@ fn e2e_comments_list_json_structure() {
     );
     assert!(add.status.success(), "add comment failed: {}", add.stderr);
 
-    // List in JSON format
     let list = run_br(&workspace, ["comments", "list", &id, "--json"], "list_json");
     assert!(list.status.success(), "list json failed: {}", list.stderr);
 
@@ -232,7 +219,6 @@ fn e2e_comments_list_json_structure() {
     assert_eq!(comments.len(), 1, "should have 1 comment");
     let comment = &comments[0];
 
-    // Validate structure
     assert!(
         comment["id"].is_number() || comment["id"].is_string(),
         "comment should have id"
@@ -271,7 +257,6 @@ fn e2e_comments_add_to_existing() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Add first comment
     let add1 = run_br(
         &workspace,
         ["comments", "add", &id, "Existing comment"],
@@ -283,14 +268,12 @@ fn e2e_comments_add_to_existing() {
         add1.stderr
     );
 
-    // Verify one comment
     let list1 = run_br(&workspace, ["comments", "list", &id, "--json"], "list1");
     assert!(list1.status.success(), "list1 failed: {}", list1.stderr);
     let payload1 = extract_json_payload(&list1.stdout);
     let comments1: Vec<Value> = serde_json::from_str(&payload1).expect("parse json");
     assert_eq!(comments1.len(), 1, "should have 1 comment");
 
-    // Add another comment
     let add2 = run_br(
         &workspace,
         ["comments", "add", &id, "New comment added"],
@@ -302,7 +285,6 @@ fn e2e_comments_add_to_existing() {
         add2.stderr
     );
 
-    // Verify two comments
     let list2 = run_br(&workspace, ["comments", "list", &id, "--json"], "list2");
     assert!(list2.status.success(), "list2 failed: {}", list2.stderr);
     let payload2 = extract_json_payload(&list2.stdout);
@@ -319,7 +301,6 @@ fn e2e_comments_add_nonexistent_issue() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Try to add comment to non-existent issue
     let add = run_br(
         &workspace,
         ["comments", "add", "bd-nonexistent", "This should fail"],
@@ -364,12 +345,8 @@ fn e2e_comments_add_empty() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Try to add empty comment (no text arguments)
     let add = run_br(&workspace, ["comments", "add", &id], "add_empty");
-    // This might either fail or succeed with empty - check behavior
-    // Most implementations reject empty comments
     if add.status.success() {
-        // If it succeeded, verify comment list
         let list = run_br(
             &workspace,
             ["comments", "list", &id, "--json"],
@@ -377,7 +354,6 @@ fn e2e_comments_add_empty() {
         );
         let payload = extract_json_payload(&list.stdout);
         let comments: Vec<Value> = serde_json::from_str(&payload).unwrap_or_default();
-        // Either no comment was added, or an empty comment exists
         assert!(
             comments.is_empty()
                 || comments
@@ -386,7 +362,6 @@ fn e2e_comments_add_empty() {
             "empty comment handling"
         );
     } else {
-        // Expected: error for empty comment
         assert!(
             add.stderr.contains("empty")
                 || add.stderr.contains("required")
@@ -423,7 +398,6 @@ fn e2e_comments_list_empty() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // List comments on issue with no comments
     let list = run_br(
         &workspace,
         ["comments", "list", &id, "--json"],
@@ -466,7 +440,6 @@ fn e2e_comments_special_characters() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Add comment with special characters using --message flag for complex text
     let special_text = "Quote: \"hello\" and apostrophe's and emoji: 🚀";
     let add = run_br(
         &workspace,
@@ -479,7 +452,6 @@ fn e2e_comments_special_characters() {
         add.stderr
     );
 
-    // Verify comment was stored correctly
     let list = run_br(
         &workspace,
         ["comments", "list", &id, "--json"],
@@ -526,7 +498,6 @@ fn e2e_comments_long_text() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Create a long comment (10KB)
     let long_text = "x".repeat(10_000);
     let add = run_br(
         &workspace,
@@ -539,7 +510,6 @@ fn e2e_comments_long_text() {
         add.stderr
     );
 
-    // Verify comment was stored
     let list = run_br(&workspace, ["comments", "list", &id, "--json"], "list_long");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
@@ -577,7 +547,6 @@ fn e2e_comments_on_closed_issue() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Close the issue through the legal gate-plus-commit ceremony.
     let gate = run_br(
         &workspace,
         [
@@ -592,10 +561,6 @@ fn e2e_comments_on_closed_issue() {
             "pass",
             "--to",
             "closed",
-            // The close below is authorised by this PASS row (ADR-0001 §5.3):
-            // a note that leads with `task=<id> verdict=<id>`. A named sha
-            // would have to resolve and cite the bead, and this harness has
-            // no commit to cite.
             "--note",
             "task=e2e-comments-task verdict=e2e-comments-verdict",
         ],
@@ -618,7 +583,6 @@ fn e2e_comments_on_closed_issue() {
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    // Add comment to closed issue
     let add = run_br(
         &workspace,
         ["comments", "add", &id, "Comment on closed issue"],
@@ -630,7 +594,6 @@ fn e2e_comments_on_closed_issue() {
         add.stderr
     );
 
-    // Verify comment was added
     let list = run_br(
         &workspace,
         ["comments", "list", &id, "--json"],
@@ -670,7 +633,6 @@ fn e2e_comments_add_json_output() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Add comment with --json output
     let add = run_br(
         &workspace,
         ["comments", "add", &id, "--json", "JSON output comment"],
@@ -678,11 +640,9 @@ fn e2e_comments_add_json_output() {
     );
     assert!(add.status.success(), "add json failed: {}", add.stderr);
 
-    // Verify JSON output
     let payload = extract_json_payload(&add.stdout);
     let result: Value = serde_json::from_str(&payload).expect("parse add json");
 
-    // The result should contain information about the added comment
     assert!(
         result.is_object() || result.is_array(),
         "add --json should return structured output"
@@ -715,7 +675,6 @@ fn e2e_comments_shorthand() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Add a comment
     let add = run_br(
         &workspace,
         ["comments", "add", &id, "Shorthand comment"],
@@ -723,7 +682,6 @@ fn e2e_comments_shorthand() {
     );
     assert!(add.status.success(), "add comment failed: {}", add.stderr);
 
-    // Use shorthand to list comments
     let list = run_br(&workspace, ["comments", &id], "list_shorthand");
     assert!(
         list.status.success(),
@@ -762,7 +720,6 @@ fn e2e_comments_sync_roundtrip() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Add comments
     let add1 = run_br(
         &workspace,
         ["comments", "add", &id, "First sync comment"],
@@ -785,7 +742,6 @@ fn e2e_comments_sync_roundtrip() {
         add2.stderr
     );
 
-    // Export to JSONL
     let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
@@ -793,17 +749,14 @@ fn e2e_comments_sync_roundtrip() {
         flush.stderr
     );
 
-    // Create a new workspace and import
     let workspace2 = BrWorkspace::new();
     let init2 = run_br(&workspace2, ["init"], "init2");
     assert!(init2.status.success(), "init2 failed: {}", init2.stderr);
 
-    // Copy JSONL to new workspace
     let jsonl_src = workspace.root.join(".beads").join("issues.jsonl");
     let jsonl_dst = workspace2.root.join(".beads").join("issues.jsonl");
     std::fs::copy(&jsonl_src, &jsonl_dst).expect("copy jsonl");
 
-    // Import
     let import = run_br(
         &workspace2,
         ["sync", "--import-only", "--force"],
@@ -811,7 +764,6 @@ fn e2e_comments_sync_roundtrip() {
     );
     assert!(import.status.success(), "import failed: {}", import.stderr);
 
-    // Verify comments were imported
     let list = run_br(
         &workspace2,
         ["comments", "list", &id, "--json"],

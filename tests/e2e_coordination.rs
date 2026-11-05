@@ -15,8 +15,6 @@ fn claim_by_id<'a>(json: &'a Value, id: &str) -> &'a Value {
         .expect("claim should exist")
 }
 
-// The lab fixtures stay in JSONL so the tests exercise the same import path
-// real agents use when sharing Beads state through git.
 fn seed_coordination_workspace(workspace: &BrWorkspace) {
     let init = run_br(workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
@@ -129,9 +127,6 @@ fn write_snapshot_files(workspace: &BrWorkspace) -> (String, String) {
     )
 }
 
-// This snapshot intentionally avoids holder, reason, and thread matches so the
-// reservation can only attach through the degraded-coordination file scope in
-// the stale issue comment.
 fn write_expired_comment_path_reservation(workspace: &BrWorkspace) -> String {
     let path = workspace
         .root

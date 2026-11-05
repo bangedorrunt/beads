@@ -19,7 +19,6 @@ fn test_homebrew_formula_syntax() {
 
     let content = fs::read_to_string(formula_path).expect("Failed to read Homebrew formula");
 
-    // Basic structure checks
     assert!(
         content.contains("class Br < Formula"),
         "Formula must define Br class extending Formula"
@@ -41,7 +40,6 @@ fn test_homebrew_formula_syntax() {
         "Formula must have a version"
     );
 
-    // Platform-specific URLs
     assert!(
         content.contains("on_macos do"),
         "Formula must have macOS platform section"
@@ -59,14 +57,12 @@ fn test_homebrew_formula_syntax() {
         "Formula must have Intel architecture section"
     );
 
-    // Install and test blocks
     assert!(
         content.contains("def install"),
         "Formula must have install method"
     );
     assert!(content.contains("test do"), "Formula must have test block");
 
-    // Check Ruby syntax if ruby is available
     if Command::new("ruby").arg("--version").output().is_ok() {
         let output = Command::new("ruby")
             .arg("-c")
@@ -94,11 +90,9 @@ fn test_scoop_manifest_schema() {
 
     let content = fs::read_to_string(manifest_path).expect("Failed to read Scoop manifest");
 
-    // Parse as JSON
     let json: serde_json::Value =
         serde_json::from_str(&content).expect("Scoop manifest must be valid JSON");
 
-    // Required fields
     assert!(
         json.get("version").is_some(),
         "Manifest must have 'version' field"
@@ -117,7 +111,6 @@ fn test_scoop_manifest_schema() {
     );
     assert!(json.get("bin").is_some(), "Manifest must have 'bin' field");
 
-    // Architecture section
     let arch = json
         .get("architecture")
         .expect("Manifest must have 'architecture' field");
@@ -126,7 +119,6 @@ fn test_scoop_manifest_schema() {
         "Manifest must have '64bit' architecture"
     );
 
-    // 64bit must have url and hash
     let arch_64 = arch.get("64bit").unwrap();
     assert!(
         arch_64.get("url").is_some(),
@@ -137,7 +129,6 @@ fn test_scoop_manifest_schema() {
         "64bit architecture must have 'hash'"
     );
 
-    // Autoupdate section (optional but recommended)
     if let Some(autoupdate) = json.get("autoupdate") {
         assert!(
             autoupdate.get("architecture").is_some(),
@@ -145,14 +136,12 @@ fn test_scoop_manifest_schema() {
         );
     }
 
-    // URL format validation
     let url = arch_64.get("url").unwrap().as_str().unwrap();
     assert!(url.starts_with("https://"), "URL must use HTTPS: {url}");
     assert!(
         url.contains("github.com"),
         "URL should point to GitHub releases"
     );
-    // Allow case-sensitive comparison since URLs are case-sensitive
     #[allow(clippy::case_sensitive_file_extension_comparisons)]
     {
         assert!(url.ends_with(".zip"), "Windows URL should be a .zip file");
@@ -171,7 +160,6 @@ fn test_pkgbuild_syntax() {
 
     let content = fs::read_to_string(pkgbuild_path).expect("Failed to read PKGBUILD");
 
-    // Required variables
     assert!(content.contains("pkgname="), "PKGBUILD must define pkgname");
     assert!(content.contains("pkgver="), "PKGBUILD must define pkgver");
     assert!(content.contains("pkgrel="), "PKGBUILD must define pkgrel");
@@ -180,7 +168,6 @@ fn test_pkgbuild_syntax() {
     assert!(content.contains("url="), "PKGBUILD must define url");
     assert!(content.contains("license="), "PKGBUILD must define license");
 
-    // Source arrays for both architectures
     assert!(
         content.contains("source_x86_64="),
         "PKGBUILD must have x86_64 sources"
@@ -190,7 +177,6 @@ fn test_pkgbuild_syntax() {
         "PKGBUILD must have aarch64 sources"
     );
 
-    // SHA256 sums
     assert!(
         content.contains("sha256sums_x86_64="),
         "PKGBUILD must have x86_64 checksums"
@@ -200,13 +186,11 @@ fn test_pkgbuild_syntax() {
         "PKGBUILD must have aarch64 checksums"
     );
 
-    // Package function
     assert!(
         content.contains("package()"),
         "PKGBUILD must have package() function"
     );
 
-    // Check bash syntax if bash is available
     if Command::new("bash").arg("--version").output().is_ok() {
         let output = Command::new("bash")
             .arg("-n")
@@ -227,7 +211,6 @@ fn test_pkgbuild_syntax() {
 fn test_cargo_metadata() {
     let cargo_toml = fs::read_to_string("Cargo.toml").expect("Failed to read Cargo.toml");
 
-    // Required fields for crates.io
     assert!(cargo_toml.contains("name = "), "Cargo.toml must have name");
     assert!(
         cargo_toml.contains("version = "),
@@ -246,7 +229,6 @@ fn test_cargo_metadata() {
         "Cargo.toml should have repository URL"
     );
 
-    // Recommended fields
     assert!(
         cargo_toml.contains("keywords = "),
         "Cargo.toml should have keywords for discoverability"
@@ -256,7 +238,6 @@ fn test_cargo_metadata() {
         "Cargo.toml should have categories for crates.io"
     );
 
-    // Binary definition
     assert!(
         cargo_toml.contains("[[bin]]"),
         "Cargo.toml must define binary target"

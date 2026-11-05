@@ -34,7 +34,6 @@ pub fn execute(args: &CompletionsArgs, _ctx: &OutputContext) -> Result<()> {
     let cmd = Cli::command();
 
     if let Some(output_path) = &args.output {
-        // Generate to file
         let mut file = std::fs::File::create(output_path)?;
         write_dynamic_completions(args.shell, &cmd, &mut file)?;
         info!(path = %output_path.display(), "Wrote completion script");
@@ -44,7 +43,6 @@ pub fn execute(args: &CompletionsArgs, _ctx: &OutputContext) -> Result<()> {
             output_path.display()
         );
     } else {
-        // Generate to stdout
         write_dynamic_completions(args.shell, &cmd, &mut io::stdout())?;
     }
 
@@ -154,7 +152,6 @@ mod tests {
         info!("test_bash_completion_generation: starting");
         let script = render_shell(ShellType::Bash);
 
-        // Verify basic structure
         assert!(
             script.contains("complete -o"),
             "should contain bash complete command"

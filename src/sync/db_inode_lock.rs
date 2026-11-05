@@ -98,21 +98,15 @@ pub fn try_lock_database_inode(file: &File) -> Result<(), TryLockError> {
         l_whence: libc::c_short::try_from(libc::SEEK_SET).unwrap_or(0),
         l_start: libc::off_t::try_from(DATABASE_INODE_LOCK_OFFSET).unwrap_or(libc::off_t::MAX - 1),
         l_len: 1,
-        // Required to be zero for open-file-description locks.
         l_pid: 0,
     };
     // SAFETY: `fcntl(fd, F_OFD_SETLK, &flock)` only reads the `flock` struct,
-    // which outlives the call, and `fd` is a valid open descriptor borrowed
-    // from `file` for the duration of the call. No memory is handed to the
-    // kernel beyond the struct pointer, and no Rust invariants depend on the
-    // advisory lock state.
     let rc = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_OFD_SETLK, &lock) };
     if rc == 0 {
         return Ok(());
     }
     let error = std::io::Error::last_os_error();
     match error.raw_os_error() {
-        // POSIX allows either EAGAIN or EACCES for a held conflicting lock.
         Some(code) if code == libc::EAGAIN || code == libc::EACCES => Err(TryLockError::WouldBlock),
         _ => Err(TryLockError::Error(error)),
     }
@@ -148,8 +142,6 @@ pub fn try_lock_database_inode(file: &File) -> Result<(), TryLockError> {
 pub fn try_lock_database_inode(file: &File) -> Result<(), TryLockError> {
     use std::os::windows::io::AsRawHandle;
 
-    // Minimal local declarations mirroring `windows-sys`; kept private so the
-    // unsafe surface stays inside this module.
     #[repr(C)]
     struct Overlapped {
         internal: usize,
@@ -185,9 +177,6 @@ pub fn try_lock_database_inode(file: &File) -> Result<(), TryLockError> {
         h_event: 0,
     };
     // SAFETY: the handle is valid for the duration of the call (borrowed from
-    // `file`), `overlapped` outlives the synchronous call, and with
-    // LOCKFILE_FAIL_IMMEDIATELY on a synchronous handle the call completes
-    // before returning, so the kernel keeps no reference to `overlapped`.
     let ok = unsafe {
         LockFileEx(
             file.as_raw_handle() as isize,
@@ -276,8 +265,6 @@ mod tests {
         let authority = temp_file(dir.path());
         try_lock_database_inode(&authority).expect("authority lock");
 
-        // Simulate frankensqlite taking a write lock on the SQLite
-        // pending-byte range through a second open file description.
         let engine = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -291,7 +278,6 @@ mod tests {
             l_pid: 0,
         };
         // SAFETY: same contract as `try_lock_database_inode` — the struct and
-        // descriptor are valid for the duration of the call.
         let rc = unsafe { libc::fcntl(engine.as_raw_fd(), libc::F_OFD_SETLK, &lock) };
         assert_eq!(
             rc,

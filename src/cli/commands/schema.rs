@@ -151,7 +151,6 @@ pub fn execute(
     );
     let quiet = cli.quiet.unwrap_or(false);
 
-    // Schema output is always machine-readable; for text mode we print pretty JSON.
     let ctx = output::OutputContext::from_output_format(output_format, quiet, true);
     if matches!(ctx.mode(), OutputMode::Quiet) {
         return Ok(());
@@ -174,7 +173,6 @@ pub fn execute(
             ctx.json_pretty(&payload);
         }
         OutputFormat::Text | OutputFormat::Csv => {
-            // Text mode: still emit JSON Schema; don't require callers to pass --json.
             let json = serde_json::to_string_pretty(&payload).expect("schema payload is JSON");
             println!("{json}");
         }
@@ -263,7 +261,6 @@ fn build_schemas(target: SchemaTarget) -> BTreeMap<&'static str, Schema> {
             schemas.insert("ErrorEnvelope", schema_for_output::<ErrorEnvelope>());
         }
         SchemaTarget::Commands => {
-            // Only the command-shape map is requested; no per-row schemas.
         }
     }
 
@@ -459,11 +456,6 @@ fn insert_dependency_command_shapes(commands: &mut BTreeMap<&'static str, Comman
 }
 
 fn insert_aggregate_command_shapes(commands: &mut BTreeMap<&'static str, CommandShape>) {
-    // `br status` is documented as an alias for `br stats` and dispatches
-    // through the same handler, so the envelope is identical. We list both
-    // keys (with differentiated `notes`) so an agent looking up either name
-    // gets the right shape without an indirection step, but can still tell
-    // which name is canonical.
     let stats_base = CommandShape {
         shape: "object",
         jq_filter: ".",
@@ -673,19 +665,14 @@ mod tests {
     #[test]
     fn command_shapes_have_consistent_invariants() {
         let commands = build_commands(SchemaTarget::Commands);
-        // Build schemas once, not per-iteration — schema_for! does real work.
         let known_schemas = build_schemas(SchemaTarget::All);
         for (name, shape) in &commands {
-            // shape must be one of the documented values.
             assert!(
                 matches!(shape.shape, "array" | "object" | "scalar"),
                 "{name}: shape={:?} is not one of array|object|scalar",
                 shape.shape
             );
-            // jq_filter must be non-empty.
             assert!(!shape.jq_filter.is_empty(), "{name}: jq_filter is empty");
-            // If shape is array, items_at must be Some(".") (jq identity — the
-            // top-level value itself is the array we iterate).
             if shape.shape == "array" {
                 assert_eq!(
                     shape.items_at,
@@ -693,16 +680,12 @@ mod tests {
                     "{name}: array shapes must set items_at = \".\""
                 );
             }
-            // If items_at is set, it must be a jq path starting with `.`
-            // (consistent with the `.issues` / `.` notation used for `list`
-            // and the array-shaped commands).
             if let Some(path) = shape.items_at {
                 assert!(
                     path.starts_with('.'),
                     "{name}: items_at {path:?} must be a jq path starting with `.`"
                 );
             }
-            // If item_schema is set, it must reference a known schema name from build_schemas(All).
             if let Some(item_schema) = shape.item_schema {
                 assert!(
                     known_schemas.contains_key(item_schema),
@@ -749,9 +732,6 @@ mod tests {
 
     #[test]
     fn stats_and_status_share_the_same_envelope() {
-        // `br status` is documented as an alias for `br stats`; the schema
-        // map should describe identical shapes for both names so agents
-        // looking up either name get a consistent answer.
         let commands = build_commands(SchemaTarget::Commands);
         let stats = commands.get("stats").expect("stats entry must exist");
         let status = commands.get("status").expect("status alias must exist");

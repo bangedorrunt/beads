@@ -34,7 +34,6 @@ use super::config::{AnalysisConfig, BetweennessMode, METRIC_DEFAULT_TIMEOUT_MS};
 use super::engine::AnalysisEngine;
 use super::status::{MetricEntry, MetricState, MetricStatus};
 
-// Base-score weights (bv priority.go; sum = 1.0).
 const WEIGHT_PAGERANK: f64 = 0.22;
 const WEIGHT_BETWEENNESS: f64 = 0.20;
 const WEIGHT_BLOCKER_RATIO: f64 = 0.13;
@@ -51,7 +50,6 @@ const DEFAULT_ESTIMATED_MINUTES: i32 = 60;
 const MAX_CRITICAL_PATH_DEPTH: f64 = 10.0;
 const URGENCY_DECAY_DAYS: f64 = 7.0;
 
-// Triage-scoring options (bv-147 defaults).
 const BASE_SCORE_WEIGHT: f64 = 0.70;
 const UNBLOCK_BOOST_WEIGHT: f64 = 0.15;
 const QUICK_WIN_WEIGHT: f64 = 0.15;
@@ -62,10 +60,6 @@ const RECOMMENDATIONS_LIMIT: usize = 10;
 const QUICK_WINS_LIMIT: usize = 5;
 const BLOCKERS_LIMIT: usize = 5;
 const TOP_PICKS_LIMIT: usize = 3;
-
-// ---------------------------------------------------------------------------
-// JSON payload types (field-for-field with bv's Go structs)
-// ---------------------------------------------------------------------------
 
 /// Go `RFC3339Nano`: trailing-zero-trimmed fraction, omitted when zero.
 pub(crate) fn go_time_nanos(t: DateTime<Utc>) -> String {
@@ -271,10 +265,6 @@ pub struct TriageResult {
     pub commands: CommandHelpers,
 }
 
-// ---------------------------------------------------------------------------
-// Scoring primitives (priority.go / risk.go ports)
-// ---------------------------------------------------------------------------
-
 /// Fractional days between two instants (Go uses full float64 precision;
 /// chrono's num_hours() would truncate and skew staleness by up to an hour).
 fn fractional_days(from: DateTime<Utc>, to: DateTime<Utc>) -> f64 {
@@ -314,8 +304,6 @@ fn compute_time_to_impact(
 
     let depth_norm = (critical_depth / MAX_CRITICAL_PATH_DEPTH).min(1.0);
     let time_factor = (1.0 - f64::from(effective_minutes) / MAX_MINUTES).clamp(0.0, 1.0);
-    // Deliberately NOT mul_add: Go evaluates these as separate ops on the
-    // golden-generating host, and fusing would perturb parity floats.
     #[allow(clippy::suboptimal_flops)]
     let score = depth_norm * 0.7 + time_factor * 0.3;
 
@@ -356,13 +344,10 @@ fn compute_urgency(issue: &Issue, now: DateTime<Utc>) -> (f64, Option<String>) {
 
     let created_at = issue.created_at;
     let days_since_created = fractional_days(created_at, now);
-    // Go evaluates the decay as separate ops; fusing would perturb parity.
     #[allow(clippy::suboptimal_flops)]
     if days_since_created > 0.0 {
         score += 0.5 * (1.0 - (-days_since_created / URGENCY_DECAY_DAYS).exp());
         if days_since_created >= 14.0 {
-            // Go %.0f and Rust {:.0} share IEEE round-half-even; no extra
-            // rounding here or the edge cases drift apart.
             reasons.push(format!("aging ({:.0} days)", days_since_created));
         }
     }
@@ -449,8 +434,6 @@ fn compute_status_risk(issue: &Issue, now: DateTime<Utc>) -> f64 {
         Status::InProgress if days_since_update > 14.0 => 0.8,
         Status::InProgress if days_since_update > 7.0 => 0.4,
         Status::Open if fractional_days(issue.created_at, now) > 30.0 => 0.3,
-        // Go gives every remaining open/in-progress bead the same base risk;
-        // closed-like and custom statuses fall through with zero.
         Status::InProgress | Status::Open => 0.1,
         _ => 0.0,
     }
@@ -524,10 +507,6 @@ fn compute_risk_signals(
     }
 }
 
-// ---------------------------------------------------------------------------
-// TriageGraph: open blockers, unblocks map, depths, parents, fan-out
-// ---------------------------------------------------------------------------
-
 pub(crate) struct TriageGraph<'a> {
     by_id: HashMap<&'a str, &'a Issue>,
     /// Known, non-closed blockers per non-closed issue (dangling ids dropped —
@@ -562,7 +541,7 @@ impl<'a> TriageGraph<'a> {
                     continue;
                 }
                 let Some(blocker) = by_id.get(dep.depends_on_id.as_str()) else {
-                    continue; // dangling edges ignored here (bv quirk, see mod docs)
+                    continue;
                 };
                 if is_closed_like(blocker) {
                     continue;
@@ -631,7 +610,7 @@ impl<'a> TriageGraph<'a> {
                 return *val;
             }
             if visited.contains(id) {
-                return -1; // cycle
+                return -1;
             }
             visited.insert(id.to_string());
 
@@ -663,10 +642,6 @@ impl<'a> TriageGraph<'a> {
         self.parents_with_open_children.contains(id)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Impact + triage scoring
-// ---------------------------------------------------------------------------
 
 struct ImpactScore {
     id: String,
@@ -823,10 +798,6 @@ fn compute_triage_scores(
     (rows, impact)
 }
 
-// ---------------------------------------------------------------------------
-// Reason generation (bv-148; byte-exact strings)
-// ---------------------------------------------------------------------------
-
 fn format_unblock_list(ids: &[String]) -> String {
     match ids.len() {
         0 => String::new(),
@@ -852,7 +823,6 @@ fn generate_reasons(
 
     let unblocks_ids = graph.unblocks_of(&row.id).to_vec();
     let blocked_by_ids = graph.open_blockers_of(&row.id).to_vec();
-    // int() truncation is bv's own behavior for the "N days" strings.
     #[allow(clippy::cast_possible_truncation)]
     let days_since_update = issue
         .map(|issue| fractional_days(issue.updated_at, now) as i64)
@@ -887,7 +857,6 @@ fn generate_reasons(
         );
     }
 
-    // 1. Unblock cascade.
     if unblocks_ids.len() >= 3 {
         reasons.push(format!(
             "🎯 Completing this unblocks {} downstream issues ({})",
@@ -902,7 +871,6 @@ fn generate_reasons(
         ));
     }
 
-    // 3. Graph metrics (betweenness first, then pagerank).
     if row.breakdown.betweenness_norm > 0.5 {
         reasons.push(format!(
             "🔀 Critical path bottleneck (betweenness: {:.0}%)",
@@ -916,7 +884,6 @@ fn generate_reasons(
         ));
     }
 
-    // 4. Staleness alert.
     if days_since_update > 14 {
         reasons.push(format!(
             "🕐 No activity in {days_since_update} days - may need review"
@@ -931,7 +898,6 @@ fn generate_reasons(
         }
     }
 
-    // 5. Quick-win identification.
     if is_quick_win {
         reasons.push("⚡ Low effort, high impact - good starting point".to_string());
         let is_critical_stale = is_in_progress && days_since_update > 14;
@@ -940,7 +906,6 @@ fn generate_reasons(
         }
     }
 
-    // 6. Agent claim status (#149 contract).
     if is_future_deferred {
         reasons.push(format!(
             "⏸️ Deferred until {} - not ready to claim",
@@ -978,7 +943,6 @@ fn generate_reasons(
         action_hint = format!("Contact {claimed_by} if you want to help");
     }
 
-    // 7. Blocked status context.
     if !blocked_by_ids.is_empty() {
         if blocked_by_ids.len() == 1 {
             reasons.push(format!(
@@ -994,7 +958,6 @@ fn generate_reasons(
         action_hint = format!("Work on {} first to unblock this", blocked_by_ids[0]);
     }
 
-    // 8. Priority context.
     if issue.is_some_and(|issue| issue.priority.0 <= 1) {
         reasons.push(format!(
             "🚨 High priority (P{}) - prioritize this work",
@@ -1002,8 +965,6 @@ fn generate_reasons(
         ));
     }
 
-    // bv also returns a `primary` reason we do not serialize; its one
-    // observable side effect is this default line when nothing matched.
     if reasons.is_empty() {
         reasons.push("Good candidate for work".to_string());
     }
@@ -1013,10 +974,6 @@ fn generate_reasons(
         all: reasons,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Counts / velocity / health
-// ---------------------------------------------------------------------------
 
 fn compute_counts(issues: &[Issue], graph: &TriageGraph<'_>) -> HealthCounts {
     let mut counts = HealthCounts {
@@ -1047,9 +1004,6 @@ fn compute_counts(issues: &[Issue], graph: &TriageGraph<'_>) -> HealthCounts {
         if is_closed_like(issue) {
             counts.closed += 1;
         } else if issue.status == Status::Open && graph.open_blockers_of(&issue.id).is_empty() {
-            // bv treats only status-open, unblocked issues as actionable;
-            // in_progress/blocked-status rows count as dependency_blocked
-            // even with no blocking edges.
             counts.not_closed += 1;
             counts.actionable += 1;
         } else {
@@ -1130,10 +1084,6 @@ fn compute_velocity(issues: &[Issue], now: DateTime<Utc>) -> Velocity {
         estimated,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
 
 /// Engine config behind both robot payloads: PageRank/Betweenness/critical
 /// heights on; everything else skipped (the golden `status` shape).
@@ -1234,8 +1184,6 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
     let impact = compute_impact_scores(issues, &graph, pagerank, betweenness, critical, now);
     let (scored, impact) = compute_triage_scores(impact, &graph);
 
-    // Recommendations over the FULL scored set (reasons generated once),
-    // sliced afterwards — bv #146/#147 ordering contract.
     let all_recommendations: Vec<Recommendation> = scored
         .iter()
         .filter_map(|row| {
@@ -1269,7 +1217,6 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
         .cloned()
         .collect();
 
-    // Quick wins ride the base impact ordering (bv buildQuickWins).
     let mut qw_candidates: Vec<(f64, &ImpactScore)> = impact
         .iter()
         .map(|base| {
@@ -1283,7 +1230,6 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
                 0.0
             };
             let priority_bonus = if base.priority <= 1 { 0.5 } else { 0.0 };
-            // Go evaluates separate ops; fusing would perturb parity floats.
             #[allow(clippy::suboptimal_flops)]
             (
                 unblock_impact * 0.4 + simplicity * 0.4 + priority_bonus * 0.2,
@@ -1315,7 +1261,6 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
         })
         .collect();
 
-    // Blockers to clear: non-closed issuers of non-empty unblock lists.
     let mut blocker_ids: Vec<&String> = graph
         .unblocks
         .iter()
@@ -1349,8 +1294,6 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
         })
         .collect();
 
-    // Top picks walk the FULL recommendation set keeping claimable ones
-    // (bv #146: blocked high-priority items must not crowd out picks).
     let top_picks: Vec<TopPick> = all_recommendations
         .iter()
         .filter(|rec| is_claimable_recommendation(rec, &graph, now))
@@ -1410,10 +1353,6 @@ pub fn compute_triage(issues: &[Issue], now: DateTime<Utc>, version: &str) -> Tr
                 node_count: analysis.ids.len(),
                 edge_count: analysis.graph.edge_count(),
                 density: analysis.density,
-                // bv's triage fast config skips cycle ENUMERATION; its
-                // health block therefore reports the enumerated set (nil =>
-                // false/omitted) even when the graph is cyclic — SCC truth
-                // stays internal. Parity replicates the emitted shape.
                 has_cycles: false,
                 cycle_count: 0,
                 phase2_ready,

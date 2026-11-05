@@ -86,7 +86,6 @@ pub fn db_path(beads_dir: &Path) -> PathBuf {
 pub fn set_last_touched_id(beads_dir: &Path, id: &str) {
     let path = last_touched_path(beads_dir);
 
-    // Ensure cache directory exists (best-effort)
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -297,8 +296,6 @@ mod tests {
             "temp root {} is not a directory",
             root.display()
         );
-        // The whole point: nothing above a temp dir created here may supply a
-        // workspace to `discover_beads_dir`'s unbounded ancestor walk.
         let temp = test_helpers::isolated_temp_dir();
         assert!(
             crate::config::discover_beads_dir(Some(temp.path())).is_err(),
@@ -338,15 +335,11 @@ mod tests {
 
     #[test]
     fn test_set_last_touched_creates_parent_dir() {
-        // Test that set_last_touched_id creates the parent directory if needed
         let temp = TempDir::new().expect("temp dir");
         let cache_dir = temp.path().join("nested").join("cache");
-        // cache_dir doesn't exist yet
 
-        // Create last-touched path manually (simulating what happens with BEADS_CACHE_DIR)
         let path = cache_dir.join(LAST_TOUCHED_FILE);
 
-        // Manually test the parent directory creation logic
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }

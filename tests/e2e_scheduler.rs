@@ -16,8 +16,6 @@ fn parse_created_id(stdout: &str) -> String {
 }
 
 fn create_issue(workspace: &BrWorkspace, title: &str, priority: &str) -> String {
-    // Wave-gated dispatch (ADR-0001): scheduler only ranks beads carrying a
-    // VERIFY command and a principles citation, so fixtures must provide both.
     let result = run_br(
         workspace,
         [

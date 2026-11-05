@@ -204,8 +204,6 @@ fn import_mixed_case_content_hash_matches_canonical() {
 
 #[test]
 fn import_unknown_status_fails_loudly() {
-    // bd-bqyb: QA_Review no longer normalizes to a Custom variant — the
-    // import fails at the typed boundary.
     let (_temp, beads_dir, jsonl_path, mut storage) = setup();
 
     let jsonl = make_jsonl_issue("bd-cust1", "Custom status", "QA_Review", "task");
@@ -224,7 +222,6 @@ fn import_unknown_status_fails_loudly() {
 
 #[test]
 fn import_unknown_issue_type_fails_loudly() {
-    // bd-bqyb: Security_Audit no longer normalizes — loud failure instead.
     let (_temp, beads_dir, jsonl_path, mut storage) = setup();
 
     let jsonl = make_jsonl_issue("bd-cust2", "Custom type", "open", "Security_Audit");

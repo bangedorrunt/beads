@@ -127,7 +127,6 @@ fn execute_inner(
         has_potential_ready_candidates,
     )?;
 
-    // Compute breakdowns if requested
     let mut breakdowns = Vec::new();
 
     if args.by_type {
@@ -172,7 +171,6 @@ fn execute_inner(
         &mut config_layer,
     )?;
 
-    // Output based on mode
     match output_format {
         OutputFormat::Json => {
             ctx.json_pretty(&output);
@@ -402,10 +400,6 @@ fn compute_summary(
         .map(|i| i.id.as_str())
         .collect();
 
-    // Reuse the storage blocked-ID path for both blocked and ready counts.
-    // It reads the materialized cache when healthy and falls back to direct
-    // graph computation when needed; keep the active filter local so status
-    // accounting remains anchored to the rows already loaded for stats.
     let dependency_blocked_ids: HashSet<String> = if active_issue_ids.is_empty() {
         HashSet::new()
     } else {
@@ -422,7 +416,6 @@ fn compute_summary(
             Status::InProgress => in_progress += 1,
             Status::Closed => {
                 closed += 1;
-                // Calculate lead time for closed issues
                 if let Some(closed_at) = issue.closed_at {
                     let lead_time = closed_at.signed_duration_since(issue.created_at);
                     lead_times.push(lead_time.num_hours() as f64);
@@ -440,7 +433,6 @@ fn compute_summary(
             pinned += 1;
         }
 
-        // Track epics for eligible-for-closure calculation
         if issue.issue_type == IssueType::Epic
             && !matches!(issue.status, Status::Closed | Status::Tombstone)
             && !issue.is_template
@@ -449,7 +441,6 @@ fn compute_summary(
         }
     }
 
-    // Ready count: status=open (not in_progress), no blockers (full definition).
     let ready = if has_potential_ready_candidates {
         issues
             .iter()
@@ -463,15 +454,11 @@ fn compute_summary(
         0
     };
 
-    // Blocked count includes both dependency-blocked issues and manual
-    // Status::Blocked issues, deduped by ID when both conditions apply.
     status_blocked_ids.extend(dependency_blocked_ids.iter().map(String::as_str));
     let blocked = status_blocked_ids.len();
 
-    // Epics eligible for closure: all children closed
     let epics_eligible = count_epics_eligible_for_closure(storage, &epics)?;
 
-    // Average lead time
     let avg_lead_time = if lead_times.is_empty() {
         None
     } else {
@@ -479,7 +466,6 @@ fn compute_summary(
         Some(sum / lead_times.len() as f64)
     };
 
-    // Total excludes tombstones
     let total = issues
         .iter()
         .filter(|i| i.status != Status::Tombstone)
@@ -1219,12 +1205,10 @@ fn store_recent_activity_cache(
 
 /// Print text output for stats.
 fn print_text_output(output: &Statistics) {
-    // Match bd format: 📊 Issue Database Status
     println!("📊 Issue Database Status\n");
 
     let s = &output.summary;
     println!("Summary:");
-    // Match bd alignment (right-aligned numbers, 18-char label width)
     println!("  Total Issues:           {}", s.total_issues);
     println!("  Open:                   {}", s.open_issues);
     println!("  In Progress:            {}", s.in_progress_issues);
@@ -1232,7 +1216,6 @@ fn print_text_output(output: &Statistics) {
     println!("  Closed:                 {}", s.closed_issues);
     println!("  Ready to Work:          {}", s.ready_issues);
 
-    // Optional fields (only show if non-zero)
     if s.deferred_issues > 0 {
         println!("  Deferred:               {}", s.deferred_issues);
     }
@@ -1246,11 +1229,9 @@ fn print_text_output(output: &Statistics) {
         println!("  Epics ready to close:   {}", s.epics_eligible_for_closure);
     }
 
-    // Extended section (matches bd format)
     if s.average_lead_time_hours.is_some() || s.tombstone_issues > 0 {
         println!("\nExtended:");
         if let Some(avg_hours) = s.average_lead_time_hours {
-            // Format like bd: "N.N hours" or "N days" for large values
             let formatted = if avg_hours >= 24.0 {
                 let avg_days = avg_hours / 24.0;
                 format!("{avg_days:.1} days")
@@ -1290,7 +1271,6 @@ fn print_text_output(output: &Statistics) {
 
     print_capacity_table(&output.capacity);
 
-    // Match bd footer
     println!("\nFor more details, use 'br list' to see individual issues.");
 }
 
@@ -1348,15 +1328,12 @@ fn render_stats_rich(output: &Statistics, ctx: &OutputContext) {
     let theme = ctx.theme();
     let width = ctx.width();
 
-    // Build content as Text with multiple sections
     let mut content = Text::new("");
 
-    // === Overview Section ===
     content.append_styled("\u{1f4ca} Overview\n", theme.section.clone());
 
     let s = &output.summary;
 
-    // Main stats row
     content.append_styled("   Total: ", theme.dimmed.clone());
     content.append_styled(&s.total_issues.to_string(), theme.emphasis.clone());
 
@@ -1371,12 +1348,10 @@ fn render_stats_rich(output: &Statistics, ctx: &OutputContext) {
     }
     content.append("\n\n");
 
-    // === Status Breakdown ===
     content.append_styled("\u{1f4c8} By Status\n", theme.section.clone());
     render_status_bars(&mut content, s, theme);
     content.append("\n");
 
-    // === Optional Breakdowns ===
     for breakdown in &output.breakdowns {
         content.append_styled(
             &format!("\u{1f4c8} By {}\n", capitalize(&breakdown.dimension)),
@@ -1386,7 +1361,6 @@ fn render_stats_rich(output: &Statistics, ctx: &OutputContext) {
         content.append("\n");
     }
 
-    // === Recent Activity ===
     if let Some(activity) = &output.recent_activity {
         content.append_styled(
             &format!(
@@ -1406,7 +1380,6 @@ fn render_stats_rich(output: &Statistics, ctx: &OutputContext) {
 
     append_capacity_section_rich(&mut content, &output.capacity, theme);
 
-    // === Health Warnings ===
     let mut warnings = Vec::new();
     if s.blocked_issues > 5 {
         warnings.push(format!("{} issues blocked", s.blocked_issues));
@@ -1435,7 +1408,6 @@ fn render_stats_rich(output: &Statistics, ctx: &OutputContext) {
         }
     }
 
-    // Wrap in panel
     let panel = Panel::from_rich_text(&content, width)
         .title(Text::styled("Project Health", theme.panel_title.clone()))
         .box_style(theme.box_style);
@@ -1546,7 +1518,6 @@ fn render_breakdown_bars(
         let filled = ((entry.count as f64 / total as f64) * bar_width as f64).round() as usize;
         let empty = bar_width.saturating_sub(filled);
 
-        // Choose style based on key
         let style = match breakdown.dimension.as_str() {
             "priority" => match entry.key.as_str() {
                 "P0" => theme.priority_critical.clone(),
@@ -1686,7 +1657,7 @@ mod tests {
             make_issue("t-1", Status::Open, IssueType::Task),
             make_issue("t-2", Status::Open, IssueType::Task),
             make_issue("t-3", Status::Open, IssueType::Bug),
-            make_issue("t-4", Status::Tombstone, IssueType::Feature), // Excluded
+            make_issue("t-4", Status::Tombstone, IssueType::Feature),
         ]
         .iter()
         .map(stats_row)
@@ -1702,7 +1673,7 @@ mod tests {
 
         assert_eq!(map.get("task"), Some(&2));
         assert_eq!(map.get("bug"), Some(&1));
-        assert_eq!(map.get("feature"), None); // Tombstone excluded
+        assert_eq!(map.get("feature"), None);
     }
 
     #[test]
@@ -1797,7 +1768,7 @@ mod tests {
         let summary = compute_test_summary(&storage, &all_issues);
 
         assert_eq!(summary.blocked_issues, 1);
-        assert_eq!(summary.ready_issues, 1); // t-1 is ready, t-2 is blocked
+        assert_eq!(summary.ready_issues, 1);
     }
 
     #[test]
@@ -1923,7 +1894,6 @@ mod tests {
             .collect::<Vec<_>>();
         let summary = compute_test_summary(&storage, &all_issues);
 
-        // t-2 should NOT be blocked because t-1 is closed
         assert_eq!(summary.blocked_issues, 0);
     }
 
@@ -2068,19 +2038,13 @@ mod tests {
 
     #[test]
     fn test_truncate_title_multibyte() {
-        // Multi-byte characters should not cause panics.
-        // 10 chars, 20 visual width; truncate to 5 visual width.
         let emoji = "😊".repeat(10);
         let result = truncate_title(&emoji, 5);
         assert!(result.ends_with("..."));
-        // 5 visual width: "😊" (2) + "..." (3) = 5
         assert_eq!(result, "😊...");
 
-        // Mixed ASCII and emoji
         let mixed = "abc😊def";
-        // "abc" (3) + "😊" (2) + "def" (3) = 8 width
         assert_eq!(truncate_title(mixed, 8), "abc😊def");
-        // "abc" (3) + "..." (3) = 6
         assert_eq!(truncate_title(mixed, 6), "abc...");
     }
 

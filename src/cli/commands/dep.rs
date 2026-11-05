@@ -103,7 +103,6 @@ fn execute_dep_add(
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
     let actor = config::resolve_actor(&config_layer);
-    // Build effective args with resolved external id so inner dep_add stores correctly
     let effective_args = DepAddArgs {
         issue: args.issue.clone(),
         depends_on: Some(effective_depends_on),
@@ -127,7 +126,6 @@ fn resolve_on_to_external(on: &str, _local_beads_dir: &Path) -> Result<String> {
         return Ok(on.to_string());
     }
     // Path/bead form: ../toron/bd-xxx or /abs/path/to/repo/bd-xxx
-    // Split by '/' to get project and bead
     if let Some((path_part, bead)) = on.rsplit_once('/') {
         let bead = bead.trim();
         if bead.is_empty() {
@@ -616,7 +614,6 @@ fn dep_add(
         .depends_on
         .as_deref()
         .ok_or_else(|| BeadsError::validation("depends_on", "missing dependency target"))?;
-    // External dependencies don't need resolution
     let depends_on_id = if raw_depends_on.starts_with("external:") {
         raw_depends_on.to_string()
     } else {
@@ -625,7 +622,6 @@ fn dep_add(
 
     let dep_type = parse_dependency_type(&args.dep_type)?;
 
-    // Self-dependency check
     if issue_id == depends_on_id {
         return Err(BeadsError::SelfDependency { id: issue_id });
     }
@@ -677,7 +673,6 @@ fn dep_add(
         let depends_on_id_display = dep_display_text(&depends_on_id);
         let dep_type_display = dep_display_text(dep_type.as_str());
         if ctx.is_rich() {
-            // Rich mode: Show detailed visual feedback
             ctx.success(&format!(
                 "Added dependency: {} → {}",
                 issue_id_display, depends_on_id_display
@@ -782,7 +777,6 @@ fn dep_remove(
 ) -> Result<()> {
     let issue_id = resolve_issue_id(&storage_ctx.storage, resolver, &args.issue)?;
 
-    // External dependencies don't need resolution
     let depends_on_id = if args.depends_on.starts_with("external:") {
         args.depends_on.clone()
     } else {
@@ -870,8 +864,6 @@ fn dep_display_text(value: &str) -> String {
 }
 
 fn parse_dependency_type(dep_type: &str) -> Result<DependencyType> {
-    // `blocked-by`, `depends`, and `depends-on` are aliases for `blocks`
-    // (same vocabulary as `br create --deps`).
     let normalized: &str = if dep_type.eq_ignore_ascii_case("blocked-by")
         || dep_type.eq_ignore_ascii_case("depends")
         || dep_type.eq_ignore_ascii_case("depends-on")
@@ -917,7 +909,6 @@ fn dep_list(
 
     let mut items = Vec::new();
 
-    // Get dependencies (what this issue depends on)
     if matches!(args.direction, DepDirection::Down | DepDirection::Both) {
         let deps = storage.get_dependencies_with_metadata(&issue_id)?;
         for dep in deps {
@@ -937,7 +928,6 @@ fn dep_list(
         }
     }
 
-    // Get dependents (what depends on this issue)
     if matches!(args.direction, DepDirection::Up | DepDirection::Both) {
         let deps = storage.get_dependents_with_metadata(&issue_id)?;
         for dep in deps {
@@ -999,10 +989,8 @@ fn dep_list(
     }
 
     if ctx.is_rich() {
-        // Rich mode: Use panel with tree-like display
         render_dep_list_rich(&ctx, &issue_id, &items, args.direction);
     } else {
-        // Plain mode: Simple text output
         let display_issue_id = sanitize_terminal_inline(&issue_id);
         let header = match args.direction {
             DepDirection::Down => {
@@ -1054,13 +1042,11 @@ fn render_dep_list_rich(
 ) {
     let theme = ctx.theme();
 
-    // Separate items into dependencies (this issue depends on) and dependents (depend on this)
     let (deps, dependents): (Vec<_>, Vec<_>) =
         items.iter().partition(|item| item.issue_id == issue_id);
 
     let mut content = Text::new("");
 
-    // Show dependencies (what this issue depends on)
     if !deps.is_empty() && matches!(direction, DepDirection::Down | DepDirection::Both) {
         append_dep_list_section(
             &mut content,
@@ -1071,12 +1057,10 @@ fn render_dep_list_rich(
         );
     }
 
-    // Add separator if showing both directions
     if !deps.is_empty() && !dependents.is_empty() && matches!(direction, DepDirection::Both) {
         content.append("\n");
     }
 
-    // Show dependents (what depends on this issue)
     if !dependents.is_empty() && matches!(direction, DepDirection::Up | DepDirection::Both) {
         append_dep_list_section(
             &mut content,
@@ -1256,7 +1240,6 @@ fn resolve_dep_tree_node_metadata(
         ));
     }
 
-    // Handle missing/deleted issues gracefully instead of failing the whole tree
     Ok((
         format!("[missing issue: {}]", sanitize_terminal_inline(node_id)),
         2,
@@ -1428,15 +1411,9 @@ fn build_dep_tree_nodes_global(
         path: Vec::new(),
     }];
     let mut next_node_key = 0usize;
-    // Global expansion guard: a node reachable via multiple (non-ancestor)
-    // paths is emitted once under each parent but its subtree is expanded only
-    // the first time. Without this, DAGs with shared dependencies (diamonds)
-    // enumerate every distinct simple path, which is exponential in depth and
-    // exhausts memory (#392).
     let mut expanded: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     while let Some(item) = queue.pop() {
-        // Cycle detection: skip a node that is already one of its own ancestors.
         if item.path.contains(&item.id) {
             continue;
         }
@@ -1464,9 +1441,6 @@ fn build_dep_tree_nodes_global(
             );
         }
 
-        // Expand only if within depth, not external, and not already expanded
-        // elsewhere in the graph. A repeat occurrence renders as a shared
-        // reference (truncated) rather than re-expanding its subtree.
         let will_expand =
             !is_external && item.depth < args.max_depth && !expanded.contains(&item.id);
         let truncated = if is_external {
@@ -1477,23 +1451,6 @@ fn build_dep_tree_nodes_global(
             !dependencies.is_empty()
         };
 
-        // Expand each issue at most once for the whole traversal. A node that
-        // is reachable through several parents still gets its own `TreeNode`
-        // under every parent, so diamonds stay visible, but only the first
-        // occurrence expands the subtree beneath it.
-        //
-        // Without this the traversal enumerates every distinct simple path
-        // from the root, so a graph with shared dependencies produces a node
-        // count that grows exponentially with `--max-depth` (GitHub #392: a
-        // 121-issue graph emitted 4.19M nodes at depth 40, and a real
-        // 1,850-issue graph exhausted 64 GiB of RAM). The correct bound is
-        // O(V + E).
-        //
-        // Claim the "already expanded" slot ONLY when this occurrence really
-        // expands. DFS can reach a node at a deeper position first; if a copy
-        // that is itself too deep to expand consumed the slot, a later
-        // shallower copy would be demoted to a childless repeat and its whole
-        // subtree would vanish from the tree.
         let can_expand_here = item.depth < args.max_depth && !item.id.starts_with("external:");
         let already_expanded = expanded.contains(&item.id);
         let expand_now = can_expand_here && !already_expanded;
@@ -1515,7 +1472,6 @@ fn build_dep_tree_nodes_global(
             repeat,
         });
 
-        // Don't expand if at max depth, or if this subtree is already shown.
         if expand_now {
             let mut new_path = item.path.clone();
             new_path.push(item.id.clone());
@@ -1529,7 +1485,6 @@ fn build_dep_tree_nodes_global(
                 &mut metadata_cache,
             )?;
             sort_dep_tree_siblings(&mut dependencies, &metadata_cache);
-            // Push in reverse order so first sorted item pops first.
             for dep_id in dependencies.into_iter().rev() {
                 queue.push(DepTreeQueueItem {
                     id: dep_id,
@@ -1566,7 +1521,6 @@ fn try_build_dep_tree_nodes_local(
         path: Vec::new(),
     }];
     let mut next_node_key = 0usize;
-    // See build_dep_tree_nodes_global: expand each node's subtree once (#392).
     let mut expanded: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     while let Some(item) = queue.pop() {
@@ -1606,12 +1560,6 @@ fn try_build_dep_tree_nodes_local(
             !dependencies.is_empty()
         };
 
-        // Mirrors `build_dep_tree_nodes_global`: expand each issue once, but
-        // still emit an occurrence under every parent (GitHub #392), and only
-        // claim the expansion slot when this occurrence actually expands. The
-        // two builders must stay byte-identical — `dep_tree_local_traversal
-        // _matches_global_nodes` compares their projections including
-        // `node_key`.
         let can_expand_here = item.depth < args.max_depth && !item.id.starts_with("external:");
         let already_expanded = expanded.contains(&item.id);
         let expand_now = can_expand_here && !already_expanded;
@@ -1711,23 +1659,19 @@ fn dep_tree(
         return Ok(());
     }
 
-    // Mermaid format output
     if args.format.eq_ignore_ascii_case("mermaid") {
         render_dep_tree_mermaid(&nodes);
         return Ok(());
     }
 
-    // Text tree output
     if nodes.is_empty() {
         ctx.info(&format!("No dependency tree for {root_id}"));
         return Ok(());
     }
 
     if ctx.is_rich() {
-        // Rich mode: Use tree component with styled output
         render_dep_tree_rich(ctx, &nodes);
     } else {
-        // Plain mode: Simple indented text
         for node in &nodes {
             let indent = "  ".repeat(node.depth);
             let prefix = if node.depth == 0 {
@@ -1761,7 +1705,6 @@ fn sanitize_mermaid_label(text: &str) -> String {
 }
 
 fn render_dep_tree_mermaid(nodes: &[TreeNode]) {
-    // Use println! directly to avoid rich_rust markup interpretation
     println!("graph TD");
 
     for node in nodes {
@@ -1831,7 +1774,6 @@ fn render_dep_tree_rich(ctx: &OutputContext, nodes: &[TreeNode]) {
 
     let theme = ctx.theme();
 
-    // Group nodes by parent_key for O(1) lookups
     let mut children_map: std::collections::HashMap<Option<&str>, Vec<&TreeNode>> =
         std::collections::HashMap::new();
     for node in nodes {
@@ -1841,7 +1783,6 @@ fn render_dep_tree_rich(ctx: &OutputContext, nodes: &[TreeNode]) {
             .push(node);
     }
 
-    // Build tree structure from flat nodes list
     let root = build_tree_node_rich(&nodes[0], &children_map, theme);
     let tree = Tree::new(root)
         .guides(TreeGuides::Rounded)
@@ -1858,7 +1799,6 @@ fn build_tree_node_rich<'a>(
 ) -> rich_rust::renderables::TreeNode {
     let mut tree_node = rich_rust::renderables::TreeNode::new(build_tree_node_label(node, theme));
 
-    // Find and add children using the pre-computed map
     if let Some(children) = children_map.get(&Some(node.node_key.as_str())) {
         for child in children {
             let child_node = build_tree_node_rich(child, children_map, theme);
@@ -1942,13 +1882,6 @@ fn dep_cycles(
     let archived_closed_count = report.archived_closed_cycles.len();
     let total_count = active_count + archived_closed_count;
 
-    // #368: An active dependency cycle is a machine-actionable condition, so a
-    // scripted/robot caller gating on the exit code must be able to see it. We
-    // still emit the full, data-carrying output on every surface below (text,
-    // rich, JSON `count`, TOON) — the exit code is recorded here and applied by
-    // `main` after output completes, so the JSON/TOON stream stays a single
-    // clean object. Archived-closed-only cycles are historical and never flip
-    // the exit code, even under `--include-closed`.
     if active_count > 0 {
         crate::output::record_pending_exit_code(crate::error::ErrorCode::CycleDetected.exit_code());
     }
@@ -2004,10 +1937,8 @@ fn dep_cycles(
             ctx.success(&format!("No {cycle_scope} cycles detected."));
         }
     } else if ctx.is_rich() {
-        // Rich mode: Show cycles with red highlighting in a panel
         render_cycles_rich(ctx, &cycles, count, args.blocking_only);
     } else {
-        // Plain mode: Simple text output
         ctx.warning(&format!("Found {count} {cycle_scope} cycle(s):"));
         for (i, cycle) in cycles.iter().enumerate() {
             ctx.print_line(&format!("  {}. {}", i + 1, format_cycle_plain(cycle)));
@@ -2065,7 +1996,6 @@ fn build_cycles_rich_text(
         append_cycle_path_rich(&mut content, cycle, theme);
         content.append("\n");
 
-        // Add underline visual
         let path_len = format_cycle_plain(cycle).chars().count();
         content.append_styled(
             &format!("  {}\n", "^".repeat(path_len.min(60))),
@@ -2397,13 +2327,11 @@ mod tests {
         storage.create_issue(&issue1, "tester").unwrap();
         storage.create_issue(&issue2, "tester").unwrap();
 
-        // Add dependency: bd-001 depends on bd-002 (blocks)
         let added = storage
             .add_dependency("bd-001", "bd-002", "blocks", "tester")
             .unwrap();
         assert!(added);
 
-        // Adding same dependency again should return false
         let added_again = storage
             .add_dependency("bd-001", "bd-002", "blocks", "tester")
             .unwrap();
@@ -2431,7 +2359,6 @@ mod tests {
             .unwrap();
         assert!(removed);
 
-        // Removing again should return false
         let removed_again = storage
             .remove_dependency("bd-001", "bd-002", "tester")
             .unwrap();
@@ -2452,7 +2379,6 @@ mod tests {
         storage.create_issue(&issue2, "tester").unwrap();
         storage.create_issue(&issue3, "tester").unwrap();
 
-        // bd-001 depends on bd-002 and bd-003
         storage
             .add_dependency("bd-001", "bd-002", "blocks", "tester")
             .unwrap();
@@ -2480,7 +2406,6 @@ mod tests {
         storage.create_issue(&issue2, "tester").unwrap();
         storage.create_issue(&issue3, "tester").unwrap();
 
-        // bd-002 and bd-003 depend on bd-001
         storage
             .add_dependency("bd-002", "bd-001", "blocks", "tester")
             .unwrap();
@@ -2695,7 +2620,6 @@ mod tests {
         }
 
         let total_issues = 3 * RUNGS + 1;
-        // Each rung contributes A->B, A->C, B->A', C->A'.
         let total_edges = 4 * RUNGS;
         let root_issue = storage.get_issue(&a_id(0)).unwrap().unwrap();
         let external_statuses = HashMap::new();
@@ -2706,33 +2630,23 @@ mod tests {
                 .unwrap()
         };
 
-        // Depth far beyond the ladder length: the pre-fix traversal emitted
-        // 2^RUNGS-scale node counts here.
         let global = node_count_at(500);
 
-        // Every issue is expanded once, so the emitted occurrences are the root
-        // plus one per edge walked out of an expanded node — O(V + E), not one
-        // node per distinct simple path.
         assert_eq!(
             global.len(),
             total_edges + 1,
             "expected O(V+E) nodes for a {total_issues}-issue / {total_edges}-edge graph"
         );
 
-        // The real regression signature: node count must not grow with depth
-        // once the traversal has covered the graph.
         assert_eq!(
             node_count_at(40).len(),
             global.len(),
             "node count must not grow with --max-depth"
         );
 
-        // Every issue in the ladder is still reachable in the rendered tree.
         let rendered: HashSet<&str> = global.iter().map(|node| node.id.as_str()).collect();
         assert_eq!(rendered.len(), total_issues);
 
-        // The shared `A_{i+1}` rungs are reached through both B and C, so
-        // exactly one occurrence of each expands and the traversal is finite.
         let repeats = global.iter().filter(|node| node.repeat).count();
         assert!(
             repeats > 0,
@@ -2765,8 +2679,6 @@ mod tests {
             storage.create_issue(&issue, "tester").unwrap();
         }
 
-        // Root -> A (sorts first) and Root -> X directly; A -> X makes X
-        // reachable at depth 1 and depth 2. X -> Y is the subtree at risk.
         storage
             .add_dependency("bd-root", "bd-a-mid", "blocks", "tester")
             .unwrap();
@@ -2780,7 +2692,6 @@ mod tests {
             .add_dependency("bd-x-shared", "bd-y-leaf", "blocks", "tester")
             .unwrap();
 
-        // Y sits at depth 2 via the shallow X, exactly at the depth limit.
         let args = dep_tree_test_args("bd-root", DepDirection::Down, 2);
         let root_issue = storage.get_issue("bd-root").unwrap().unwrap();
         let external_statuses = HashMap::new();
@@ -2848,11 +2759,6 @@ mod tests {
 
     #[test]
     fn test_dep_tree_diamond_graph_is_bounded() {
-        // Regression for #392: a "diamond ladder" DAG (A_i depends on B_i and
-        // C_i; both depend on A_{i+1}) is reachable via 2^i distinct simple
-        // paths. Without a global expansion guard the traversal emitted
-        // 2^(depth/2+2)-3 nodes and exhausted memory. With expansion-once the
-        // node count is bounded by the number of edges regardless of depth.
         const RUNGS: usize = 20;
 
         init_test_logging();
@@ -2885,7 +2791,6 @@ mod tests {
 
         let total_issues = a.len() + b.len() + c.len();
         let total_edges = 4 * RUNGS;
-        // Deep traversal: the per-path traversal would need 2^(100/2+2) nodes.
         let args = dep_tree_test_args(&a[0], DepDirection::Down, 100);
         let root_issue = storage.get_issue(&a[0]).unwrap().unwrap();
         let external_statuses = HashMap::new();
@@ -2894,15 +2799,12 @@ mod tests {
             build_dep_tree_nodes_global(&args, &storage, &a[0], &root_issue, &external_statuses)
                 .unwrap();
 
-        // Node count is bounded by root + one occurrence per edge (each node is
-        // rendered under every parent, but its subtree is expanded only once).
         assert!(
             global.len() <= total_edges + 1,
             "expected <= {} nodes, got {}",
             total_edges + 1,
             global.len()
         );
-        // Every unique issue in the graph is present at least once.
         let seen: std::collections::HashSet<&str> = global.iter().map(|n| n.id.as_str()).collect();
         assert_eq!(
             seen.len(),
@@ -2910,8 +2812,6 @@ mod tests {
             "every unique issue should be represented"
         );
 
-        // The local fast path must not blow up either: it either produces the
-        // same bounded set or cleanly falls back to the global path.
         if let Some(local) =
             try_build_dep_tree_nodes_local(&args, &storage, &a[0], &root_issue, &external_statuses)
                 .unwrap()
@@ -2932,12 +2832,10 @@ mod tests {
         storage.create_issue(&issue1, "tester").unwrap();
         storage.create_issue(&issue2, "tester").unwrap();
 
-        // bd-001 depends on bd-002
         storage
             .add_dependency("bd-001", "bd-002", "blocks", "tester")
             .unwrap();
 
-        // bd-002 depends on bd-001 would create a cycle
         let would_cycle = storage
             .would_create_cycle("bd-002", "bd-001", true)
             .unwrap();
@@ -2958,7 +2856,6 @@ mod tests {
         storage.create_issue(&issue2, "tester").unwrap();
         storage.create_issue(&issue3, "tester").unwrap();
 
-        // bd-001 -> bd-002 -> bd-003
         storage
             .add_dependency("bd-001", "bd-002", "blocks", "tester")
             .unwrap();
@@ -2966,13 +2863,11 @@ mod tests {
             .add_dependency("bd-002", "bd-003", "blocks", "tester")
             .unwrap();
 
-        // bd-003 -> bd-001 would create a cycle
         let would_cycle = storage
             .would_create_cycle("bd-003", "bd-001", true)
             .unwrap();
         assert!(would_cycle);
 
-        // bd-003 -> bd-002 would also create a cycle
         let would_cycle = storage
             .would_create_cycle("bd-003", "bd-002", true)
             .unwrap();
@@ -2993,12 +2888,10 @@ mod tests {
         storage.create_issue(&issue2, "tester").unwrap();
         storage.create_issue(&issue3, "tester").unwrap();
 
-        // bd-001 -> bd-002
         storage
             .add_dependency("bd-001", "bd-002", "blocks", "tester")
             .unwrap();
 
-        // bd-003 -> bd-002 should NOT be a cycle
         let would_cycle = storage
             .would_create_cycle("bd-003", "bd-002", true)
             .unwrap();
@@ -3021,7 +2914,7 @@ mod tests {
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"status\":\"ok\""));
         assert!(json.contains("\"issue_id\":\"bd-001\""));
-        assert!(json.contains("\"type\":\"blocks\"")); // Note: renamed field
+        assert!(json.contains("\"type\":\"blocks\""));
         info!("test_dep_action_result_json: assertions passed");
     }
 
@@ -3039,7 +2932,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&item).unwrap();
-        assert!(json.contains("\"type\":\"blocks\"")); // Renamed field
+        assert!(json.contains("\"type\":\"blocks\""));
         assert!(json.contains("\"priority\":2"));
         info!("test_dep_list_item_json: assertions passed");
     }

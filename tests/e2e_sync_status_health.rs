@@ -20,8 +20,6 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process::Command;
 
-// Retained helpers: not referenced by the current test set (pre-existing on
-// main; kept per the suite's convention for shared git fixture helpers).
 #[allow(dead_code)]
 fn git(root: &Path, args: &[&str]) -> std::process::Output {
     Command::new("git")
@@ -238,9 +236,6 @@ fn e2e_sync_status_reports_workspace_health_and_reliability_audit() {
     let create = run_br(&workspace, ["create", "Health issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Establish a clean, fully-synced baseline. `br create` already
-    // auto-flushes, but flush again explicitly so the DB and JSONL are
-    // unambiguously in sync before we drive a deterministic anomaly.
     let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
@@ -262,10 +257,6 @@ fn e2e_sync_status_reports_workspace_health_and_reliability_audit() {
         "{healthy}"
     );
 
-    // Drive a deterministic drift: append an external record to the JSONL
-    // so it is now newer than the DB (pending import). This is the same
-    // jsonl_newer → degraded mapping doctor uses; only codes we actually
-    // evaluate may appear.
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     {
         use std::io::Write as _;
@@ -280,8 +271,6 @@ fn e2e_sync_status_reports_workspace_health_and_reliability_audit() {
         .expect("append to jsonl");
     }
 
-    // --no-auto-import keeps the external edit visible as jsonl_newer
-    // instead of being silently imported by the status open.
     let pending = sync_status_json_no_auto_import(&workspace, "status_pending_import");
     assert_eq!(
         pending["jsonl_newer"], true,
@@ -327,8 +316,6 @@ fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
     let jsonl_path = beads_dir.join("issues.jsonl");
     let anchor_path = beads_dir.join("beads.base.jsonl");
 
-    // No-op flush path: create's auto-flush already exported, so this flush
-    // has nothing to export — it must still materialize the missing anchor.
     let flush_noop = run_br(&workspace, ["sync", "--flush-only"], "flush_noop");
     assert!(
         flush_noop.status.success(),
@@ -345,9 +332,6 @@ fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
         "anchor must match the live JSONL byte-for-byte after a no-op flush"
     );
 
-    // Exact-match no-op path: certifying an already-current regular anchor
-    // must not replace it. Inode stability makes the no-rewrite guarantee
-    // observable on Unix.
     #[cfg(unix)]
     let matching_anchor_inode = std::fs::metadata(&anchor_path)
         .expect("matching anchor metadata")
@@ -367,8 +351,6 @@ fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
         "an exact anchor must keep its inode across an idempotent no-op flush"
     );
 
-    // Stale-anchor no-op path: the same recovery command must replace stale
-    // bytes even though there is still nothing to export from the database.
     std::fs::write(
         &anchor_path,
         b"{\"id\":\"stale-anchor\",\"title\":\"must be replaced\"}\n",
@@ -386,8 +368,6 @@ fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
         "a no-op flush must replace a stale merge anchor with exact JSONL bytes"
     );
 
-    // Real export path: a dirty issue forces an actual export, which must
-    // refresh the anchor to the newly finalized JSONL.
     let create2 = run_br(&workspace, ["create", "Second issue"], "create2");
     assert!(
         create2.status.success(),
@@ -410,7 +390,6 @@ fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
         "anchor must track the finalized JSONL after a real export"
     );
 
-    // Doctor must agree with sync --status: no missing-anchor warning.
     let status = sync_status_json(&workspace, "status_after_flush");
     assert_eq!(status["dirty_count"], 0, "{status}");
     let doctor = run_br(&workspace, ["doctor", "--json"], "doctor_after_flush");
@@ -511,9 +490,6 @@ fn e2e_noop_anchor_missing_cached_hash_self_certifies_when_consistent() {
         "test precondition requires a missing cached hash"
     );
 
-    // beads_rust-a6kl: with the hash deleted but the JSONL EXACTLY matching
-    // the database, the no-op flush SELF-CERTIFIES (bootstrap vacuum, not
-    // tampering) and restores a deterministic hash.
     let self_certified = run_br(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
@@ -543,9 +519,6 @@ fn e2e_noop_anchor_missing_cached_hash_fails_then_force_recovers() {
     let (workspace, _issue_id) = setup_certified_anchor_workspace("missing_cached_hash");
     let beads_dir = workspace.root.join(".beads");
 
-    // Divergence case: hash deleted AND the JSONL diverges from the database.
-    // Fail-closed semantics are unchanged — this must refuse and preserve
-    // state until --force reconciles from the database.
     let mut storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("open workspace db");
     assert!(
         storage
@@ -568,8 +541,6 @@ fn e2e_noop_anchor_missing_cached_hash_fails_then_force_recovers() {
         ["sync", "--flush-only", "--json", "--no-auto-import"],
         "missing_cached_hash_flush",
     );
-    // The stale-database guard fires BEFORE certification here (data-loss
-    // protection outranks hash bookkeeping); assert its contract directly.
     assert!(
         !failed.status.success(),
         "missing cached hash + divergence unexpectedly succeeded\nstdout={}\nstderr={}",
@@ -688,7 +659,6 @@ fn fresh_workspace_noop_flush_self_certifies_deterministic_hash() {
     let init = run_br(&workspace, ["init"], "fresh_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Deliberately NO create: the reported failure is the zero-issue case.
     let flush = run_br(&workspace, ["sync", "--flush-only"], "fresh_flush");
     assert!(
         flush.status.success(),
@@ -713,7 +683,6 @@ fn fresh_workspace_noop_flush_self_certifies_deterministic_hash() {
         "anchor must be certified byte-exact after the bootstrap flush"
     );
 
-    // Deterministic + idempotent: a second no-op flush keeps the same hash.
     let flush_again = run_br(&workspace, ["sync", "--flush-only"], "fresh_flush_again");
     assert!(flush_again.status.success(), "{}", flush_again.stderr);
     let status2 = run_br(&workspace, ["sync", "--status", "--json"], "fresh_status_2");
@@ -728,7 +697,6 @@ fn fresh_workspace_noop_flush_self_certifies_deterministic_hash() {
         "no-op flush hash must be deterministic"
     );
 
-    // The workspace must read as fully healthy afterwards.
     let doctor = run_br(&workspace, ["doctor", "--quick", "--json"], "fresh_doctor");
     let doctor_payload: Value =
         serde_json::from_str(&extract_json_payload(&doctor.stdout)).expect("doctor json");

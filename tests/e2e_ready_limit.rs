@@ -6,9 +6,6 @@ fn test_ready_limit_with_external_blockers() {
     let workspace = BrWorkspace::new();
     run_br(&workspace, ["init"], "init");
 
-    // Create 10 issues. Wave-gated dispatch (ADR-0001) only returns beads
-    // carrying a VERIFY command and a principles citation, so fixtures must
-    // provide both for the ready assertions to exercise the limit semantics.
     for i in 1..=10 {
         run_br(
             &workspace,
@@ -24,14 +21,6 @@ fn test_ready_limit_with_external_blockers() {
         );
     }
 
-    // Block the first 5 with external dependencies (that won't resolve)
-    // IDs are likely bd-1 to bd-10 (base36).
-    // bd-1, bd-2, bd-3, bd-4, bd-5.
-    // bd-6..10 are free.
-
-    // We need actual IDs.
-    // Assuming deterministic IDs or extracting them.
-    // For simplicity, let's just grep list output or use `br list --json` to get IDs.
     let list = run_br(&workspace, ["list", "--json"], "list");
     let issues = parse_list_issues(&list.stdout);
 
@@ -39,7 +28,6 @@ fn test_ready_limit_with_external_blockers() {
         .iter()
         .map(|i| i["id"].as_str().unwrap().to_string())
         .collect();
-    // Sort IDs to ensure we block the first created ones (which ready returns first)
     ids.sort();
 
     assert_eq!(ids.len(), 10);
@@ -52,14 +40,10 @@ fn test_ready_limit_with_external_blockers() {
         );
     }
 
-    // Run ready with limit 5
-    // We expect it to skip the 5 blocked ones and return the next 5.
     let ready = run_br(&workspace, ["ready", "--limit", "5", "--json"], "ready");
     let ready_page: serde_json::Value = serde_json::from_str(&ready.stdout).unwrap();
     let ready_issues = ready_page["issues"].as_array().cloned().unwrap_or_default();
 
-    // If bug exists, this will likely be 0 (or < 5).
-    // If fixed, should be 5.
     assert_eq!(
         ready_issues.len(),
         5,
@@ -67,7 +51,6 @@ fn test_ready_limit_with_external_blockers() {
         ready_issues.len()
     );
 
-    // Verify we got the unblocked ones
     for issue in ready_issues {
         let id = issue["id"].as_str().unwrap();
         assert!(

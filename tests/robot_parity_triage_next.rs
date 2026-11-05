@@ -30,12 +30,6 @@ const FIXTURE_ISSUES: &str = include_str!("fixtures/bv_parity/fixture_issues.jso
 /// BR_ANALYSIS_NOW so time-derived scoring matches the goldens deterministically.
 const GOLDEN_NOW: &str = include_str!("fixtures/bv_parity/GOLDEN_NOW.txt");
 
-// Exact keys, so naming a new one is a deliberate act rather than a suffix
-// sweep. `compute_time_ms` is the measured wall clock of the graph build: the
-// golden recorded 0 and a loaded machine reports 1, which is a real 1.0 float
-// drift against a 1e-4 tolerance. The filter never matched it because "ms" is
-// not "compute_time_ms", so the timing leaked into the parity check and the
-// test failed on machine load rather than on behaviour.
 const VOLATILE_FIELDS: &[&str] = &[
     "generated_at",
     "data_hash",
@@ -135,12 +129,6 @@ fn workspace_with_fixture() -> BrWorkspace {
     let beads_dir = workspace.root.join(".beads");
     std::fs::create_dir_all(&beads_dir).expect("create .beads dir");
 
-    // Stamp ADR-0001 §5.5 dispatchability fields so `br next`'s fail-closed
-    // claimability parity matches `br ready`'s SQL gate (beads_rust-ready-empty-set-bug-g0wra).
-    // The bv fixture ships without verify/principles; br now requires them
-    // for P≤2 dispatchability, so next would otherwise degrade and diverge
-    // from the golden. Stamping keeps the fixture's graph and the golden's
-    // top pick while satisfying the §5.5 gate.
     let stamped: String = FIXTURE_ISSUES
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -152,7 +140,6 @@ fn workspace_with_fixture() -> BrWorkspace {
                 obj.entry("principles".to_string()).or_insert(serde_json::json!([
                     {"name": "prove-it-works", "decision": "each exclusion rule has a named test"}
                 ]));
-                // Ensure wave/pin for structured output completeness (golden expects them).
                 obj.entry("wave".to_string()).or_insert(Value::Null);
                 obj.entry("pin".to_string()).or_insert(Value::Null);
             }
@@ -226,8 +213,6 @@ fn robot_triage_quick_ref_shape_and_issue_165_semantics() {
         );
     }
 
-    // #165 semantics: open_count counts status exactly "open";
-    // not_closed_count is the pre-#165 "open" (everything not closed).
     let fixture_lines: Vec<Value> = FIXTURE_ISSUES
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -310,8 +295,6 @@ fn robot_triage_recommendations_ranked_score_desc_then_id_asc() {
             .expect("recommendation id")
             .to_owned();
         if let Some((previous_score, previous_id)) = previous {
-            // Exact equality is the point here (bv's tie-break contract):
-            // equal floats MUST fall through to the id comparison.
             #[allow(clippy::float_cmp)]
             let tied = score == previous_score;
             assert!(
@@ -321,7 +304,6 @@ fn robot_triage_recommendations_ranked_score_desc_then_id_asc() {
         }
         previous = Some((score, id));
 
-        // ScoreBreakdown presence with base weights summing to 1.0 (§4.1).
         let breakdown = rec
             .get("breakdown")
             .expect("recommendation.breakdown (ScoreBreakdown)");
@@ -354,7 +336,6 @@ fn robot_next_matches_bv_golden_claim_contract() {
 
     assert_structurally_equal(&strip_volatile(&actual), &golden, "next");
 
-    // The flywheel-consumed fail-closed claim surface (ADR-0003 §3.1).
     let id = actual
         .get("id")
         .and_then(Value::as_str)
@@ -379,8 +360,6 @@ fn robot_next_matches_bv_golden_claim_contract() {
 fn robot_next_fails_closed_when_top_pick_unclaimable() {
     let workspace = workspace_with_fixture();
 
-    // Claim EVERY golden pick so no claim-safe candidate remains and the
-    // walk must degrade (claiming just the first would hand us the second).
     let golden = load_golden("robot-triage.json");
     let pick_ids: Vec<String> = golden
         .pointer("/triage/quick_ref/top_picks")
@@ -412,7 +391,6 @@ fn robot_next_fails_closed_when_top_pick_unclaimable() {
         .output()
         .expect("spawn br next");
 
-    // Fail-closed contract: exit 0, degraded signal, NO claim_command.
     assert!(output.status.success(), "next must exit 0 when degrading");
     let actual: Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("stdout of `br next --json` must be JSON: {error}"));

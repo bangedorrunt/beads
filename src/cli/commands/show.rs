@@ -219,9 +219,6 @@ fn execute_routed(
         return Ok(());
     }
 
-    // Display-only resolution aid: shows a stored assignee's identity in the
-    // other planes (pin -> pane) so an operator can see why an orchestrator
-    // might misread it. Best-effort; absent registry reads unchanged.
     let assignee_registry = crate::agent_registry::SpawnRegistry::load(beads_dir);
     for (index, (details, use_color)) in ordered_details.iter().enumerate() {
         if index > 0 {
@@ -301,9 +298,6 @@ fn attach_reservation_blocks(details_list: &mut [IssueDetails], args: &ShowArgs)
     };
     let now = Utc::now();
     for details in details_list.iter_mut() {
-        // Match on the same evidence the coordination surface trusts: holder
-        // == assignee, or reason/thread naming the issue id. Comments ride
-        // along so degraded-coordination comment paths still attach.
         details.reservation = show_reservation_block(
             &details.issue.id,
             details.issue.assignee.as_deref(),
@@ -330,7 +324,6 @@ fn load_reservation_snapshot(path: &Path) -> Result<Vec<AgentMailReservationSnap
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
         return parse_reservation_snapshot_value(value, path);
     }
-    // JSONL fallback.
     let mut rows = Vec::new();
     for (index, line) in trimmed.lines().enumerate() {
         let line = line.trim();
@@ -451,8 +444,6 @@ fn execute_inner(
     if matches!(ctx.mode(), OutputMode::Quiet) {
         return Ok(());
     }
-    // beads#430: structured output must carry the same inherited
-    // governing context that text mode renders, as a structured field.
     if matches!(
         output_format,
         crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Toon
@@ -465,9 +456,6 @@ fn execute_inner(
             preloaded_storage_ctx,
         );
     }
-    // ADR-0001 Wave 3: read-only reservation display (JSON/TOON + text both
-    // benefit; the block serializes into structured output and is skipped
-    // by the text renderer when absent).
     attach_reservation_blocks(&mut details_list, args);
     match output_format {
         crate::cli::OutputFormat::Json => {
@@ -477,13 +465,6 @@ fn execute_inner(
             emit_show_toon(&ctx, &details_list, args.stats);
         }
         crate::cli::OutputFormat::Text | crate::cli::OutputFormat::Csv => {
-            // beads#297: emit inherited governing context for each
-            // bead before its own details, when the project has opted
-            // in. Prefer the caller's preloaded storage; fall back to
-            // opening a transient read connection so the feature works
-            // from both `br show` and `br show --workspace …` paths.
-            // Failure to open is non-fatal — the alternative would be
-            // failing the entire show over an optional feature.
             let inheritance_enabled = crate::inheritance::is_enabled(beads_dir);
             let assignee_registry = crate::agent_registry::SpawnRegistry::load(beads_dir);
             let transient_ctx = if inheritance_enabled
@@ -497,15 +478,10 @@ fn execute_inner(
             let inheritance_storage: Option<&SqliteStorage> = preloaded_storage
                 .or_else(|| preloaded_storage_ctx.map(|ctx| &ctx.storage))
                 .or_else(|| transient_ctx.as_ref().map(|ctx| &ctx.storage));
-            // beads#351: when showing several siblings, each child's
-            // ancestor chain resolves independently, so the same epic/parent
-            // block would be re-rendered once per sibling. Dedup across the
-            // whole invocation: each inherited source is emitted exactly
-            // once, before the first child that references it.
             let mut emitted_sources: HashSet<String> = HashSet::new();
             for (i, details) in details_list.iter().enumerate() {
                 if i > 0 {
-                    println!(); // Separate multiple issues
+                    println!();
                 }
                 if inheritance_enabled
                     && let Some(storage) = inheritance_storage
@@ -689,8 +665,6 @@ fn load_issue_details_from_storage(
     let mut details_list = Vec::with_capacity(target_ids.len());
 
     for id_input in target_ids {
-        // Mirror `super::resolve_issue_id`: the derived-alias fallback runs
-        // only on `IssueNotFound`, so aliases never shadow a real match.
         let resolution = match resolver.resolve_fallible(
             id_input,
             |id| storage.id_exists(id),
@@ -1021,8 +995,6 @@ fn build_issue_details_from_exact_jsonl_index(
             .rev()
             .find(|dep| dep.dep_type.as_str() == "parent-child")
             .map(|dep| dep.depends_on_id.clone()),
-        // Rollup derives from the local database; JSONL fallback paths
-        // deliberately omit it.
         rollup: None,
         inherited_context: Vec::new(),
         reservation: None,
@@ -1095,8 +1067,6 @@ fn build_issue_details_from_jsonl(
             .rev()
             .find(|dep| dep.dep_type.as_str() == "parent-child")
             .map(|dep| dep.depends_on_id.clone()),
-        // Rollup derives from the local database; JSONL fallback paths
-        // deliberately omit it.
         rollup: None,
         inherited_context: Vec::new(),
         reservation: None,
@@ -1201,8 +1171,6 @@ fn find_ids_by_hash_in_memory(
     issues_by_id: &HashMap<String, Issue>,
     hash_suffix: &str,
 ) -> Vec<String> {
-    // Use the same child-suffix-aware matching as find_matching_ids so that
-    // searching for "64up6.4" matches "bd-64up6.4" consistently.
     let (search_base, search_child) = match hash_suffix.split_once('.') {
         Some((base, child)) => (base, Some(child)),
         None => (hash_suffix, None),
@@ -1379,8 +1347,6 @@ fn format_issue_details(
     registry: Option<&crate::agent_registry::SpawnRegistry>,
 ) -> String {
     let mut output = String::new();
-    // `usize::MAX` makes `wrap_body` a no-op, so `--no-wrap` (or any caller that
-    // opts out) keeps the exact pre-#370 unwrapped output.
     let wrap_width = if wrap {
         compact_wrap_width()
     } else {
@@ -1393,7 +1359,6 @@ fn format_issue_details(
     let issue_id = sanitize_terminal_inline(&issue.id);
     let title = sanitize_terminal_inline(&issue.title);
 
-    // Match bd format: {status_icon} {id} · {title}   [● {priority} · {STATUS}]
     let _ = writeln!(
         output,
         "{} {} · {}   [● {} · {}]",
@@ -1413,7 +1378,6 @@ fn format_issue_details(
         format_type_label(&issue.issue_type)
     );
 
-    // Created/Updated line
     let _ = writeln!(
         output,
         "Created: {} · Updated: {}",
@@ -1421,7 +1385,6 @@ fn format_issue_details(
         issue.updated_at.format("%Y-%m-%d")
     );
 
-    // ADR-0005 §§2-3: typed deliverable + advisory promotes link.
     let _ = writeln!(output, "Deliverable: {}", issue.deliverable.as_str());
     if let Some(promotes) = &issue.promotes {
         let _ = writeln!(output, "Promotes: {}", sanitize_terminal_inline(promotes));

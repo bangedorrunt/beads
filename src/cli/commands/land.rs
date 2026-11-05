@@ -40,8 +40,6 @@ fn validate_sha_token(raw: &str) -> Result<String> {
              message cites the bead",
         ));
     }
-    // `sha.get(SHA_LEN..)` returns `Some("")` on a string of EXACTLY 40 bytes,
-    // so the length test must come first (a 40-char sha reported "glue").
     if sha.len() > SHA_LEN
         && let Some(extra) = sha.get(SHA_LEN..)
     {
@@ -241,7 +239,6 @@ pub fn execute(args: &LandArgs, cli: &CliOverrides, ctx: &OutputContext) -> Resu
         return Ok(());
     }
 
-    // 1. Gate row, through the exact gate-report write path.
     let recorded = gate::record_verdict(
         &GateReportArgs {
             id: issue_id.clone(),
@@ -256,7 +253,6 @@ pub fn execute(args: &LandArgs, cli: &CliOverrides, ctx: &OutputContext) -> Resu
         &beads_dir,
     )?;
 
-    // 2. Close, through the exact close core (policy gates included).
     let outcome = close::execute_land_close(&close_args, cli, ctx, &beads_dir)?;
     if outcome.closed.is_empty() {
         let reasons = outcome
@@ -274,7 +270,6 @@ pub fn execute(args: &LandArgs, cli: &CliOverrides, ctx: &OutputContext) -> Resu
         ));
     }
 
-    // 3. Automatable tail steps, then the operator's remaining ones, in order.
     let mut steps = vec![
         LandStep::done(
             "gate row",
@@ -334,8 +329,6 @@ fn emit_dry_run(
         ),
     ];
     if !report.would_close {
-        // As of NOW the close would refuse (the gate row this land would
-        // write is not recorded yet, or something else is missing).
         steps[1].status = "blocked".to_string();
     }
     let project = args.project.as_deref().unwrap_or("<TORON_PROJECT>");
@@ -401,8 +394,6 @@ fn live_tail_steps(issue_id: &str, args: &LandArgs, cli: &CliOverrides) -> Resul
         ));
     }
     if args.sync {
-        // Quiet context: land renders one document; sync failures still
-        // propagate loudly below.
         let quiet = OutputContext::from_flags(false, true, false);
         match sync::execute(
             &SyncArgs {
@@ -611,10 +602,8 @@ mod tests {
             message.contains("glued") && message.contains("UNBOUND"),
             "the refusal must name the trap: {message}"
         );
-        // The bare sha passes and normalizes case.
         assert_eq!(validate_sha_token(SHA).unwrap(), SHA);
         assert_eq!(validate_sha_token(&SHA.to_uppercase()).unwrap(), SHA);
-        // A short sha and non-hex are refused too.
         assert!(validate_sha_token("d1d02dd3").is_err());
         assert!(validate_sha_token("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz").is_err());
     }
@@ -635,7 +624,6 @@ mod tests {
 
     #[test]
     fn gate_derives_only_from_a_single_legal_name() {
-        // P2 + loop-runnable verify: exactly command-verified is legal.
         let runnable = issue_with(
             Priority::MEDIUM,
             Some("cargo test -p beads land_full_ceremony"),
@@ -644,21 +632,17 @@ mod tests {
             resolve_gate_name(None, &runnable).unwrap(),
             "command-verified"
         );
-        // Explicit wins, trimmed.
         assert_eq!(
             resolve_gate_name(Some(" command-verified "), &runnable).unwrap(),
             "command-verified"
         );
         assert!(resolve_gate_name(Some("  "), &runnable).is_err());
-        // An explicit ILLEGAL verdict is refused up front (land would record a
-        // row that can never authorize its own close).
         let illegal = resolve_gate_name(Some("unit-test-verified"), &runnable)
             .expect_err("an illegal verdict must be refused");
         assert!(
             illegal.to_string().contains("never authorize"),
             "the refusal must say why: {illegal}"
         );
-        // Empty verify (triage band): several legal names, so refuse and name them.
         let triage = issue_with(Priority::MEDIUM, None);
         let error = resolve_gate_name(None, &triage).expect_err("ambiguous band must refuse");
         let message = error.to_string();

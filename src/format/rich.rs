@@ -84,7 +84,7 @@ impl<'a> RichIssueTable<'a> {
     #[must_use]
     pub fn build_table(&self) -> Table {
         let mut table = Table::new()
-            .with_column(Column::new("").width(2)) // Status icon
+            .with_column(Column::new("").width(2))
             .with_column(Column::new("ID"))
             .with_column(Column::new("Pri").justify(JustifyMethod::Center));
 
@@ -104,28 +104,23 @@ impl<'a> RichIssueTable<'a> {
 
             let mut cells = Vec::new();
 
-            // Status icon with color
             let status_style = self.theme.status_style(&issue.status);
             cells.push(Cell::new(status_icon).style(status_style.clone()));
 
-            // Issue ID
             cells.push(
                 Cell::new(sanitize_terminal_inline(&issue.id).into_owned())
                     .style(self.theme.issue_id.clone()),
             );
 
-            // Priority with color
             let priority_style = self.theme.priority_style(issue.priority);
             cells.push(Cell::new(priority).style(priority_style.clone()));
 
-            // Type (if showing)
             if self.show_type {
                 let type_str = format_type_label(&issue.issue_type);
                 let type_style = self.theme.type_style(&issue.issue_type);
                 cells.push(Cell::new(type_str).style(type_style.clone()));
             }
 
-            // Title
             cells.push(Cell::new(sanitize_terminal_inline(&title).into_owned()));
 
             table = table.with_row(Row::new(cells));
@@ -165,7 +160,6 @@ impl<'a> RichIssuePanel<'a> {
     pub fn build_panel(&self) -> Panel<'static> {
         let mut content = String::new();
 
-        // Header line: status icon + title
         let status_icon = format_status_icon(&self.issue.status);
         content.push_str(&format!(
             "{} {}\n",
@@ -173,13 +167,11 @@ impl<'a> RichIssuePanel<'a> {
             sanitize_terminal_inline(&self.issue.title)
         ));
 
-        // Metadata line
         let priority = format_priority(&self.issue.priority);
         let type_str = format_type_label(&self.issue.issue_type);
         let status_str = format_status_label(&self.issue.status, false);
         content.push_str(&format!("[{priority}] [{type_str}] {status_str}\n"));
 
-        // Description if present and enabled
         if self.show_description
             && let Some(desc) = &self.issue.description
         {
@@ -189,7 +181,6 @@ impl<'a> RichIssuePanel<'a> {
 
         let status_style = self.theme.status_style(&self.issue.status);
 
-        // Build content lines for Panel
         let content_lines: Vec<Vec<Segment<'static>>> = content
             .lines()
             .map(|line| vec![Segment::new(line.to_owned(), None)])
@@ -204,7 +195,7 @@ impl<'a> RichIssuePanel<'a> {
 /// Rich tree display for dependency relationships.
 pub struct RichDependencyTree<'a> {
     root_issue: &'a Issue,
-    dependencies: &'a [(String, String)], // (from_id, to_id)
+    dependencies: &'a [(String, String)],
     issues_by_id: &'a std::collections::HashMap<String, &'a Issue>,
     theme: &'a Theme,
 }
@@ -231,7 +222,6 @@ impl<'a> RichDependencyTree<'a> {
     pub fn build_tree(&self) -> Tree {
         let mut root = TreeNode::new(self.issue_label(self.root_issue, 40));
 
-        // Find direct dependencies of root
         for (from_id, to_id) in self.dependencies {
             if from_id == &self.root_issue.id {
                 if let Some(dep_issue) = self.issues_by_id.get(to_id) {

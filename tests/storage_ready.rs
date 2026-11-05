@@ -15,10 +15,6 @@ use common::ordering::{
 };
 use common::{fixtures, test_db};
 
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
 fn ready_ids(
     storage: &SqliteStorage,
     filters: &ReadyFilters,
@@ -42,10 +38,6 @@ fn ready_issues(
 ) -> Vec<Issue> {
     storage.get_ready_issues(filters, sort).unwrap()
 }
-
-// ============================================================================
-// ASSIGNEE FILTER TESTS
-// ============================================================================
 
 #[test]
 fn ready_filter_by_assignee() {
@@ -100,10 +92,6 @@ fn ready_filter_unassigned_only() {
     assert!(ids.contains(&unassigned1.id));
     assert!(ids.contains(&unassigned2.id));
 }
-
-// ============================================================================
-// TYPE FILTER TESTS
-// ============================================================================
 
 #[test]
 fn ready_filter_by_single_type() {
@@ -162,10 +150,6 @@ fn ready_filter_by_multiple_types() {
     assert!(ids.contains(&feature.id));
     assert!(!ids.contains(&task.id));
 }
-
-// ============================================================================
-// PRIORITY FILTER TESTS
-// ============================================================================
 
 #[test]
 fn ready_filter_by_single_priority() {
@@ -230,10 +214,6 @@ fn ready_filter_by_multiple_priorities() {
     assert!(!ids.contains(&p3.id));
 }
 
-// ============================================================================
-// LABEL FILTER TESTS
-// ============================================================================
-
 #[test]
 fn ready_filter_by_labels_and_single() {
     let mut storage = test_db();
@@ -276,7 +256,6 @@ fn ready_filter_by_labels_and_multiple() {
     storage.add_label(&issue2.id, "backend", "tester").unwrap();
     storage.add_label(&issue3.id, "urgent", "tester").unwrap();
 
-    // AND logic: must have both labels
     let filters = ReadyFilters {
         labels_and: vec!["backend".to_string(), "urgent".to_string()],
         ..Default::default()
@@ -302,7 +281,6 @@ fn ready_filter_by_labels_or() {
     storage.add_label(&issue1.id, "backend", "tester").unwrap();
     storage.add_label(&issue2.id, "frontend", "tester").unwrap();
 
-    // OR logic: has any of the labels
     let filters = ReadyFilters {
         labels_or: vec!["backend".to_string(), "frontend".to_string()],
         ..Default::default()
@@ -315,15 +293,10 @@ fn ready_filter_by_labels_or() {
     assert!(!ids.contains(&issue3.id));
 }
 
-// ============================================================================
-// LIMIT FILTER TESTS
-// ============================================================================
-
 #[test]
 fn ready_filter_with_limit() {
     let mut storage = test_db();
 
-    // Create 5 issues
     for i in 1..=5 {
         let issue = fixtures::issue(&format!("Issue {i}"));
         storage.create_issue(&issue, "tester").unwrap();
@@ -342,14 +315,13 @@ fn ready_filter_with_limit() {
 fn ready_filter_limit_zero_returns_all() {
     let mut storage = test_db();
 
-    // Create 3 issues
     for i in 1..=3 {
         let issue = fixtures::issue(&format!("Issue {i}"));
         storage.create_issue(&issue, "tester").unwrap();
     }
 
     let filters = ReadyFilters {
-        limit: Some(0), // Zero means no limit
+        limit: Some(0),
         ..Default::default()
     };
 
@@ -361,24 +333,19 @@ fn ready_filter_limit_zero_returns_all() {
 fn ready_filter_limit_greater_than_total() {
     let mut storage = test_db();
 
-    // Create 2 issues
     let issue1 = fixtures::issue("Issue 1");
     let issue2 = fixtures::issue("Issue 2");
     storage.create_issue(&issue1, "tester").unwrap();
     storage.create_issue(&issue2, "tester").unwrap();
 
     let filters = ReadyFilters {
-        limit: Some(100), // More than available
+        limit: Some(100),
         ..Default::default()
     };
 
     let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
     assert_eq!(ids.len(), 2);
 }
-
-// ============================================================================
-// SORT POLICY TESTS
-// ============================================================================
 
 /// jsgu rewrite (2026-05-09): Priority-sort invariant.
 ///
@@ -412,10 +379,8 @@ fn ready_sort_policy_priority() {
     let filters = ReadyFilters::default();
     let issues = ready_issues(&storage, &filters, ReadySortPolicy::Priority);
 
-    // Invariant 1: cardinality
     assert_eq!(issues.len(), 4, "expected all 4 issues to be ready");
 
-    // Invariant 2: each input ID appears exactly once
     assert_no_duplicate_ids(&issues);
     let ids: std::collections::HashSet<_> = issues.iter().map(|i| i.id.clone()).collect();
     assert!(ids.contains(&p0_old.id));
@@ -423,7 +388,6 @@ fn ready_sort_policy_priority() {
     assert!(ids.contains(&p1.id));
     assert!(ids.contains(&p2.id));
 
-    // Invariant 3: sorted by priority ASC (the actual contract)
     assert_priority_ordered(&issues);
 }
 
@@ -436,15 +400,10 @@ fn ready_sort_policy_priority() {
 fn ready_sort_policy_oldest() {
     let mut storage = test_db();
 
-    // Use IssueBuilder + explicit created_at offsets so oldest-first is meaningful
     let first = fixtures::issue("First created");
     let second = fixtures::issue("Second created");
     let third = fixtures::issue("Third created");
 
-    // All fixtures have identical created_at (per fixtures::issue using fixed
-    // base_time). The Oldest sort uses created_at ASC, then id ASC tiebreak.
-    // The invariant we actually care about is: every issue is in the result
-    // exactly once, and the order is monotonically non-decreasing by created_at.
     storage.create_issue(&first, "tester").unwrap();
     storage.create_issue(&second, "tester").unwrap();
     storage.create_issue(&third, "tester").unwrap();
@@ -458,7 +417,6 @@ fn ready_sort_policy_oldest() {
     assert!(result_ids.contains(&first.id));
     assert!(result_ids.contains(&second.id));
     assert!(result_ids.contains(&third.id));
-    // Invariant: oldest-first (created_at ASC)
     assert_oldest_first(&issues);
 }
 
@@ -496,13 +454,8 @@ fn ready_sort_policy_hybrid() {
     assert_eq!(issues.len(), 4);
     assert_no_duplicate_ids(&issues);
 
-    // Invariant: high-tier (P0/P1) comes before low-tier (P2/P3/P4)
     assert_hybrid_ordered(&issues);
 }
-
-// ============================================================================
-// COMBINED FILTER TESTS
-// ============================================================================
 
 #[test]
 fn ready_combined_assignee_and_type_filter() {
@@ -575,10 +528,6 @@ fn ready_combined_priority_and_label_filter() {
     assert!(ids.contains(&p0_backend.id));
 }
 
-// ============================================================================
-// BLOCKED ISSUE INTERACTION TESTS
-// ============================================================================
-
 #[test]
 fn ready_excludes_blocked_issues_with_filters() {
     let mut storage = test_db();
@@ -597,7 +546,6 @@ fn ready_excludes_blocked_issues_with_filters() {
     storage.create_issue(&blocked_issue, "tester").unwrap();
     storage.create_issue(&unblocked_bug, "tester").unwrap();
 
-    // Add dependency - blocked depends on blocker
     storage
         .add_dependency(
             &blocked_issue.id,
@@ -607,7 +555,6 @@ fn ready_excludes_blocked_issues_with_filters() {
         )
         .unwrap();
 
-    // Filter by type=bug - should still exclude blocked
     let filters = ReadyFilters {
         types: Some(vec![IssueType::Bug]),
         ..Default::default()
@@ -619,10 +566,6 @@ fn ready_excludes_blocked_issues_with_filters() {
     assert!(ids.contains(&unblocked_bug.id));
     assert!(!ids.contains(&blocked_issue.id));
 }
-
-// ============================================================================
-// STATUS INTERACTION TESTS
-// ============================================================================
 
 #[test]
 fn ready_excludes_in_progress_and_includes_only_open() {
@@ -662,8 +605,6 @@ fn ready_excludes_in_progress_and_includes_only_open() {
 fn ready_include_deferred_flag() {
     let mut storage = test_db();
 
-    // Create an issue that has open status but a future defer_until date
-    // The ready query excludes issues where defer_until > now (unless include_deferred)
     let open_no_defer = fixtures::IssueBuilder::new("Open no defer")
         .with_status(Status::Open)
         .build();
@@ -671,23 +612,19 @@ fn ready_include_deferred_flag() {
     let mut open_with_defer = fixtures::IssueBuilder::new("Open with future defer")
         .with_status(Status::Open)
         .build();
-    // Set defer_until to a future date
     open_with_defer.defer_until = Some(chrono::Utc::now() + chrono::Duration::days(30));
 
     storage.create_issue(&open_no_defer, "tester").unwrap();
     storage.create_issue(&open_with_defer, "tester").unwrap();
 
-    // Without include_deferred - deferred should be excluded
     let filters_no_deferred = ReadyFilters {
         include_deferred: false,
         ..Default::default()
     };
     let ids = ready_ids(&storage, &filters_no_deferred, ReadySortPolicy::Oldest);
     assert!(ids.contains(&open_no_defer.id));
-    // Open issue with future defer_until should be excluded
     assert!(!ids.contains(&open_with_defer.id));
 
-    // With include_deferred - deferred should be included
     let filters_with_deferred = ReadyFilters {
         include_deferred: true,
         ..Default::default()
@@ -696,10 +633,6 @@ fn ready_include_deferred_flag() {
     assert!(ids.contains(&open_no_defer.id));
     assert!(ids.contains(&open_with_defer.id));
 }
-
-// ============================================================================
-// ADR-0001 §5.5 UNIFIED READY PREDICATE (beads_rust-ready-predicate-9n4c)
-// ============================================================================
 
 use beads::model::PrincipleCitation;
 use beads::storage::IssueUpdate;
@@ -793,7 +726,6 @@ fn ready_omits_p1_missing_principles() {
         "P1 citation with empty name must not be ready"
     );
 
-    // Fully-cited P1 is ready; uncited P3 is also ready (exempt band).
     let mut p1_ok = fixtures::IssueBuilder::new("P1 fully cited")
         .with_priority(Priority(1))
         .build();
@@ -848,7 +780,6 @@ fn ready_holds_wave_2_while_wave_1_open() {
         "wave None is never held by the wave gate"
     );
 
-    // Closing the wave-1 bead releases wave 2.
     storage
         .update_issue(
             &wave1.id,
@@ -898,8 +829,4 @@ fn ready_ignores_closed_blocker() {
         "closed blocker must be ignored (#432)"
     );
 
-    // Missing blockers (dependency edge -> nonexistent local id) are also
-    // ignored by §5.5, but the storage API refuses to create dangling edges
-    // (IssueNotFound), so that half of the rule is exercised by the SQL-level
-    // INNER JOIN in load_direct_blockers_impl rather than here.
 }

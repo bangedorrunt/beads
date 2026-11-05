@@ -195,7 +195,6 @@ fn test_concurrent_claim_exactly_one_wins() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("beads.db");
 
-    // Seed the issue
     {
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         seed_issue(&mut storage, "race-1", None);
@@ -311,7 +310,6 @@ fn test_non_claim_update_skips_guard() {
     let mut storage = SqliteStorage::open_memory().unwrap();
     seed_issue(&mut storage, "test-nc", Some("bob"));
 
-    // Regular update (not a claim) should succeed even though assigned to someone else
     let update = IssueUpdate {
         title: Some("New title".to_string()),
         expect_unassigned: false,

@@ -59,10 +59,6 @@ use tempfile::TempDir;
 use toon_rust::options::ExpandPathsMode;
 use toon_rust::{DecodeOptions, try_decode as parse_toon};
 
-// =============================================================================
-// Configuration
-// =============================================================================
-
 /// Check if stress tests are enabled.
 fn stress_tests_enabled() -> bool {
     std::env::var("BR_E2E_STRESS").is_ok()
@@ -151,10 +147,6 @@ impl ScaleTier {
     }
 }
 
-// =============================================================================
-// Synthetic Dataset Generator
-// =============================================================================
-
 /// Configuration for synthetic dataset generation.
 #[derive(Debug, Clone)]
 pub struct SyntheticConfig {
@@ -190,7 +182,7 @@ impl SyntheticConfig {
         Self {
             issue_count: tier.issue_count(),
             dependency_density: tier.dependency_density(),
-            seed: 42, // Reproducible by default
+            seed: 42,
             base_dataset: Some(KnownDataset::BeadsRust),
             label_pool_size: 64,
             min_labels_per_issue: 0,
@@ -390,12 +382,10 @@ impl SyntheticDataset {
         let beads_dir = root.join(".beads");
         let manifest_path = root.join("synthetic-corpus-manifest.json");
 
-        // Create minimal git scaffold
         fs::create_dir_all(root.join(".git"))?;
         fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n")?;
 
-        // Initialize beads
-        let init_output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+        let init_output = Command::new(br_path)
             .args(["init"])
             .current_dir(&root)
             .env("NO_COLOR", "1")
@@ -490,7 +480,7 @@ impl SyntheticDataset {
         fs::create_dir_all(root.join(".git"))?;
         fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n")?;
 
-        let init_output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+        let init_output = Command::new(br_path)
             .args(["init"])
             .current_dir(&root)
             .env("NO_COLOR", "1")
@@ -1035,16 +1025,11 @@ fn run_br_status<const N: usize>(
     workspace: &Path,
     label: &str,
 ) -> std::io::Result<bool> {
-    let output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+    let output = Command::new(br_path)
         .args(args)
         .current_dir(workspace)
         .env("NO_COLOR", "1")
         .env("RUST_LOG", "error")
-        // A host with `br` in more than one $PATH directory makes every
-        // spawned `br doctor` emit a `br_path_dupes` WARN, failing corpus
-        // generation for a reason unrelated to the workspace under test.
-        // Mirror tests/e2e_doctor_fixture_suite.rs and drop later
-        // duplicates only.
         .env("PATH", common::cli::deduplicated_br_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1062,7 +1047,7 @@ fn run_br_status<const N: usize>(
 }
 
 fn doctor_workspace_is_healthy(br_path: &Path, workspace: &Path) -> std::io::Result<bool> {
-    let output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+    let output = Command::new(br_path)
         .args(["doctor", "--json", "--no-auto-import", "--no-auto-flush"])
         .current_dir(workspace)
         .env("NO_COLOR", "1")
@@ -1102,7 +1087,7 @@ fn doctor_workspace_is_healthy(br_path: &Path, workspace: &Path) -> std::io::Res
 }
 
 fn sync_status_is_clean(br_path: &Path, workspace: &Path) -> std::io::Result<bool> {
-    let output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+    let output = Command::new(br_path)
         .args(["sync", "--status", "--json"])
         .current_dir(workspace)
         .env("NO_COLOR", "1")
@@ -1207,10 +1192,6 @@ fn generate_title(rng: &mut StdRng, index: usize) -> String {
     format!("{prefix} {subject} (#{index})")
 }
 
-// =============================================================================
-// Benchmark Metrics
-// =============================================================================
-
 /// Metrics for a single benchmark operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationMetrics {
@@ -1267,10 +1248,6 @@ pub struct BenchmarkSummary {
     /// Issues per second (for list operations)
     pub issues_per_second: Option<f64>,
 }
-
-// =============================================================================
-// Benchmark Runner
-// =============================================================================
 
 const SYNTHETIC_FULL_GRAPH_MAX_ISSUES: usize = 10_000;
 
@@ -1393,12 +1370,9 @@ fn run_measured_br_command(
     args: &[&str],
     workspace: &Path,
 ) -> std::io::Result<MeasuredCommandOutput> {
-    // /usr/bin/time -v is GNU-only; macOS BSD time(1) rejects -v and every
-    // measured operation would fail. Probe once for GNU time and fall back
-    // to unmeasured execution (peak_rss unavailable) on BSD hosts.
     let gnu_time = gnu_time_available();
     if gnu_time {
-        let output = Command::new("/usr/bin/time") // ubs:ignore - benchmark harness intentionally invokes GNU time for child RSS
+        let output = Command::new("/usr/bin/time")
             .arg("-v")
             .arg(br_path)
             .args(args)
@@ -1417,7 +1391,7 @@ fn run_measured_br_command(
         });
     }
 
-    let output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+    let output = Command::new(br_path)
         .args(args)
         .current_dir(workspace)
         .env("NO_COLOR", "1")
@@ -1456,7 +1430,6 @@ fn benchmark_synthetic(dataset: &SyntheticDataset, br_path: &Path) -> SyntheticB
     let mut operations = Vec::new();
     let workspace = dataset.workspace_root();
 
-    // Read operations
     operations.push(run_operation(
         br_path,
         &["list", "--json"],
@@ -1499,7 +1472,6 @@ fn benchmark_synthetic(dataset: &SyntheticDataset, br_path: &Path) -> SyntheticB
         operations.push(run_operation(br_path, &args, workspace, workload.operation));
     }
 
-    // Export operation
     operations.push(run_operation(
         br_path,
         &["sync", "--flush-only", "--json"],
@@ -1507,7 +1479,6 @@ fn benchmark_synthetic(dataset: &SyntheticDataset, br_path: &Path) -> SyntheticB
         "sync_flush",
     ));
 
-    // Calculate summary
     let total_duration_ms = start.elapsed().as_millis();
     let successful_ops: Vec<_> = operations.iter().filter(|o| o.success).collect();
 
@@ -1529,7 +1500,6 @@ fn benchmark_synthetic(dataset: &SyntheticDataset, br_path: &Path) -> SyntheticB
         0.0
     };
 
-    // Calculate issues/second for list operation
     let issues_per_second = operations
         .iter()
         .find(|o| o.operation == "list" && o.success)
@@ -1582,7 +1552,6 @@ fn print_benchmark(benchmark: &SyntheticBenchmark) {
     println!("Synthetic Benchmark: {}", benchmark.tier);
     println!("{sep}");
 
-    // Generation metrics
     let generation = &benchmark.generation;
     println!(
         "Dataset: {} issues, {} dependencies, {} labels, {} comments, {} claims across {} agents ({:.1} KB JSONL, {:.1} KB DB)",
@@ -1606,7 +1575,6 @@ fn print_benchmark(benchmark: &SyntheticBenchmark) {
     );
     println!("{dash}");
 
-    // Operations
     println!(
         "{:<20} {:>12} {:>12} {:>12} {:>10}",
         "Operation", "Duration(ms)", "Output(KB)", "RSS(MB)", "Status"
@@ -1626,7 +1594,6 @@ fn print_benchmark(benchmark: &SyntheticBenchmark) {
         );
     }
 
-    // Summary
     let sum = &benchmark.summary;
     println!("{dash}");
     println!("Total duration: {}ms", sum.total_duration_ms);
@@ -2166,10 +2133,6 @@ Reproduce: `{}`\n",
     fs::write(path, summary)
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 /// Bounded evidence profile for streaming-output RSS/latency artifacts.
 /// Env gate: BR_E2E_STRESS=1
 #[test]
@@ -2463,7 +2426,6 @@ fn stress_synthetic_small() {
     let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
     print_benchmark(&benchmark);
 
-    // Write results
     let output_dir = PathBuf::from("target/benchmark-results");
     fs::create_dir_all(&output_dir).expect("create output dir");
     let output_path = output_dir.join("synthetic_small_latest.json");
@@ -2498,7 +2460,6 @@ fn stress_synthetic_medium() {
     let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
     print_benchmark(&benchmark);
 
-    // Write results
     let output_dir = PathBuf::from("target/benchmark-results");
     fs::create_dir_all(&output_dir).expect("create output dir");
     let output_path = output_dir.join("synthetic_medium_latest.json");
@@ -2533,7 +2494,6 @@ fn stress_synthetic_large() {
     let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
     print_benchmark(&benchmark);
 
-    // Write results
     let output_dir = PathBuf::from("target/benchmark-results");
     fs::create_dir_all(&output_dir).expect("create output dir");
     let output_path = output_dir.join("synthetic_large_latest.json");
@@ -2568,7 +2528,6 @@ fn stress_synthetic_xlarge() {
     let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
     print_benchmark(&benchmark);
 
-    // Write results
     let output_dir = PathBuf::from("target/benchmark-results");
     fs::create_dir_all(&output_dir).expect("create output dir");
     let output_path = output_dir.join("synthetic_xlarge_latest.json");
@@ -2650,7 +2609,6 @@ fn stress_synthetic_all() {
         }
     }
 
-    // Write combined results
     if !all_benchmarks.is_empty() {
         let output_dir = PathBuf::from("target/benchmark-results");
         fs::create_dir_all(&output_dir).expect("create output dir");
@@ -2660,12 +2618,10 @@ fn stress_synthetic_all() {
         write_benchmark_json(&all_benchmarks, &output_path).expect("write results");
         println!("\nAll results written to: {}", output_path.display());
 
-        // Also write latest.json
         let latest_path = output_dir.join("synthetic_all_latest.json");
         write_benchmark_json(&all_benchmarks, &latest_path).expect("write latest");
     }
 
-    // Print overall summary
     println!("\n{}", "=".repeat(80));
     println!("OVERALL SUMMARY");
     println!("{}", "=".repeat(80));
@@ -2711,7 +2667,6 @@ fn test_generate_title() {
     let mut rng = StdRng::seed_from_u64(42);
     let title = generate_title(&mut rng, 123);
 
-    // Should have format "Prefix subject (#123)"
     assert!(title.contains("#123"));
     assert!(title.len() > 10);
 }
@@ -2887,8 +2842,6 @@ fn synthetic_ci_profile_benchmarks_graph_projection_workloads() {
         );
     }
 
-    // RSS evidence is only available when GNU time measured the child;
-    // BSD time(1) hosts (macOS) run unmeasured and skip this assert.
     if gnu_time_available() {
         let missing_rss = benchmark
             .operations

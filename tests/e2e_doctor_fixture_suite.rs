@@ -22,7 +22,6 @@ use std::process::Command;
 /// Run the bash-driven real-world fixture suite end-to-end. Asserts exit 0.
 #[test]
 fn doctor_fixture_suite_passes() {
-    // Skip when `jq` or `bash` are unavailable (e.g. cross-compiled CI host).
     if which("bash").is_none() {
         eprintln!("[skip] bash not on PATH");
         return;
@@ -48,19 +47,8 @@ fn doctor_fixture_suite_passes() {
     let output = Command::new("bash")
         .arg(&script)
         .env("TOOL_BIN", bin)
-        // run all fixtures even if one fails so the diagnostic shows the
-        // full failure inventory.
         .env("FAIL_FAST", "0")
-        // A host with `br` installed in more than one $PATH directory (the
-        // documented `~/.local/bin` vs `~/.cargo/bin` split) makes every
-        // fixture's `br doctor` emit a `br_path_dupes` WARN, which fails
-        // `healthy_workspace_baseline` for a reason that has nothing to do
-        // with the workspace under test. Drop only the later `br` directories,
-        // so `sqlite3`, `jq`, and `bash` stay reachable — several fixtures
-        // shell out to them. The `multiple_br_in_path` fixture builds its own
-        // $PATH, so duplicate detection is still exercised deliberately.
         .env("PATH", common::cli::deduplicated_br_path())
-        // Strip developer env that might confuse `br doctor` discovery.
         .env_remove("BD_DB")
         .env_remove("BD_DATABASE")
         .env_remove("BEADS_DB")
@@ -68,12 +56,6 @@ fn doctor_fixture_suite_passes() {
         .env_remove("BEADS_DIR")
         .env_remove("BEADS_JSONL")
         .env_remove("BR_STARTUP_CACHE")
-        // Production resolves the startup-cache directory XDG-first, HOME
-        // second. A host with XDG_CACHE_HOME set would otherwise prime and
-        // inspect a different startup-cache directory than the one the
-        // startup_cache_poisoned fixture plants under $HOME/.cache, breaking
-        // its prime/quarantine assertions for environment reasons that have
-        // nothing to do with the fixers under test.
         .env_remove("XDG_CACHE_HOME")
         .output()
         .expect("spawn run_all.sh");
@@ -93,7 +75,6 @@ fn doctor_fixture_suite_passes() {
         );
     }
 
-    // Print summary line so `cargo test --nocapture` is informative.
     let stdout = String::from_utf8_lossy(&output.stdout);
     if let Some(summary_line) = stdout
         .lines()
@@ -109,8 +90,6 @@ fn which(cmd: &str) -> Option<PathBuf> {
     for dir in std::env::split_paths(&path_env) {
         let candidate = dir.join(cmd);
         if candidate.is_file() {
-            // Treat as executable; on Unix we could check mode bits but
-            // `is_file()` is fine for jq/bash on a development host.
             return Some(candidate);
         }
     }
@@ -139,7 +118,6 @@ fn fixture_coverage_manifest_is_complete() {
     let coverage = std::fs::read_to_string(&coverage_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", coverage_path.display()));
 
-    // Declared set: every quoted fm- string in the capabilities envelope.
     let out = Command::new(env!("CARGO_BIN_EXE_br"))
         .args(["doctor", "capabilities", "--format", "json"])
         .current_dir(&manifest_dir)
@@ -163,7 +141,6 @@ fn fixture_coverage_manifest_is_complete() {
         declared.len()
     );
 
-    // Manifest rows: `| fm-... | fixture, fixture | kind |`.
     let mut row_ids: Vec<String> = Vec::new();
     let mut named_fixtures: Vec<String> = Vec::new();
     for line in coverage.lines() {
@@ -188,7 +165,6 @@ fn fixture_coverage_manifest_is_complete() {
         row_ids.push(id);
     }
 
-    // (1) every declared id has a row.
     let missing_rows: Vec<&&str> = declared
         .iter()
         .filter(|id| !row_ids.iter().any(|row| row == **id))
@@ -198,7 +174,6 @@ fn fixture_coverage_manifest_is_complete() {
         "declared finding id(s) missing from COVERAGE.md: {missing_rows:?}"
     );
 
-    // (2) every named fixture exists with the runnable pair.
     for fixture in &named_fixtures {
         let dir = fixtures_root.join(fixture);
         assert!(
@@ -208,7 +183,6 @@ fn fixture_coverage_manifest_is_complete() {
         );
     }
 
-    // (3) every fixture dir on disk is mentioned somewhere in the manifest.
     let mut unmentioned: Vec<String> = Vec::new();
     for entry in std::fs::read_dir(&fixtures_root).expect("read fixtures root") {
         let entry = entry.expect("dir entry");

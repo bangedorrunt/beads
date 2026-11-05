@@ -211,8 +211,6 @@ fn build_scheduler_output(
 ) -> Result<SchedulerOutput> {
     let now = Utc::now();
     let candidate_limit = (args.candidate_limit > 0).then_some(args.candidate_limit);
-    // Honor the configured "ready" status group (#354) so the scheduler scores
-    // the same candidate set `br ready` surfaces. Defaults to `[open]`.
     let workflow = crate::close_policy::load_for_beads_dir(beads_dir)?.workflow;
     workflow.validate_ready_status_group()?;
     let mut filters = ReadyFilters {
@@ -232,8 +230,6 @@ fn build_scheduler_output(
         let external_blockers = storage.external_blockers(&external_statuses)?;
         if !external_blockers.is_empty() {
             if should_refill_scheduler_candidates(candidate_limit, &issues, &external_blockers) {
-                // External filtering can remove early fallback rows, so refill
-                // the local ready set before applying the scheduler's scoring cap.
                 filters.limit = None;
                 issues = storage
                     .get_ready_issues_for_command_output(&filters, ReadySortPolicy::Priority)?;
@@ -712,14 +708,10 @@ mod tests {
         assert_eq!(score_of(9), score_of(4), "above the range reads as P4");
         assert_eq!(score_of(99), score_of(4));
         assert_eq!(score_of(-3), score_of(0), "below the range reads as P0");
-        // The whole point of the clamp: unbounded, 99 would outscore every legal
-        // issue by an order of magnitude and take the head of the queue.
         assert!(
             score_of(99) <= score_of(4),
             "an out-of-range priority must not outrank the top legal one"
         );
-        // P0 is the most urgent, so it contributes the most: the contribution
-        // is `4 - priority`, not `priority`.
         assert!(
             score_of(0) > score_of(4),
             "the legal range must still order, P0 above P4"

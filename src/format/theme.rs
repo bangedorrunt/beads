@@ -25,7 +25,6 @@ fn color(name: &str) -> Color {
 /// for visual consistency.
 #[derive(Debug, Clone)]
 pub struct Theme {
-    // Status colors
     pub status_open: Style,
     pub status_in_progress: Style,
     pub status_blocked: Style,
@@ -33,13 +32,11 @@ pub struct Theme {
     pub status_closed: Style,
     pub status_pinned: Style,
 
-    // Priority colors
     pub priority_critical: Style,
     pub priority_high: Style,
     pub priority_medium: Style,
     pub priority_low: Style,
 
-    // Type colors
     pub type_bug: Style,
     pub type_feature: Style,
     pub type_task: Style,
@@ -47,7 +44,6 @@ pub struct Theme {
     pub type_docs: Style,
     pub type_chore: Style,
 
-    // Structural elements
     pub header: Style,
     pub border: Style,
     pub muted: Style,
@@ -56,7 +52,6 @@ pub struct Theme {
     pub warning: Style,
     pub error: Style,
 
-    // Issue ID styling
     pub issue_id: Style,
     pub label: Style,
     pub dependency: Style,
@@ -73,7 +68,6 @@ impl Theme {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            // Status colors - matching text.rs format_status_label
             status_open: Style::new().color(color("green")),
             status_in_progress: Style::new().color(color("yellow")),
             status_blocked: Style::new().color(color("red")),
@@ -81,13 +75,11 @@ impl Theme {
             status_closed: Style::new().color(color("bright_black")),
             status_pinned: Style::new().color(color("magenta")).bold(),
 
-            // Priority colors - matching text.rs format_priority_label
             priority_critical: Style::new().color(color("red")).bold(),
             priority_high: Style::new().color(color("red")),
             priority_medium: Style::new().color(color("yellow")),
             priority_low: Style::new().color(color("bright_black")),
 
-            // Type colors - matching text.rs format_type_badge_colored
             type_bug: Style::new().color(color("red")),
             type_feature: Style::new().color(color("cyan")),
             type_task: Style::new(),
@@ -95,7 +87,6 @@ impl Theme {
             type_docs: Style::new().color(color("blue")),
             type_chore: Style::new().color(color("bright_black")),
 
-            // Structural elements
             header: Style::new().bold(),
             border: Style::new().color(color("bright_black")),
             muted: Style::new().color(color("bright_black")),
@@ -104,7 +95,6 @@ impl Theme {
             warning: Style::new().color(color("yellow")),
             error: Style::new().color(color("red")).bold(),
 
-            // Issue-specific
             issue_id: Style::new().color(color("cyan")),
             label: Style::new().color(color("blue")),
             dependency: Style::new().color(color("magenta")),

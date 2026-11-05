@@ -60,8 +60,6 @@ fn commit_citing(workspace: &BrWorkspace, bead_ids: &[&str]) -> String {
     }
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "test"]);
-    // One work file per call: a second call must still have something to
-    // commit (`git commit` refuses an empty index).
     let count = std::process::Command::new("git")
         .args(["rev-list", "--count", "HEAD"])
         .current_dir(&workspace.root)
@@ -134,7 +132,6 @@ fn close_without_pass_gate_is_nonzero() {
         closed.stdout
     );
 
-    // The bead must still be open.
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     assert!(show.status.success(), "{}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
@@ -189,9 +186,6 @@ fn close_with_legal_gate_and_sha_sets_close_verdict() {
     let issues: serde_json::Value = serde_json::from_str(&payload).expect("valid json");
     assert_eq!(issues["status"], "closed", "{issues}");
 
-    // The verdict kind whose PASS row authorized the close is recorded in
-    // close_metadata's gates JSON (`close_verdict=<name>` audit entry) until
-    // schema v18 promotes issue.close_verdict to a real column.
     let db = workspace.root.join(".beads").join("beads.db");
     let output = std::process::Command::new("sqlite3")
         .arg(&db)
@@ -251,7 +245,6 @@ fn bypass_without_br_operator_is_rejected() {
 fn setup_workspace_without_policy() -> (BrWorkspace, String) {
     let workspace = BrWorkspace::new();
     std::fs::create_dir_all(workspace.root.join(".beads")).expect("beads dir");
-    // Deliberately NO `br init`: `.beads/policy.yaml` stays absent.
     let create = run_br(
         &workspace,
         [
@@ -387,8 +380,6 @@ fn gate_report_default_explicit_file_still_governs() {
          strict, or the close would demand a verdict that nothing could record: {report:?}"
     );
 
-    // The default's TRANSITIONS must not leak: the ADR default allows
-    // open -> in_progress, this policy does not.
     let leaked = run_br(
         &workspace,
         [
@@ -431,8 +422,6 @@ fn init_writes_require_legal_close_policy() {
         "default policy must enable require_legal_close: {policy}"
     );
 
-    // The written file must LOAD cleanly — i.e. it must not carry the
-    // illegal require_all-of-five shape that load_for_beads_dir rejects.
     let list = run_br(&workspace, ["list", "--json"], "list_after_init");
     assert!(
         list.status.success(),

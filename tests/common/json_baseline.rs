@@ -119,7 +119,6 @@ mod tests {
     #[test]
     fn test_list_baselines() {
         let baselines = list_baselines();
-        // After running generate_json_baseline.sh, we should have fixtures
         if !baselines.is_empty() {
             assert!(baselines.contains(&"list".to_string()));
         }
@@ -127,7 +126,6 @@ mod tests {
 
     #[test]
     fn test_baseline_exists() {
-        // This test will pass after fixtures are generated
         if baseline_exists("list") {
             let value = load_baseline("list");
             assert!(value.is_array());

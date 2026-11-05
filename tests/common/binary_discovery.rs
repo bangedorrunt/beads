@@ -57,7 +57,6 @@ impl DiscoveredBinaries {
 
 /// Discover br binary (from cargo build).
 fn discover_br() -> Result<BinaryVersion, String> {
-    // First check if BR_BINARY env var is set
     if let Ok(br_path) = std::env::var("BR_BINARY") {
         let path = PathBuf::from(&br_path);
         if path.exists() {
@@ -66,20 +65,17 @@ fn discover_br() -> Result<BinaryVersion, String> {
         return Err(format!("BR_BINARY={br_path} does not exist"));
     }
 
-    // Try cargo-built binary
     let cargo_bin = assert_cmd::cargo::cargo_bin!("br");
     if cargo_bin.exists() {
         return probe_binary("br", cargo_bin);
     }
 
-    // Try release binary
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let release_bin = manifest_dir.join("target/release/br");
     if release_bin.exists() {
         return probe_binary("br", &release_bin);
     }
 
-    // Try PATH
     if let Some(path) = which("br") {
         return probe_binary("br", &path);
     }
@@ -89,7 +85,6 @@ fn discover_br() -> Result<BinaryVersion, String> {
 
 /// Probe a binary to extract version information.
 fn probe_binary(name: &str, path: &Path) -> Result<BinaryVersion, String> {
-    // Try `--version --json` first
     let json_output = run_version_command(path, &["version", "--json"]);
     if let Some(output) = json_output
         && let Ok(parsed) = parse_json_version(&output)
@@ -104,7 +99,6 @@ fn probe_binary(name: &str, path: &Path) -> Result<BinaryVersion, String> {
         });
     }
 
-    // Fallback to plain `--version`
     let plain_output = run_version_command(path, &["--version"]);
     if let Some(output) = plain_output {
         let version = parse_plain_version(&output);
@@ -118,7 +112,6 @@ fn probe_binary(name: &str, path: &Path) -> Result<BinaryVersion, String> {
         });
     }
 
-    // Last resort: just verify it runs
     let check_output = run_version_command(path, &["--help"]);
     if check_output.is_some() {
         return Ok(BinaryVersion {
@@ -163,7 +156,6 @@ struct JsonVersion {
 
 /// Parse JSON version output.
 fn parse_json_version(output: &str) -> Result<JsonVersion, serde_json::Error> {
-    // Handle potential prefix text before JSON
     let json_start = output.find('{').unwrap_or(0);
     serde_json::from_str(&output[json_start..])
 }
@@ -172,10 +164,8 @@ fn parse_json_version(output: &str) -> Result<JsonVersion, serde_json::Error> {
 fn parse_plain_version(output: &str) -> String {
     let output = output.trim();
 
-    // Try to extract version number
     for word in output.split_whitespace() {
         if word.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-            // Include digits, dots, hyphens, and alphanumeric suffixes (e.g., "0.1.0-dev")
             let version: String = word
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-')
@@ -247,19 +237,11 @@ mod tests {
     /// no version window left to get wrong, so the hazard is gone with it.
     #[test]
     fn test_no_bd_oracle_remains() {
-        // Only the production half. Checking the whole file would find this
-        // test's own list of names and always fail — the first version of this
-        // test did exactly that, which is the same self-reference that makes a
-        // source-grep assertion look stronger than it is.
         let src = include_str!("binary_discovery.rs")
             .split("#[cfg(test)]")
             .next()
             .expect("the module header precedes its test block");
 
-        // Definitions, not bare names: this module's own header describes the
-        // retired `BD_BINARY` remedy in prose, and the first version of this
-        // check matched that sentence. A guard that fires on its own
-        // documentation trains you to delete the guard.
         for gone in [
             "fn bd_skip_reason",
             "fn bd_binary_name",

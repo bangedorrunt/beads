@@ -43,7 +43,6 @@ fn flag_value_hint(flag: &str, detected: &str) -> String {
 /// Format: `SCREAMING_SNAKE_CASE` for easy parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ErrorCode {
-    // === Database Errors (exit code 2) ===
     /// Database file not found
     DatabaseNotFound,
     /// Database is locked by another process
@@ -57,7 +56,6 @@ pub enum ErrorCode {
     /// Already initialized
     AlreadyInitialized,
 
-    // === Issue Errors (exit code 3) ===
     /// Issue with specified ID not found
     IssueNotFound,
     /// An optimistic-concurrency conflict means the caller observed an old
@@ -70,7 +68,6 @@ pub enum ErrorCode {
     /// Invalid issue ID format
     InvalidId,
 
-    // === Validation Errors (exit code 4) ===
     /// Field validation failed
     ValidationFailed,
     /// Invalid status value
@@ -82,7 +79,6 @@ pub enum ErrorCode {
     /// Required field missing
     RequiredField,
 
-    // === Dependency Errors (exit code 5) ===
     /// Dependency cycle detected
     CycleDetected,
     /// Dependency target not found
@@ -94,7 +90,6 @@ pub enum ErrorCode {
     /// Duplicate dependency
     DuplicateDependency,
 
-    // === Sync/JSONL Errors (exit code 6) ===
     /// JSONL parse error
     JsonlParseError,
     /// Prefix mismatch during import
@@ -108,7 +103,6 @@ pub enum ErrorCode {
     /// Path traversal attempt blocked
     PathTraversal,
 
-    // === Config Errors (exit code 7) ===
     /// Configuration error
     ConfigError,
     /// Config file not found
@@ -116,7 +110,6 @@ pub enum ErrorCode {
     /// Config parse error
     ConfigParseError,
 
-    // === I/O Errors (exit code 8) ===
     /// File I/O error
     IoError,
     /// JSON serialization error
@@ -124,7 +117,6 @@ pub enum ErrorCode {
     /// YAML parsing error
     YamlError,
 
-    // === Operational Errors ===
     /// Cooperative shutdown is already in progress
     ShuttingDown,
     /// All requested items were skipped; nothing to do
@@ -132,13 +124,11 @@ pub enum ErrorCode {
     /// Some requested items were applied and the rest were skipped
     CloseIncomplete,
 
-    // === Policy Errors (exit code 4) ===
     /// Closure-time policy gate fired (issue #274)
     PolicyViolation,
     /// Atomic workflow capacity/admission guard fired (GitHub #384)
     WorkflowCapacityExceeded,
 
-    // === Internal Errors (exit code 1) ===
     /// Unexpected internal error
     InternalError,
 }
@@ -148,54 +138,44 @@ impl ErrorCode {
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
-            // Database
             Self::DatabaseNotFound => "DATABASE_NOT_FOUND",
             Self::DatabaseLocked => "DATABASE_LOCKED",
             Self::SchemaMismatch => "SCHEMA_MISMATCH",
             Self::DatabaseError => "DATABASE_ERROR",
             Self::NotInitialized => "NOT_INITIALIZED",
             Self::AlreadyInitialized => "ALREADY_INITIALIZED",
-            // Issue
             Self::IssueNotFound => "ISSUE_NOT_FOUND",
             Self::StaleRevision => "STALE_REVISION",
             Self::AmbiguousId => "AMBIGUOUS_ID",
             Self::IdCollision => "ID_COLLISION",
             Self::InvalidId => "INVALID_ID",
-            // Validation
             Self::ValidationFailed => "VALIDATION_FAILED",
             Self::InvalidStatus => "INVALID_STATUS",
             Self::InvalidType => "INVALID_TYPE",
             Self::InvalidPriority => "INVALID_PRIORITY",
             Self::RequiredField => "REQUIRED_FIELD",
-            // Dependency
             Self::CycleDetected => "CYCLE_DETECTED",
             Self::DependencyNotFound => "DEPENDENCY_NOT_FOUND",
             Self::HasDependents => "HAS_DEPENDENTS",
             Self::SelfDependency => "SELF_DEPENDENCY",
             Self::DuplicateDependency => "DUPLICATE_DEPENDENCY",
-            // Sync
             Self::JsonlParseError => "JSONL_PARSE_ERROR",
             Self::PrefixMismatch => "PREFIX_MISMATCH",
             Self::ImportCollision => "IMPORT_COLLISION",
             Self::SyncConflict => "SYNC_CONFLICT",
             Self::ConflictMarkers => "CONFLICT_MARKERS",
             Self::PathTraversal => "PATH_TRAVERSAL",
-            // Config
             Self::ConfigError => "CONFIG_ERROR",
             Self::ConfigNotFound => "CONFIG_NOT_FOUND",
             Self::ConfigParseError => "CONFIG_PARSE_ERROR",
-            // I/O
             Self::IoError => "IO_ERROR",
             Self::JsonError => "JSON_ERROR",
             Self::YamlError => "YAML_ERROR",
-            // Operational
             Self::ShuttingDown => "SHUTTING_DOWN",
             Self::NothingToDo => "NOTHING_TO_DO",
             Self::CloseIncomplete => "CLOSE_INCOMPLETE",
-            // Policy
             Self::PolicyViolation => "POLICY_VIOLATION",
             Self::WorkflowCapacityExceeded => "WORKFLOW_CAPACITY_EXCEEDED",
-            // Internal
             Self::InternalError => "INTERNAL_ERROR",
         }
     }
@@ -236,14 +216,12 @@ impl ErrorCode {
     #[must_use]
     pub const fn exit_code(&self) -> i32 {
         match self {
-            // Database (2)
             Self::DatabaseNotFound
             | Self::DatabaseLocked
             | Self::SchemaMismatch
             | Self::DatabaseError
             | Self::NotInitialized
             | Self::AlreadyInitialized => 2,
-            // Issue / Operational (3)
             Self::IssueNotFound
             | Self::StaleRevision
             | Self::AmbiguousId
@@ -252,7 +230,6 @@ impl ErrorCode {
             | Self::NothingToDo
             | Self::CloseIncomplete => 3,
             Self::ShuttingDown => 130,
-            // Validation (4)
             Self::ValidationFailed
             | Self::InvalidStatus
             | Self::InvalidType
@@ -260,24 +237,19 @@ impl ErrorCode {
             | Self::RequiredField
             | Self::PolicyViolation
             | Self::WorkflowCapacityExceeded => 4,
-            // Dependency (5)
             Self::CycleDetected
             | Self::DependencyNotFound
             | Self::HasDependents
             | Self::SelfDependency
             | Self::DuplicateDependency => 5,
-            // Sync (6)
             Self::JsonlParseError
             | Self::PrefixMismatch
             | Self::ImportCollision
             | Self::SyncConflict
             | Self::ConflictMarkers
             | Self::PathTraversal => 6,
-            // Config (7)
             Self::ConfigError | Self::ConfigNotFound | Self::ConfigParseError => 7,
-            // I/O (8)
             Self::IoError | Self::JsonError | Self::YamlError => 8,
-            // Internal (1)
             Self::InternalError => 1,
         }
     }
@@ -609,7 +581,6 @@ impl StructuredError {
         let mut output = String::new();
 
         if color {
-            // Red for error
             output.push_str("\x1b[31mError:\x1b[0m ");
         } else {
             output.push_str("Error: ");
@@ -620,7 +591,6 @@ impl StructuredError {
         if let Some(hint) = &self.hint {
             output.push('\n');
             if color {
-                // Yellow for hint
                 output.push_str("\x1b[33mHint:\x1b[0m ");
             } else {
                 output.push_str("Hint: ");
@@ -888,10 +858,6 @@ impl StructuredError {
                 summary,
             } => (
                 ErrorCode::CloseIncomplete,
-                // The counts ride in the envelope so stderr alone is a
-                // sufficient account of the partial batch: a caller that
-                // discards stdout on a non-zero exit still learns how many
-                // transitions landed and which ones did not.
                 Some(json!({
                     "closed": closed,
                     "skipped": skipped,
@@ -968,12 +934,10 @@ impl StructuredError {
 
     /// Generate context-aware hint from error.
     fn generate_hint(err: &BeadsError, context: Option<&Value>) -> Option<String> {
-        // First check if BeadsError has a built-in suggestion
         if let Some(suggestion) = err.suggestion() {
             return Some(suggestion.to_string());
         }
 
-        // Generate additional hints based on context
         match err {
             BeadsError::IssueNotFound { .. } => {
                 Some("Run 'br list' to see available issues.".to_string())
@@ -1038,8 +1002,6 @@ fn skip_reason_hint(reasons: &str) -> String {
         "Skipped issue(s) were already closed or not found.".to_string()
     }
 }
-
-// === Precomputed Valid Values (O(1) lookup) ===
 
 /// Valid status values.
 static VALID_STATUSES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
@@ -1143,23 +1105,18 @@ static PRIORITY_SYNONYMS: LazyLock<std::collections::HashMap<&'static str, &'sta
         .collect()
     });
 
-// === Intent Detection ===
-
 /// Detect what status the user likely meant.
 fn detect_status_intent(input: &str) -> Option<&'static str> {
     let lower = input.to_lowercase();
 
-    // Direct match (case-insensitive)
     if VALID_STATUSES.contains(lower.as_str()) {
         return VALID_STATUSES.get(lower.as_str()).copied();
     }
 
-    // Synonym lookup
     if let Some(&canonical) = STATUS_SYNONYMS.get(lower.as_str()) {
         return Some(canonical);
     }
 
-    // Prefix match
     for &status in VALID_STATUSES.iter() {
         if status.starts_with(&lower) {
             return Some(status);
@@ -1173,17 +1130,14 @@ fn detect_status_intent(input: &str) -> Option<&'static str> {
 fn detect_type_intent(input: &str) -> Option<&'static str> {
     let lower = input.to_lowercase();
 
-    // Direct match
     if VALID_TYPES.contains(lower.as_str()) {
         return VALID_TYPES.get(lower.as_str()).copied();
     }
 
-    // Synonym lookup
     if let Some(&canonical) = TYPE_SYNONYMS.get(lower.as_str()) {
         return Some(canonical);
     }
 
-    // Prefix match
     for &t in VALID_TYPES.iter() {
         if t.starts_with(&lower) {
             return Some(t);
@@ -1197,7 +1151,6 @@ fn detect_type_intent(input: &str) -> Option<&'static str> {
 fn detect_priority_intent(input: &str) -> Option<&'static str> {
     let lower = input.to_lowercase();
 
-    // Already valid
     if ["0", "1", "2", "3", "4"].contains(&lower.as_str()) {
         return match lower.as_str() {
             "0" => Some("0"),
@@ -1209,7 +1162,6 @@ fn detect_priority_intent(input: &str) -> Option<&'static str> {
         };
     }
 
-    // P0-P4 format
     if lower.starts_with('p') && lower.len() == 2 {
         let digit = lower.chars().nth(1)?;
         if digit.is_ascii_digit() && digit <= '4' {
@@ -1224,11 +1176,8 @@ fn detect_priority_intent(input: &str) -> Option<&'static str> {
         }
     }
 
-    // Synonym lookup
     PRIORITY_SYNONYMS.get(lower.as_str()).copied()
 }
-
-// === Levenshtein Distance ===
 
 /// Calculate the Levenshtein distance between two strings.
 ///
@@ -1244,7 +1193,6 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
         return a_len;
     }
 
-    // Levenshtein distance matrix
     let mut matrix = vec![vec![0; b_len + 1]; a_len + 1];
 
     for (i, row) in matrix.iter_mut().enumerate().take(a_len + 1) {
@@ -1281,10 +1229,9 @@ pub fn find_similar_ids(
     let mut candidates: Vec<(usize, &str)> = existing
         .iter()
         .map(|id| (levenshtein_distance(searched, id), id.as_str()))
-        .filter(|(dist, _)| *dist <= 3) // Only suggest if reasonably close
+        .filter(|(dist, _)| *dist <= 3)
         .collect();
 
-    // Sort by distance, then alphabetically
     candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
 
     candidates
@@ -1380,11 +1327,7 @@ mod tests {
             context["policy_path"],
             "workflow.capacity.statuses.in_progress"
         );
-        // `all` counting omits the hierarchy field entirely, so phase-1/2
-        // consumers see the exact evidence shape they saw before phase 3.
         assert!(context.get("aggregate_parents_excluded").is_none());
-        // Likewise, no active exemption means no `exempt` field: phase-4
-        // evidence stays byte-identical for repos without exemptions.
         assert!(context.get("exempt").is_none());
     }
 
@@ -1442,7 +1385,6 @@ mod tests {
 
         let suggestions = find_similar_ids("bd-abc12", &existing, 3);
         assert!(!suggestions.is_empty());
-        // bd-abc123 and bd-abc124 should be closest (distance 1)
         assert!(suggestions.contains(&"bd-abc123".to_string()));
     }
 
@@ -1452,7 +1394,7 @@ mod tests {
         assert_eq!(detect_status_intent("wip"), Some("in_progress"));
         assert_eq!(detect_status_intent("OPEN"), Some("open"));
         assert_eq!(detect_status_intent("draft"), Some("draft"));
-        assert_eq!(detect_status_intent("op"), Some("open")); // Prefix match
+        assert_eq!(detect_status_intent("op"), Some("open"));
         assert_eq!(detect_status_intent("xyz"), None);
     }
 
@@ -1845,7 +1787,7 @@ mod tests {
         assert!(plain.contains("Hint: Did you mean 'bd-abd'?"));
 
         let colored = err.to_human(true);
-        assert!(colored.contains("\x1b[31m")); // Red color code
-        assert!(colored.contains("\x1b[33m")); // Yellow color code
+        assert!(colored.contains("\x1b[31m"));
+        assert!(colored.contains("\x1b[33m"));
     }
 }

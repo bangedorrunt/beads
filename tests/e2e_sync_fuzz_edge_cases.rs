@@ -24,18 +24,12 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-// ============================================================================
-// Helper: Create a basic beads workspace with some issues
-// ============================================================================
-
 fn setup_workspace_with_issues() -> BrWorkspace {
     let workspace = BrWorkspace::new();
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create a few issues for export
     let _ = run_br(
         &workspace,
         ["create", "Test issue 1", "-t", "task"],
@@ -52,16 +46,11 @@ fn setup_workspace_with_issues() -> BrWorkspace {
         "create3",
     );
 
-    // Export to JSONL
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
     workspace
 }
-
-// ============================================================================
-// MALFORMED JSONL TESTS
-// ============================================================================
 
 /// Test: Import rejects JSONL with truncated/partial lines
 #[test]
@@ -70,25 +59,21 @@ fn edge_case_import_rejects_partial_lines() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // Read original and truncate a line mid-way
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let lines: Vec<&str> = original.lines().collect();
     assert!(!lines.is_empty(), "JSONL should have content");
 
-    // Create malformed JSONL by truncating the first line
     let first_line = lines[0];
-    let truncated = &first_line[..first_line.len() / 2]; // Cut in half
+    let truncated = &first_line[..first_line.len() / 2];
     let malformed = format!("{}\n{}", truncated, lines[1..].join("\n"));
     fs::write(&jsonl_path, &malformed).expect("write malformed jsonl");
 
-    // Attempt import - should fail
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_partial",
     );
 
-    // Log for postmortem
     let log = format!(
         "=== PARTIAL LINE TEST ===\n\
          Original line: {}\n\
@@ -101,7 +86,6 @@ fn edge_case_import_rejects_partial_lines() {
     let log_path = workspace.log_dir.join("partial_line_test.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // ASSERTION: Import should fail
     assert!(
         !import.status.success(),
         "SAFETY VIOLATION: Import should reject truncated JSONL!\n\
@@ -110,7 +94,6 @@ fn edge_case_import_rejects_partial_lines() {
         log_path.display()
     );
 
-    // ASSERTION: Error message should mention JSON parsing
     assert!(
         import.stderr.to_lowercase().contains("json")
             || import.stderr.to_lowercase().contains("invalid")
@@ -189,7 +172,6 @@ fn edge_case_import_rejects_invalid_json() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // Create various invalid JSON payloads
     let invalid_json_cases = [
         ("{\"id\": \"test\", \"title\": ", "Missing closing brace"),
         ("{invalid json here}", "Not valid JSON"),
@@ -202,17 +184,14 @@ fn edge_case_import_rejects_invalid_json() {
     ];
 
     for (invalid_line, description) in invalid_json_cases {
-        // Write invalid JSONL
         fs::write(&jsonl_path, format!("{invalid_line}\n")).expect("write invalid jsonl");
 
-        // Attempt import
         let import = run_br(
             &workspace,
             ["sync", "--import-only", "--force"],
             &format!("import_{}", description.replace(' ', "_")),
         );
 
-        // Log for postmortem
         let log = format!(
             "=== INVALID JSON TEST: {} ===\n\
              Invalid line: {}\n\n\
@@ -227,7 +206,6 @@ fn edge_case_import_rejects_invalid_json() {
         ));
         fs::write(&log_path, &log).expect("write log");
 
-        // ASSERTION: Import should fail
         assert!(
             !import.status.success(),
             "SAFETY VIOLATION: Import should reject invalid JSON ({})!\n\
@@ -252,12 +230,10 @@ fn edge_case_import_handles_empty_lines() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // Read original and add empty lines
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let with_empty = format!("\n\n{}\n\n\n", original.replace('\n', "\n\n"));
     fs::write(&jsonl_path, &with_empty).expect("write with empty lines");
 
-    // Attempt import - should succeed (empty lines are skipped)
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -275,7 +251,6 @@ fn edge_case_import_handles_empty_lines() {
     let log_path = workspace.log_dir.join("empty_lines_test.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // Empty lines should be gracefully skipped
     assert!(
         import.status.success(),
         "Import should handle empty lines gracefully.\n\
@@ -286,10 +261,6 @@ fn edge_case_import_handles_empty_lines() {
     eprintln!("[PASS] Import handled empty lines gracefully");
 }
 
-// ============================================================================
-// CONFLICT MARKER TESTS
-// ============================================================================
-
 /// Test: Import rejects JSONL containing git merge conflict markers
 #[test]
 fn edge_case_import_rejects_conflict_markers() {
@@ -297,10 +268,8 @@ fn edge_case_import_rejects_conflict_markers() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // Read original JSONL
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
 
-    // Test various conflict marker scenarios
     let conflict_cases = [
         (
             format!(
@@ -328,17 +297,14 @@ fn edge_case_import_rejects_conflict_markers() {
     ];
 
     for (malformed, description) in conflict_cases {
-        // Write JSONL with conflict markers
         fs::write(&jsonl_path, &malformed).expect("write conflicted jsonl");
 
-        // Attempt import
         let import = run_br(
             &workspace,
             ["sync", "--import-only", "--force"],
             &format!("import_conflict_{}", description.replace(' ', "_")),
         );
 
-        // Log for postmortem
         let log = format!(
             "=== CONFLICT MARKER TEST: {} ===\n\
              JSONL content:\n{}\n\n\
@@ -356,7 +322,6 @@ fn edge_case_import_rejects_conflict_markers() {
             .join(format!("conflict_{}.log", description.replace(' ', "_")));
         fs::write(&log_path, &log).expect("write log");
 
-        // ASSERTION: Import should fail with conflict marker error
         assert!(
             !import.status.success(),
             "SAFETY VIOLATION: Import should reject JSONL with conflict markers ({})!\n\
@@ -365,7 +330,6 @@ fn edge_case_import_rejects_conflict_markers() {
             log_path.display()
         );
 
-        // ASSERTION: Error message should mention conflict
         assert!(
             import.stderr.to_lowercase().contains("conflict")
                 || import.stderr.to_lowercase().contains("merge")
@@ -381,14 +345,9 @@ fn edge_case_import_rejects_conflict_markers() {
             import.stderr.lines().next().unwrap_or("(no error)")
         );
 
-        // Restore original for next test
         fs::write(&jsonl_path, &original).expect("restore original");
     }
 }
-
-// ============================================================================
-// PATH TRAVERSAL TESTS
-// ============================================================================
 
 /// Test: Path validation blocks `../` traversal attempts
 #[test]
@@ -396,18 +355,14 @@ fn edge_case_path_traversal_blocked() {
     let _log = common::test_log("edge_case_path_traversal_blocked");
     let workspace = BrWorkspace::new();
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
-    // Create an issue
     let _ = run_br(&workspace, ["create", "Test issue"], "create");
 
-    // Create a file outside .beads that we'll try to access
     let outside_file = workspace.root.join("secret.txt");
     fs::write(&outside_file, "SECRET DATA").expect("write secret file");
 
-    // Try to export to a path with traversal
     let traversal_paths = [
         workspace.root.join(".beads").join("..").join("secret.txt"),
         workspace
@@ -427,15 +382,12 @@ fn edge_case_path_traversal_blocked() {
     ];
 
     for traversal_path in &traversal_paths {
-        // We can't directly test CLI path traversal (it may be validated before reaching sync)
-        // but we can verify the path validation logic
         eprintln!(
             "[INFO] Would test traversal path: {}",
             traversal_path.display()
         );
     }
 
-    // Test that the secret file is untouched after sync operations
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed");
 
@@ -455,22 +407,17 @@ fn edge_case_symlink_escape_blocked() {
     let _log = common::test_log("edge_case_symlink_escape_blocked");
     let workspace = BrWorkspace::new();
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
-    // Create an issue
     let _ = run_br(&workspace, ["create", "Test issue"], "create");
 
-    // Create a file outside .beads
     let outside_file = workspace.root.join("outside_secret.txt");
     fs::write(&outside_file, "OUTSIDE SECRET").expect("write outside file");
 
-    // Create a symlink inside .beads pointing outside
     let beads_dir = workspace.root.join(".beads");
     let symlink_path = beads_dir.join("escape_link");
 
-    // Try to create a symlink (may fail on some systems)
     if symlink(&outside_file, &symlink_path).is_ok() {
         eprintln!(
             "[INFO] Created symlink: {} -> {}",
@@ -478,13 +425,10 @@ fn edge_case_symlink_escape_blocked() {
             outside_file.display()
         );
 
-        // Verify symlink exists
         assert!(symlink_path.exists() || symlink_path.is_symlink());
 
-        // Run sync operations
         let export = run_br(&workspace, ["sync", "--flush-only"], "export_with_symlink");
 
-        // Log for postmortem
         let log = format!(
             "=== SYMLINK ESCAPE TEST ===\n\
              Symlink: {} -> {}\n\n\
@@ -500,7 +444,6 @@ fn edge_case_symlink_escape_blocked() {
         let log_path = workspace.log_dir.join("symlink_escape_test.log");
         fs::write(&log_path, &log).expect("write log");
 
-        // Verify the outside file was not modified
         let outside_content = fs::read_to_string(&outside_file).expect("read outside file");
         assert_eq!(
             outside_content, "OUTSIDE SECRET",
@@ -513,10 +456,6 @@ fn edge_case_symlink_escape_blocked() {
     }
 }
 
-// ============================================================================
-// EDGE CASE TESTS
-// ============================================================================
-
 /// Test: Import handles extremely long lines
 #[test]
 fn edge_case_huge_line() {
@@ -524,30 +463,24 @@ fn edge_case_huge_line() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // Read original to get a valid issue structure
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let first_line = original.lines().next().expect("at least one line");
 
-    // Parse and modify to add huge title
     let mut issue: serde_json::Value = serde_json::from_str(first_line).expect("parse first line");
 
-    // Create a title that's ~1MB
     let huge_title = "X".repeat(1_000_000);
     issue["title"] = serde_json::Value::String(huge_title.clone());
 
     let huge_line = serde_json::to_string(&issue).expect("serialize huge issue");
 
-    // Write the huge line
     fs::write(&jsonl_path, format!("{huge_line}\n")).expect("write huge line");
 
-    // Attempt import
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_huge",
     );
 
-    // Log for postmortem
     let log = format!(
         "=== HUGE LINE TEST ===\n\
          Line size: {} bytes\n\
@@ -564,21 +497,17 @@ fn edge_case_huge_line() {
     let log_path = workspace.log_dir.join("huge_line_test.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // Either succeed gracefully or fail cleanly (no crash, no partial write)
     eprintln!(
         "[INFO] Huge line test: status={}, line_size={} bytes",
         import.status,
         huge_line.len()
     );
 
-    // Verify no partial/corrupted state by checking we can still list issues
-    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
     let list = run_br(
         &workspace,
         ["list", "--no-auto-import", "--allow-stale"],
         "list_after_huge",
     );
-    // If import succeeded, list should work; if it failed, list should show old data
     assert!(
         list.status.success(),
         "SAFETY VIOLATION: System in corrupted state after huge line test!\n\
@@ -598,25 +527,20 @@ fn edge_case_invalid_utf8() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // Read original as bytes
     let original = fs::read(&jsonl_path).expect("read jsonl bytes");
 
-    // Create invalid UTF-8 by inserting bytes that are invalid UTF-8
-    // 0xFF is never valid in UTF-8
     let mut invalid_bytes = original.clone();
     invalid_bytes.insert(10, 0xFF);
     invalid_bytes.insert(11, 0xFE);
 
     fs::write(&jsonl_path, &invalid_bytes).expect("write invalid utf8");
 
-    // Attempt import
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_invalid_utf8",
     );
 
-    // Log for postmortem
     let log = format!(
         "=== INVALID UTF-8 TEST ===\n\
          Inserted bytes: [0xFF, 0xFE] at position 10-11\n\n\
@@ -628,7 +552,6 @@ fn edge_case_invalid_utf8() {
     let log_path = workspace.log_dir.join("invalid_utf8_test.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // Import should fail with a clear error (not panic)
     assert!(
         !import.status.success(),
         "SAFETY VIOLATION: Import should reject invalid UTF-8!\n\
@@ -636,7 +559,6 @@ fn edge_case_invalid_utf8() {
         log_path.display()
     );
 
-    // Verify error message is useful
     assert!(
         import.stderr.to_lowercase().contains("utf")
             || import.stderr.to_lowercase().contains("invalid")
@@ -659,10 +581,8 @@ fn edge_case_whitespace_only() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // Write whitespace-only content
     fs::write(&jsonl_path, "   \n\t\n   \n\n").expect("write whitespace");
 
-    // Attempt import - should succeed with 0 issues imported
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -679,7 +599,6 @@ fn edge_case_whitespace_only() {
     let log_path = workspace.log_dir.join("whitespace_only_test.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // Should succeed (empty import)
     assert!(
         import.status.success(),
         "Import should handle whitespace-only JSONL gracefully.\n\
@@ -697,10 +616,8 @@ fn edge_case_empty_file() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // Write empty file
     fs::write(&jsonl_path, "").expect("write empty file");
 
-    // Attempt import
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -718,7 +635,6 @@ fn edge_case_empty_file() {
     let log_path = workspace.log_dir.join("empty_file_test.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // Should succeed (empty import)
     assert!(
         import.status.success(),
         "Import should handle empty file gracefully.\n\
@@ -736,8 +652,6 @@ fn edge_case_deeply_nested_json() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // Create deeply nested JSON (100 levels)
-    // This might be valid but tests parser limits
     let mut nested = String::new();
     let depth = 100;
     for _ in 0..depth {
@@ -748,14 +662,12 @@ fn edge_case_deeply_nested_json() {
         nested.push('}');
     }
 
-    // Wrap in a minimal issue structure
     let deep_json = format!(
         "{{\"id\":\"deep-test\",\"title\":\"Deep\",\"status\":\"open\",\"data\":{nested}}}"
     );
 
     fs::write(&jsonl_path, format!("{deep_json}\n")).expect("write deeply nested");
 
-    // Attempt import
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -773,14 +685,11 @@ fn edge_case_deeply_nested_json() {
     let log_path = workspace.log_dir.join("deeply_nested_test.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // Should either succeed or fail cleanly (no stack overflow)
     eprintln!(
         "[INFO] Deeply nested JSON test: status={}, depth={}",
         import.status, depth
     );
 
-    // The important thing is no crash/panic
-    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
     let list = run_br(
         &workspace,
         ["list", "--no-auto-import", "--allow-stale"],
@@ -800,11 +709,9 @@ fn edge_case_no_partial_writes_on_failure() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // First, get the current state
     let list_before = run_br(&workspace, ["list", "--json"], "list_before");
     let count_before = list_before.stdout.matches("\"id\"").count();
 
-    // Create malformed JSONL with valid issues followed by invalid
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let malformed = format!(
         "{}\n{{\"id\":\"new-valid\",\"title\":\"New Valid Issue\",\"status\":\"open\"}}\n{{invalid json here}}\n",
@@ -812,15 +719,12 @@ fn edge_case_no_partial_writes_on_failure() {
     );
     fs::write(&jsonl_path, &malformed).expect("write malformed");
 
-    // Attempt import - should fail
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_partial_fail",
     );
 
-    // Check final state
-    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
     let list_after = run_br(
         &workspace,
         ["list", "--json", "--no-auto-import", "--allow-stale"],
@@ -828,7 +732,6 @@ fn edge_case_no_partial_writes_on_failure() {
     );
     let count_after = list_after.stdout.matches("\"id\"").count();
 
-    // Log for postmortem
     let log = format!(
         "=== NO PARTIAL WRITES TEST ===\n\
          Issues before: {}\n\
@@ -840,21 +743,16 @@ fn edge_case_no_partial_writes_on_failure() {
     let log_path = workspace.log_dir.join("no_partial_writes_test.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // Import should have failed
     assert!(
         !import.status.success(),
         "Import should fail on invalid JSON"
     );
 
-    // If atomicity is enforced, count should be unchanged
-    // (This depends on implementation - some may allow partial imports)
     eprintln!(
         "[INFO] Partial write test: before={}, after={}, import_status={}",
         count_before, count_after, import.status
     );
 
-    // At minimum, the system should be in a consistent state
-    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
     let list_final = run_br(
         &workspace,
         ["list", "--no-auto-import", "--allow-stale"],

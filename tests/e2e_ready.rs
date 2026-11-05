@@ -76,8 +76,6 @@ fn stamp_dispatchable(workspace: &BrWorkspace) {
                     }
                 ]),
             );
-            // Bump updated_at so the importer treats the row as newer than
-            // the database copy ("Equal timestamps" skip guard).
             object.insert(
                 "updated_at".to_string(),
                 Value::String(
@@ -104,7 +102,6 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
 
     let mut ids = Vec::new();
 
-    // Issue 1: High priority task assigned to alice with "backend" label
     let issue1 = run_br(
         &workspace,
         ["create", "Backend API", "-p", "1", "-t", "task"],
@@ -126,7 +123,6 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id1);
 
-    // Issue 2: Medium priority bug assigned to bob with "frontend" label
     let issue2 = run_br(
         &workspace,
         ["create", "Frontend Bug", "-p", "2", "-t", "bug"],
@@ -148,7 +144,6 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id2);
 
-    // Issue 3: Low priority feature unassigned with "backend" and "api" labels
     let issue3 = run_br(
         &workspace,
         ["create", "New Feature", "-p", "3", "-t", "feature"],
@@ -170,7 +165,6 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id3);
 
-    // Issue 4: Critical task unassigned with "urgent" label
     let issue4 = run_br(
         &workspace,
         ["create", "Critical Fix", "-p", "0", "-t", "task"],
@@ -185,7 +179,6 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id4);
 
-    // Issue 5: Backlog task assigned to alice
     let issue5 = run_br(
         &workspace,
         ["create", "Backlog Item", "-p", "4", "-t", "task"],
@@ -326,20 +319,19 @@ fn ready_cli_filters_by_assignee() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should have alice's issues: issue 1 and issue 5
     assert_eq!(issues.len(), 2);
     assert!(
         issues
             .iter()
             .map(|i| i["id"].as_str().unwrap())
             .any(|id| id == ids[0].as_str())
-    ); // Backend API
+    );
     assert!(
         issues
             .iter()
             .map(|i| i["id"].as_str().unwrap())
             .any(|id| id == ids[4].as_str())
-    ); // Backlog Item
+    );
 }
 
 #[test]
@@ -410,8 +402,6 @@ fn ready_respects_external_dependencies() {
         "dep add failed: {}",
         dep_add.stderr
     );
-    // §5.5: make the locally created bead dispatchable once its external
-    // blocker clears (verify + principles present).
     stamp_dispatchable(&workspace);
 
     let ready_before = run_br(&workspace, ["ready", "--json"], "ready_before");
@@ -464,10 +454,6 @@ fn ready_respects_external_dependencies() {
         label.stderr
     );
 
-    // The external provider is closed through the fail-closed close policy
-    // now installed by `init` (default policy.yaml): record a legal PASS gate
-    // row, then close with a commit sha. The test's subject is external
-    // status resolution, so the closure mechanics are kept minimal but legal.
     let gate = run_br(
         &external,
         [
@@ -573,8 +559,6 @@ fn ready_imports_stale_external_jsonl_before_status_probe() {
         "dep add failed: {}",
         dep_add.stderr
     );
-    // §5.5: make the locally created bead dispatchable once its external
-    // blocker clears (verify + principles present).
     stamp_dispatchable(&workspace);
 
     let provider = run_br(&external, ["create", "Provide auth"], "ext_create");
@@ -666,20 +650,19 @@ fn ready_cli_filters_unassigned_only() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should have unassigned issues: issue 3 and issue 4
     assert_eq!(issues.len(), 2);
     assert!(
         issues
             .iter()
             .map(|i| i["id"].as_str().unwrap())
             .any(|id| id == ids[2].as_str())
-    ); // New Feature
+    );
     assert!(
         issues
             .iter()
             .map(|i| i["id"].as_str().unwrap())
             .any(|id| id == ids[3].as_str())
-    ); // Critical Fix
+    );
 }
 
 #[test]
@@ -687,7 +670,6 @@ fn ready_cli_filters_by_type() {
     let _log = common::test_log("ready_cli_filters_by_type");
     let (workspace, _ids) = setup_workspace_with_issues();
 
-    // Filter by task type
     let result = run_br(
         &workspace,
         ["ready", "--type", "task", "--json"],
@@ -699,7 +681,6 @@ fn ready_cli_filters_by_type() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should have tasks: issue 1, 4, and 5
     assert_eq!(issues.len(), 3);
     for issue in &issues {
         assert_eq!(issue["issue_type"], "task");
@@ -711,7 +692,6 @@ fn ready_cli_filters_by_multiple_types() {
     let _log = common::test_log("ready_cli_filters_by_multiple_types");
     let (workspace, _ids) = setup_workspace_with_issues();
 
-    // Filter by task and bug types
     let result = run_br(
         &workspace,
         ["ready", "--type", "task", "--type", "bug", "--json"],
@@ -723,7 +703,6 @@ fn ready_cli_filters_by_multiple_types() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should have tasks and bugs: issue 1, 2, 4, and 5
     assert_eq!(issues.len(), 4);
     for issue in &issues {
         let issue_type = issue["issue_type"].as_str().unwrap();
@@ -736,7 +715,6 @@ fn ready_cli_filters_by_priority() {
     let _log = common::test_log("ready_cli_filters_by_priority");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    // Filter by priority 0 (critical)
     let result = run_br(
         &workspace,
         ["ready", "--priority", "0", "--json"],
@@ -748,7 +726,6 @@ fn ready_cli_filters_by_priority() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should have only issue 4
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"].as_str().unwrap(), ids[3]);
 }
@@ -758,7 +735,6 @@ fn ready_cli_filters_by_multiple_priorities() {
     let _log = common::test_log("ready_cli_filters_by_multiple_priorities");
     let (workspace, _ids) = setup_workspace_with_issues();
 
-    // Filter by priority 0 and 1
     let result = run_br(
         &workspace,
         ["ready", "--priority", "0", "--priority", "1", "--json"],
@@ -770,7 +746,6 @@ fn ready_cli_filters_by_multiple_priorities() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should have issue 1 (P1) and issue 4 (P0)
     assert_eq!(issues.len(), 2);
     for issue in &issues {
         let priority = issue["priority"].as_u64().unwrap();
@@ -783,7 +758,6 @@ fn ready_cli_filters_by_label_and() {
     let _log = common::test_log("ready_cli_filters_by_label_and");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    // Filter by "backend" label
     let result = run_br(
         &workspace,
         ["ready", "--label", "backend", "--json"],
@@ -795,7 +769,6 @@ fn ready_cli_filters_by_label_and() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should have issue 1 and issue 3
     assert_eq!(issues.len(), 2);
     assert!(
         issues
@@ -816,7 +789,6 @@ fn ready_cli_filters_by_multiple_labels_and() {
     let _log = common::test_log("ready_cli_filters_by_multiple_labels_and");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    // Filter by both "backend" AND "api" labels
     let result = run_br(
         &workspace,
         ["ready", "--label", "backend", "--label", "api", "--json"],
@@ -828,7 +800,6 @@ fn ready_cli_filters_by_multiple_labels_and() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should only have issue 3 (both labels)
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"].as_str().unwrap(), ids[2]);
 }
@@ -838,7 +809,6 @@ fn ready_cli_filters_by_label_or() {
     let _log = common::test_log("ready_cli_filters_by_label_or");
     let (workspace, _ids) = setup_workspace_with_issues();
 
-    // Filter by "backend" OR "frontend" labels
     let result = run_br(
         &workspace,
         [
@@ -857,7 +827,6 @@ fn ready_cli_filters_by_label_or() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should have issues 1, 2, and 3
     assert_eq!(issues.len(), 3);
 }
 
@@ -896,7 +865,6 @@ fn ready_cli_limit_zero_returns_all() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // All 5 issues
     assert_eq!(issues.len(), 5);
 }
 
@@ -916,9 +884,7 @@ fn ready_cli_sort_priority() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // First should be P0 (Critical Fix - ids[3])
     assert_eq!(issues[0]["id"].as_str().unwrap(), ids[3]);
-    // Second should be P1 (Backend API - ids[0])
     assert_eq!(issues[1]["id"].as_str().unwrap(), ids[0]);
 }
 
@@ -927,7 +893,6 @@ fn ready_cli_combined_filters() {
     let _log = common::test_log("ready_cli_combined_filters");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    // Filter by assignee "alice" AND type "task"
     let result = run_br(
         &workspace,
         ["ready", "--assignee", "alice", "--type", "task", "--json"],
@@ -939,7 +904,6 @@ fn ready_cli_combined_filters() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should have issue 1 and issue 5 (both alice's tasks)
     assert_eq!(issues.len(), 2);
     assert!(
         issues
@@ -960,11 +924,9 @@ fn ready_cli_excludes_blocked_issues() {
     let _log = common::test_log("ready_cli_excludes_blocked_issues");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    // Create a dependency: issue 3 is blocked by issue 1
     let dep = run_br(&workspace, ["dep", "add", &ids[2], &ids[0]], "add_dep");
     assert!(dep.status.success(), "dep add failed: {}", dep.stderr);
 
-    // Ready should NOT include the blocked issue
     let result = run_br(
         &workspace,
         ["ready", "--limit", "0", "--json"],
@@ -976,14 +938,13 @@ fn ready_cli_excludes_blocked_issues() {
     let page: Value = serde_json::from_str(&payload).expect("valid json");
     let issues = page["issues"].as_array().cloned().unwrap_or_default();
 
-    // Should have 4 issues (issue 3 is blocked)
     assert_eq!(issues.len(), 4);
     assert!(
         !issues
             .iter()
             .map(|i| i["id"].as_str().unwrap())
             .any(|id| id == ids[2].as_str())
-    ); // New Feature is blocked
+    );
 }
 
 #[test]
@@ -991,7 +952,6 @@ fn ready_cli_excludes_deferred_by_default() {
     let _log = common::test_log("ready_cli_excludes_deferred_by_default");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    // Defer issue 3
     let defer = run_br(
         &workspace,
         [
@@ -1005,7 +965,6 @@ fn ready_cli_excludes_deferred_by_default() {
     );
     assert!(defer.status.success(), "defer failed: {}", defer.stderr);
 
-    // Ready should NOT include deferred by default
     let result = run_br(
         &workspace,
         ["ready", "--limit", "0", "--json"],
@@ -1031,7 +990,6 @@ fn ready_cli_includes_deferred_with_flag() {
     let _log = common::test_log("ready_cli_includes_deferred_with_flag");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    // Defer issue 3
     let defer = run_br(
         &workspace,
         [
@@ -1045,7 +1003,6 @@ fn ready_cli_includes_deferred_with_flag() {
     );
     assert!(defer.status.success(), "defer failed: {}", defer.stderr);
 
-    // Ready with --include-deferred should include it
     let result = run_br(
         &workspace,
         ["ready", "--limit", "0", "--include-deferred", "--json"],
@@ -1074,9 +1031,7 @@ fn ready_cli_text_output_format() {
     let result = run_br(&workspace, ["ready"], "ready_text");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
-    // Should have the header (matches bd format)
     assert!(result.stdout.contains("Ready work"));
-    // Should show priority badge (matches bd format: [● P2])
     assert!(result.stdout.contains("[●"));
 }
 
@@ -1091,7 +1046,6 @@ fn ready_cli_empty_result_message() {
     let result = run_br(&workspace, ["ready"], "ready_empty");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
-    // Empty workspace shows completion message
     assert!(
         result.stdout.contains("No open issues")
             || result.stdout.contains("no issues to work on")
@@ -1106,7 +1060,6 @@ fn ready_cli_priority_p_format() {
     let _log = common::test_log("ready_cli_priority_p_format");
     let (workspace, _ids) = setup_workspace_with_issues();
 
-    // Priority can be specified as P0, P1, etc.
     let result = run_br(
         &workspace,
         ["ready", "--priority", "P0", "--json"],
@@ -1122,12 +1075,6 @@ fn ready_cli_priority_p_format() {
     assert_eq!(issues[0]["priority"].as_u64().unwrap(), 0);
 }
 
-// ============================================================================
-// beads-jsgu: invariant-based e2e ordering tests (added 2026-05-09)
-// Pairs with the unit-level rewrite in tests/storage_ready.rs::ready_sort_*
-// (those exercise the storage API directly; these exercise the full CLI).
-// ============================================================================
-
 /// jsgu AC: full CLI round-trip for the priority-ordering contract. Creates
 /// issues at P0/P1/P2/P3 in REVERSE priority order, runs `br ready --json`,
 /// asserts hybrid ordering invariant (high-tier P0/P1 before low-tier P2+).
@@ -1139,8 +1086,6 @@ fn e2e_ready_with_mixed_priority_high_tier_first() {
 
     eprintln!("[jsgu TEST] e2e_ready_with_mixed_priority_high_tier_first");
 
-    // Create issues in REVERSE priority order to guard against accidental
-    // creation-order pass-through.
     for (title, prio) in [
         ("Low", "3"),
         ("Critical", "0"),
@@ -1179,8 +1124,6 @@ fn e2e_ready_with_mixed_priority_high_tier_first() {
 
     assert_eq!(issues.len(), 4, "expected 4 ready issues");
 
-    // Hybrid invariant: no high-tier (priority ≤ 1) issue appears AFTER any
-    // low-tier (priority > 1) issue.
     let mut low_seen = false;
     for issue in &issues {
         let prio = issue["priority"].as_u64().unwrap_or(99);
@@ -1214,7 +1157,6 @@ fn e2e_ready_returns_no_duplicate_ids() {
 
     eprintln!("[jsgu TEST] e2e_ready_returns_no_duplicate_ids");
 
-    // Create 6 issues all at the same priority — id-tiebreak path is exercised
     for i in 0..6 {
         let title = format!("issue {i}");
         let create = run_br(
@@ -1260,10 +1202,6 @@ fn ready_default_group_is_open_only_e2e() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // The default policy.yaml installed by `init` is strict; this test only
-    // needs a real non-terminal status OUTSIDE [open] (unconfigured ready
-    // group must default to [open]), so grant `blocked` + its transition
-    // without configuring a ready group.
     write_policy(
         &workspace,
         "workflow:\n  statuses: [open, in_progress, closed, deferred, blocked]\n  transitions:\n    open: [in_progress, closed, deferred, blocked]\n    blocked: [open, closed]\n",
@@ -1289,7 +1227,6 @@ fn ready_default_group_is_open_only_e2e() {
     );
     stamp_dispatchable(&workspace);
 
-    // No policy configured → default ready group is [open].
     let result = run_br(&workspace, ["ready", "--json"], "ready_default");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
     let payload = extract_json_payload(&result.stdout);
@@ -1312,9 +1249,6 @@ fn ready_configured_group_surfaces_blocked_e2e() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // The default strict policy excludes `blocked`; the custom policy must be
-    // installed BEFORE the status flip and carry both the status vocabulary
-    // and the configured ready group under test.
     write_policy(
         &workspace,
         "workflow:\n  statuses: [open, in_progress, closed, deferred, blocked]\n  transitions:\n    open: [in_progress, closed, deferred, blocked]\n    blocked: [open, closed]\n  status_groups:\n    ready: [open, blocked]\n",
@@ -1348,7 +1282,6 @@ fn ready_configured_group_surfaces_blocked_e2e() {
         issue_list_contains_id(&issues, &rework_id),
         "blocked issue must surface under the configured [open, blocked] group"
     );
-    // Status parity: the blocked issue keeps its real status in JSON output.
     let rework_issue = issues
         .iter()
         .find(|i| i["id"].as_str() == Some(rework_id.as_str()))
@@ -1369,8 +1302,6 @@ fn ready_strict_rejects_out_of_vocab_group_e2e() {
 
     run_br(&workspace, ["create", "Open work", "-t", "task"], "c_open");
 
-    // strict statuses do NOT include `blocked`, but the ready group lists it:
-    // the model vocabulary is closed, the POLICY vocabulary is narrower still.
     write_policy(
         &workspace,
         "workflow:\n  strict: true\n  statuses: [open, in_progress, closed]\n  status_groups:\n    ready: [open, blocked]\n",
@@ -1383,8 +1314,6 @@ fn ready_strict_rejects_out_of_vocab_group_e2e() {
         result.stdout,
         result.stderr
     );
-    // In --json mode the structured error envelope is emitted on stdout; in
-    // human mode it goes to stderr. Accept either so the assertion is robust.
     let combined = format!("{}{}", result.stdout, result.stderr);
     assert!(
         combined.contains("blocked") && combined.contains("workflow.status_groups.ready"),
@@ -1396,16 +1325,12 @@ fn ready_strict_rejects_out_of_vocab_group_e2e() {
 
 #[test]
 fn ready_cli_text_truncation_emits_showing_note() {
-    // #356: when `br ready --limit N` hides ready rows, the text surface must
-    // print a "Showing N of M" note (on stderr) instead of silently truncating
-    // — mirroring `br list` and the MCP ready surface (issue #91).
     let _log = common::test_log("ready_cli_text_truncation_emits_showing_note");
-    let (workspace, _ids) = setup_workspace_with_issues(); // 5 ready issues
+    let (workspace, _ids) = setup_workspace_with_issues();
 
     let result = run_br(&workspace, ["ready", "--limit", "2"], "ready_limit_note");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
-    // Exactly 2 rows shown on stdout (lines starting with "1." and "2.").
     let shown = result
         .stdout
         .lines()
@@ -1424,9 +1349,8 @@ fn ready_cli_text_truncation_emits_showing_note() {
 
 #[test]
 fn ready_cli_no_note_when_limit_covers_all() {
-    // No "Showing N of M" note when the limit does not actually truncate.
     let _log = common::test_log("ready_cli_no_note_when_limit_covers_all");
-    let (workspace, _ids) = setup_workspace_with_issues(); // 5 ready issues
+    let (workspace, _ids) = setup_workspace_with_issues();
 
     let result = run_br(
         &workspace,
@@ -1443,9 +1367,8 @@ fn ready_cli_no_note_when_limit_covers_all() {
 
 #[test]
 fn ready_cli_quiet_suppresses_truncation_note() {
-    // `--quiet` must suppress the truncation note, matching `br list`.
     let _log = common::test_log("ready_cli_quiet_suppresses_truncation_note");
-    let (workspace, _ids) = setup_workspace_with_issues(); // 5 ready issues
+    let (workspace, _ids) = setup_workspace_with_issues();
 
     let result = run_br(
         &workspace,
@@ -1460,10 +1383,6 @@ fn ready_cli_quiet_suppresses_truncation_note() {
     );
 }
 
-// ============================================================================
-// ADR-0001 §5.5 unified ready predicate (beads_rust-ready-predicate-9n4c)
-// ============================================================================
-
 /// `br ready --json` is the loop's dispatchable set: rows carry the §5.5
 /// fields (verify, wave, pin, principles), and the predicate excludes a P1
 /// bead until its principles citation lands.
@@ -1473,7 +1392,6 @@ fn e2e_ready_json_carries_s55_fields_and_enforces_predicate() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // P1 with verify but no principles: hidden by condition 5.
     let created = run_br(
         &workspace,
         [
@@ -1495,8 +1413,6 @@ fn e2e_ready_json_carries_s55_fields_and_enforces_predicate() {
     let p1_id = parse_created_id(&created.stdout);
     assert!(!p1_id.is_empty(), "could not parse created id");
 
-    // The whole test is "P1 with verify but NO principles", so strip the
-    // brief the harness supplies at create time before hand-editing verify.
     let strip = run_br(
         &workspace,
         ["update", &p1_id, "--verify", "", "--clear-principles"],
@@ -1519,8 +1435,6 @@ fn e2e_ready_json_carries_s55_fields_and_enforces_predicate() {
         "P1 without principles citation must not be dispatchable"
     );
 
-    // Add the citation; the bead becomes dispatchable and the row carries
-    // the §5.5 fields.
     let mut cited = issue_from_jsonl(&workspace, &p1_id);
     cited["principles"] = serde_json::json!([
         {"name": "prove-it-works", "decision": "each exclusion rule has a named test"}

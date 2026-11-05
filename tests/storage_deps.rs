@@ -46,10 +46,6 @@ fn blocked_ids_for(storage: &SqliteStorage) -> Vec<String> {
         .collect()
 }
 
-// ============================================================================
-// ADD DEPENDENCY TESTS
-// ============================================================================
-
 #[test]
 fn add_dependency_creates_link() {
     let mut storage = test_db();
@@ -96,7 +92,6 @@ fn add_dependency_duplicate_returns_false() {
         .unwrap();
     assert!(first);
 
-    // Try to add same dependency again
     let second = storage
         .add_dependency(
             &blocked.id,
@@ -107,7 +102,6 @@ fn add_dependency_duplicate_returns_false() {
         .unwrap();
     assert!(!second);
 
-    // Should still only have one dependency
     let deps = storage.get_dependencies(&blocked.id).unwrap();
     assert_eq!(deps.len(), 1);
 }
@@ -136,7 +130,6 @@ fn add_dependency_records_event() {
         .unwrap()
         .expect("issue exists");
 
-    // Find dependency added event
     let dep_event = details
         .events
         .iter()
@@ -158,11 +151,9 @@ fn add_dependency_marks_dirty() {
     storage.create_issue(&blocker, "tester").unwrap();
     storage.create_issue(&blocked, "tester").unwrap();
 
-    // Clear dirty flags
     let ids: Vec<String> = vec![blocker.id.clone(), blocked.id.clone()];
     storage.clear_dirty_flags(&ids).unwrap();
 
-    // Add dependency
     storage
         .add_dependency(
             &blocked.id,
@@ -175,10 +166,6 @@ fn add_dependency_marks_dirty() {
     let dirty_ids = storage.get_dirty_issue_ids().unwrap();
     assert!(dirty_ids.contains(&blocked.id));
 }
-
-// ============================================================================
-// REMOVE DEPENDENCY TESTS
-// ============================================================================
 
 #[test]
 fn remove_dependency_removes_link() {
@@ -218,7 +205,6 @@ fn remove_dependency_nonexistent_returns_false() {
     storage.create_issue(&issue1, "tester").unwrap();
     storage.create_issue(&issue2, "tester").unwrap();
 
-    // No dependency exists
     let removed = storage
         .remove_dependency(&issue1.id, &issue2.id, "tester")
         .unwrap();
@@ -253,7 +239,6 @@ fn remove_dependency_records_event() {
         .unwrap()
         .expect("issue exists");
 
-    // Find dependency removed event
     let rm_event = details
         .events
         .iter()
@@ -283,11 +268,9 @@ fn remove_dependency_marks_dirty() {
         )
         .unwrap();
 
-    // Clear dirty flags
     let ids: Vec<String> = vec![blocker.id.clone(), blocked.id.clone()];
     storage.clear_dirty_flags(&ids).unwrap();
 
-    // Remove dependency
     storage
         .remove_dependency(&blocked.id, &blocker.id, "tester")
         .unwrap();
@@ -295,10 +278,6 @@ fn remove_dependency_marks_dirty() {
     let dirty_ids = storage.get_dirty_issue_ids().unwrap();
     assert!(dirty_ids.contains(&blocked.id));
 }
-
-// ============================================================================
-// GET DEPENDENCIES/DEPENDENTS TESTS
-// ============================================================================
 
 #[test]
 fn get_dependencies_empty_for_new_issue() {
@@ -414,10 +393,6 @@ fn get_dependents_returns_all() {
     assert!(dependents.contains(&dependent3.id));
 }
 
-// ============================================================================
-// CYCLE DETECTION TESTS
-// ============================================================================
-
 #[test]
 fn would_create_cycle_detects_simple_cycle() {
     let mut storage = test_db();
@@ -428,12 +403,10 @@ fn would_create_cycle_detects_simple_cycle() {
     storage.create_issue(&a, "tester").unwrap();
     storage.create_issue(&b, "tester").unwrap();
 
-    // A depends on B
     storage
         .add_dependency(&a.id, &b.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
 
-    // Would B depending on A create a cycle? Yes!
     let would_cycle = storage.would_create_cycle(&b.id, &a.id, true).unwrap();
     assert!(would_cycle);
 }
@@ -450,7 +423,6 @@ fn would_create_cycle_transitive_detection() {
     storage.create_issue(&b, "tester").unwrap();
     storage.create_issue(&c, "tester").unwrap();
 
-    // A -> B -> C (A depends on B, B depends on C)
     storage
         .add_dependency(&a.id, &b.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
@@ -458,7 +430,6 @@ fn would_create_cycle_transitive_detection() {
         .add_dependency(&b.id, &c.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
 
-    // Would C depending on A create a cycle? Yes!
     let would_cycle = storage.would_create_cycle(&c.id, &a.id, true).unwrap();
     assert!(would_cycle);
 }
@@ -475,16 +446,13 @@ fn would_create_cycle_no_cycle() {
     storage.create_issue(&b, "tester").unwrap();
     storage.create_issue(&c, "tester").unwrap();
 
-    // A -> B (A depends on B)
     storage
         .add_dependency(&a.id, &b.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
 
-    // Would A depending on C create a cycle? No (C is unconnected)
     let would_cycle = storage.would_create_cycle(&a.id, &c.id, true).unwrap();
     assert!(!would_cycle);
 
-    // Would C depending on B create a cycle? No
     let would_cycle = storage.would_create_cycle(&c.id, &b.id, true).unwrap();
     assert!(!would_cycle);
 }
@@ -499,21 +467,16 @@ fn would_create_cycle_mixed_types() {
     storage.create_issue(&a, "tester").unwrap();
     storage.create_issue(&b, "tester").unwrap();
 
-    // A -> related -> B
     storage
         .add_dependency(&a.id, &b.id, DependencyType::Related.as_str(), "tester")
         .unwrap();
 
-    // Would B -> blocks -> A create a BLOCKING cycle?
-    // Path B -> ... -> A? No, because A->B is 'related' (non-blocking).
-    // So blocking_only=true should return false.
     let blocking_cycle = storage.would_create_cycle(&b.id, &a.id, true).unwrap();
     assert!(
         !blocking_cycle,
         "Should not detect blocking cycle through related dependency"
     );
 
-    // blocking_only=false should detect it (graph reachability)
     let any_cycle = storage.would_create_cycle(&b.id, &a.id, false).unwrap();
     assert!(any_cycle, "Should detect general graph cycle");
 }
@@ -530,9 +493,6 @@ fn detect_all_cycles_finds_cycles() {
     storage.create_issue(&b, "tester").unwrap();
     storage.create_issue(&c, "tester").unwrap();
 
-    // Create cycle: A -> B -> C -> A. Blocking edges: since GH#391 the
-    // detector tracks the blocking edge set only, and cyclic fixtures come
-    // in through the import surface.
     import_blocking_edge(&storage, &a.id, &b.id);
     import_blocking_edge(&storage, &b.id, &c.id);
     import_blocking_edge(&storage, &c.id, &a.id);
@@ -540,7 +500,6 @@ fn detect_all_cycles_finds_cycles() {
     let cycles = storage.detect_all_cycles().unwrap();
     assert!(!cycles.is_empty());
 
-    // At least one cycle should contain all three issues
     let has_full_cycle = cycles
         .iter()
         .any(|cycle| cycle.contains(&a.id) && cycle.contains(&b.id) && cycle.contains(&c.id));
@@ -559,7 +518,6 @@ fn detect_all_cycles_empty_when_no_cycles() {
     storage.create_issue(&b, "tester").unwrap();
     storage.create_issue(&c, "tester").unwrap();
 
-    // Linear chain: A -> B -> C (no cycles)
     storage
         .add_dependency(&a.id, &b.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
@@ -613,8 +571,6 @@ fn detect_all_cycles_collapses_dense_component_to_witness() {
     }
 
     for from in &ids {
-        // One import call per node with its complete outgoing edge set —
-        // the import surface replaces an issue's outgoing dependencies.
         let edges: Vec<Dependency> = ids
             .iter()
             .filter(|to| *to != from)
@@ -669,9 +625,6 @@ fn dependency_cycle_report_separates_active_from_archived_and_filters_blocking()
         storage.create_issue(issue, "tester").unwrap();
     }
 
-    // GH#391: cycle health tracks the *blocking* edge set in both modes;
-    // `related` cycles are deliberately invisible to the report. Blocking
-    // cycles come in through the import surface (the add gate refuses them).
     import_blocking_edge(&storage, &active_a.id, &active_b.id);
     import_blocking_edge(&storage, &active_b.id, &active_a.id);
     import_blocking_edge(&storage, &archived_a.id, &archived_b.id);
@@ -716,21 +669,15 @@ fn dependency_cycle_report_separates_active_from_archived_and_filters_blocking()
             .any(|cycle| cycle.contains(&archived_a.id) && cycle.contains(&archived_b.id))
     );
 
-    // `--blocking-only` is a compatible alias for the same blocking edge set.
     let blocking_report = storage.detect_dependency_cycle_report(true).unwrap();
     assert_eq!(blocking_report.active_cycles.len(), 1);
     assert_eq!(blocking_report.archived_closed_cycles.len(), 1);
 }
 
-// ============================================================================
-// DEEP HIERARCHY TESTS (5+ levels)
-// ============================================================================
-
 #[test]
 fn deep_hierarchy_five_levels() {
     let mut storage = test_db();
 
-    // Create 6 issues for 5 levels of dependencies
     let level0 = fixtures::issue("deep-l0");
     let level1 = fixtures::issue("deep-l1");
     let level2 = fixtures::issue("deep-l2");
@@ -745,7 +692,6 @@ fn deep_hierarchy_five_levels() {
     storage.create_issue(&level4, "tester").unwrap();
     storage.create_issue(&level5, "tester").unwrap();
 
-    // Create chain: l0 -> l1 -> l2 -> l3 -> l4 -> l5
     storage
         .add_dependency(
             &level0.id,
@@ -787,7 +733,6 @@ fn deep_hierarchy_five_levels() {
         )
         .unwrap();
 
-    // Verify each level has correct dependencies
     assert_eq!(
         storage.get_dependencies(&level0.id).unwrap(),
         vec![level1.id.clone()]
@@ -802,7 +747,6 @@ fn deep_hierarchy_five_levels() {
     );
     assert!(storage.get_dependencies(&level5.id).unwrap().is_empty());
 
-    // Would l5 -> l0 create a cycle? Yes!
     let would_cycle = storage
         .would_create_cycle(&level5.id, &level0.id, true)
         .unwrap();
@@ -813,8 +757,6 @@ fn deep_hierarchy_five_levels() {
 fn deep_hierarchy_transitive_blocked() {
     let mut storage = test_db();
 
-    // Create chain where root is blocked (closed status blocks nothing,
-    // but open status on dependency means dependent is blocked)
     let root = fixtures::issue("root-blocked");
     let l1 = fixtures::issue("l1-blocked");
     let l2 = fixtures::issue("l2-blocked");
@@ -829,7 +771,6 @@ fn deep_hierarchy_transitive_blocked() {
     storage.create_issue(&l4, "tester").unwrap();
     storage.create_issue(&l5, "tester").unwrap();
 
-    // Chain: l5 -> l4 -> l3 -> l2 -> l1 -> root (l5 transitively blocked by root)
     storage
         .add_dependency(&l5.id, &l4.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
@@ -846,19 +787,15 @@ fn deep_hierarchy_transitive_blocked() {
         .add_dependency(&l1.id, &root.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
 
-    // Verify the chain is set up correctly
     assert_eq!(storage.get_dependencies(&l5.id).unwrap().len(), 1);
     assert_eq!(
         storage.get_dependencies(&l1.id).unwrap(),
         vec![root.id.clone()]
     );
 
-    // l5 should be blocked because it transitively depends on root (open)
-    // Need to rebuild blocked cache first
     storage.rebuild_blocked_cache(true).unwrap();
 
     let blocked_ids = blocked_ids_for(&storage);
-    // All issues except root should be blocked
     assert!(blocked_ids.contains(&l1.id));
     assert!(blocked_ids.contains(&l2.id));
     assert!(blocked_ids.contains(&l3.id));
@@ -867,20 +804,10 @@ fn deep_hierarchy_transitive_blocked() {
     assert!(!blocked_ids.contains(&root.id));
 }
 
-// ============================================================================
-// DIAMOND PATTERN TESTS
-// ============================================================================
-
 #[test]
 fn diamond_pattern_dependencies() {
     let mut storage = test_db();
 
-    // Diamond: A depends on B and C, both B and C depend on D
-    //      A
-    //     / \
-    //    B   C
-    //     \ /
-    //      D
     let a = fixtures::issue("diamond-a");
     let b = fixtures::issue("diamond-b");
     let c = fixtures::issue("diamond-c");
@@ -904,7 +831,6 @@ fn diamond_pattern_dependencies() {
         .add_dependency(&c.id, &d.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
 
-    // Verify structure
     let a_deps = storage.get_dependencies(&a.id).unwrap();
     assert_eq!(a_deps.len(), 2);
     assert!(a_deps.contains(&b.id));
@@ -915,11 +841,9 @@ fn diamond_pattern_dependencies() {
     assert!(d_dependents.contains(&b.id));
     assert!(d_dependents.contains(&c.id));
 
-    // Would D -> A create a cycle? Yes (through either path)
     let would_cycle = storage.would_create_cycle(&d.id, &a.id, true).unwrap();
     assert!(would_cycle);
 
-    // No cycles currently exist
     let cycles = storage.detect_all_cycles().unwrap();
     assert!(cycles.is_empty());
 }
@@ -928,7 +852,6 @@ fn diamond_pattern_dependencies() {
 fn diamond_pattern_blocked_propagation() {
     let mut storage = test_db();
 
-    // Same diamond pattern, D is open so everything is blocked
     let a = fixtures::issue("dblock-a");
     let b = fixtures::issue("dblock-b");
     let c = fixtures::issue("dblock-c");
@@ -952,20 +875,14 @@ fn diamond_pattern_blocked_propagation() {
         .add_dependency(&c.id, &d.id, DependencyType::Blocks.as_str(), "tester")
         .unwrap();
 
-    // Rebuild blocked cache
     storage.rebuild_blocked_cache(true).unwrap();
 
     let blocked_ids = blocked_ids_for(&storage);
-    // A, B, C are all blocked (depend on D which is open)
     assert!(blocked_ids.contains(&a.id));
     assert!(blocked_ids.contains(&b.id));
     assert!(blocked_ids.contains(&c.id));
-    assert!(!blocked_ids.contains(&d.id)); // D has no blockers
+    assert!(!blocked_ids.contains(&d.id));
 }
-
-// ============================================================================
-// BLOCKED CACHE INVALIDATION TESTS
-// ============================================================================
 
 #[test]
 fn blocked_cache_invalidated_on_add_dependency() {
@@ -977,12 +894,10 @@ fn blocked_cache_invalidated_on_add_dependency() {
     storage.create_issue(&blocker, "tester").unwrap();
     storage.create_issue(&blocked, "tester").unwrap();
 
-    // Initially no blocked issues
     storage.rebuild_blocked_cache(true).unwrap();
     let initial_blocked = blocked_ids_for(&storage);
     assert!(!initial_blocked.contains(&blocked.id));
 
-    // Add dependency - cache should be invalidated and rebuilt
     storage
         .add_dependency(
             &blocked.id,
@@ -992,7 +907,6 @@ fn blocked_cache_invalidated_on_add_dependency() {
         )
         .unwrap();
 
-    // After adding dependency, blocked should be in blocked cache
     let after_blocked = blocked_ids_for(&storage);
     assert!(after_blocked.contains(&blocked.id));
 }
@@ -1007,7 +921,6 @@ fn blocked_cache_invalidated_on_remove_dependency() {
     storage.create_issue(&blocker, "tester").unwrap();
     storage.create_issue(&blocked, "tester").unwrap();
 
-    // Add dependency
     storage
         .add_dependency(
             &blocked.id,
@@ -1017,16 +930,13 @@ fn blocked_cache_invalidated_on_remove_dependency() {
         )
         .unwrap();
 
-    // Blocked should be in cache
     let before_blocked = blocked_ids_for(&storage);
     assert!(before_blocked.contains(&blocked.id));
 
-    // Remove dependency - cache should be invalidated
     storage
         .remove_dependency(&blocked.id, &blocker.id, "tester")
         .unwrap();
 
-    // After removing, blocked should not be in cache
     let after_blocked = blocked_ids_for(&storage);
     assert!(!after_blocked.contains(&blocked.id));
 }
@@ -1050,11 +960,9 @@ fn blocked_cache_reflects_status_changes() {
         )
         .unwrap();
 
-    // Initially blocked (blocker is open)
     let blocked_ids = blocked_ids_for(&storage);
     assert!(blocked_ids.contains(&blocked.id));
 
-    // Close the blocker
     let update = beads::storage::IssueUpdate {
         status: Some(Status::Closed),
         ..Default::default()
@@ -1063,14 +971,9 @@ fn blocked_cache_reflects_status_changes() {
         .update_issue(&blocker.id, &update, "tester")
         .unwrap();
 
-    // After closing blocker, blocked should no longer be blocked
     let blocked_ids = blocked_ids_for(&storage);
     assert!(!blocked_ids.contains(&blocked.id));
 }
-
-// ============================================================================
-// REMOVE ALL DEPENDENCIES TESTS
-// ============================================================================
 
 #[test]
 fn remove_all_dependencies_clears_all() {
@@ -1086,7 +989,6 @@ fn remove_all_dependencies_clears_all() {
     storage.create_issue(&dep2, "tester").unwrap();
     storage.create_issue(&dependent, "tester").unwrap();
 
-    // main depends on dep1 and dep2
     storage
         .add_dependency(
             &main.id,
@@ -1103,7 +1005,6 @@ fn remove_all_dependencies_clears_all() {
             "tester",
         )
         .unwrap();
-    // dependent depends on main
     storage
         .add_dependency(
             &dependent.id,
@@ -1113,22 +1014,15 @@ fn remove_all_dependencies_clears_all() {
         )
         .unwrap();
 
-    // Remove all dependencies for main
     let count = storage.remove_all_dependencies(&main.id, "tester").unwrap();
-    assert!(count >= 2); // At least the outgoing deps
+    assert!(count >= 2);
 
-    // main should have no outgoing deps
     let deps = storage.get_dependencies(&main.id).unwrap();
     assert!(deps.is_empty());
 
-    // dependent should have no dep on main anymore
     let dependents = storage.get_dependents(&main.id).unwrap();
     assert!(dependents.is_empty());
 }
-
-// ============================================================================
-// DEPENDENCY COUNTS TESTS
-// ============================================================================
 
 #[test]
 fn count_dependencies_returns_correct_count() {
@@ -1200,10 +1094,6 @@ fn count_dependents_returns_correct_count() {
     assert_eq!(storage.count_dependents(&blocker.id).unwrap(), 2);
 }
 
-// ============================================================================
-// READY LIST INTERACTION TESTS
-// ============================================================================
-
 #[test]
 fn blocked_issues_excluded_from_ready_list() {
     let mut storage = test_db();
@@ -1231,17 +1121,10 @@ fn blocked_issues_excluded_from_ready_list() {
         .unwrap();
     let ready_ids: Vec<_> = ready.iter().map(|i| i.id.clone()).collect();
 
-    // blocker and unblocked are ready, blocked is not
     assert!(ready_ids.contains(&blocker.id));
     assert!(ready_ids.contains(&unblocked.id));
     assert!(!ready_ids.contains(&blocked.id));
 }
-
-// ============================================================================
-// beads-uelt: dep-type matrix coverage (added 2026-05-09)
-// Verifies the single-parent rule applies ONLY to `parent-child`, not to
-// any other dep type. Each test is paired with its specific assertion.
-// ============================================================================
 
 /// uelt: adding multiple `blocks` deps to the SAME issue must succeed.
 /// (single-parent rule does NOT apply to `blocks`.)
@@ -1318,12 +1201,10 @@ fn test_dep_remove_parent_allows_subsequent_add() {
     storage.create_issue(&parent_b, "tester").unwrap();
     storage.create_issue(&child, "tester").unwrap();
 
-    // Initial parent
     storage
         .add_dependency(&child.id, &parent_a.id, "parent-child", "tester")
         .expect("first parent-child must succeed");
 
-    // Remove
     storage
         .remove_dependency(&child.id, &parent_a.id, "tester")
         .expect("remove must succeed");
@@ -1331,7 +1212,6 @@ fn test_dep_remove_parent_allows_subsequent_add() {
     let deps = storage.get_dependencies(&child.id).unwrap();
     assert_eq!(deps.len(), 0, "child should have no deps after remove");
 
-    // New parent — must succeed (no stale validator state)
     storage
         .add_dependency(&child.id, &parent_b.id, "parent-child", "tester")
         .expect("subsequent parent-child must succeed after remove");
@@ -1352,11 +1232,9 @@ fn test_dep_add_each_supported_type_against_full_matrix() {
     let target = fixtures::issue("matrix-target");
     storage.create_issue(&target, "tester").unwrap();
 
-    // For each dep type, create a fresh peer (so single-parent rule doesn't
-    // collide with multiple parent-child variants — only one parent allowed).
     let dep_types: &[&str] = &[
         "blocks",
-        "parent-child", // ← exactly one allowed
+        "parent-child",
         "related",
         "conditional-blocks",
         "waits-for",
@@ -1378,8 +1256,6 @@ fn test_dep_add_each_supported_type_against_full_matrix() {
         let result = storage.add_dependency(&target.id, &peer.id, dep_type, "tester");
 
         if *dep_type == "parent-child" {
-            // First parent-child must succeed; if we hit it twice (we don't,
-            // but defensively), only the first should win
             if parent_child_used {
                 assert!(result.is_err(), "second parent-child must reject; got Ok");
             } else {
@@ -1401,10 +1277,6 @@ fn test_dep_add_each_supported_type_against_full_matrix() {
     );
 }
 
-// ============================================================================
-// DIRECTIONAL BATCH QUERIES (beads-mf72)
-// ============================================================================
-
 /// `get_blocking_dependencies_for_issue_ids` backs `br graph --dependencies`
 /// and must be the exact inverse of the dependents query that backs the
 /// default walk. Asserting the inverse relation — rather than each query's
@@ -1413,7 +1285,6 @@ fn test_dep_add_each_supported_type_against_full_matrix() {
 fn blocking_dependencies_batch_is_the_inverse_of_blocking_dependents() {
     let mut storage = test_db();
 
-    // A depends on B, B depends on C. C blocks B blocks A.
     let (a, b, c) = (
         fixtures::issue("dir-a"),
         fixtures::issue("dir-b"),
@@ -1449,18 +1320,14 @@ fn blocking_dependencies_batch_is_the_inverse_of_blocking_dependents() {
         out
     };
 
-    // Dependents: who is blocked by me.
     assert_eq!(neighbours(&dependents, &c.id), vec![b.id.clone()]);
     assert_eq!(neighbours(&dependents, &b.id), vec![a.id.clone()]);
     assert!(neighbours(&dependents, &a.id).is_empty());
 
-    // Dependencies: who blocks me. Exactly the reverse of the above.
     assert_eq!(neighbours(&dependencies, &a.id), vec![b.id.clone()]);
     assert_eq!(neighbours(&dependencies, &b.id), vec![c.id.clone()]);
     assert!(neighbours(&dependencies, &c.id).is_empty());
 
-    // State the inverse relation directly: `x` is a dependent of `y` if and
-    // only if `y` is a dependency of `x`.
     for id in &ids {
         for neighbour in neighbours(&dependents, id) {
             assert!(

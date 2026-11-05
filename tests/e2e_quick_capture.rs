@@ -14,14 +14,9 @@ use common::cli::{BrWorkspace, extract_issues_array, extract_json_payload, run_b
 use serde_json::Value;
 use std::collections::HashSet;
 
-// =============================================================================
-// Success Path Tests (8 tests)
-// =============================================================================
-
 #[test]
 fn q_creates_issue_returns_id_only() {
     let _log = common::test_log("q_creates_issue_returns_id_only");
-    // The q command should output only the issue ID (no "Created" prefix or other text)
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -31,13 +26,11 @@ fn q_creates_issue_returns_id_only() {
     assert!(quick.status.success(), "q failed: {}", quick.stderr);
 
     let output = quick.stdout.trim();
-    // Should be just the ID, no other output
     assert_eq!(output.lines().count(), 1, "q should output only one line");
     assert!(
         output.contains('-'),
         "output should be an issue ID (prefix-hash format), got: {output}"
     );
-    // Should not contain "Created" or other verbose text
     assert!(
         !output.to_lowercase().contains("created"),
         "q should not include 'Created' text"
@@ -47,7 +40,6 @@ fn q_creates_issue_returns_id_only() {
 #[test]
 fn q_with_type_flag() {
     let _log = common::test_log("q_with_type_flag");
-    // --type bug should set the issue type correctly
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -66,7 +58,6 @@ fn q_with_type_flag() {
 
     let id = quick.stdout.trim();
 
-    // Verify the issue was created with the correct type
     let show = run_br(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
@@ -78,7 +69,6 @@ fn q_with_type_flag() {
 #[test]
 fn q_with_priority_flag() {
     let _log = common::test_log("q_with_priority_flag");
-    // --priority 1 should set the priority correctly
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -93,7 +83,6 @@ fn q_with_priority_flag() {
 
     let id = quick.stdout.trim();
 
-    // Verify the issue was created with the correct priority
     let show = run_br(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
@@ -105,7 +94,6 @@ fn q_with_priority_flag() {
 #[test]
 fn q_with_all_flags() {
     let _log = common::test_log("q_with_all_flags");
-    // Combine type + priority + labels
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -135,7 +123,6 @@ fn q_with_all_flags() {
 
     let id = quick.stdout.trim();
 
-    // Verify all fields
     let show = run_br(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
@@ -159,13 +146,11 @@ fn q_with_all_flags() {
 #[test]
 fn q_with_labels() {
     let _log = common::test_log("q_with_labels");
-    // Test label functionality including comma-separated values
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Test comma-separated labels
     let quick = run_br(
         &workspace,
         ["q", "Labeled issue", "-l", "frontend,backend,api"],
@@ -233,7 +218,6 @@ fn q_updates_last_touched_context() {
 #[test]
 fn q_multiple_words_title() {
     let _log = common::test_log("q_multiple_words_title");
-    // Multiple words without quotes should be joined
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -258,7 +242,6 @@ fn q_multiple_words_title() {
     let payload = extract_json_payload(&show.stdout);
     let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    // Words should be joined with spaces
     assert_eq!(
         json["title"], "This is a multi word title",
         "title should be joined words"
@@ -268,7 +251,6 @@ fn q_multiple_words_title() {
 #[test]
 fn q_output_is_valid_id() {
     let _log = common::test_log("q_output_is_valid_id");
-    // Verify the output matches the expected ID format
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -284,8 +266,7 @@ fn q_output_is_valid_id() {
     let parts: Vec<&str> = id.split('-').collect();
     assert!(parts.len() >= 2, "ID should have prefix and hash parts");
 
-    // The hash part should be alphanumeric (base36)
-    let hash_part = parts[1..].join("-"); // In case of multiple hyphens
+    let hash_part = parts[1..].join("-");
     assert!(
         hash_part.chars().all(|c| c.is_ascii_alphanumeric()),
         "hash part should be alphanumeric: {hash_part}"
@@ -295,7 +276,6 @@ fn q_output_is_valid_id() {
 #[test]
 fn q_issue_appears_in_list() {
     let _log = common::test_log("q_issue_appears_in_list");
-    // Created issue should be visible in list output
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -367,17 +347,10 @@ fn q_parent_accepts_short_parent_id() {
     );
 }
 
-// =============================================================================
-// Error Cases (4 tests)
-// =============================================================================
-
 #[test]
 fn q_without_init_fails() {
     let _log = common::test_log("q_without_init_fails");
-    // q should fail if workspace is not initialized
     let workspace = BrWorkspace::new();
-
-    // Do NOT run init
 
     let quick = run_br(&workspace, ["q", "No init"], "quick_no_init");
     assert!(
@@ -385,7 +358,6 @@ fn q_without_init_fails() {
         "q should fail without init, but succeeded"
     );
 
-    // Should have error message about not being initialized
     assert!(
         quick.stderr.contains("not initialized")
             || quick.stderr.contains("Not initialized")
@@ -399,13 +371,11 @@ fn q_without_init_fails() {
 #[test]
 fn q_empty_title_fails() {
     let _log = common::test_log("q_empty_title_fails");
-    // Empty title should be rejected
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Try with empty string
     let quick = run_br(&workspace, ["q", ""], "quick_empty");
     assert!(
         !quick.status.success(),
@@ -454,12 +424,6 @@ fn q_rejects_overlong_title_without_persisting() {
 #[test]
 fn q_with_custom_type_is_rejected() {
     let _log = common::test_log("q_with_custom_type_is_rejected");
-    // `IssueType` is a CLOSED enum (`FromStr` goes through `known_value`), so
-    // a type outside the known set cannot be named on the command line. Custom
-    // types may still exist in imported data — `br lint --type` says exactly
-    // that — they just cannot be created here. This test used to assert the
-    // opposite ("br unlike bd allows custom issue types"), which was the old
-    // design.
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -480,7 +444,6 @@ fn q_with_custom_type_is_rejected() {
         quick.stderr
     );
 
-    // Fail-closed: nothing was written.
     let list = run_br(&workspace, ["list", "--json"], "list_check");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
@@ -492,13 +455,11 @@ fn q_with_custom_type_is_rejected() {
 #[test]
 fn q_invalid_priority_fails() {
     let _log = common::test_log("q_invalid_priority_fails");
-    // Out of range priority should be rejected
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Priority should be 0-4
     let quick = run_br(
         &workspace,
         ["q", "Bad priority", "-p", "99"],
@@ -518,14 +479,9 @@ fn q_invalid_priority_fails() {
     );
 }
 
-// =============================================================================
-// Scripting Integration Tests (3 tests)
-// =============================================================================
-
 #[test]
 fn q_output_usable_in_pipeline() {
     let _log = common::test_log("q_output_usable_in_pipeline");
-    // ID can be piped to other commands (e.g., show)
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -536,7 +492,6 @@ fn q_output_usable_in_pipeline() {
 
     let id = quick.stdout.trim();
 
-    // The ID should work directly with show command
     let show = run_br(&workspace, ["show", id], "show_pipeline");
     assert!(
         show.status.success(),
@@ -548,7 +503,6 @@ fn q_output_usable_in_pipeline() {
         "show should display the issue title"
     );
 
-    // Also verify it works with update
     let update = run_br(
         &workspace,
         ["update", id, "--status", "in_progress"],
@@ -564,7 +518,6 @@ fn q_output_usable_in_pipeline() {
 #[test]
 fn q_multiple_creates_unique_ids() {
     let _log = common::test_log("q_multiple_creates_unique_ids");
-    // Rapid creates should get unique IDs
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -572,7 +525,6 @@ fn q_multiple_creates_unique_ids() {
 
     let mut ids: HashSet<String> = HashSet::new();
 
-    // Create 10 issues rapidly
     for i in 0..10 {
         let quick = run_br(
             &workspace,
@@ -590,7 +542,6 @@ fn q_multiple_creates_unique_ids() {
 
     assert_eq!(ids.len(), 10, "should have 10 unique IDs");
 
-    // Verify all issues exist
     let list = run_br(&workspace, ["list", "--json"], "list_all");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
@@ -601,7 +552,6 @@ fn q_multiple_creates_unique_ids() {
 #[test]
 fn q_silent_mode_stderr() {
     let _log = common::test_log("q_silent_mode_stderr");
-    // No stderr output on success
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -610,8 +560,6 @@ fn q_silent_mode_stderr() {
     let quick = run_br(&workspace, ["q", "Silent test"], "quick_silent");
     assert!(quick.status.success(), "q failed: {}", quick.stderr);
 
-    // stderr should be empty on success (excluding debug logs if RUST_LOG is set)
-    // Filter out tracing/debug output
     let stderr_lines: Vec<&str> = quick
         .stderr
         .lines()
@@ -630,14 +578,9 @@ fn q_silent_mode_stderr() {
     );
 }
 
-// =============================================================================
-// Additional Edge Cases
-// =============================================================================
-
 #[test]
 fn q_with_p_prefix_priority() {
     let _log = common::test_log("q_with_p_prefix_priority");
-    // P0, P1, P2, P3, P4 format should work
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -667,7 +610,6 @@ fn q_with_p_prefix_priority() {
 #[test]
 fn q_special_characters_in_title() {
     let _log = common::test_log("q_special_characters_in_title");
-    // Special characters should be preserved in title
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -697,7 +639,6 @@ fn q_special_characters_in_title() {
 #[test]
 fn q_default_values() {
     let _log = common::test_log("q_default_values");
-    // Without flags, should use defaults (task type, medium priority)
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -714,26 +655,19 @@ fn q_default_values() {
     let payload = extract_json_payload(&show.stdout);
     let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    // Default type is task
     assert_eq!(json["issue_type"], "task", "default type should be task");
-    // Default priority is 2 (medium)
     assert_eq!(json["priority"], 2, "default priority should be 2");
-    // ADR-0035: `br q` is quick capture, so the default status is draft.
     assert_eq!(json["status"], "draft", "status should be draft");
 }
 
 #[test]
 fn q_status_is_always_draft() {
     let _log = common::test_log("q_status_is_always_draft");
-    // ADR-0035: `br q` is quick capture, so it always creates status=draft
-    // (no status flag). The point of this test is that --type and --priority
-    // do not move the status.
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create multiple issues with different types/priorities
     let ids: Vec<String> = vec![
         run_br(&workspace, ["q", "Issue 1", "-t", "bug"], "q1"),
         run_br(&workspace, ["q", "Issue 2", "-p", "0"], "q2"),
@@ -750,7 +684,6 @@ fn q_status_is_always_draft() {
 
     assert_eq!(ids.len(), 3, "all creates should succeed");
 
-    // All should have status=draft
     for id in ids {
         let show = run_br(&workspace, ["show", &id, "--json"], &format!("show_{id}"));
         assert!(show.status.success(), "show failed: {}", show.stderr);

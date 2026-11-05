@@ -105,7 +105,6 @@ fn get_commit_count(dir: &Path) -> usize {
 
 /// Initialize a git repo in the workspace with an initial commit.
 fn init_git_repo(workspace: &BrWorkspace) {
-    // Initialize git
     let init = Command::new("git")
         .args(["init"])
         .current_dir(&workspace.root)
@@ -113,7 +112,6 @@ fn init_git_repo(workspace: &BrWorkspace) {
         .expect("git init");
     assert!(init.status.success(), "git init failed");
 
-    // Configure git user for commits
     let _ = Command::new("git")
         .args(["config", "user.email", "test@example.com"])
         .current_dir(&workspace.root)
@@ -123,7 +121,6 @@ fn init_git_repo(workspace: &BrWorkspace) {
         .current_dir(&workspace.root)
         .output();
 
-    // Create a source file to simulate a real repo with code
     let src_dir = workspace.root.join("src");
     fs::create_dir_all(&src_dir).expect("create src dir");
     fs::write(
@@ -132,7 +129,6 @@ fn init_git_repo(workspace: &BrWorkspace) {
     )
     .expect("write main.rs");
 
-    // Initial commit
     let _ = Command::new("git")
         .args(["add", "."])
         .current_dir(&workspace.root)
@@ -427,10 +423,6 @@ fn e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation() {
         }
     }
 
-    // These modes have distinct, supported JSONL-only implementations. A
-    // reviewed additive reconciliation is deliberately absent: it compares
-    // against and may apply to the durable database, so `--no-db` does not
-    // select another execution path for that mode.
     for (label, args) in [
         (
             "matrix_no_db_flush",
@@ -476,9 +468,6 @@ fn e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation() {
 
     let jsonl_path = workspace.root.join(".beads/issues.jsonl");
     fs::copy(&jsonl_path, workspace.root.join(".beads/beads.base.jsonl")).expect("seed merge base");
-    // Merge correctness has dedicated semantic tests. This matrix exercises
-    // every conflict-resolution dispatch policy under the no-process/no-.git
-    // authority sentinel, even when the converged fixture has no conflict.
     for (label, args) in [
         (
             "matrix_merge_manual",
@@ -647,9 +636,6 @@ fn e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation() {
         }
     }
 
-    // Invalid combinations are part of the authority boundary too: they must
-    // fail before any future fallback or error-reporting path can delegate to
-    // Git. These cases cover clap-level and dispatch-level rejection.
     for (label, args) in [
         ("matrix_reject_no_mode", strings(&["sync"])),
         (
@@ -717,14 +703,11 @@ fn e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation() {
 fn regression_sync_export_does_not_create_commits() {
     let workspace = BrWorkspace::new();
 
-    // Initialize git repo first
     init_git_repo(&workspace);
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create some issues
     let create1 = run_br(
         &workspace,
         ["create", "Test issue 1", "--no-auto-flush"],
@@ -746,24 +729,18 @@ fn regression_sync_export_does_not_create_commits() {
         create2.stderr
     );
 
-    // Record git state BEFORE sync
     let commit_before = get_head_commit(&workspace.root);
     let commit_count_before = get_commit_count(&workspace.root);
     let git_status_before = get_git_status(&workspace.root);
     let git_dir_hash_before = hash_directory_contents(&workspace.root.join(".git"));
 
-    // Run sync export
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_export");
     assert!(sync.status.success(), "sync export failed: {}", sync.stderr);
 
-    // Record git state AFTER sync
     let commit_after = get_head_commit(&workspace.root);
     let commit_count_after = get_commit_count(&workspace.root);
     let git_dir_hash_after = hash_directory_contents(&workspace.root.join(".git"));
 
-    // CRITICAL ASSERTIONS:
-
-    // 1. HEAD commit must not change (no new commits created)
     assert_eq!(
         commit_before, commit_after,
         "SAFETY VIOLATION: sync export created a git commit!\n\
@@ -771,7 +748,6 @@ fn regression_sync_export_does_not_create_commits() {
          After: {commit_after:?}"
     );
 
-    // 2. Commit count must not increase
     assert_eq!(
         commit_count_before, commit_count_after,
         "SAFETY VIOLATION: sync export changed commit count!\n\
@@ -779,8 +755,6 @@ fn regression_sync_export_does_not_create_commits() {
          After: {commit_count_after}"
     );
 
-    // 3. .git directory should be unchanged (allowing for index/lock file changes during reads)
-    // Filter out files that git legitimately modifies during read operations
     let filter_transient = |hashes: &BTreeMap<String, String>| -> BTreeMap<String, String> {
         hashes
             .iter()
@@ -800,7 +774,6 @@ fn regression_sync_export_does_not_create_commits() {
     let filtered_before = filter_transient(&git_dir_hash_before);
     let filtered_after = filter_transient(&git_dir_hash_after);
 
-    // Check for new files in .git (excluding transient)
     for (path, hash) in &filtered_after {
         assert!(
             filtered_before.contains_key(path),
@@ -809,7 +782,6 @@ fn regression_sync_export_does_not_create_commits() {
         );
     }
 
-    // Check for modified files in .git (excluding transient)
     for (path, hash_before) in &filtered_before {
         if let Some(hash_after) = filtered_after.get(path) {
             assert!(
@@ -821,7 +793,6 @@ fn regression_sync_export_does_not_create_commits() {
         }
     }
 
-    // Log success for verification
     eprintln!(
         "[PASS] sync export did not create commits or mutate .git\n\
          - Commit before: {:?}\n\
@@ -840,10 +811,8 @@ fn regression_sync_export_does_not_create_commits() {
 fn regression_sync_import_does_not_create_commits() {
     let workspace = BrWorkspace::new();
 
-    // Initialize git repo first
     init_git_repo(&workspace);
 
-    // Initialize beads and create an issue
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
@@ -854,16 +823,13 @@ fn regression_sync_import_does_not_create_commits() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Export first
     let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    // Record git state BEFORE import
     let commit_before = get_head_commit(&workspace.root);
     let commit_count_before = get_commit_count(&workspace.root);
     let git_dir_hash_before = hash_directory_contents(&workspace.root.join(".git"));
 
-    // Run sync import
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -875,14 +841,10 @@ fn regression_sync_import_does_not_create_commits() {
         import.stderr
     );
 
-    // Record git state AFTER import
     let commit_after = get_head_commit(&workspace.root);
     let commit_count_after = get_commit_count(&workspace.root);
     let git_dir_hash_after = hash_directory_contents(&workspace.root.join(".git"));
 
-    // CRITICAL ASSERTIONS:
-
-    // 1. HEAD commit must not change
     assert_eq!(
         commit_before, commit_after,
         "SAFETY VIOLATION: sync import created a git commit!\n\
@@ -890,7 +852,6 @@ fn regression_sync_import_does_not_create_commits() {
          After: {commit_after:?}"
     );
 
-    // 2. Commit count must not increase
     assert_eq!(
         commit_count_before, commit_count_after,
         "SAFETY VIOLATION: sync import changed commit count!\n\
@@ -898,7 +859,6 @@ fn regression_sync_import_does_not_create_commits() {
          After: {commit_count_after}"
     );
 
-    // 3. .git directory core files unchanged
     let filter_transient = |hashes: &BTreeMap<String, String>| -> BTreeMap<String, String> {
         hashes
             .iter()
@@ -941,14 +901,11 @@ fn regression_sync_import_does_not_create_commits() {
 fn regression_full_sync_cycle_does_not_touch_git() {
     let workspace = BrWorkspace::new();
 
-    // Initialize git repo
     init_git_repo(&workspace);
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create multiple issues with different types
     let _ = run_br(
         &workspace,
         ["create", "Bug fix", "-t", "bug", "--no-auto-flush"],
@@ -965,22 +922,18 @@ fn regression_full_sync_cycle_does_not_touch_git() {
         "create_docs",
     );
 
-    // Record baseline git state
     let baseline_commit = get_head_commit(&workspace.root);
     let baseline_count = get_commit_count(&workspace.root);
     let baseline_git_hash = hash_directory_contents(&workspace.root.join(".git"));
 
-    // Perform full sync cycle: export -> modify JSONL -> import
     let flush1 = run_br(&workspace, ["sync", "--flush-only"], "flush1");
     assert!(flush1.status.success(), "flush1 failed");
 
-    // Modify JSONL externally (simulate git pull bringing changes)
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let modified = original.replace("Bug fix", "Critical bug fix");
     fs::write(&jsonl_path, modified).expect("write jsonl");
 
-    // Import modified JSONL
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -988,15 +941,12 @@ fn regression_full_sync_cycle_does_not_touch_git() {
     );
     assert!(import.status.success(), "import failed");
 
-    // Export again
     let flush2 = run_br(&workspace, ["sync", "--flush-only", "--force"], "flush2");
     assert!(flush2.status.success(), "flush2 failed");
 
-    // Check sync status
     let status = run_br(&workspace, ["sync", "--status"], "status");
     assert!(status.status.success(), "status failed");
 
-    // Verify git state is unchanged after entire cycle
     let final_commit = get_head_commit(&workspace.root);
     let final_count = get_commit_count(&workspace.root);
     let final_git_hash = hash_directory_contents(&workspace.root.join(".git"));
@@ -1011,7 +961,6 @@ fn regression_full_sync_cycle_does_not_touch_git() {
         "SAFETY VIOLATION: full sync cycle changed commit count!"
     );
 
-    // Verify .git directory unchanged (excluding transient files)
     let filter_transient = |hashes: &BTreeMap<String, String>| -> BTreeMap<String, String> {
         hashes
             .iter()
@@ -1028,7 +977,6 @@ fn regression_full_sync_cycle_does_not_touch_git() {
     let baseline_filtered = filter_transient(&baseline_git_hash);
     let final_filtered = filter_transient(&final_git_hash);
 
-    // Check for unexpected .git mutations
     let mut violations = Vec::new();
     for (path, hash) in &final_filtered {
         match baseline_filtered.get(path) {
@@ -1059,10 +1007,8 @@ fn regression_full_sync_cycle_does_not_touch_git() {
 fn regression_sync_manifest_does_not_touch_git() {
     let workspace = BrWorkspace::new();
 
-    // Initialize git repo
     init_git_repo(&workspace);
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
@@ -1073,10 +1019,8 @@ fn regression_sync_manifest_does_not_touch_git() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Record git state before
     let commit_before = get_head_commit(&workspace.root);
 
-    // Run sync with manifest flag
     let sync = run_br(
         &workspace,
         ["sync", "--flush-only", "--manifest"],
@@ -1088,11 +1032,9 @@ fn regression_sync_manifest_does_not_touch_git() {
         sync.stderr
     );
 
-    // Verify manifest was created
     let manifest_path = workspace.root.join(".beads").join(".manifest.json");
     assert!(manifest_path.exists(), "manifest file should be created");
 
-    // Verify git state unchanged
     let commit_after = get_head_commit(&workspace.root);
     assert_eq!(
         commit_before, commit_after,
@@ -1107,22 +1049,18 @@ fn regression_sync_manifest_does_not_touch_git() {
 fn regression_sync_never_touches_source_files() {
     let workspace = BrWorkspace::new();
 
-    // Initialize git repo with source files
     init_git_repo(&workspace);
 
-    // Add more source files
     let src_dir = workspace.root.join("src");
     fs::write(src_dir.join("lib.rs"), "pub fn hello() {}").expect("write lib.rs");
     fs::write(src_dir.join("util.rs"), "pub fn util() {}").expect("write util.rs");
 
-    // Create a Cargo.toml
     fs::write(
         workspace.root.join("Cargo.toml"),
         "[package]\nname = \"test\"\nversion = \"0.1.0\"",
     )
     .expect("write Cargo.toml");
 
-    // Hash all source files before sync
     let source_files = [
         workspace.root.join("src").join("main.rs"),
         workspace.root.join("src").join("lib.rs"),
@@ -1141,7 +1079,6 @@ fn regression_sync_never_touches_source_files() {
         })
         .collect();
 
-    // Initialize beads and perform sync operations
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
@@ -1158,7 +1095,6 @@ fn regression_sync_never_touches_source_files() {
     let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import");
     assert!(import.status.success(), "import failed");
 
-    // Hash source files after sync
     let hashes_after: BTreeMap<_, _> = source_files
         .iter()
         .filter(|p| p.exists())
@@ -1170,7 +1106,6 @@ fn regression_sync_never_touches_source_files() {
         })
         .collect();
 
-    // Verify no source files were modified
     for (path, hash_before) in &hashes_before {
         let hash_after = hashes_after
             .get(path)
@@ -1181,7 +1116,6 @@ fn regression_sync_never_touches_source_files() {
         );
     }
 
-    // Verify no source files were deleted
     assert_eq!(
         hashes_before.len(),
         hashes_after.len(),
@@ -1198,11 +1132,6 @@ fn regression_sync_never_touches_source_files() {
     );
 }
 
-// ============================================================================
-// COMPREHENSIVE INTEGRATION TEST: beads-0v1.3.2
-// Verifies sync operations only touch allowed files in .beads/
-// ============================================================================
-
 /// Files that sync is allowed to modify within `.beads/`.
 ///
 /// This matches the allowlist in `src/sync/path.rs` for sync-direct writes,
@@ -1217,18 +1146,15 @@ fn regression_sync_never_touches_source_files() {
 /// See `.beads/SYNC_SAFETY_INVARIANTS.md` invariant **PC-RECOVERY** for the
 /// precise contract.
 fn is_allowed_sync_file(rel_path: &str) -> bool {
-    // Must be under .beads/
     if !rel_path.starts_with(".beads/") && !rel_path.starts_with(".beads\\") {
         return false;
     }
 
-    // Extract filename
     let filename = Path::new(rel_path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    // Check exact name matches
     const ALLOWED_EXACT_NAMES: &[&str] = &[".manifest.json", "metadata.json", "last-touched"];
     if ALLOWED_EXACT_NAMES.iter().any(|&name| filename == name) {
         return true;
@@ -1256,24 +1182,12 @@ fn is_allowed_sync_file(rel_path: &str) -> bool {
         return true;
     }
 
-    // Allow .br_history meta files (history snapshot metadata)
     if filename.ends_with(".meta.json")
         && (rel_path.contains(".br_history/") || rel_path.contains(".br_history\\"))
     {
         return true;
     }
 
-    // Allow .br_recovery artifacts created as a side effect of storage
-    // recovery flows triggered during sync invocations. These are written
-    // by `src/config/mod.rs::recovery_backup_filename` (format
-    // `<original-filename>.<stamp>.<suffix>`); recognized suffixes:
-    //   - "bak"             → routine pre-rebuild backup of the DB family
-    //   - "rebuild-failed"  → rollback marker after a failed rebuild
-    //   - "truncated-wal"   → quarantined WAL/SHM sidecar (< 32 bytes)
-    // PC-RECOVERY invariant: any file under .beads/.br_recovery/ ending in
-    // one of these suffixes is allowed; arbitrary other contents are NOT
-    // (so we still catch a regression that scatters non-recovery files into
-    // the recovery dir).
     if rel_path.contains(".br_recovery/") || rel_path.contains(".br_recovery\\") {
         const RECOVERY_SUFFIXES: &[&str] = &[".bak", ".rebuild-failed", ".truncated-wal"];
         if RECOVERY_SUFFIXES.iter().any(|s| filename.ends_with(s)) {
@@ -1281,14 +1195,13 @@ fn is_allowed_sync_file(rel_path: &str) -> bool {
         }
     }
 
-    // Check extension matches
     const ALLOWED_EXTENSIONS: &[&str] = &[
-        "db",         // SQLite database
-        "db-journal", // SQLite rollback journal
-        "db-wal",     // SQLite WAL
-        "db-shm",     // SQLite shared memory
-        "jsonl",      // JSONL export
-        "jsonl.tmp",  // Atomic write temp files
+        "db",
+        "db-journal",
+        "db-wal",
+        "db-shm",
+        "jsonl",
+        "jsonl.tmp",
     ];
 
     for ext in ALLOWED_EXTENSIONS {
@@ -1330,7 +1243,6 @@ impl FileTreeSnapshot {
                     .to_string_lossy()
                     .to_string();
 
-                // Skip log directory (our test artifacts)
                 if rel_path.starts_with("logs") || rel_path.starts_with("logs/") {
                     continue;
                 }
@@ -1357,7 +1269,6 @@ impl FileTreeSnapshot {
         let mut deleted = Vec::new();
         let mut unchanged = Vec::new();
 
-        // Find created and modified files
         for (path, (hash_after, size_after)) in &after.files {
             match self.files.get(path) {
                 None => created.push(FileChange {
@@ -1382,7 +1293,6 @@ impl FileTreeSnapshot {
             }
         }
 
-        // Find deleted files
         for (path, (hash_before, size_before)) in &self.files {
             if !after.files.contains_key(path) {
                 deleted.push(FileChange {
@@ -1480,7 +1390,6 @@ impl FileTreeDiff {
         }
 
         for change in &self.deleted {
-            // Deletions outside .beads are always violations
             if is_allowed_sync_file(&change.path) {
                 allowed.push(change);
             } else {
@@ -1561,14 +1470,11 @@ impl FileTreeDiff {
 fn integration_sync_only_touches_allowed_files() {
     let workspace = BrWorkspace::new();
 
-    // Create a realistic project structure
     create_realistic_project(&workspace);
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create several issues to ensure JSONL has content
     let _ = run_br(
         &workspace,
         [
@@ -1620,20 +1526,14 @@ fn integration_sync_only_touches_allowed_files() {
         "create_docs",
     );
 
-    // =========================================================================
-    // TEST 1: Export operation
-    // =========================================================================
-
     eprintln!("\n[TEST 1] Testing sync export...");
 
-    // Take snapshot BEFORE export
     let snapshot_before_export = FileTreeSnapshot::new(&workspace.root);
     eprintln!(
         "  Snapshot before export: {} files",
         snapshot_before_export.files.len()
     );
 
-    // Run sync export
     let export = run_br(&workspace, ["sync", "--flush-only"], "sync_export");
     assert!(
         export.status.success(),
@@ -1642,18 +1542,15 @@ fn integration_sync_only_touches_allowed_files() {
         fs::read_to_string(&export.log_path).unwrap_or_default()
     );
 
-    // Take snapshot AFTER export
     let snapshot_after_export = FileTreeSnapshot::new(&workspace.root);
     eprintln!(
         "  Snapshot after export: {} files",
         snapshot_after_export.files.len()
     );
 
-    // Compare snapshots
     let diff_export = snapshot_before_export.diff(&snapshot_after_export);
     let (violations_export, allowed_export) = diff_export.check_allowed_changes();
 
-    // Write detailed log for export phase
     let export_log = format!(
         "=== SYNC EXPORT PHASE ===\n\
          Command: br sync --flush-only\n\
@@ -1688,7 +1585,6 @@ fn integration_sync_only_touches_allowed_files() {
     let export_log_path = workspace.log_dir.join("sync_export_diff.log");
     fs::write(&export_log_path, &export_log).expect("write export log");
 
-    // CRITICAL ASSERTION: No violations in export
     assert!(
         violations_export.is_empty(),
         "SAFETY VIOLATION: sync export modified files outside allowed list!\n\n\
@@ -1707,13 +1603,8 @@ fn integration_sync_only_touches_allowed_files() {
         allowed_export.len()
     );
 
-    // =========================================================================
-    // TEST 2: Import operation
-    // =========================================================================
-
     eprintln!("\n[TEST 2] Testing sync import...");
 
-    // Modify the JSONL to simulate external changes (like git pull)
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     if jsonl_path.exists() {
         let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
@@ -1721,14 +1612,12 @@ fn integration_sync_only_touches_allowed_files() {
         fs::write(&jsonl_path, modified).expect("write modified jsonl");
     }
 
-    // Take snapshot BEFORE import
     let snapshot_before_import = FileTreeSnapshot::new(&workspace.root);
     eprintln!(
         "  Snapshot before import: {} files",
         snapshot_before_import.files.len()
     );
 
-    // Run sync import
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -1741,18 +1630,15 @@ fn integration_sync_only_touches_allowed_files() {
         fs::read_to_string(&import.log_path).unwrap_or_default()
     );
 
-    // Take snapshot AFTER import
     let snapshot_after_import = FileTreeSnapshot::new(&workspace.root);
     eprintln!(
         "  Snapshot after import: {} files",
         snapshot_after_import.files.len()
     );
 
-    // Compare snapshots
     let diff_import = snapshot_before_import.diff(&snapshot_after_import);
     let (violations_import, allowed_import) = diff_import.check_allowed_changes();
 
-    // Write detailed log for import phase
     let import_log = format!(
         "=== SYNC IMPORT PHASE ===\n\
          Command: br sync --import-only --force\n\
@@ -1787,7 +1673,6 @@ fn integration_sync_only_touches_allowed_files() {
     let import_log_path = workspace.log_dir.join("sync_import_diff.log");
     fs::write(&import_log_path, &import_log).expect("write import log");
 
-    // CRITICAL ASSERTION: No violations in import
     assert!(
         violations_import.is_empty(),
         "SAFETY VIOLATION: sync import modified files outside allowed list!\n\n\
@@ -1806,16 +1691,10 @@ fn integration_sync_only_touches_allowed_files() {
         allowed_import.len()
     );
 
-    // =========================================================================
-    // TEST 3: Full sync cycle
-    // =========================================================================
-
     eprintln!("\n[TEST 3] Testing full sync cycle...");
 
-    // Take snapshot BEFORE full cycle
     let snapshot_before_cycle = FileTreeSnapshot::new(&workspace.root);
 
-    // Create more issues, run multiple sync operations
     let _ = run_br(
         &workspace,
         ["create", "Chore: Update deps", "-t", "chore"],
@@ -1833,14 +1712,11 @@ fn integration_sync_only_touches_allowed_files() {
         "cycle_flush2",
     );
 
-    // Take snapshot AFTER full cycle
     let snapshot_after_cycle = FileTreeSnapshot::new(&workspace.root);
 
-    // Compare
     let diff_cycle = snapshot_before_cycle.diff(&snapshot_after_cycle);
     let (violations_cycle, allowed_cycle) = diff_cycle.check_allowed_changes();
 
-    // Write detailed log for cycle
     let cycle_log = format!(
         "=== FULL SYNC CYCLE ===\n\
          Operations: create -> flush -> import -> flush\n\n\
@@ -1871,7 +1747,6 @@ fn integration_sync_only_touches_allowed_files() {
     let cycle_log_path = workspace.log_dir.join("sync_cycle_diff.log");
     fs::write(&cycle_log_path, &cycle_log).expect("write cycle log");
 
-    // CRITICAL ASSERTION: No violations in full cycle
     assert!(
         violations_cycle.is_empty(),
         "SAFETY VIOLATION: full sync cycle modified files outside allowed list!\n\n\
@@ -1890,10 +1765,6 @@ fn integration_sync_only_touches_allowed_files() {
         allowed_cycle.len()
     );
 
-    // =========================================================================
-    // Final summary
-    // =========================================================================
-
     eprintln!(
         "\n[PASS] Integration test: sync only touches allowed files\n\
          - Export: {} allowed changes, 0 violations\n\
@@ -1911,7 +1782,6 @@ fn integration_sync_only_touches_allowed_files() {
 
 /// Create a realistic project structure for testing.
 fn create_realistic_project(workspace: &BrWorkspace) {
-    // Source files
     let src_dir = workspace.root.join("src");
     fs::create_dir_all(&src_dir).expect("create src dir");
     fs::write(
@@ -1921,7 +1791,6 @@ fn create_realistic_project(workspace: &BrWorkspace) {
     .expect("write main.rs");
     fs::write(src_dir.join("lib.rs"), "pub mod utils;\npub mod models;\n").expect("write lib.rs");
 
-    // Nested source directories
     let utils_dir = src_dir.join("utils");
     fs::create_dir_all(&utils_dir).expect("create utils dir");
     fs::write(utils_dir.join("mod.rs"), "pub mod helpers;\n").expect("write utils/mod.rs");
@@ -1939,7 +1808,6 @@ fn create_realistic_project(workspace: &BrWorkspace) {
     )
     .expect("write models/mod.rs");
 
-    // Test files
     let tests_dir = workspace.root.join("tests");
     fs::create_dir_all(&tests_dir).expect("create tests dir");
     fs::write(
@@ -1948,7 +1816,6 @@ fn create_realistic_project(workspace: &BrWorkspace) {
     )
     .expect("write integration_tests.rs");
 
-    // Configuration files
     fs::write(
         workspace.root.join("Cargo.toml"),
         "[package]\nname = \"test-project\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
@@ -1957,7 +1824,6 @@ fn create_realistic_project(workspace: &BrWorkspace) {
 
     fs::write(workspace.root.join(".gitignore"), "/target\n").expect("write .gitignore");
 
-    // Documentation
     let docs_dir = workspace.root.join("docs");
     fs::create_dir_all(&docs_dir).expect("create docs dir");
     fs::write(
@@ -1971,14 +1837,12 @@ fn create_realistic_project(workspace: &BrWorkspace) {
     )
     .expect("write API.md");
 
-    // Hidden files (not .beads)
     fs::write(
         workspace.root.join(".editorconfig"),
         "root = true\n\n[*]\nindent_style = space\n",
     )
     .expect("write .editorconfig");
 
-    // Data files
     let data_dir = workspace.root.join("data");
     fs::create_dir_all(&data_dir).expect("create data dir");
     fs::write(
@@ -1992,10 +1856,8 @@ fn create_realistic_project(workspace: &BrWorkspace) {
     )
     .expect("write sample.csv");
 
-    // Assets
     let assets_dir = workspace.root.join("assets");
     fs::create_dir_all(&assets_dir).expect("create assets dir");
-    // Create a small binary file (PNG header simulation)
     let png_header = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     fs::write(assets_dir.join("logo.png"), png_header).expect("write logo.png");
 
@@ -2025,10 +1887,8 @@ fn count_files(dir: &Path) -> usize {
 fn integration_sync_manifest_only_touches_allowed_files() {
     let workspace = BrWorkspace::new();
 
-    // Create project structure
     create_realistic_project(&workspace);
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
@@ -2038,10 +1898,8 @@ fn integration_sync_manifest_only_touches_allowed_files() {
         "create",
     );
 
-    // Take snapshot before manifest sync
     let snapshot_before = FileTreeSnapshot::new(&workspace.root);
 
-    // Run sync with manifest
     let sync = run_br(
         &workspace,
         ["sync", "--flush-only", "--manifest"],
@@ -2053,14 +1911,11 @@ fn integration_sync_manifest_only_touches_allowed_files() {
         sync.stderr
     );
 
-    // Take snapshot after
     let snapshot_after = FileTreeSnapshot::new(&workspace.root);
 
-    // Compare
     let diff = snapshot_before.diff(&snapshot_after);
     let (violations, allowed) = diff.check_allowed_changes();
 
-    // Log details
     let log = format!("=== SYNC MANIFEST TEST ===\n\n{}\n", diff.format_log());
     let log_path = workspace.log_dir.join("sync_manifest_diff.log");
     fs::write(&log_path, &log).expect("write log");
@@ -2078,7 +1933,6 @@ fn integration_sync_manifest_only_touches_allowed_files() {
         log_path.display()
     );
 
-    // Verify manifest was actually created
     let manifest_exists = workspace
         .root
         .join(".beads")
@@ -2092,12 +1946,8 @@ fn integration_sync_manifest_only_touches_allowed_files() {
     );
 }
 
-// ============================================================================
 // beads-yyxo: additional sync-safety regression tests (added 2026-05-09)
 // Per SYNC_SAFETY_INVARIANTS.md PC-1, PC-3, PC-RECOVERY, NGI-3.
-// Each test emits tracing-style eprintln! lines per phase so the test log
-// alone tells the story.
-// ============================================================================
 
 /// PC-1 + PC-RECOVERY: when a stale `.br_recovery/*.bak` exists at workspace
 /// open time (e.g., from a prior sync invocation), a fresh sync export +
@@ -2123,7 +1973,6 @@ fn integration_sync_after_recovery_artifact_present_does_not_touch_artifacts() {
     );
     let _ = run_br(&workspace, ["sync", "--flush-only"], "initial_flush");
 
-    // Pre-place a fake recovery artifact and capture its hash + mtime
     eprintln!("  Phase 2: pre-place a stale .br_recovery artifact");
     let recovery_dir = workspace.root.join(".beads").join(".br_recovery");
     fs::create_dir_all(&recovery_dir).expect("create recovery dir");
@@ -2139,11 +1988,9 @@ fn integration_sync_after_recovery_artifact_present_does_not_touch_artifacts() {
         stale_mtime_before
     );
 
-    // Snapshot before
     let snapshot_before = FileTreeSnapshot::new(&workspace.root);
     eprintln!("    files before: {}", snapshot_before.files.len());
 
-    // Run a sync cycle
     eprintln!("  Phase 3: run sync export + import (should NOT touch the stale artifact)");
     let _ = run_br(
         &workspace,
@@ -2157,11 +2004,9 @@ fn integration_sync_after_recovery_artifact_present_does_not_touch_artifacts() {
         "second_import",
     );
 
-    // Snapshot after
     let snapshot_after = FileTreeSnapshot::new(&workspace.root);
     eprintln!("    files after: {}", snapshot_after.files.len());
 
-    // Verify the stale artifact wasn't touched
     let stale_meta_after = fs::metadata(&stale_artifact).expect("stat stale (post-sync)");
     let stale_mtime_after = stale_meta_after
         .modified()
@@ -2177,11 +2022,7 @@ fn integration_sync_after_recovery_artifact_present_does_not_touch_artifacts() {
         "PC-RECOVERY: pre-existing recovery artifact mtime was changed by sync"
     );
 
-    // Verify any NEW recovery artifacts created during the cycle have an
-    // expected suffix (so a regression that scattered random files into
-    // recovery_dir would still trip the test). Use case-insensitive
     // matching against the final extension for cross-platform safety
-    // (e.g., FAT32 / Windows quirks).
     if let Ok(entries) = fs::read_dir(&recovery_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -2192,8 +2033,6 @@ fn integration_sync_after_recovery_artifact_present_does_not_touch_artifacts() {
                 .to_string();
             let ext_matches =
                 |e: &str| -> bool { path.extension().is_some_and(|x| x.eq_ignore_ascii_case(e)) };
-            // suffix `truncated-wal` and `rebuild-failed` are the trailing
-            // dotted token; for `bak` it's the final extension.
             let valid =
                 ext_matches("bak") || ext_matches("rebuild-failed") || ext_matches("truncated-wal");
             assert!(
@@ -2238,7 +2077,6 @@ fn integration_sync_does_not_create_or_modify_dotgit_anywhere() {
         "create_2",
     );
 
-    // Snapshot dotgit state (none expected)
     let dotgit_paths_before = collect_all_dotgit_paths(&workspace.root);
     eprintln!(
         "    dotgit paths before: {} (expected 0)",
@@ -2249,7 +2087,6 @@ fn integration_sync_does_not_create_or_modify_dotgit_anywhere() {
         "test fixture leaked dotgit paths before sync (test setup bug, not a sync regression): {dotgit_paths_before:?}"
     );
 
-    // Phase 2: Run a multi-step sync cycle
     eprintln!("  Phase 2: full sync cycle");
     let _ = run_br(&workspace, ["sync", "--flush-only"], "flush");
     let _ = run_br(
@@ -2263,7 +2100,6 @@ fn integration_sync_does_not_create_or_modify_dotgit_anywhere() {
         "flush_force",
     );
 
-    // Phase 3: Verify still no dotgit paths
     let dotgit_paths_after = collect_all_dotgit_paths(&workspace.root);
     eprintln!(
         "    dotgit paths after: {} (expected 0)",
@@ -2299,19 +2135,15 @@ fn integration_sync_in_subdirectory_only_touches_nearest_beads_dir() {
         "create_subdir",
     );
 
-    // Phase 2: Snapshot before
     let snapshot_before = FileTreeSnapshot::new(&workspace.root);
     eprintln!("    files before: {}", snapshot_before.files.len());
 
-    // Phase 3: Run sync from a subdirectory
     eprintln!("  Phase 2: sync from subdir (mimics `cd src/cli && br sync --flush-only`)");
     let subdir = workspace.root.join("src");
     if !subdir.exists() {
         fs::create_dir_all(&subdir).expect("create src/");
     }
 
-    // Run br sync with cwd=subdir; the binary should auto-discover the
-    // workspace .beads/ via parent-walk
     let br_path = std::env::var("CARGO_BIN_EXE_br")
         .or_else(|_| std::env::var("BR_BIN").map(|b| b.trim().to_string()))
         .unwrap_or_else(|_| "br".to_string());
@@ -2334,7 +2166,6 @@ fn integration_sync_in_subdirectory_only_touches_nearest_beads_dir() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Phase 4: Snapshot after; verify only the workspace .beads/ was touched
     let snapshot_after = FileTreeSnapshot::new(&workspace.root);
     let diff = snapshot_before.diff(&snapshot_after);
     let (violations, allowed) = diff.check_allowed_changes();
@@ -2385,17 +2216,14 @@ fn integration_sync_with_external_jsonl_path_touches_only_target_and_beads() {
         "create_for_external",
     );
 
-    // Set up an external JSONL target
     let external_dir = workspace.temp_dir.path().join("ext-jsonl-store");
     fs::create_dir_all(&external_dir).expect("create external dir");
     let external_jsonl = external_dir.join("custom-issues.jsonl");
     eprintln!("  external target: {}", external_jsonl.display());
 
-    // Snapshot ALL files (including the workspace root / external dir)
     let snapshot_before = FileTreeSnapshot::new(workspace.temp_dir.path());
     eprintln!("  files before sync: {}", snapshot_before.files.len());
 
-    // Run sync with explicit BEADS_JSONL + --allow-external-jsonl --force
     let env_vars = vec![("BEADS_JSONL", external_jsonl.to_str().unwrap().to_string())];
     let sync = run_br_with_env(
         &workspace,
@@ -2409,24 +2237,17 @@ fn integration_sync_with_external_jsonl_path_touches_only_target_and_beads() {
         sync.stderr.len()
     );
 
-    // The implementation may either (a) succeed and write the external file
-    // or (b) reject with a clear error. EITHER WAY, no third-party file
-    // should appear (no `.git/`, no random tmpfile in /tmp/, etc).
     let snapshot_after = FileTreeSnapshot::new(workspace.temp_dir.path());
     let diff = snapshot_after.files.iter().filter(|(path, _)| {
-        // Allow files in .beads/ (workspace metadata)
         if path.starts_with(".beads/") || path.contains(".beads\\") {
             return false;
         }
-        // Allow files explicitly under the external target's directory
         if path.contains("ext-jsonl-store/") || path.contains("ext-jsonl-store\\") {
             return false;
         }
-        // Allow logs (test-only output)
         if path.starts_with("logs") || path.starts_with("logs/") {
             return false;
         }
-        // Allow the realistic-project files that already existed before the test
         !snapshot_before.files.contains_key(path.as_str())
             && !path.starts_with("src/")
             && !path.starts_with("tests/")
@@ -2447,7 +2268,6 @@ fn integration_sync_with_external_jsonl_path_touches_only_target_and_beads() {
         "PC-1 violation: sync with BEADS_JSONL touched unexpected files outside .beads/ and the external target"
     );
 
-    // If sync succeeded, the external file must have been created
     if sync.status.success() {
         assert!(
             external_jsonl.exists(),
@@ -2455,7 +2275,6 @@ fn integration_sync_with_external_jsonl_path_touches_only_target_and_beads() {
         );
         eprintln!("  [PASS] external JSONL created; no third-party files touched");
     } else {
-        // If rejected, error must mention the external path concern
         let combined = format!("{}{}", sync.stdout, sync.stderr);
         assert!(
             combined.contains("external")
@@ -2478,9 +2297,8 @@ fn collect_all_dotgit_paths(root: &Path) -> Vec<PathBuf> {
             let name = entry.file_name();
             if name == ".git" {
                 out.push(entry.path());
-                continue; // don't descend into dotgit (defensive)
+                continue;
             }
-            // Skip the test's own logs dir
             if name == "logs" {
                 continue;
             }

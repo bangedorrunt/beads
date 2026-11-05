@@ -48,7 +48,6 @@ impl ProgressTracker {
     }
 
     pub fn render(&self, console: &Console) {
-        // Clear line and render progress
         print!("\r");
         console.print_renderable(&self.render_prefix());
         console.print_renderable(&self.bar);

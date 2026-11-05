@@ -16,10 +16,6 @@ mod common;
 use common::cli::{BrWorkspace, extract_json_payload, run_br};
 use serde_json::Value;
 
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
 fn parse_created_id(stdout: &str) -> String {
     let line = stdout.lines().next().unwrap_or("");
     // Handle both formats: "Created bd-xxx: title" and "✓ Created bd-xxx: title"
@@ -86,14 +82,9 @@ fn create_bare_issue(
     id
 }
 
-// =============================================================================
-// Clean Workspace Tests
-// =============================================================================
-
 #[test]
 fn e2e_lint_clean_workspace_no_issues() {
     let _log = common::test_log("e2e_lint_clean_workspace_no_issues");
-    // Lint on empty workspace (no issues) should pass with no warnings
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -109,7 +100,6 @@ fn e2e_lint_clean_workspace_no_issues() {
 #[test]
 fn e2e_lint_clean_workspace_json_empty_results() {
     let _log = common::test_log("e2e_lint_clean_workspace_json_empty_results");
-    // JSON output on empty workspace should have empty results array
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -130,7 +120,6 @@ fn e2e_lint_clean_workspace_json_empty_results() {
 #[test]
 fn e2e_lint_issue_with_all_required_sections_passes() {
     let _log = common::test_log("e2e_lint_issue_with_all_required_sections_passes");
-    // A bug with a well-formed brief (verify + principle, no headings) lints clean
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -161,21 +150,15 @@ fn e2e_lint_issue_with_all_required_sections_passes() {
     );
 }
 
-// =============================================================================
-// Typed Brief Field Tests
-// =============================================================================
-
 #[test]
 fn e2e_lint_missing_verify_warns() {
     let _log = common::test_log("e2e_lint_missing_verify_warns");
-    // An issue without a VERIFY command should warn on `verify`
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
     let id = create_bare_issue(&workspace, "No verify", "bug", Some("Some bug"));
 
     let lint = run_br(&workspace, ["lint", "--json"], "lint_bug_missing_verify");
-    // In JSON mode, exit code is always 0
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);
@@ -200,7 +183,6 @@ fn e2e_lint_missing_verify_warns() {
 #[test]
 fn e2e_lint_priority_at_or_below_two_requires_principles() {
     let _log = common::test_log("e2e_lint_priority_at_or_below_two_requires_principles");
-    // P2 issue with verify but no principles should warn on `principles`
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -212,17 +194,6 @@ fn e2e_lint_priority_at_or_below_two_requires_principles() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    // Same reason as `create_bare_issue`: the harness gate would otherwise
-    // supply the very principles citation this test exists to omit. Only the
-    // principles go here — the VERIFY above is the field under contrast.
-    //
-    // This step is currently a silent no-op: `br update <id> --clear-principles`
-    // with no accompanying `--principle` reports "No updates specified" and exits
-    // 0 without clearing anything, so this test stays red until that is fixed.
-    // `bd_clear_principles::clearing_alone_empties_the_set` proves the model
-    // function empties the set, but never exercises the CLI gate that drops the
-    // request before it gets there. Kept in its correct final form so the fix
-    // turns it green rather than requiring the test to be rewritten.
     let strip = run_br(
         &workspace,
         ["update", id.as_str(), "--clear-principles"],
@@ -291,7 +262,6 @@ fn e2e_lint_non_kebab_principle_name_warns() {
 #[test]
 fn e2e_lint_epic_without_verify_warns() {
     let _log = common::test_log("e2e_lint_epic_without_verify_warns");
-    // One brief schema: epics lint under the same rules as every other type
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -355,7 +325,6 @@ fn e2e_lint_chore_with_well_formed_brief_passes() {
 #[test]
 fn e2e_lint_bug_missing_all_typed_fields() {
     let _log = common::test_log("e2e_lint_bug_missing_all_sections");
-    // Bare P2 bug: both verify and principles warn
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -381,8 +350,6 @@ fn e2e_lint_bug_missing_all_typed_fields() {
 #[test]
 fn e2e_lint_heading_free_bug_with_brief_passes() {
     let _log = common::test_log("e2e_lint_task_missing_acceptance_criteria");
-    // Headings are dead: a bug whose description carries no headings but
-    // whose typed fields satisfy the brief lints clean
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -411,20 +378,13 @@ fn e2e_lint_heading_free_bug_with_brief_passes() {
     assert_eq!(json["total"], 0, "heading-free brief must not warn");
 }
 
-// =============================================================================
-// Filter Tests
-// =============================================================================
-
 #[test]
 fn e2e_lint_filter_by_type_bug() {
     let _log = common::test_log("e2e_lint_filter_by_type_bug");
-    // --type bug should only lint bug issues
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    // Create bug without required sections
     let bug_id = create_bare_issue(&workspace, "Buggy bug", "bug", Some("Bug desc"));
-    // Create task without required sections
     create_bare_issue(&workspace, "Tasky task", "task", Some("Task desc"));
 
     let lint = run_br(
@@ -438,7 +398,6 @@ fn e2e_lint_filter_by_type_bug() {
     let json: Value = serde_json::from_str(&json_str).expect("valid JSON");
 
     let results = json["results"].as_array().unwrap();
-    // Should only have the bug in results
     assert!(
         results.iter().all(|r| r["type"] == "bug"),
         "expected only bugs in results when filtering by type=bug"
@@ -452,11 +411,9 @@ fn e2e_lint_filter_by_type_bug() {
 #[test]
 fn e2e_lint_filter_by_status_all() {
     let _log = common::test_log("e2e_lint_filter_by_status_all");
-    // --status all should include non-default issue states.
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    // Create and close a bug without required fields
     let bug_id = create_bare_issue(&workspace, "Closed bug", "bug", Some("Closed"));
     let gate = run_br(
         &workspace,
@@ -496,7 +453,6 @@ fn e2e_lint_filter_by_status_all() {
     );
     assert!(defer.status.success(), "defer failed: {}", defer.stderr);
 
-    // Default lint should not include closed or deferred.
     let lint_default = run_br(&workspace, ["lint", "--json"], "lint_status_default");
     let json_str = extract_json_payload(&lint_default.stdout);
     let json: Value = serde_json::from_str(&json_str).expect("valid JSON");
@@ -510,7 +466,6 @@ fn e2e_lint_filter_by_status_all() {
         "deferred issue should not appear in default lint"
     );
 
-    // --status all should include closed and deferred.
     let lint_all = run_br(
         &workspace,
         ["lint", "--status", "all", "--json"],
@@ -580,15 +535,12 @@ fn e2e_lint_filter_by_status_deferred() {
 #[test]
 fn e2e_lint_specific_issue_id() {
     let _log = common::test_log("e2e_lint_specific_issue_id");
-    // Lint specific issue by ID
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    // Create two bugs without required sections
     let bug1_id = create_bare_issue(&workspace, "Bug one", "bug", Some("First"));
     let _bug2_id = create_bare_issue(&workspace, "Bug two", "bug", Some("Second"));
 
-    // Lint only bug1
     let lint = run_br(&workspace, ["lint", &bug1_id, "--json"], "lint_specific_id");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
@@ -607,14 +559,9 @@ fn e2e_lint_specific_issue_id() {
     );
 }
 
-// =============================================================================
-// JSON Output Structure Tests
-// =============================================================================
-
 #[test]
 fn e2e_lint_json_output_structure() {
     let _log = common::test_log("e2e_lint_json_output_structure");
-    // Verify JSON output has correct structure
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -626,12 +573,10 @@ fn e2e_lint_json_output_structure() {
     let json_str = extract_json_payload(&lint.stdout);
     let json: Value = serde_json::from_str(&json_str).expect("valid JSON");
 
-    // Check top-level fields
     assert!(json.get("total").is_some(), "missing 'total' field");
     assert!(json.get("issues").is_some(), "missing 'issues' field");
     assert!(json.get("results").is_some(), "missing 'results' field");
 
-    // Check results array structure
     let results = json["results"].as_array().unwrap();
     if !results.is_empty() {
         let result = &results[0];
@@ -667,11 +612,9 @@ fn e2e_lint_json_output_structure() {
 #[test]
 fn e2e_lint_json_exit_code_always_zero() {
     let _log = common::test_log("e2e_lint_json_exit_code_always_zero");
-    // In JSON mode, exit code should always be 0 (even with warnings)
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    // Create bug without required sections (will have warnings)
     create_bare_issue(&workspace, "Buggy", "bug", Some("No sections"));
 
     let lint = run_br(&workspace, ["lint", "--json"], "lint_json_exit_code");
@@ -682,22 +625,15 @@ fn e2e_lint_json_exit_code_always_zero() {
     );
 }
 
-// =============================================================================
-// Text Output Tests
-// =============================================================================
-
 #[test]
 fn e2e_lint_text_output_warnings() {
     let _log = common::test_log("e2e_lint_text_output_warnings");
-    // Text mode with warnings should show formatted output
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
     let id = create_bare_issue(&workspace, "Warning bug", "bug", Some("No sections"));
 
     let lint = run_br(&workspace, ["lint"], "lint_text_warnings");
-    // Text mode exits non-zero when there are warnings
-    // But we should still check the output format
 
     assert!(
         lint.stdout.contains(&id) || lint.stdout.contains("bug"),
@@ -716,7 +652,6 @@ fn e2e_lint_text_output_warnings() {
 #[test]
 fn e2e_lint_text_exit_code_nonzero_with_warnings() {
     let _log = common::test_log("e2e_lint_text_exit_code_nonzero_with_warnings");
-    // In text mode, exit code should be 1 when there are warnings
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -729,16 +664,10 @@ fn e2e_lint_text_exit_code_nonzero_with_warnings() {
     );
 }
 
-// =============================================================================
-// Error Handling Tests
-// =============================================================================
-
 #[test]
 fn e2e_lint_before_init_fails() {
     let _log = common::test_log("e2e_lint_before_init_fails");
-    // Lint without init should fail
     let workspace = BrWorkspace::new();
-    // Do NOT init
 
     let lint = run_br(&workspace, ["lint"], "lint_before_init");
     assert!(!lint.status.success(), "lint before init should fail");
@@ -754,7 +683,6 @@ fn e2e_lint_before_init_fails() {
 #[test]
 fn e2e_lint_nonexistent_id_error() {
     let _log = common::test_log("e2e_lint_nonexistent_id_error");
-    // Lint with nonexistent ID should handle gracefully
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -763,7 +691,6 @@ fn e2e_lint_nonexistent_id_error() {
         ["lint", "bd-nonexistent"],
         "lint_nonexistent_id",
     );
-    // Should either fail or print an error message
     assert!(
         !lint.status.success()
             || lint.stderr.contains("not found")
@@ -775,11 +702,9 @@ fn e2e_lint_nonexistent_id_error() {
 #[test]
 fn e2e_lint_unknown_type_filter_no_matches() {
     let _log = common::test_log("e2e_lint_unknown_type_filter_no_matches");
-    // Unknown --type value is rejected (bd conformance: only task, bug, feature, epic, chore)
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
-    // Create a bug issue
     create_bare_issue(&workspace, "Sample bug", "bug", None);
 
     let lint = run_br(
@@ -787,8 +712,6 @@ fn e2e_lint_unknown_type_filter_no_matches() {
         ["lint", "--type", "unknown_custom_type"],
         "lint_unknown_type",
     );
-    // For bd conformance, CLI rejects unknown types (they may exist in imported data
-    // but cannot be specified via CLI). See src/model/mod.rs FromStr for IssueType.
     assert!(
         !lint.status.success(),
         "unknown type should fail for bd conformance, got stdout: {}",
@@ -801,15 +724,9 @@ fn e2e_lint_unknown_type_filter_no_matches() {
     );
 }
 
-// =============================================================================
-// Heading Independence Tests
-// =============================================================================
-
 #[test]
 fn e2e_lint_ignores_markdown_headings_entirely() {
     let _log = common::test_log("e2e_lint_case_insensitive_section_matching");
-    // Headings neither satisfy nor trigger warnings: only typed fields count.
-    // A P3 bug with headings but no verify still warns on verify.
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -842,14 +759,9 @@ fn e2e_lint_ignores_markdown_headings_entirely() {
     );
 }
 
-// =============================================================================
-// Multiple Issues Tests
-// =============================================================================
-
 #[test]
 fn e2e_lint_multiple_issues_with_warnings() {
     let _log = common::test_log("e2e_lint_multiple_issues_with_warnings");
-    // Multiple issues with warnings should all be reported
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 

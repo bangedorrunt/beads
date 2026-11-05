@@ -35,10 +35,6 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-// ============================================================================
-// Helper: Snapshot file tree for verifying no modifications
-// ============================================================================
-
 fn snapshot_directory(dir: &Path) -> HashMap<String, Vec<u8>> {
     let mut snapshot = HashMap::new();
     if !dir.exists() {
@@ -63,7 +59,6 @@ fn snapshot_directory(dir: &Path) -> HashMap<String, Vec<u8>> {
 fn assert_directory_unchanged(before: &HashMap<String, Vec<u8>>, dir: &Path, context: &str) {
     let after = snapshot_directory(dir);
 
-    // Check no new files
     for path in after.keys() {
         if !before.contains_key(path) {
             panic!(
@@ -74,10 +69,8 @@ fn assert_directory_unchanged(before: &HashMap<String, Vec<u8>>, dir: &Path, con
         }
     }
 
-    // Check no files deleted (except any that might legitimately change like the db)
     for (path, old_content) in before {
         if let Some(new_content) = after.get(path) {
-            // Allow database files to change (they track state)
             if path.ends_with(".db")
                 || path.ends_with(".db-journal")
                 || path.ends_with(".db-wal")
@@ -100,18 +93,12 @@ fn assert_directory_unchanged(before: &HashMap<String, Vec<u8>>, dir: &Path, con
     }
 }
 
-// ============================================================================
-// Helper: Create a basic beads workspace
-// ============================================================================
-
 fn setup_workspace_with_issues() -> BrWorkspace {
     let workspace = BrWorkspace::new();
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create a few issues for export
     let _ = run_br(
         &workspace,
         ["create", "Test issue 1", "-t", "task"],
@@ -123,16 +110,11 @@ fn setup_workspace_with_issues() -> BrWorkspace {
         "create2",
     );
 
-    // Export to JSONL
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
     workspace
 }
-
-// ============================================================================
-// CONFLICT MARKER TESTS (Import Preflight)
-// ============================================================================
 
 /// Test: Import preflight rejects JSONL containing conflict markers
 #[test]
@@ -141,10 +123,8 @@ fn preflight_import_rejects_conflict_markers() {
     let beads_dir = workspace.root.join(".beads");
     let jsonl_path = beads_dir.join("issues.jsonl");
 
-    // Snapshot before modification
     let snapshot_before = snapshot_directory(&workspace.root);
 
-    // Inject conflict markers into JSONL
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let mut file = fs::File::create(&jsonl_path).expect("create jsonl");
     writeln!(file, "<<<<<<< HEAD").unwrap();
@@ -153,7 +133,6 @@ fn preflight_import_rejects_conflict_markers() {
     writeln!(file, r#"{{"id":"bd-conflict","title":"Conflict version"}}"#).unwrap();
     writeln!(file, ">>>>>>> feature-branch").unwrap();
 
-    // Run preflight - should fail
     let config = ImportConfig {
         beads_dir: Some(beads_dir.clone()),
         ..Default::default()
@@ -162,7 +141,6 @@ fn preflight_import_rejects_conflict_markers() {
     let preflight_result =
         preflight_import(&jsonl_path, &config, None).expect("preflight should run");
 
-    // Log for postmortem
     let log = format!(
         "=== CONFLICT MARKER PREFLIGHT TEST ===\n\
          JSONL path: {}\n\n\
@@ -183,7 +161,6 @@ fn preflight_import_rejects_conflict_markers() {
     let log_path = workspace.log_dir.join("preflight_conflict_marker.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // ASSERTION: Preflight should fail
     assert_eq!(
         preflight_result.overall_status,
         PreflightCheckStatus::Fail,
@@ -192,7 +169,6 @@ fn preflight_import_rejects_conflict_markers() {
         log_path.display()
     );
 
-    // ASSERTION: Failure should be about conflict markers
     let failures = preflight_result.failures();
     let conflict_failure = failures.iter().find(|c| c.name == "no_conflict_markers");
     assert!(
@@ -201,7 +177,6 @@ fn preflight_import_rejects_conflict_markers() {
         failures
     );
 
-    // ASSERTION: Remediation should mention resolving conflicts
     let check = conflict_failure.unwrap();
     assert!(
         check
@@ -212,15 +187,11 @@ fn preflight_import_rejects_conflict_markers() {
         check.remediation
     );
 
-    // ASSERTION: No files should be modified (except the JSONL we intentionally changed)
-    // Since we modified the JSONL ourselves, we only check that no OTHER files changed
     let snapshot_after = snapshot_directory(&workspace.root);
     for (path, old_content) in &snapshot_before {
-        // Skip the JSONL we intentionally modified
         if path.ends_with("issues.jsonl") {
             continue;
         }
-        // Skip database files (allowed to track state)
         if path.ends_with(".db")
             || path.ends_with(".db-journal")
             || path.ends_with(".db-wal")
@@ -247,14 +218,13 @@ fn preflight_import_conflict_markers_shows_line_numbers() {
     let beads_dir = workspace.root.join(".beads");
     let jsonl_path = beads_dir.join("issues.jsonl");
 
-    // Create JSONL with conflict markers at known lines
     let mut file = fs::File::create(&jsonl_path).expect("create jsonl");
     writeln!(file, r#"{{"id":"bd-1","title":"Issue 1","status":"open","priority":2,"issue_type":"task","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z","labels":[],"dependencies":[],"comments":[]}}"#).unwrap();
-    writeln!(file, "<<<<<<< HEAD").unwrap(); // Line 2
+    writeln!(file, "<<<<<<< HEAD").unwrap();
     writeln!(file, r#"{{"id":"bd-2","title":"Issue 2"}}"#).unwrap();
-    writeln!(file, "=======").unwrap(); // Line 4
+    writeln!(file, "=======").unwrap();
     writeln!(file, r#"{{"id":"bd-2","title":"Modified Issue 2"}}"#).unwrap();
-    writeln!(file, ">>>>>>> branch").unwrap(); // Line 6
+    writeln!(file, ">>>>>>> branch").unwrap();
 
     let config = ImportConfig {
         beads_dir: Some(beads_dir),
@@ -263,10 +233,8 @@ fn preflight_import_conflict_markers_shows_line_numbers() {
 
     let result = preflight_import(&jsonl_path, &config, None).expect("preflight should run");
 
-    // ASSERTION: Should fail
     assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
 
-    // ASSERTION: Error message should mention line numbers or markers
     let failures = result.failures();
     let conflict_check = failures
         .iter()
@@ -282,17 +250,12 @@ fn preflight_import_conflict_markers_shows_line_numbers() {
     eprintln!("✓ Preflight shows actionable conflict marker info");
 }
 
-// ============================================================================
-// UNSAFE PATH TESTS (Import Preflight)
-// ============================================================================
-
 /// Test: Import preflight rejects paths outside .beads directory
 #[test]
 fn preflight_import_rejects_outside_beads_dir() {
     let workspace = setup_workspace_with_issues();
     let beads_dir = workspace.root.join(".beads");
 
-    // Try to import from outside .beads/
     let outside_path = workspace.root.join("malicious.jsonl");
     fs::write(
         &outside_path,
@@ -308,7 +271,6 @@ fn preflight_import_rejects_outside_beads_dir() {
 
     let result = preflight_import(&outside_path, &config, None).expect("preflight should run");
 
-    // Log for postmortem
     let log = format!(
         "=== OUTSIDE BEADS DIR PREFLIGHT TEST ===\n\
          Path: {}\n\
@@ -328,7 +290,6 @@ fn preflight_import_rejects_outside_beads_dir() {
     let log_path = workspace.log_dir.join("preflight_outside_beads.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // ASSERTION: Preflight should fail
     assert_eq!(
         result.overall_status,
         PreflightCheckStatus::Fail,
@@ -337,7 +298,6 @@ fn preflight_import_rejects_outside_beads_dir() {
         log_path.display()
     );
 
-    // ASSERTION: Failure should be about path validation
     let failures = result.failures();
     let path_failure = failures.iter().find(|c| c.name == "path_validation");
     assert!(
@@ -355,7 +315,6 @@ fn preflight_import_rejects_git_paths() {
     let workspace = setup_workspace_with_issues();
     let beads_dir = workspace.root.join(".beads");
 
-    // Create a .git directory with a malicious file
     let git_dir = workspace.root.join(".git");
     fs::create_dir_all(&git_dir).expect("create .git");
     let git_path = git_dir.join("config.jsonl");
@@ -365,23 +324,20 @@ fn preflight_import_rejects_git_paths() {
     )
     .expect("write test file");
 
-    // Even with allow_external, .git paths should be rejected
     let config = ImportConfig {
         beads_dir: Some(beads_dir.clone()),
-        allow_external_jsonl: true, // Even with this flag!
+        allow_external_jsonl: true,
         ..Default::default()
     };
 
     let result = preflight_import(&git_path, &config, None).expect("preflight should run");
 
-    // ASSERTION: Preflight should fail
     assert_eq!(
         result.overall_status,
         PreflightCheckStatus::Fail,
         "CRITICAL SAFETY: Preflight should ALWAYS reject .git paths!"
     );
 
-    // ASSERTION: Error should mention git
     let failures = result.failures();
     let path_failure = failures.iter().find(|c| c.name == "path_validation");
     assert!(
@@ -404,7 +360,6 @@ fn preflight_import_rejects_path_traversal() {
     let workspace = setup_workspace_with_issues();
     let beads_dir = workspace.root.join(".beads");
 
-    // Create a file outside .beads using traversal
     let parent = workspace.root.parent().unwrap();
     let traversal_target = parent.join("traversal_test.jsonl");
     fs::write(
@@ -413,7 +368,6 @@ fn preflight_import_rejects_path_traversal() {
     )
     .expect("write test file");
 
-    // Try to access it via traversal path
     let traversal_path = beads_dir.join("..").join("..").join("traversal_test.jsonl");
 
     let config = ImportConfig {
@@ -424,22 +378,16 @@ fn preflight_import_rejects_path_traversal() {
 
     let result = preflight_import(&traversal_path, &config, None).expect("preflight should run");
 
-    // ASSERTION: Preflight should fail
     assert_eq!(
         result.overall_status,
         PreflightCheckStatus::Fail,
         "SAFETY: Preflight should reject path traversal attempts"
     );
 
-    // Cleanup
     let _ = fs::remove_file(&traversal_target);
 
     eprintln!("✓ Preflight correctly rejected path traversal");
 }
-
-// ============================================================================
-// EXPORT PREFLIGHT TESTS
-// ============================================================================
 
 /// Test: Export preflight rejects export to .git path
 #[test]
@@ -448,7 +396,6 @@ fn preflight_export_rejects_git_paths() {
     let beads_dir = workspace.root.join(".beads");
     let db_path = beads_dir.join("beads.db");
 
-    // Create a .git directory
     let git_dir = workspace.root.join(".git");
     fs::create_dir_all(&git_dir).expect("create .git");
     let git_output = git_dir.join("issues.jsonl");
@@ -456,13 +403,12 @@ fn preflight_export_rejects_git_paths() {
     let storage = SqliteStorage::open(&db_path).expect("open db");
     let config = ExportConfig {
         beads_dir: Some(beads_dir),
-        allow_external_jsonl: true, // Even with this flag!
+        allow_external_jsonl: true,
         ..Default::default()
     };
 
     let result = preflight_export(&storage, &git_output, &config).expect("preflight should run");
 
-    // ASSERTION: Preflight should fail
     assert_eq!(
         result.overall_status,
         PreflightCheckStatus::Fail,
@@ -480,25 +426,22 @@ fn preflight_export_warns_empty_db_over_nonempty_jsonl() {
     let jsonl_path = beads_dir.join("issues.jsonl");
     let db_path = beads_dir.join("beads_test_empty.db");
 
-    // Create an empty database
     let storage = SqliteStorage::open(&db_path).expect("open empty db");
 
     let config = ExportConfig {
         beads_dir: Some(beads_dir),
-        force: false, // No force - should fail on empty db
+        force: false,
         ..Default::default()
     };
 
     let result = preflight_export(&storage, &jsonl_path, &config).expect("preflight should run");
 
-    // ASSERTION: Preflight should fail (would lose data)
     assert_eq!(
         result.overall_status,
         PreflightCheckStatus::Fail,
         "Preflight should prevent exporting empty db over non-empty JSONL"
     );
 
-    // ASSERTION: Should mention data loss
     let failures = result.failures();
     let safety_failure = failures
         .iter()
@@ -510,10 +453,6 @@ fn preflight_export_warns_empty_db_over_nonempty_jsonl() {
 
     eprintln!("✓ Export preflight correctly prevented potential data loss");
 }
-
-// ============================================================================
-// LOGGING AND OBSERVABILITY TESTS
-// ============================================================================
 
 /// Test: Preflight result includes all check names and actionable messages
 #[test]
@@ -529,7 +468,6 @@ fn preflight_results_are_actionable() {
 
     let result = preflight_import(&jsonl_path, &config, None).expect("preflight should run");
 
-    // ASSERTION: All checks should have names
     for check in &result.checks {
         assert!(!check.name.is_empty(), "Check should have a name");
         assert!(
@@ -544,7 +482,6 @@ fn preflight_results_are_actionable() {
         );
     }
 
-    // ASSERTION: Failed checks should have remediation
     for failure in result.failures() {
         assert!(
             failure.remediation.is_some(),
@@ -553,7 +490,6 @@ fn preflight_results_are_actionable() {
         );
     }
 
-    // ASSERTION: into_result() produces readable error
     if result.overall_status == PreflightCheckStatus::Fail {
         let err = result.clone().into_result().unwrap_err();
         let err_str = err.to_string();
@@ -579,25 +515,21 @@ fn cli_import_shows_preflight_failure() {
     let workspace = setup_workspace_with_issues();
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
 
-    // Inject conflict markers
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let modified = format!("<<<<<<< HEAD\n{}\n=======\n>>>>>>> branch\n", original);
     fs::write(&jsonl_path, &modified).expect("write modified jsonl");
 
-    // Try CLI import - should fail with clear error
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_preflight",
     );
 
-    // ASSERTION: Should fail
     assert!(
         !import.status.success(),
         "CLI import should fail when preflight detects issues"
     );
 
-    // ASSERTION: Error should mention conflict markers
     let stderr_lower = import.stderr.to_lowercase();
     assert!(
         stderr_lower.contains("conflict")

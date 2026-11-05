@@ -92,8 +92,6 @@ impl AnalysisEngine {
     }
 
     fn build(&self) -> (DiGraph, Vec<String>, HashMap<String, usize>, Vec<&Issue>) {
-        // Dedup by id (last wins) then sort by id for deterministic
-        // node-index order (bv sorts by ID before hashing/analyzing).
         let mut by_id: BTreeMap<String, &Issue> = BTreeMap::new();
         for issue in &self.issues {
             by_id.insert(issue.id.clone(), issue);
@@ -108,8 +106,6 @@ impl AnalysisEngine {
             index.insert(issue.id.clone(), idx);
             ids.push(issue.id.clone());
         }
-        // Canonical blocker -> blocked. `issue` depends on `dep.depends_on_id`,
-        // so `dep.depends_on_id` blocks `issue`.
         for issue in &issues {
             for dep in &issue.dependencies {
                 if !is_blocking(&dep.dep_type) {
@@ -118,7 +114,7 @@ impl AnalysisEngine {
                 let (Some(&from), Some(&to)) =
                     (index.get(&dep.depends_on_id), index.get(&issue.id))
                 else {
-                    continue; // dep on unknown id: ignore (bv loads only known)
+                    continue;
                 };
                 graph.add_edge(from, to);
             }
@@ -218,9 +214,6 @@ impl AnalysisEngine {
             }
         }
 
-        // Phase-1 cycle detection is free: Kahn's failure IS the cycle
-        // signal (topo is None iff the graph is cyclic). Enumeration
-        // (cycle_count) stays a Phase-2 job.
         let has_cycles = topo_ids.is_none();
 
         AnalysisResult {
@@ -260,8 +253,6 @@ impl AnalysisEngine {
     pub fn analyze(&self, config: &AnalysisConfig) -> AnalysisResult {
         let mut result = self.analyze_phase1();
 
-        // SCC cycles are needed for has_cycles/topo validity regardless of
-        // the config toggle (the toggle governs *enumeration*).
         let (has_cycles, cycle_count) = {
             let scc = cycles::tarjan_scc(&result.graph);
             (scc.has_cycles, scc.cycle_count)
@@ -269,18 +260,13 @@ impl AnalysisEngine {
         result.has_cycles = has_cycles;
         result.cycle_count = cycle_count;
 
-        // bv-parity view for centrality + heights.
         let parity = Self::reverse_of(&result.graph);
-        // Owned copies of the read-only views: the helpers below write into
-        // `result`, so borrowed aliases would fight the borrow checker.
-        // O(V+E) once per analysis, dwarfed by the metrics themselves.
         let graph = result.graph.clone();
         let ids = result.ids.clone();
 
         Self::centrality_metrics(&parity, &ids, config, &mut result);
         Self::structural_metrics(&graph, &parity, &ids, config, &mut result);
 
-        // No entry may remain pending at exit (bv contract).
         result.status.resolve_pending("not computed");
         result
     }
@@ -294,8 +280,6 @@ impl AnalysisEngine {
         config: &AnalysisConfig,
         result: &mut AnalysisResult,
     ) {
-        // PageRank (config-struct API; budgets recorded, not enforced
-        // mid-iteration — the vendored loop runs to convergence or max-iter)
         if config.compute_pagerank {
             let t = Instant::now();
             let scores = pagerank::pagerank(
@@ -312,7 +296,6 @@ impl AnalysisEngine {
             result.status.pagerank = Some(MetricEntry::skipped(&reason));
         }
 
-        // Betweenness (raw scores, bv parity — not normalized)
         match &config.betweenness_mode {
             super::config::BetweennessMode::Exact if config.compute_betweenness => {
                 let t = Instant::now();
@@ -334,7 +317,6 @@ impl AnalysisEngine {
             }
         }
 
-        // Eigenvector
         if config.compute_eigenvector {
             let t = Instant::now();
             let ev = eigenvector::eigenvector(parity, &EigenvectorConfig::default());
@@ -344,7 +326,6 @@ impl AnalysisEngine {
             result.status.eigenvector = Some(MetricEntry::skipped(&reason));
         }
 
-        // HITS
         if config.compute_hits {
             let t = Instant::now();
             let h = hits::hits(parity, &HITSConfig::default());
@@ -374,7 +355,6 @@ impl AnalysisEngine {
         config: &AnalysisConfig,
         result: &mut AnalysisResult,
     ) {
-        // Critical path heights (bv-parity view: 1 + max dependent height)
         if config.compute_critical_path {
             let t = Instant::now();
             if !result.has_cycles {
@@ -389,7 +369,6 @@ impl AnalysisEngine {
             result.status.critical = Some(MetricEntry::skipped(&reason));
         }
 
-        // Cycles enumeration (SCC count already recorded above)
         if config.compute_cycles && config.max_cycles > 0 {
             let t = Instant::now();
             let enumerated = cycles::enumerate_cycles(graph, config.max_cycles);
@@ -406,7 +385,6 @@ impl AnalysisEngine {
             result.status.cycles = Some(MetricEntry::skipped("cycle count only"));
         }
 
-        // k-core (undirected — canonical graph is fine)
         if config.compute_kcore {
             let t = Instant::now();
             let cores = kcore::kcore(graph);
@@ -420,7 +398,6 @@ impl AnalysisEngine {
             result.status.kcore = Some(MetricEntry::skipped(&reason));
         }
 
-        // Articulation points (undirected)
         if config.compute_articulation {
             let t = Instant::now();
             let arts = articulation::articulation_points(graph);
@@ -430,7 +407,6 @@ impl AnalysisEngine {
             result.status.articulation = Some(MetricEntry::skipped(&reason));
         }
 
-        // Slack (canonical blocker -> blocked orientation: scheduling float)
         if config.compute_slack {
             let t = Instant::now();
             if result.has_cycles {
@@ -467,8 +443,6 @@ impl AnalysisEngine {
                 move || Self::new(issues).analyze(&config)
             }) {
             Ok(handle) => handle.join().unwrap_or_else(|_| {
-                // Worker panicked: degrade to Phase 1 rather than crash the
-                // caller (robot commands must still emit valid JSON).
                 let mut r = Self::new(self.issues.clone()).analyze_phase1();
                 r.status.resolve_pending("phase 2 worker panicked");
                 r
@@ -529,17 +503,13 @@ mod tests {
     #[test]
     fn phase1_structure_matches_fixture_semantics() {
         let r = AnalysisEngine::new(fixture()).analyze_phase1();
-        // fx-a blocks fx-b (out-degree 1), fx-b blocked (in-degree 1)
         assert_eq!(r.out_degree["fx-a"], 1);
         assert_eq!(r.in_degree["fx-b"], 1);
-        // a, b, c, d connected; h, i connected; j isolated; e/f/g/k/l absent
         assert_eq!(r.components.len(), 3);
-        // actionable: fx-a (no blockers), fx-j closed; blocked: b, c, d, h, i
         assert!(r.actionable.contains("fx-a"));
         assert!(r.blocked.contains("fx-b"));
         assert!(r.blocked.contains("fx-h"));
         assert!(!r.actionable.contains("fx-j"));
-        // cycle between h and i -> topo undefined
         assert!(r.topological_order.is_none());
         assert!(r.has_cycles);
     }
@@ -554,7 +524,6 @@ mod tests {
         assert!(r.authorities.is_some());
         assert!(r.core_number.is_some());
         assert!(r.articulation_points.is_some());
-        // cycles block heights + slack
         assert!(r.critical_path_score.is_none());
         assert!(r.slack.is_none());
         assert_eq!(
@@ -574,7 +543,6 @@ mod tests {
 
     #[test]
     fn pagerank_direction_is_bv_parity() {
-        // a blocks b blocks c: bv puts importance on a (transitive dependents).
         let issues = vec![
             issue_json("fx-a", "open", &[]),
             issue_json("fx-b", "open", &[("fx-a", "blocks")]),
@@ -605,7 +573,6 @@ mod tests {
             issue_json("fx-a", "open", &[]),
             issue_json("fx-b", "open", &[]),
         ];
-        // manually attach a related dep
         let mut b = issues[1].clone();
         b.dependencies.push(
             serde_json::from_str(

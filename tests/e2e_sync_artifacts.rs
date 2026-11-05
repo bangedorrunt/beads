@@ -80,7 +80,6 @@ impl TestArtifacts {
 
     /// Write all artifacts to disk for postmortem analysis.
     fn persist(&self) {
-        // Write snapshot comparison
         let snapshot_path = self
             .artifact_dir
             .join(format!("{}_snapshots.txt", self.test_name));
@@ -94,7 +93,6 @@ impl TestArtifacts {
         }
         fs::write(&snapshot_path, snapshot_content).expect("write snapshots");
 
-        // Write JSONL captures
         for (label, content) in &self.jsonl_captures {
             let jsonl_path = self
                 .artifact_dir
@@ -102,7 +100,6 @@ impl TestArtifacts {
             fs::write(&jsonl_path, content).expect("write jsonl capture");
         }
 
-        // Write command logs
         let logs_path = self
             .artifact_dir
             .join(format!("{}_commands.log", self.test_name));
@@ -177,7 +174,6 @@ impl DirectorySnapshot {
         let mut removed = Vec::new();
         let mut modified = Vec::new();
 
-        // Find added and modified files
         for (path, hash) in &other.files {
             match self.files.get(path) {
                 None => added.push(path.clone()),
@@ -186,7 +182,6 @@ impl DirectorySnapshot {
             }
         }
 
-        // Find removed files
         for path in self.files.keys() {
             if !other.files.contains_key(path) {
                 removed.push(path.clone());
@@ -230,10 +225,6 @@ impl SnapshotDiff {
     }
 }
 
-// =============================================================================
-// E2E SYNC TESTS WITH ARTIFACT PRESERVATION
-// =============================================================================
-
 /// E2E test: Basic export cycle with artifact capture.
 #[test]
 #[allow(clippy::too_many_lines)]
@@ -242,17 +233,14 @@ fn e2e_sync_export_with_artifacts() {
     let workspace = BrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_export");
 
-    // Capture initial state
     artifacts.capture_snapshot("initial", &workspace.root);
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     artifacts.record_command("init", &init.stdout, &init.stderr, init.status.success());
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     artifacts.capture_snapshot("after_init", &workspace.root);
 
-    // Create issues with various attributes
     let create1 = run_br(
         &workspace,
         [
@@ -305,21 +293,17 @@ fn e2e_sync_export_with_artifacts() {
 
     artifacts.capture_snapshot("after_creates", &workspace.root);
 
-    // Run sync export
     let sync = run_br(&workspace, ["sync", "--flush-only", "--manifest"], "export");
     artifacts.record_command("export", &sync.stdout, &sync.stderr, sync.status.success());
     assert!(sync.status.success(), "sync export failed: {}", sync.stderr);
 
-    // Capture JSONL output
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     artifacts.capture_jsonl("after_export", &jsonl_path);
 
     artifacts.capture_snapshot("after_export", &workspace.root);
 
-    // Verify JSONL was created
     assert!(jsonl_path.exists(), "JSONL file should exist after export");
 
-    // Verify manifest was created
     let manifest_path = workspace.root.join(".beads").join(".manifest.json");
     if !manifest_path.exists() {
         eprintln!("Manifest missing! Contents of .beads:");
@@ -332,7 +316,6 @@ fn e2e_sync_export_with_artifacts() {
         "Manifest file should exist after export with --manifest"
     );
 
-    // Verify only .beads/ was affected (logs/ are test artifacts, not user files)
     let diff = artifacts.diff_snapshots("initial", "after_export");
     assert!(
         diff.only_beads_affected(),
@@ -349,7 +332,6 @@ fn e2e_sync_export_with_artifacts() {
             .collect::<Vec<_>>()
     );
 
-    // Persist artifacts for postmortem
     artifacts.persist();
 
     eprintln!(
@@ -374,7 +356,6 @@ fn e2e_sync_import_with_artifacts() {
     let workspace = BrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_import");
 
-    // Initialize and create issues
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
@@ -385,7 +366,6 @@ fn e2e_sync_import_with_artifacts() {
     );
     assert!(create.status.success(), "create failed");
 
-    // Export first
     let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed");
 
@@ -393,7 +373,6 @@ fn e2e_sync_import_with_artifacts() {
     artifacts.capture_jsonl("before_modification", &jsonl_path);
     artifacts.capture_snapshot("before_modification", &workspace.root);
 
-    // Modify JSONL externally (simulate incoming changes)
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let modified = original.replace("Original issue", "Modified via JSONL");
     fs::write(&jsonl_path, &modified).expect("write modified jsonl");
@@ -401,7 +380,6 @@ fn e2e_sync_import_with_artifacts() {
     artifacts.capture_jsonl("after_modification", &jsonl_path);
     artifacts.capture_snapshot("after_modification", &workspace.root);
 
-    // Run sync import
     let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import");
     artifacts.record_command(
         "import",
@@ -417,7 +395,6 @@ fn e2e_sync_import_with_artifacts() {
 
     artifacts.capture_snapshot("after_import", &workspace.root);
 
-    // Verify the title was updated in the database via list command
     let list = run_br(&workspace, ["list", "--json"], "list_verify");
     assert!(list.status.success(), "list failed");
     assert!(
@@ -427,7 +404,6 @@ fn e2e_sync_import_with_artifacts() {
         list.stdout
     );
 
-    // Verify only .beads/ was affected (logs/ are test artifacts, not user files)
     let diff = artifacts.diff_snapshots("before_modification", "after_import");
     assert!(
         diff.only_beads_affected(),
@@ -460,12 +436,10 @@ fn e2e_sync_full_cycle_with_artifacts() {
     let workspace = BrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_full_cycle");
 
-    // Initialize
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
     artifacts.capture_snapshot("after_init", &workspace.root);
 
-    // Create multiple issues
     for (i, (title, typ)) in [
         ("Bug: Login fails", "bug"),
         ("Feature: Dark mode", "feature"),
@@ -490,7 +464,6 @@ fn e2e_sync_full_cycle_with_artifacts() {
 
     artifacts.capture_snapshot("after_creates", &workspace.root);
 
-    // Phase 1: Export
     let export1 = run_br(&workspace, ["sync", "--flush-only"], "export1");
     artifacts.record_command(
         "export1",
@@ -504,13 +477,11 @@ fn e2e_sync_full_cycle_with_artifacts() {
     artifacts.capture_jsonl("phase1_export", &jsonl_path);
     artifacts.capture_snapshot("after_export1", &workspace.root);
 
-    // Phase 2: External modification (simulate git pull with changes)
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let modified = original.replace("Bug: Login fails", "Bug: Login fails (critical)");
     fs::write(&jsonl_path, &modified).expect("write modified");
     artifacts.capture_jsonl("phase2_modified", &jsonl_path);
 
-    // Phase 3: Import
     let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import");
     artifacts.record_command(
         "import",
@@ -521,7 +492,6 @@ fn e2e_sync_full_cycle_with_artifacts() {
     assert!(import.status.success(), "import failed");
     artifacts.capture_snapshot("after_import", &workspace.root);
 
-    // Phase 4: Re-export
     let export2 = run_br(&workspace, ["sync", "--flush-only", "--force"], "export2");
     artifacts.record_command(
         "export2",
@@ -534,14 +504,12 @@ fn e2e_sync_full_cycle_with_artifacts() {
     artifacts.capture_jsonl("phase4_reexport", &jsonl_path);
     artifacts.capture_snapshot("after_export2", &workspace.root);
 
-    // Verify the modification persisted
     let list = run_br(&workspace, ["list", "--json"], "list_verify");
     assert!(
         list.stdout.contains("critical"),
         "Modification should persist through full cycle"
     );
 
-    // Check sync status
     let status = run_br(&workspace, ["sync", "--status"], "status");
     artifacts.record_command(
         "status",
@@ -568,11 +536,9 @@ fn e2e_sync_status_with_artifacts() {
     let workspace = BrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_status");
 
-    // Initialize
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
-    // Check status before any issues (clean state)
     let status1 = run_br(&workspace, ["sync", "--status", "--json"], "status_empty");
     artifacts.record_command(
         "status_empty",
@@ -582,11 +548,9 @@ fn e2e_sync_status_with_artifacts() {
     );
     assert!(status1.status.success(), "status check failed");
 
-    // Create an issue (makes DB dirty)
     let create = run_br(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success(), "create failed");
 
-    // Check status with dirty DB
     let status2 = run_br(&workspace, ["sync", "--status", "--json"], "status_dirty");
     artifacts.record_command(
         "status_dirty",
@@ -596,11 +560,9 @@ fn e2e_sync_status_with_artifacts() {
     );
     assert!(status2.status.success(), "status check failed");
 
-    // Export
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed");
 
-    // Check status after export (should be clean)
     let status3 = run_br(&workspace, ["sync", "--status", "--json"], "status_clean");
     artifacts.record_command(
         "status_clean",
@@ -627,7 +589,6 @@ fn e2e_sync_error_conflict_markers() {
     let workspace = BrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_error_conflict");
 
-    // Initialize and export
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
@@ -637,14 +598,12 @@ fn e2e_sync_error_conflict_markers() {
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed");
 
-    // Inject conflict markers into JSONL
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let corrupted = format!("<<<<<<< HEAD\n{original}=======\n{original}>>>>>>> branch\n");
     fs::write(&jsonl_path, &corrupted).expect("write corrupted");
     artifacts.capture_jsonl("corrupted", &jsonl_path);
 
-    // Attempt import (should fail)
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -657,7 +616,6 @@ fn e2e_sync_error_conflict_markers() {
         import.status.success(),
     );
 
-    // Verify import failed with conflict marker error
     assert!(
         !import.status.success(),
         "Import should fail with conflict markers"
@@ -686,13 +644,11 @@ fn e2e_sync_export_empty_db() {
     let workspace = BrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_export_empty");
 
-    // Initialize only (no issues)
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
     artifacts.capture_snapshot("after_init", &workspace.root);
 
-    // Try to export empty DB (without --force)
     let export1 = run_br(&workspace, ["sync", "--flush-only"], "export_no_force");
     artifacts.record_command(
         "export_no_force",
@@ -700,9 +656,7 @@ fn e2e_sync_export_empty_db() {
         &export1.stderr,
         export1.status.success(),
     );
-    // This may succeed or report "nothing to export" - both are valid
 
-    // Export with --force
     let export2 = run_br(
         &workspace,
         ["sync", "--flush-only", "--force"],
@@ -722,7 +676,6 @@ fn e2e_sync_export_empty_db() {
 
     artifacts.capture_snapshot("after_export", &workspace.root);
 
-    // Verify JSONL exists (may be empty)
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     artifacts.capture_jsonl("empty_export", &jsonl_path);
 
@@ -743,17 +696,14 @@ fn e2e_sync_deterministic_export() {
     let workspace = BrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_deterministic");
 
-    // Initialize
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
-    // Create issues in specific order
     for title in ["Zebra", "Apple", "Mango", "Banana"] {
         let create = run_br(&workspace, ["create", title], &format!("create_{title}"));
         assert!(create.status.success(), "create failed");
     }
 
-    // Export multiple times
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let mut exports = Vec::new();
 
@@ -770,13 +720,11 @@ fn e2e_sync_deterministic_export() {
         exports.push(content);
     }
 
-    // Verify all exports are identical
     assert!(
         exports.windows(2).all(|w| w[0] == w[1]),
         "Multiple exports should produce identical JSONL"
     );
 
-    // Verify issues are sorted (by ID)
     let lines: Vec<&str> = exports[0].lines().collect();
     let mut ids: Vec<String> = Vec::new();
     for line in lines {
@@ -814,19 +762,15 @@ fn e2e_staleness_hash_check_prevents_false_touch() {
     let workspace = BrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "staleness_hash_check");
 
-    // Initialize
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(&workspace, ["create", "Test staleness"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Export to JSONL
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
-    // Check status - should be in sync
     let status1 = run_br(
         &workspace,
         ["sync", "--status", "--json"],
@@ -851,16 +795,13 @@ fn e2e_staleness_hash_check_prevents_false_touch() {
         "JSONL should not be marked newer after export"
     );
 
-    // Sleep briefly to ensure mtime would differ
     thread::sleep(Duration::from_millis(100));
 
-    // Touch the JSONL file (updates mtime but not content)
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let content = fs::read_to_string(&jsonl_path).expect("read jsonl");
     fs::write(&jsonl_path, &content).expect("touch jsonl");
     artifacts.capture_jsonl("after_touch", &jsonl_path);
 
-    // Check status again - should NOT be marked stale due to hash check
     let status2 = run_br(
         &workspace,
         ["sync", "--status", "--json"],
@@ -876,7 +817,6 @@ fn e2e_staleness_hash_check_prevents_false_touch() {
     let payload2 = common::cli::extract_json_payload(&status2.stdout);
     let json2: serde_json::Value = serde_json::from_str(&payload2).expect("parse status json");
 
-    // Hash check should prevent false staleness: mtime changed but content didn't
     assert!(
         !json2["jsonl_newer"].as_bool().unwrap_or(true),
         "JSONL should NOT be marked newer after touch (hash unchanged)\n\
@@ -907,29 +847,23 @@ fn e2e_staleness_detects_real_content_change() {
     let workspace = BrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "staleness_real_change");
 
-    // Initialize
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(&workspace, ["create", "Test staleness"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Export to JSONL
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
-    // Modify the JSONL content (simulate external change)
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let mut content = fs::read_to_string(&jsonl_path).expect("read jsonl");
     artifacts.capture_jsonl("before_modify", &jsonl_path);
 
-    // Append a comment to trigger content change
     content.push_str("# External comment added\n");
     fs::write(&jsonl_path, &content).expect("write modified jsonl");
     artifacts.capture_jsonl("after_modify", &jsonl_path);
 
-    // Check status - should be marked stale (jsonl_newer = true)
     let status = run_br(
         &workspace,
         ["sync", "--status", "--json"],
@@ -950,7 +884,6 @@ fn e2e_staleness_detects_real_content_change() {
         );
     });
 
-    // Real content change should trigger staleness
     assert!(
         json["jsonl_newer"].as_bool().unwrap_or(false),
         "JSONL should be marked newer after real content change\n\
@@ -992,18 +925,12 @@ fn e2e_staleness_detects_real_content_change() {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn e2e_sync_import_force_preserves_integrity_and_close_works() {
-    // Create enough issues to cross the bulk-insert threshold where
-    // frankensqlite's B-tree layer stops cleaning up after itself reliably.
-    // 220 is comfortably above the 200 seen in empirical repros for #248
-    // and well under any test-timeout budget.
     const ISSUE_COUNT: usize = 220;
 
     let _log = common::test_log("e2e_sync_import_force_preserves_integrity_and_close_works");
     let workspace = BrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_import_force_preserves_integrity");
 
-    // Initialize with a custom prefix so resolution can't fall back to the
-    // default "br-" prefix (matches the reporter's swarm workspace setup).
     let init = run_br(&workspace, ["init", "--prefix", "rr"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
@@ -1024,7 +951,6 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
     }
     assert!(!last_id.is_empty(), "expected at least one created id");
 
-    // Flush DB → JSONL so the JSONL is the canonical source for the rebuild.
     let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
@@ -1033,8 +959,6 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
     let jsonl_path = beads_dir.join("issues.jsonl");
     artifacts.capture_jsonl("after_flush", &jsonl_path);
 
-    // Delete the DB family (db + WAL + SHM sidecars) to simulate the
-    // "rebuild from canonical JSONL" path the reporter's swarm script takes.
     for sidecar in [
         "beads.db",
         "beads.db-wal",
@@ -1049,9 +973,6 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
         }
     }
 
-    // Re-init and force-import from the canonical JSONL.  The `--force`
-    // flag triggers `reset_data_tables()` + bulk import — the exact path
-    // that historically left frankensqlite's B-tree/indexes inconsistent.
     let reinit = run_br(&workspace, ["init", "--prefix", "rr", "--force"], "reinit");
     assert!(reinit.status.success(), "reinit failed: {}", reinit.stderr);
 
@@ -1072,9 +993,6 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
         import.stderr
     );
 
-    // Probe #1: C-sqlite3 must see an integrity-clean file.  `sqlite3`
-    // binary is a hard test dependency because that's the parser that the
-    // reporter's `check_beads_trust.sh` uses in the wild.
     let integrity_before_close = run_sqlite3_pragma_integrity_check(&db_path);
     artifacts.record_command(
         "integrity_check_before_close",
@@ -1091,9 +1009,6 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
          output: {integrity_before_close}"
     );
 
-    // Probe #2: a regular `br close` on an issue visible to `br show`
-    // must succeed without tripping the mutation-path "Issue not found"
-    // code path and without further corrupting the DB.
     let show = run_br(&workspace, ["show", &last_id], "show_before_close");
     assert!(
         show.status.success(),
@@ -1101,7 +1016,6 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
         show.stderr
     );
 
-    // Fail-closed close ceremony: recorded PASS gate + commit SHA.
     let gate = run_br(
         &workspace,
         [
@@ -1576,9 +1490,6 @@ fn run_sqlite3_pragma_integrity_check(db_path: &Path) -> String {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
             if stdout.trim().is_empty() {
-                // sqlite3 prints error messages on stderr and exits non-zero
-                // when the DB is unreadable; surface the stderr so the
-                // regression test makes clear what went wrong.
                 format!(
                     "<sqlite3 exited {} with empty stdout; stderr: {}>",
                     output.status,

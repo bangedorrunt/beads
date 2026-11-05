@@ -240,8 +240,6 @@ mod storage_tests {
         storage
             .bind_captain_hold("holdcase-3", "corr-a", Some(&past), "tester")
             .expect("bind");
-        // The bind-time sweep runs before the INSERT, so flagging happens
-        // on the next sweep; the hold stays open throughout.
         let count = storage
             .resurface_expired_captain_holds("tester")
             .expect("sweep");
@@ -303,7 +301,6 @@ mod tests {
         assert!(!holds[0].open);
         assert_eq!(holds[0].resolving_corr.as_deref(), Some("corr-a"));
         assert!(holds[1].open);
-        // Non-matching corr clears nothing.
         let resolved = resolve_holds(&mut holds, "corr-zzz");
         assert!(resolved.is_empty());
         assert!(holds[1].open);

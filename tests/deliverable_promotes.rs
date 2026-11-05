@@ -202,16 +202,12 @@ fn deliverable_promotes_link_visible_without_ready_gating() {
         Some(id_a.as_str()),
         "promotes link must be visible in show"
     );
-    // Advisory, not a dependency edge: no blocks/parent edge is created.
     let deps = issue_b.get("dependencies").and_then(Value::as_array);
     assert!(
         deps.is_none_or(Vec::is_empty),
         "promotes must not create a dependency edge: {:?}",
         issue_b.get("dependencies")
     );
-    // ...and readiness is unaffected by the link itself: the linked set is
-    // a subset of the later set (fail-closed create stamps every bead with
-    // proof, so the added plain bead is itself dispatchable and joins ready).
     let ready_linked = run_br(&ws, ["ready", "--json"], "ready_linked");
     assert!(ready_linked.status.success(), "ready failed");
     let c = run_br(

@@ -73,8 +73,6 @@ pub enum Status {
 impl<'de> Deserialize<'de> for Status {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
-        // ADR-0035 Spec 4/6: unknown statuses fail loud at the boundary —
-        // never a silent catch-all default (bd-bqyb).
         Self::known_value(&value).ok_or_else(|| {
             serde::de::Error::unknown_variant(
                 &value,
@@ -488,7 +486,6 @@ impl JsonSchema for EventType {
     }
 
     fn json_schema(generator: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
-        // EventType serializes as a string (see custom Serialize/Deserialize above).
         generator.subschema_for::<String>()
     }
 }
@@ -774,7 +771,6 @@ pub struct Issue {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_context: Option<String>,
 
-    // Tombstone fields
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -784,9 +780,6 @@ pub struct Issue {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_type: Option<String>,
 
-    // Compaction (legacy/compat)
-    // Note: Always serialize compaction_level as integer (0 when None) for bd conformance
-    // bd's Go sql scanner cannot handle NULL for integer columns
     #[serde(default, serialize_with = "serialize_compaction_level")]
     pub compaction_level: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -796,19 +789,16 @@ pub struct Issue {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_size: Option<i32>,
 
-    // Messaging
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub ephemeral: bool,
 
-    // Context
     #[serde(default, skip_serializing_if = "is_false")]
     pub pinned: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_template: bool,
 
-    // Relations (for export/display, not always in DB table directly)
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub labels: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -930,26 +920,21 @@ impl Issue {
             || self.ephemeral != other.ephemeral
             || self.pinned != other.pinned
             || self.is_template != other.is_template
-            // Live JSONL payload field (beads_rust#297): an agent_context-only
-            // change must count as a difference or three-way merge would drop it.
             || self.agent_context != other.agent_context
         {
             return false;
         }
 
-        // Handle compaction_level serialization quirk where None == 0
         if self.compaction_level.unwrap_or(0) != other.compaction_level.unwrap_or(0) {
             return false;
         }
 
-        // Fast path for relations: if lengths differ, they can't be equal
         if self.dependencies.len() != other.dependencies.len()
             || self.comments.len() != other.comments.len()
         {
             return false;
         }
 
-        // Compare labels (order independent)
         let mut self_labels = self.labels.clone();
         self_labels.sort_unstable();
         self_labels.dedup();
@@ -960,7 +945,6 @@ impl Issue {
             return false;
         }
 
-        // Compare dependencies (order independent)
         let mut self_deps = self.dependencies.clone();
         self_deps.sort_by(Self::cmp_dependency);
         let mut other_deps = other.dependencies.clone();
@@ -969,7 +953,6 @@ impl Issue {
             return false;
         }
 
-        // Compare comments (order independent)
         let mut self_comments = self.comments.clone();
         self_comments.sort_by(Self::cmp_comment);
         let mut other_comments = other.comments.clone();
@@ -1026,23 +1009,17 @@ impl Issue {
         };
 
         if days == 0 {
-            return false; // Keep forever if 0 (though usually means disabled/immediate, assume safe default)
+            return false;
         }
 
         let Some(deleted_at) = self.deleted_at else {
-            return false; // Keep if deletion time is unknown
+            return false;
         };
 
-        // Clamp days to a safe maximum to avoid panic in Duration::days().
-        // chrono::Duration can handle up to ~292,000 years, but we'll clamp to
-        // something extremely safe for an issue tracker (e.g., 1000 years).
         let max_safe_days = 365_u64 * 1000;
         let days_i64 = i64::try_from(days.min(max_safe_days)).unwrap_or(365_000);
         let Some(expiration_time) = deleted_at.checked_add_signed(chrono::Duration::days(days_i64))
         else {
-            // A positive retention period that extends beyond chrono's maximum
-            // representable timestamp has not expired at any representable
-            // cutoff, so retain the tombstone.
             return false;
         };
         as_of > expiration_time
@@ -1140,11 +1117,9 @@ mod tests {
 
     #[test]
     fn status_unknown_rejected_loudly() {
-        // bd-bqyb: unknown statuses fail at the boundary, never a default.
         assert!(serde_json::from_str::<Status>("\"custom_status\"").is_err());
         assert!(serde_json::from_str::<Status>("\"QaReview\"").is_err());
         assert!(Status::from_str("bogus").is_err());
-        // Known values still parse (case-insensitive).
         assert_eq!(
             serde_json::from_str::<Status>("\"Blocked\"").unwrap(),
             Status::Blocked
@@ -1246,16 +1221,14 @@ mod tests {
         };
 
         let json = serde_json::to_string(&issue).unwrap();
-        // Check key fields
         assert!(json.contains("\"id\":\"bd-123\""));
         assert!(json.contains("\"title\":\"Test Issue\""));
         assert!(json.contains("\"status\":\"open\""));
         assert!(json.contains("\"priority\":2"));
         assert!(json.contains("\"issue_type\":\"task\""));
-        // Check omission
         assert!(!json.contains("content_hash"));
         assert!(!json.contains("design"));
-        assert!(!json.contains("labels")); // empty vec skipped
+        assert!(!json.contains("labels"));
     }
 
     #[test]
@@ -1281,13 +1254,8 @@ mod tests {
         let e = EventType::StatusChanged;
         let json = serde_json::to_string(&e).unwrap();
         assert_eq!(json, "\"status_changed\"");
-        // Unknown event types fail loud (bd-bqyb).
         assert!(serde_json::from_str::<EventType>("\"foobar\"").is_err());
     }
-
-    // ========================================================================
-    // STATUS ENUM TESTS
-    // ========================================================================
 
     #[test]
     fn test_status_from_str_open() {
@@ -1383,10 +1351,6 @@ mod tests {
         assert_eq!(Status::Pinned.as_str(), "pinned");
     }
 
-    // ========================================================================
-    // PRIORITY TESTS
-    // ========================================================================
-
     #[test]
     fn test_priority_from_str_with_p_prefix() {
         assert_eq!(Priority::from_str("P0").unwrap(), Priority::CRITICAL);
@@ -1459,19 +1423,13 @@ mod tests {
         assert_eq!(p, Priority(2));
     }
 
-    // ========================================================================
-    // ISSUE TYPE TESTS
-    // ========================================================================
-
     #[test]
     fn test_issue_type_from_str_all_variants() {
-        // Only these 5 types are valid via FromStr for bd conformance
         assert_eq!(IssueType::from_str("task").unwrap(), IssueType::Task);
         assert_eq!(IssueType::from_str("bug").unwrap(), IssueType::Bug);
         assert_eq!(IssueType::from_str("feature").unwrap(), IssueType::Feature);
         assert_eq!(IssueType::from_str("epic").unwrap(), IssueType::Epic);
         assert_eq!(IssueType::from_str("chore").unwrap(), IssueType::Chore);
-        // docs and question are now accepted
         assert_eq!(IssueType::from_str("docs").unwrap(), IssueType::Docs);
         assert_eq!(
             IssueType::from_str("question").unwrap(),
@@ -1488,7 +1446,6 @@ mod tests {
 
     #[test]
     fn test_issue_type_from_str_custom_rejected() {
-        // bd-bqyb: unknown types fail loud, never a default.
         assert!(IssueType::from_str("custom_type").is_err());
         assert!(IssueType::from_str("Odd_Type").is_err());
     }
@@ -1519,10 +1476,6 @@ mod tests {
     fn test_issue_type_default() {
         assert_eq!(IssueType::default(), IssueType::Task);
     }
-
-    // ========================================================================
-    // DEPENDENCY TYPE TESTS
-    // ========================================================================
 
     #[test]
     fn test_dependency_type_from_str_all_variants() {
@@ -1628,10 +1581,6 @@ mod tests {
         assert_eq!(DependencyType::Supersedes.to_string(), "supersedes");
         assert_eq!(DependencyType::CausedBy.to_string(), "caused-by");
     }
-
-    // ========================================================================
-    // ISSUE CONTENT HASH TESTS
-    // ========================================================================
 
     fn create_test_issue() -> Issue {
         Issue {
@@ -1864,9 +1813,6 @@ mod tests {
 
     #[test]
     fn test_issue_sync_equals_detects_agent_context_changes() {
-        // beads_rust#297: an agent_context-only change is a real payload
-        // difference; if sync_equals ignored it, three-way merge / import
-        // de-dup would silently drop a peer's inherited-context update.
         let mut issue1 = create_test_issue();
         issue1.agent_context = Some(r#"{"constraints":["no network"]}"#.to_string());
 
@@ -1875,13 +1821,11 @@ mod tests {
         assert!(!issue1.sync_equals(&issue2));
         assert!(!issue2.sync_equals(&issue1));
 
-        // Setting vs. clearing the field is also a difference.
         let mut issue3 = issue1.clone();
         issue3.agent_context = None;
         assert!(!issue1.sync_equals(&issue3));
         assert!(!issue3.sync_equals(&issue1));
 
-        // Identical agent_context still compares equal.
         let issue4 = issue1.clone();
         assert!(issue1.sync_equals(&issue4));
     }
@@ -1901,10 +1845,6 @@ mod tests {
         assert!(issue1.sync_equals(&issue2));
         assert!(issue2.sync_equals(&issue1));
     }
-
-    // ========================================================================
-    // ISSUE TOMBSTONE TESTS
-    // ========================================================================
 
     #[test]
     fn test_is_expired_tombstone_not_tombstone() {
@@ -2005,10 +1945,6 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // EVENT TYPE TESTS
-    // ========================================================================
-
     #[test]
     fn test_event_type_as_str() {
         assert_eq!(EventType::Created.as_str(), "created");
@@ -2069,10 +2005,6 @@ mod tests {
         assert_eq!(result, EventType::StatusChanged);
     }
 
-    // ========================================================================
-    // COMMENT TESTS
-    // ========================================================================
-
     #[test]
     fn test_comment_serialization_roundtrip() {
         let comment = Comment {
@@ -2095,10 +2027,6 @@ mod tests {
         let comment: Comment = serde_json::from_str(json).unwrap();
         assert_eq!(comment.body, "comment body");
     }
-
-    // ========================================================================
-    // DEPENDENCY TESTS
-    // ========================================================================
 
     #[test]
     fn test_dependency_serialization_roundtrip() {
@@ -2127,10 +2055,6 @@ mod tests {
 
     #[test]
     fn dependency_empty_string_metadata_coerced_to_none() {
-        // Regression for issue #323: legacy JSONL serialized absent dependency
-        // metadata as `"metadata":""`, which is not valid JSON. Deserialization
-        // must tolerate it by coercing the degenerate empty string to `None`
-        // (lossless: the import path materializes `None` as `"{}"`).
         let json = r#"{
             "issue_id": "example-1",
             "depends_on_id": "example-0",
@@ -2145,8 +2069,6 @@ mod tests {
             dep.metadata, None,
             "empty-string metadata should become None"
         );
-        // thread_id intentionally has no coercion: only `metadata` is parsed as
-        // JSON downstream, so only it needs the empty-string tolerance.
     }
 
     #[test]
@@ -2158,19 +2080,13 @@ mod tests {
 
     #[test]
     fn dependency_real_metadata_preserved() {
-        // Genuine JSON metadata must round-trip unchanged (no data loss).
         let json = r#"{"issue_id":"a","depends_on_id":"b","type":"blocks","created_at":"2026-01-01T00:00:00Z","metadata":"{\"k\":\"v\"}"}"#;
         let dep: Dependency = serde_json::from_str(json).unwrap();
         assert_eq!(dep.metadata.as_deref(), Some(r#"{"k":"v"}"#));
-        // And it survives a serialize round-trip.
         let reser = serde_json::to_string(&dep).unwrap();
         let dep2: Dependency = serde_json::from_str(&reser).unwrap();
         assert_eq!(dep, dep2);
     }
-
-    // ========================================================================
-    // EVENT TESTS
-    // ========================================================================
 
     #[test]
     fn test_event_serialization_roundtrip() {
@@ -2193,10 +2109,6 @@ mod tests {
 
         assert_eq!(event, deserialized);
     }
-
-    // ========================================================================
-    // EPIC STATUS TESTS
-    // ========================================================================
 
     #[test]
     fn test_epic_status_serialization() {

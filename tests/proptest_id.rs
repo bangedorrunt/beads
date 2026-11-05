@@ -55,9 +55,6 @@ proptest! {
 
         info!("proptest_id_valid: output_id={id}");
 
-        // The default prefix in Rust is `br-` (the Go prototype used `bd-`);
-        // assert the structural property "prefix + dash + >=3 hash chars"
-        // instead of a stale literal.
         let default_prefix = IdConfig::default().prefix;
         let expected_start = format!("{default_prefix}-");
         prop_assert!(
@@ -103,7 +100,6 @@ proptest! {
     ) {
         init_test_logging();
 
-        // Only test when titles are actually different
         prop_assume!(title1 != title2);
 
         let now = Utc::now();
@@ -111,8 +107,6 @@ proptest! {
         let id1 = generate_without_registry(&title1, None, None, now);
         let id2 = generate_without_registry(&title2, None, None, now);
 
-        // Note: This is probabilistic - collisions are possible but rare
-        // We just verify IDs are generated (format validation already tested above)
         info!(
             "proptest_id_different: id1={id1} id2={id2} same={same}",
             same = id1 == id2
@@ -275,7 +269,6 @@ fn id_no_collisions_batch() {
     let now = Utc::now();
     let mut generated = HashSet::new();
 
-    // Generate 100 unique IDs with the collision checker
     for i in 0..100 {
         let title = format!("Test Issue Number {i}");
         let id = generator

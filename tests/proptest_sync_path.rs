@@ -31,19 +31,12 @@ fn fresh_workspace() -> (TempDir, PathBuf) {
     (temp, beads)
 }
 
-// PC-3 + NGI-3: any filename whose path component contains `.git` ANYWHERE
-// in the .beads/-rooted ancestor chain MUST be rejected. The invariant is
-// hard — even subdirectories whose names *contain* `.git` as a substring
-// are not necessarily git, but exact-match `.git` components are.
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 64,
         ..ProptestConfig::default()
     })]
 
-    // Property: any path of the form .beads/<segment>/.git/<inner> MUST
-    // be rejected. Tests with random alphanumeric segments ensure the
-    // rejection is structural, not a special-case for one filename.
     #[test]
     fn prop_validate_rejects_arbitrary_dotgit_descendants(
         outer in "[a-z0-9_]{1,8}",
@@ -59,10 +52,6 @@ proptest! {
         );
     }
 
-    // Property: a path explicitly constructed with `..` traversing outside
-    // .beads/ MUST be rejected, regardless of the suffix.
-    // We use existing `.beads/` and a sibling external dir to make the
-    // canonicalization meaningful.
     #[test]
     fn prop_validate_rejects_traversal_outside_beads(
         external_seg in "[a-z]{1,6}",
@@ -71,7 +60,6 @@ proptest! {
         let (temp, beads) = fresh_workspace();
         let external_dir = temp.path().join(format!("ext_{external_seg}"));
         std::fs::create_dir_all(&external_dir).expect("create external");
-        // Path that lexically is .beads/../ext_<seg>/<suffix>
         let escape = beads.join("..").join(format!("ext_{external_seg}")).join(&suffix);
 
         let result = validate_sync_path(&escape, &beads);
@@ -81,8 +69,6 @@ proptest! {
         );
     }
 
-    // Property: a freshly-written `.jsonl` file under .beads/ with any
-    // well-formed alphanumeric name MUST be accepted.
     #[test]
     fn prop_validate_accepts_canonical_jsonl(
         stem in "[a-z][a-z0-9_]{0,15}",
@@ -98,8 +84,6 @@ proptest! {
         );
     }
 
-    // Property: even with `allow_external=true`, the explicit-external
-    // validator MUST STILL reject any `.git/*` path. NGI-3 is hard.
     #[test]
     fn prop_validate_with_external_rejects_dotgit_unconditionally(
         outer in "[a-z]{1,6}",

@@ -27,20 +27,17 @@ pub fn draw(frame: &mut Frame, app: &TuiApp) {
     let area = frame.area();
     let [body, footer] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
 
-    // Help overlay replaces body (priority per UX map §1.7).
     if app.focus() == Focus::Help {
         draw_help(frame, body, app);
         draw_footer(frame, footer, app);
         return;
     }
 
-    // View overlays replace main body with their own layout but keep sidebar+search chrome.
     if app.is_view_focus() {
         draw_view(frame, body, footer, app);
         return;
     }
 
-    // Sidebar takes 34 cols from body when visible (UX map §5.1).
     let (main_body, sidebar_area_opt) = if app.show_shortcuts() {
         if body.width > 34 {
             let [main, sidebar] =
@@ -53,7 +50,6 @@ pub fn draw(frame: &mut Frame, app: &TuiApp) {
         (body, None)
     };
 
-    // Search input bar is an extra line at top of main_body when in Search.
     let (list_detail_area, search_area_opt) = if app.is_searching() {
         if main_body.height > 2 {
             let [search, rest] =
@@ -130,7 +126,6 @@ fn draw_view(
     app: &TuiApp,
 ) {
     let (title, hint) = view_title(app.focus());
-    // Split body: view area (Min) + pagination hint line (1) when list-like views.
     let [view_area, hint_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(body);
     match app.focus() {
@@ -142,7 +137,6 @@ fn draw_view(
         Focus::LabelDashboard => draw_label_dashboard(frame, view_area, app),
         _ => {}
     }
-    // Hint line under view
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(hint.to_string(), theme::dim()),
@@ -150,7 +144,6 @@ fn draw_view(
         ])),
         hint_area,
     );
-    // Footer still shows counts
     draw_footer(frame, footer, app);
     if app.focus() == Focus::QuitConfirm {
         draw_quit_confirm(frame, frame.area());
@@ -167,7 +160,6 @@ fn draw_board(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         return;
     }
     let visible = app.visible_indices();
-    // Mobile stacked mode when narrow (iphone): single column
     if area.width <= 80 {
         let mut lines = vec![Line::from(vec![
             Span::styled(" Board ", theme::primary()),
@@ -203,7 +195,6 @@ fn draw_board(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         );
         return;
     }
-    // Group by status
     let mut groups: std::collections::BTreeMap<&str, Vec<usize>> =
         std::collections::BTreeMap::new();
     for (vis_idx, &issue_idx) in visible.iter().enumerate() {
@@ -222,7 +213,6 @@ fn draw_board(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         Span::styled(" Board ", theme::primary()),
         Span::styled(cols.join(" │ "), theme::dim()),
     ]);
-    // Build columns side-by-side with simple vertical lists.
     let col_count = 4;
     let col_width = area.width / u16::try_from(col_count).unwrap_or(4);
     let constraints = vec![Constraint::Length(col_width); col_count];
@@ -267,7 +257,6 @@ fn draw_board(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             col_areas[ci],
         );
     }
-    // Overlay header at top? Instead render header in first col area top is already, we also render global header at very top via hint.
     let _ = header;
 }
 
@@ -313,7 +302,6 @@ fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
         Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
         list,
     );
-    // Right pane: ASCII edge list for selected
     if detail.width > 0
         && let Some(issue) = app.selected_issue()
     {
@@ -357,7 +345,6 @@ fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
 
 fn draw_actionable(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let visible = app.visible_indices();
-    // Actionable = open, unblocked, sorted by priority then id (simplified vs bv triage).
     let mut actionable: Vec<usize> = visible
         .iter()
         .copied()
@@ -468,7 +455,6 @@ fn draw_insights(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
 }
 
 fn draw_tree(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
-    // Simple parent-child tree via parent-child deps.
     let visible = app.visible_indices();
     let mut parent_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
@@ -504,7 +490,6 @@ fn draw_tree(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         roots.len().max(1),
         area.height.saturating_sub(2) as usize,
     );
-    // Render roots with one level of children inline.
     let mut flat: Vec<(String, usize)> = Vec::new();
     for rid in &roots {
         flat.push((rid.clone(), 0));
@@ -515,14 +500,12 @@ fn draw_tree(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         }
     }
     if flat.is_empty() && !visible.is_empty() {
-        // Fallback: show flat list when no parent-child edges.
         for &idx in &visible {
             flat.push((app.issues()[idx].id.clone(), 0));
         }
     }
     let sel = app.selected().min(flat.len().saturating_sub(1));
     let w = viewport_window(sel, flat.len(), area.height.saturating_sub(2) as usize);
-    // Use computed window, not earlier roots window, for consistency.
     let _ = window;
     for (i, (id, depth)) in flat.iter().enumerate().skip(w.0).take(w.1 - w.0) {
         let is_sel = i == sel;
@@ -628,7 +611,6 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
             }
             Event::End(TagEnd::Heading(_)) => {
                 if !cur_spans.is_empty() {
-                    // style heading bold cyan
                     let styled: Vec<Span> = cur_spans
                         .drain(..)
                         .map(|s| Span::styled(s.content.to_string(), theme::primary_fg()))
@@ -685,7 +667,6 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
                 let mut style = Style::new();
                 if in_code_block {
                     style = theme::status_open().bg(Color::Rgb(0x12, 0x12, 0x2a));
-                    // code block lines are kept as separate lines
                     for l in text.lines() {
                         lines.push(Line::from(Span::styled(format!("    {l}"), style)));
                     }
@@ -700,7 +681,6 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
                 if heading_level > 0 {
                     style = theme::primary_fg();
                 }
-                // inline split by soft breaks already handled; just push
                 cur_spans.push(Span::styled(text.to_string(), style));
             }
             Event::Code(text) => {
@@ -720,7 +700,6 @@ fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
         lines.push(Line::from(cur_spans));
     }
     if width > 0 {
-        // crude wrap: split long lines
         let mut wrapped: Vec<Line> = Vec::new();
         for line in lines {
             let s: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();
@@ -765,7 +744,6 @@ fn viewport_window(selected: usize, total: usize, viewport: usize) -> (usize, us
 }
 
 fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
-    // Responsive header per bv thresholds (ultrawide>180, wide>140, split>100, mobile<=60)
     let header_text = if area.width <= 40 {
         "  ID       TITLE"
     } else if area.width <= 60 {
@@ -786,7 +764,7 @@ fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let header = Line::from(header_spans);
     let visible = app.visible_indices();
     let total = visible.len();
-    let viewport = usize::from(area.height.saturating_sub(1)); // minus header
+    let viewport = usize::from(area.height.saturating_sub(1));
     let (start, end) = viewport_window(app.selected(), total, viewport.max(1));
     let page = if viewport == 0 {
         1
@@ -798,7 +776,6 @@ fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     } else {
         total.div_ceil(viewport)
     };
-    // pagination line appended after rows (as footer of list pane)
     let page_line = Line::from(Span::styled(
         format!(
             " Page {page}/{total_pages} ({}-{} of {total}) ",
@@ -824,7 +801,6 @@ fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         } else {
             String::new()
         };
-        // Mobile: collapse to ID + title only for iphone readability
         let row_spans = if area.width <= 40 {
             vec![
                 Span::styled(selector.to_string(), style),
@@ -871,7 +847,6 @@ fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             theme::dim(),
         )));
     }
-    // If we have room, show pagination; otherwise it will be clipped but counts are in footer too.
     if rows.len() < usize::from(area.height) {
         rows.push(Line::from(""));
         rows.push(page_line);
@@ -989,7 +964,6 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         lines.push(Line::from(Span::styled("Acceptance:", theme::dim())));
         lines.push(Line::from(Span::styled(format!("  {ac}"), theme::row())));
     }
-    // Dependencies
     if !issue.dependencies.is_empty() {
         lines.push(Line::from(Span::styled("Depends on:", theme::dim())));
         for dep in issue.dependencies.iter().take(8) {
@@ -1005,7 +979,6 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             )));
         }
     }
-    // Comments first (visible without scrolling past long description)
     if !issue.comments.is_empty() {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
@@ -1020,9 +993,7 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
                 Span::styled(format!("  {}: ", c.author), theme::status_warning()),
                 Span::styled(c.created_at.format("%m/%d").to_string(), theme::dim()),
             ]));
-            // render comment body with markdown
             for l in markdown_lines(&c.body, usize::from(area.width.saturating_sub(6))) {
-                // indent comment body
                 let indented: Vec<Span> =
                     std::iter::once(Span::styled("    ".to_string(), theme::dim()))
                         .chain(l.spans)
@@ -1040,7 +1011,6 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         lines.push(Line::from(Span::styled("Comments: (none)", theme::dim())));
     }
 
-    // Triage insight (from analysis cache)
     if let Some(rec) = app.triage_for(&issue.id) {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -1067,7 +1037,6 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             )));
         }
     }
-    // Graph analysis for this bead
     if let Some(analysis) = app.analysis() {
         let mut graph_bits: Vec<String> = Vec::new();
         if let Some(pr) = analysis.pagerank.as_ref().and_then(|m| m.get(&issue.id)) {
@@ -1107,7 +1076,6 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         }
     }
 
-    // Description with markdown + syntax highlighting
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Description:",
@@ -1143,11 +1111,9 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         }
     }
 
-    // Apply scroll windowing: slice lines by detail_scroll and area height.
-    let viewport = usize::from(area.height.saturating_sub(2)); // minus border
+    let viewport = usize::from(area.height.saturating_sub(2));
     let total = lines.len();
     let start = app.detail_scroll().min(total.saturating_sub(viewport));
-    // If End was pressed (MAX/2), clamp to bottom.
     let start = start.min(total.saturating_sub(viewport));
     let end = (start + viewport).min(total);
     let visible: Vec<Line> = lines.into_iter().skip(start).take(end - start).collect();
@@ -1215,7 +1181,7 @@ fn draw_shortcuts_sidebar(frame: &mut Frame, area: ratatui::layout::Rect, app: &
         _ => "list",
     });
     let scroll = app.shortcuts_scroll();
-    let visible_rows = area.height.saturating_sub(2) as usize; // minus border
+    let visible_rows = area.height.saturating_sub(2) as usize;
     let total = bindings.len();
     let start = scroll.min(total.saturating_sub(visible_rows));
     let end = (start + visible_rows).min(total);
@@ -1247,7 +1213,6 @@ fn draw_shortcuts_sidebar(frame: &mut Frame, area: ratatui::layout::Rect, app: &
 }
 
 fn draw_help(frame: &mut Frame, area: ratatui::layout::Rect, _app: &TuiApp) {
-    // Multi-panel help per UX map §5.2, simplified to two-column docs.
     let popup = centered_rect(
         area,
         area.width.saturating_sub(4).min(80),
@@ -1314,7 +1279,6 @@ fn draw_help(frame: &mut Frame, area: ratatui::layout::Rect, _app: &TuiApp) {
 }
 
 fn draw_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {
-    // Centered rounded box over everything (bv modal rule §1.7).
     let popup = centered_rect(area, 40, 5);
     frame.render_widget(Clear, popup);
     frame.render_widget(
@@ -1339,7 +1303,6 @@ fn draw_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {
 }
 
 fn draw_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
-    // Status message replaces the whole bar when set (bv §1.6).
     if let Some(message) = app.status_message() {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -1351,7 +1314,6 @@ fn draw_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         return;
     }
 
-    // Context hints vary by focus (UX map §3.9, simplified).
     let hint = match app.focus() {
         Focus::List => {
             if app.active_filter_query().is_some() {

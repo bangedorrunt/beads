@@ -43,30 +43,22 @@ fn assert_doctor_json_has_healthy_checks(json: &Value) {
     );
 }
 
-// =============================================================================
-// Init Scenarios
-// =============================================================================
-
 #[test]
 fn scenario_init_new_workspace() {
     let mut ws = TestWorkspace::new("e2e_workspace", "init_new");
 
-    // Initialize a fresh workspace
     let init = ws.run_br(["init"], "init");
     init.assert_success();
 
-    // Verify .beads directory was created
     let beads_dir = ws.root.join(".beads");
     assert!(
         beads_dir.exists(),
         ".beads directory should exist after init"
     );
 
-    // Verify database was created
     let db_path = beads_dir.join("beads.db");
     assert!(db_path.exists(), "beads.db should exist after init");
 
-    // Verify init output contains expected text
     assert!(
         init.stdout.contains("Initialized") || init.stdout.contains("initialized"),
         "init should confirm initialization: {}",
@@ -80,15 +72,12 @@ fn scenario_init_new_workspace() {
 fn scenario_init_reinit_rejected_without_force() {
     let mut ws = TestWorkspace::new("e2e_workspace", "init_reinit");
 
-    // First init
     let init1 = ws.run_br(["init"], "init_first");
     init1.assert_success();
 
-    // Create an issue to have some data
     let create = ws.run_br(["create", "Test issue"], "create");
     create.assert_success();
 
-    // Second init without --force should fail (already initialized)
     let init2 = ws.run_br(["init"], "init_second");
     init2.assert_failure();
     assert!(
@@ -99,7 +88,6 @@ fn scenario_init_reinit_rejected_without_force() {
         init2.stderr
     );
 
-    // Data should be preserved
     let list = ws.run_br(["list", "--json"], "list_after_reinit");
     list.assert_success();
 
@@ -116,7 +104,6 @@ fn scenario_init_reinit_rejected_without_force() {
 fn scenario_init_json_output() {
     let mut ws = TestWorkspace::new("e2e_workspace", "init_json");
 
-    // Init with JSON output
     let init = ws.run_br(["init", "--json"], "init_json");
     init.assert_success();
 
@@ -132,23 +119,16 @@ fn scenario_init_json_output() {
     ws.finish(true);
 }
 
-// =============================================================================
-// Config Scenarios
-// =============================================================================
-
 #[test]
 fn scenario_config_list() {
     let mut ws = TestWorkspace::new("e2e_workspace", "config_list");
 
-    // Init first
     let init = ws.run_br(["init"], "init");
     init.assert_success();
 
-    // List configuration
     let list = ws.run_br(["config", "list"], "config_list");
     list.assert_success();
 
-    // Should contain configuration output
     assert!(!list.stdout.is_empty(), "config list should produce output");
 
     ws.finish(true);
@@ -178,11 +158,9 @@ fn scenario_config_set_and_get() {
     let init = ws.run_br(["init"], "init");
     init.assert_success();
 
-    // Set a config value
     let set = ws.run_br(["config", "set", "issue_prefix=test_prefix"], "config_set");
     set.assert_success();
 
-    // Get the value back
     let get = ws.run_br(["config", "get", "issue_prefix"], "config_get");
     get.assert_success();
     assert!(
@@ -201,11 +179,9 @@ fn scenario_config_get_json() {
     let init = ws.run_br(["init"], "init");
     init.assert_success();
 
-    // Set a value first
     let set = ws.run_br(["config", "set", "json=true"], "config_set");
     set.assert_success();
 
-    // Get with JSON output
     let get = ws.run_br(["config", "get", "json", "--json"], "config_get_json");
     get.assert_success();
 
@@ -223,11 +199,9 @@ fn scenario_config_path() {
     let init = ws.run_br(["init"], "init");
     init.assert_success();
 
-    // Get config file path
     let path = ws.run_br(["config", "path"], "config_path");
     path.assert_success();
 
-    // Should contain a path
     let stdout = &path.stdout;
     assert!(
         stdout.contains("beads") || stdout.contains('.'),
@@ -237,10 +211,6 @@ fn scenario_config_path() {
     ws.finish(true);
 }
 
-// =============================================================================
-// Doctor Scenarios
-// =============================================================================
-
 #[test]
 fn scenario_doctor_healthy_workspace() {
     let mut ws = TestWorkspace::new("e2e_workspace", "doctor_healthy");
@@ -248,7 +218,6 @@ fn scenario_doctor_healthy_workspace() {
     let init = ws.run_br(["init"], "init");
     init.assert_success();
 
-    // Doctor on healthy workspace should pass
     let doctor = ws.run_br(["doctor"], "doctor");
     doctor.assert_success();
     let stdout = doctor.stdout.to_ascii_lowercase();
@@ -280,11 +249,8 @@ fn scenario_doctor_json_output() {
 #[test]
 fn scenario_doctor_no_workspace() {
     let mut ws = TestWorkspace::new("e2e_workspace", "doctor_no_workspace");
-    // Do NOT init
 
     let doctor = ws.run_br(["doctor"], "doctor_no_init");
-    // Should fail or warn about missing workspace
-    // (behavior may vary - just verify it doesn't crash)
     assert!(
         !doctor.success || doctor.stderr.contains("not initialized"),
         "doctor should indicate missing workspace"
@@ -292,10 +258,6 @@ fn scenario_doctor_no_workspace() {
 
     ws.finish(true);
 }
-
-// =============================================================================
-// Info Scenarios
-// =============================================================================
 
 #[test]
 fn scenario_info_shows_paths() {
@@ -307,7 +269,6 @@ fn scenario_info_shows_paths() {
     let info = ws.run_br(["info"], "info");
     info.assert_success();
 
-    // Should contain workspace path info
     assert!(!info.stdout.is_empty(), "info should produce output");
 
     ws.finish(true);
@@ -330,10 +291,6 @@ fn scenario_info_json_output() {
     ws.finish(true);
 }
 
-// =============================================================================
-// Where Scenarios
-// =============================================================================
-
 #[test]
 fn scenario_where_shows_workspace_path() {
     let mut ws = TestWorkspace::new("e2e_workspace", "where_path");
@@ -344,7 +301,6 @@ fn scenario_where_shows_workspace_path() {
     let where_cmd = ws.run_br(["where"], "where");
     where_cmd.assert_success();
 
-    // Should show a path to the workspace
     let stdout = &where_cmd.stdout;
     assert!(
         stdout.contains('/') || stdout.contains('\\'),
@@ -357,10 +313,8 @@ fn scenario_where_shows_workspace_path() {
 #[test]
 fn scenario_where_no_workspace() {
     let mut ws = TestWorkspace::new("e2e_workspace", "where_no_workspace");
-    // Do NOT init
 
     let where_cmd = ws.run_br(["where"], "where_no_init");
-    // Should fail or indicate no workspace
     assert!(
         !where_cmd.success || where_cmd.stderr.contains("not"),
         "where should indicate missing workspace"
@@ -369,19 +323,13 @@ fn scenario_where_no_workspace() {
     ws.finish(true);
 }
 
-// =============================================================================
-// Version Scenarios
-// =============================================================================
-
 #[test]
 fn scenario_version_text() {
     let mut ws = TestWorkspace::new("e2e_workspace", "version_text");
-    // Version doesn't require init
 
     let version = ws.run_br(["version"], "version");
     version.assert_success();
 
-    // Should contain version info
     assert!(
         version.stdout.contains("br") || version.stdout.contains("version"),
         "version should show version info: {}",
@@ -401,7 +349,6 @@ fn scenario_version_json() {
     let payload = extract_json_payload(&version.stdout);
     let json: Value = serde_json::from_str(&payload).expect("parse version json");
 
-    // Check expected fields
     assert!(
         json.get("version").is_some(),
         "version JSON should have 'version' field"
@@ -413,7 +360,6 @@ fn scenario_version_json() {
 #[test]
 fn scenario_version_no_workspace_required() {
     let mut ws = TestWorkspace::new("e2e_workspace", "version_no_workspace");
-    // Do NOT init - version should still work
 
     let version = ws.run_br(["version"], "version");
     version.assert_success();
@@ -426,15 +372,10 @@ fn scenario_version_no_workspace_required() {
     ws.finish(true);
 }
 
-// =============================================================================
-// Cross-command Scenarios
-// =============================================================================
-
 #[test]
 fn scenario_workspace_lifecycle() {
     let mut ws = TestWorkspace::new("e2e_workspace", "lifecycle");
 
-    // 1. Check version (no workspace needed)
     let version = ws.run_br(["version", "--json"], "version");
     version.assert_success();
     let version_json = parse_json_stdout(&version.stdout, "version");
@@ -445,11 +386,9 @@ fn scenario_workspace_lifecycle() {
         "version JSON should contain a non-empty version: {version_json:?}"
     );
 
-    // 2. Initialize workspace
     let init = ws.run_br(["init"], "init");
     init.assert_success();
 
-    // 3. Check workspace location
     let where_cmd = ws.run_br(["where"], "where");
     where_cmd.assert_success();
     assert!(
@@ -458,7 +397,6 @@ fn scenario_workspace_lifecycle() {
         where_cmd.stdout
     );
 
-    // 4. Get workspace info
     let info = ws.run_br(["info", "--json"], "info");
     info.assert_success();
     let info_json = parse_json_stdout(&info.stdout, "info");
@@ -470,7 +408,6 @@ fn scenario_workspace_lifecycle() {
     );
     assert_eq!(info_json["mode"].as_str(), Some("direct"));
 
-    // 5. Check configuration
     let config = ws.run_br(["config", "list", "--json"], "config");
     config.assert_success();
     let config_json = parse_json_stdout(&config.stdout, "config list");
@@ -479,13 +416,11 @@ fn scenario_workspace_lifecycle() {
         "config list JSON should be an object: {config_json:?}"
     );
 
-    // 6. Run doctor
     let doctor = ws.run_br(["doctor", "--json"], "doctor");
     doctor.assert_success();
     let doctor_json = parse_json_stdout(&doctor.stdout, "doctor");
     assert_doctor_json_has_healthy_checks(&doctor_json);
 
-    // 7. Re-init without --force should be rejected
     let reinit = ws.run_br(["init"], "reinit");
     reinit.assert_failure();
     assert!(
@@ -496,7 +431,6 @@ fn scenario_workspace_lifecycle() {
         reinit.stderr
     );
 
-    // 8. Doctor still passes
     let doctor2 = ws.run_br(["doctor"], "doctor_after_reinit");
     doctor2.assert_success();
     let doctor2_stdout = doctor2.stdout.to_ascii_lowercase();
@@ -564,17 +498,6 @@ fn scenario_long_lived_single_workspace_stress_suite() {
         .event("doctor_after_stress")
         .and_then(|event| event.command_result.as_ref())
         .expect("final doctor event");
-    // Per the post-#292 doctor contract (commits 96c3fad2, 1c3c4fe1):
-    // any non-OK check — WARN or ERROR — now flips top-level `ok` to
-    // false and exits 1. The stress harness legitimately produces a
-    // benign WARN finding (the test runner sets
-    // `RUST_LOG=beads=debug`, which trips `rust_log`). Since #378,
-    // `sync --flush-only` also refreshes the merge anchor
-    // `beads.base.jsonl` and `base_jsonl.missing_post_flush` no longer
-    // warns for verifiably in-sync workspaces. None of
-    // this does not degrade the workspace's semantic health, so we assert on
-    // the JSON payload's `workspace_health`/`reliability_audit.health`
-    // rather than the now-broader-than-necessary exit-code contract.
     let doctor_json = parse_json_stdout(&final_doctor.stdout, "doctor_after_stress");
     let workspace_health = doctor_json
         .get("workspace_health")
@@ -606,8 +529,6 @@ fn scenario_long_lived_single_workspace_stress_suite() {
          exit={} stdout={} stderr={}",
         final_doctor.exit_code, final_doctor.stdout, final_doctor.stderr
     );
-    // Belt-and-suspenders: assert no `error`-level check leaks through
-    // (WARN is acceptable for the benign findings catalogued above).
     let checks = doctor_json
         .get("checks")
         .and_then(Value::as_array)

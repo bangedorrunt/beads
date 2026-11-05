@@ -238,12 +238,6 @@ fn resolve_target(
     let configured = config::resolve_paths(&beads_dir, cli.db.as_ref())?;
     let canonical_beads =
         crate::sync::path::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
-    // Linked-worktree diagnostics (#429 interaction): state discovery
-    // resolves a linked worktree's `.beads` to the primary checkout, but the
-    // effective-config probes must run in the worktree that physically holds
-    // the diagnosed JSONL — or its `extensions.worktreeConfig` values
-    // (core.autocrlf, core.attributesFile, ...) are invisible and the global
-    // HOME config wins.
     let mut same_repo_worktree = false;
     let mut requested = args.jsonl.clone();
     if requested.is_none()
@@ -380,8 +374,6 @@ fn invocation_worktree_beads_dir(canonical_beads: &Path) -> Option<PathBuf> {
             if !same && is_linked_worktree_of(dir, canonical_beads) {
                 return Some(candidate);
             }
-            // Reached the resolved workspace first, or this ancestor is not
-            // a linked worktree of the same repository.
             return None;
         }
         cursor = dir.parent();
@@ -416,8 +408,6 @@ fn is_linked_worktree_of(worktree_root: &Path, canonical_beads: &Path) -> bool {
             None => return false,
         }
     };
-    // The gitdir's commondir file points at the shared `<primary>/.git`;
-    // its parent is the primary working tree.
     let primary_root = fs::read_to_string(gitdir_path.join("commondir"))
         .ok()
         .and_then(|pointer| {
@@ -431,8 +421,6 @@ fn is_linked_worktree_of(worktree_root: &Path, canonical_beads: &Path) -> bool {
             } else {
                 gitdir_path.join(raw)
             };
-            // Normalize BEFORE parent(): "../.." must resolve against the
-            // gitdir, not lose a level to a literal-parent parent().
             lexical_normalize(&joined).parent().map(Path::to_path_buf)
         })
         .or_else(|| {
@@ -443,9 +431,6 @@ fn is_linked_worktree_of(worktree_root: &Path, canonical_beads: &Path) -> bool {
     let Some(primary_root) = primary_root else {
         return false;
     };
-    // commondir pointers are relative ("../.."), so the derived root carries
-    // literal ParentDir components; normalize them before path comparison
-    // (the shared canonicalize helper rejects unnormalized input).
     let primary_root = lexical_normalize(&primary_root);
     let primary_beads = primary_root.join(".beads");
     let resolved = crate::sync::path::canonicalize(&primary_beads);
@@ -908,8 +893,6 @@ fn parse_object_id(bytes: &[u8], object_format: GitObjectFormat) -> Option<Strin
     std::str::from_utf8(bytes).ok().map(str::to_ascii_lowercase)
 }
 
-// Both arms are load-bearing: the hash must match the repo's own object
-// format for git-blob parity, so sha1 stays while sha1 repos exist.
 fn hash_snapshot_as_git_blob(
     source: &JsonlSourceSnapshot,
     object_format: GitObjectFormat,
@@ -1062,9 +1045,6 @@ fn read_ignored_state(
     target: &ResolvedGitTarget,
     deadline: Instant,
 ) -> std::result::Result<bool, CollectionFailure> {
-    // `git check-ignore` rejects `GIT_LITERAL_PATHSPECS=1`, even for ordinary
-    // filenames. `ls-files` provides the same ignored/untracked distinction
-    // while retaining the probe runner's mandatory literal-path hardening.
     let mut args = os_args(&[
         "ls-files",
         "--others",
@@ -1092,10 +1072,6 @@ fn parse_single_ignored_match(output: &[u8]) -> Option<bool> {
         return Some(false);
     }
     let records = split_nul_records(output)?;
-    // The command supplies exactly one literal pathspec, so one record is the
-    // requested leaf. Deliberately validate cardinality rather than comparing
-    // Git's platform-specific output encoding with `OsStr` (notably WTF-16 on
-    // Windows).
     if records.len() != 1 || records[0].is_empty() {
         return None;
     }
@@ -1222,8 +1198,6 @@ fn read_core_autocrlf(
         Some(1) => Ok(false),
         Some(0) => match trim_ascii(&output.stdout).to_ascii_lowercase().as_slice() {
             b"false" | b"no" | b"off" | b"0" => Ok(false),
-            // "true", "yes", "on", "1", "input", and any unrecognized value
-            // all imply checkout/commit transformation.
             _ => Ok(true),
         },
         _ => Err(CollectionFailure::Semantic("probe_failed")),
@@ -1611,11 +1585,6 @@ fn run_bounded_capture(
     command: &mut Command,
     deadline: Instant,
 ) -> std::result::Result<ProbeOutput, ProbeFailure> {
-    // Anonymous regular files avoid pipe-EOF waits when the trusted direct
-    // executable exits after a descendant inherits its output descriptors.
-    // We still bound retained bytes, poll on-disk lengths, and kill/reap the
-    // direct child on every observed timeout or runner error. Reaping is
-    // mandatory cleanup and may extend beyond the probe execution deadline.
     if Instant::now() >= deadline {
         return Err(ProbeFailure::TimedOut);
     }
@@ -2096,13 +2065,6 @@ mod tests {
             !marker_text.contains('\''),
             "temporary test path must not require shell quote escaping"
         );
-        // The descendant holds its inherited descriptors far past the probe
-        // deadline, so "the capture waited for it" cannot be confused with "the
-        // machine was busy". The old fixture slept 0.8s against a 500ms bound,
-        // which a loaded full-suite run (147 targets at once) can cross on
-        // spawn overhead alone; it flaked exactly that way. A regression back to
-        // pipes now blocks past the 3s deadline (TimedOut, an explicit error) or
-        // returns at >= 5s, both unmistakably red against a 2s bound.
         let script_body = format!(
             "#!/bin/sh\n(sleep 0.2; printf 'done' > '{marker_text}'; sleep 5) &\nprintf 'direct child done'\nexit 0\n"
         );
@@ -2124,9 +2086,6 @@ mod tests {
             "capture waited for the descendant's inherited descriptors: {elapsed:?}"
         );
 
-        // The marker lands 0.2s into the descendant, long before its 5s hold
-        // ends: waiting for it proves the fixture actually ran and kept the
-        // descriptors open, so a fast return above is not vacuous.
         let marker_deadline = Instant::now() + Duration::from_secs(2);
         while !marker.is_file() && Instant::now() < marker_deadline {
             std::thread::sleep(Duration::from_millis(20));
@@ -2148,9 +2107,6 @@ mod tests {
         let file_name = OsString::from_vec(b"issues-\xff.jsonl".to_vec());
         let path = beads_dir.join(&file_name);
         if let Err(error) = fs::write(&path, b"{\"id\":\"bd-x\"}\n") {
-            // APFS rejects non-UTF-8 filenames outright (errno 92,
-            // "Illegal byte sequence"); the fixture needs a
-            // raw-bytes filesystem such as Linux ext4 to construct.
             if error.raw_os_error() == Some(92) {
                 eprintln!(
                     "[skip] filesystem rejects non-UTF-8 filenames ({error}); \

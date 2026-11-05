@@ -220,7 +220,6 @@ pub fn format_type_badge_colored(issue_type: &IssueType, use_color: bool) -> Str
 /// 3. Falls back to 80
 #[must_use]
 pub fn terminal_width() -> usize {
-    // Try COLUMNS first
     if let Ok(columns) = std::env::var("COLUMNS")
         && let Ok(value) = columns.trim().parse::<usize>()
         && value > 0
@@ -228,7 +227,6 @@ pub fn terminal_width() -> usize {
         return value;
     }
 
-    // Try crossterm for actual terminal size
     if let Ok((cols, _)) = crossterm::terminal::size()
         && cols > 0
     {
@@ -295,12 +293,10 @@ fn visible_len(text: &str) -> usize {
 #[must_use]
 pub fn format_issue_line_with(issue: &Issue, options: TextFormatOptions) -> String {
     let status_icon_plain = format_status_icon(&issue.status);
-    // Account for the bullet in priority badge: [● P2]
     let priority_badge_plain = format!("[● {}]", format_priority(&issue.priority));
     let type_badge_plain = format_type_badge(&issue.issue_type);
     let issue_id = sanitize_terminal_inline(&issue.id);
 
-    // Add 3 for " - " separator between type badge and title
     let prefix_len = visible_len(status_icon_plain)
         + 1
         + visible_len(issue_id.as_ref())
@@ -308,7 +304,7 @@ pub fn format_issue_line_with(issue: &Issue, options: TextFormatOptions) -> Stri
         + visible_len(&priority_badge_plain)
         + 1
         + visible_len(&type_badge_plain)
-        + 3; // " - " separator
+        + 3;
 
     let sanitized_title = sanitize_terminal_inline(&issue.title);
     let title = if options.wrap {
@@ -510,8 +506,6 @@ mod tests {
 
     #[test]
     fn status_and_type_labels_escape_terminal_controls() {
-        // bd-bqyb: statuses/types parse strictly, so control characters can
-        // no longer enter through these fields — the labels still sanitize.
         let status = format_status_label(&Status::Blocked, false);
         let issue_type = format_type_badge(&IssueType::Bug);
 
@@ -523,7 +517,6 @@ mod tests {
     fn test_format_issue_line_open() {
         let issue = make_test_issue();
         let line = format_issue_line(&issue);
-        // Format matches bd: {icon} {id} [● {priority}] [{type}] - {title}
         assert_eq!(line, "○ bd-test [● P2] [task] - Test title");
     }
 

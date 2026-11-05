@@ -109,10 +109,6 @@ pub const ROBOT_DOCS_SCHEMA: &str = "br.doctor.robot_docs.v1";
 pub const UNDO_SCHEMA: &str = "br.doctor.undo.v1";
 pub const EXPLAIN_SCHEMA: &str = "br.doctor.explain.v1";
 
-// =============================================================================
-// capabilities
-// =============================================================================
-
 /// Top-level envelope for `br doctor capabilities`. Wraps the inner
 /// [`DoctorCapabilities`] struct with a stable
 /// `schema_version = "br.doctor.capabilities.v1"`.
@@ -139,17 +135,10 @@ pub fn execute_capabilities(args: &DoctorCapabilitiesArgs, _ctx: &OutputContext)
         inner: &caps,
     };
 
-    // The optional --command filter is reserved for future fixer/detector
-    // expansion (capabilities currently has empty fixers/detectors lists,
-    // so filtering is a no-op for now). We honor the flag silently to
-    // avoid breaking pinned agent invocations later.
     let _filter = args.command.as_deref();
 
     match args.format {
         OutputFormatBasic::Json | OutputFormatBasic::Toon => {
-            // The capabilities subcommand is a pure machine-readable
-            // surface — emit pretty JSON to stdout regardless of the
-            // outer OutputContext (which may be Quiet for CI runs).
             let json = serde_json::to_string_pretty(&envelope).map_err(BeadsError::Json)?;
             println!("{json}");
         }
@@ -187,10 +176,6 @@ fn render_capabilities_text(env: &CapabilitiesEnvelope<'_>) {
     println!();
     println!("Use `br doctor capabilities --format json` for the machine envelope.");
 }
-
-// =============================================================================
-// robot-docs
-// =============================================================================
 
 const ROBOT_HANDBOOK_BODY: &str = r#"# br doctor — Agent Handbook
 
@@ -349,10 +334,6 @@ pub const fn robot_handbook_body() -> &'static str {
     ROBOT_HANDBOOK_BODY
 }
 
-// =============================================================================
-// health
-// =============================================================================
-
 /// Output of `br doctor health`. Shape pinned by [`HEALTH_SCHEMA`].
 #[derive(Debug, Clone, Serialize)]
 pub struct HealthOutput {
@@ -426,13 +407,6 @@ fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
     let db_present = db.is_file();
     let jsonl_present = beads.join("issues.jsonl").is_file() || beads.join("beads.jsonl").is_file();
 
-    // Engine-free schema-version tripwire (#464): a database file can exist yet
-    // carry a schema version this binary refuses to mutate ("Schema version
-    // mismatch: expected N, found M"). Read the checkpointed header version
-    // (no engine open, well under the 200 ms budget) and treat any present,
-    // non-zero value other than CURRENT_SCHEMA_VERSION as an incompatibility so
-    // `health` no longer reports "healthy" on a tracker that rejects every
-    // write. A value of 0 (no user_version set) stays indeterminate.
     let schema_expected = CURRENT_SCHEMA_VERSION;
     let schema_user_version = if db_present {
         database_header_user_version(&db)
@@ -445,7 +419,6 @@ fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
     );
     let schema_compatible = !schema_incompatible;
 
-    // MERGE_* artifacts indicate a torn previous merge.
     let merge_artifacts_present = match fs::read_dir(&beads) {
         Ok(it) => it.flatten().any(|e| {
             let n = e.file_name();
@@ -455,7 +428,6 @@ fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
         Err(_) => false,
     };
 
-    // Orphan locks: present-but-empty, owner unknown.
     let orphan_write_lock = beads.join(".write.lock").exists();
     let orphan_sync_lock = beads.join(".sync.lock").exists();
 
@@ -465,8 +437,6 @@ fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
     let (status, exit_code) = if findings_present {
         ("findings_present", DoctorExitCode::FindingsPresent.as_i32())
     } else {
-        // Lock files alone are advisory only; keep status healthy but
-        // tag the line below so agents can see them.
         ("healthy", DoctorExitCode::Healthy.as_i32())
     };
 
@@ -524,10 +494,6 @@ fn emit_health(args: &DoctorHealthArgs, payload: &HealthOutput) {
     }
 }
 
-// =============================================================================
-// ls
-// =============================================================================
-
 /// One row of `br doctor ls`.
 #[derive(Debug, Clone, Serialize)]
 pub struct RunListRow {
@@ -562,8 +528,6 @@ pub fn execute_ls(args: &DoctorLsArgs, repo_root: &Path) -> Result<()> {
                 continue;
             }
             let run_id = entry.file_name().to_string_lossy().into_owned();
-            // Skip top-level non-run housekeeping (e.g. symlinks named
-            // `latest` end up under the parent of `runs_dir`, not inside).
             let actions = entry.path().join("actions.jsonl");
             let action_count = count_lines(&actions);
             let report = entry.path().join("report.json");
@@ -640,10 +604,6 @@ fn read_exit_code_from_report(path: &Path) -> Option<i32> {
         .and_then(serde_json::Value::as_i64)
         .and_then(|n| i32::try_from(n).ok())
 }
-
-// =============================================================================
-// undo
-// =============================================================================
 
 /// JSONL line shape on disk in `.doctor/runs/<id>/actions.jsonl`. We
 /// only need a subset of fields for replay.
@@ -732,10 +692,6 @@ pub fn execute_undo(args: &DoctorUndoArgs, repo_root: &Path) -> Result<()> {
     let (actions, parse_failures) = read_actions_reverse(&actions_path)?;
     let backups_dir = run_dir_path.join("backups");
 
-    // Build a fresh "undo" run-dir so the restore writes are
-    // themselves audited via mutate(). If we can't create one (e.g.,
-    // dry-run on a read-only tree), fall back to a synthetic ctx that
-    // refuses real writes.
     let mut steps = parse_failures;
     let mut restored = 0;
     let mut skipped = 0;
@@ -753,12 +709,6 @@ pub fn execute_undo(args: &DoctorUndoArgs, repo_root: &Path) -> Result<()> {
             .append(true)
             .open(&undo.actions_file)
             .map_err(BeadsError::Io)?;
-        // Undo writes target whatever paths the original repair touched.
-        // The forward `--repair` run extended write_scopes (e.g. to a
-        // root `.gitignore` for the `doctor.gitignore_repair` fixer); the
-        // undo must permit the same paths or `mutate()` will refuse the
-        // restore with `outside write_scopes`. Paths from the action log
-        // are still revalidated before being added here.
         let mut capabilities = MutateCapabilities::for_repo(repo_root);
         for record in &actions {
             if let Ok(target) = undo_action_target(repo_root, &record.path)
@@ -798,7 +748,6 @@ pub fn execute_undo(args: &DoctorUndoArgs, repo_root: &Path) -> Result<()> {
             steps.push(step);
         }
     } else {
-        // Dry-run: report the plan but never call mutate().
         for record in actions {
             let step = plan_one(repo_root, &run_dir_path, &backups_dir, &record);
             update_counts(&step, &mut restored, &mut skipped, &mut failed);
@@ -980,25 +929,15 @@ fn restore_one(
             };
         }
     };
-    // Mirror the writer-side layout: strip the leading separator from
-    // absolute action paths so PathBuf::join cannot replace backups_dir.
     let backup_rel = std::path::Path::new(&record.path)
         .strip_prefix("/")
         .unwrap_or_else(|_| std::path::Path::new(&record.path));
     let backup = backups_dir.join(backup_rel);
 
-    // For Rename ops we recorded an empty after-hash; the recovery is
-    // to move the renamed file back from its destination.
     if record.op == "rename" {
         return restore_rename(ctx, repo_root, run_dir_path, record, target, &backup);
     }
 
-    // For DbExec we replay the JSON snapshot back into the live DB
-    // inside a single BEGIN IMMEDIATE / COMMIT. The chokepoint
-    // recorded snapshot file paths under `db_snapshots`; each snapshot
-    // is a `br.doctor.db_snapshot.v1` envelope with the table, the
-    // predicate, the column list, and the row vector taken before the
-    // forward DbExec ran.
     if record.op == "db_exec" {
         return restore_db_exec(repo_root, record, target);
     }
@@ -1009,9 +948,6 @@ fn restore_one(
     };
     let backup_mode = fs::metadata(&backup).ok().map(|m| metadata_mode(&m));
 
-    // Idempotence: bytes alone are not enough for chmod-only repairs.
-    // The backup is verbatim metadata too; skip only once both the live
-    // bytes and the live mode match the verified backup.
     let bytes_match = live_bytes_match(&target, &backup_bytes);
     if bytes_match {
         if live_mode_matches(&target, backup_mode) {
@@ -1095,7 +1031,6 @@ fn restore_db_exec(repo_root: &Path, record: &StoredActionRecord, target: PathBu
         };
     }
 
-    // Replay every snapshot inside one BEGIN IMMEDIATE / COMMIT.
     let conn = match Connection::open(target.to_string_lossy().into_owned()) {
         Ok(c) => c,
         Err(e) => {
@@ -1107,12 +1042,7 @@ fn restore_db_exec(repo_root: &Path, record: &StoredActionRecord, target: PathBu
             };
         }
     };
-    // Undo replays intentionally-orphaned rows: the forward repair pruned
-    // rows whose parent issue was already gone, so restoring the backup
-    // violates the comments/dependencies FK under real SQLite (the previous
-    // engine never enforced it; rusqlite runs with foreign_keys = ON).
     // `PRAGMA foreign_keys` is a no-op inside a transaction, so toggle it
-    // BEFORE BEGIN and restore the default after the replay settles.
     let _ = conn.execute("PRAGMA foreign_keys = OFF");
     if let Err(e) = conn.execute("BEGIN IMMEDIATE") {
         let _ = conn.close();
@@ -1444,7 +1374,6 @@ fn json_to_sqlite_value(
         }
         serde_json::Value::String(s) => Ok(SqliteValue::Text(s.clone())),
         serde_json::Value::Object(map) => {
-            // {"$blob_hex": "..."} encoding from the snapshot writer.
             if let Some(serde_json::Value::String(hex)) = map.get("$blob_hex") {
                 let bytes = decode_hex(hex).map_err(|e| format!("blob hex decode: {e}"))?;
                 return Ok(SqliteValue::Blob(bytes));
@@ -1550,11 +1479,6 @@ fn restore_rename(
         }
     };
 
-    // Rename ops carry their payload at `rename_to`, so the verbatim backup
-    // is only an idempotence witness. Older runs recorded absolute-path
-    // actions whose `backups_dir.join(path)` collapsed to the original
-    // location (no durable copy), so tolerate a missing backup when the
-    // moved file itself still hashes to the recorded before_hash.
     let backup_bytes = match read_verified_backup(record, backup) {
         Ok(bytes) => bytes,
         Err(_) if from.exists() => match fs::read(&from) {
@@ -1661,8 +1585,6 @@ fn plan_one(
             };
         }
     };
-    // Mirror the writer-side layout: strip the leading separator from
-    // absolute action paths so PathBuf::join cannot replace backups_dir.
     let backup_rel = std::path::Path::new(&record.path)
         .strip_prefix("/")
         .unwrap_or_else(|_| std::path::Path::new(&record.path));
@@ -1764,8 +1686,6 @@ fn plan_db_exec(repo_root: &Path, record: &StoredActionRecord) -> UndoStep {
             backup_used: None,
         };
     }
-    // Same length-binding the live undo path enforces, applied here too
-    // so `--dry-run` reports the hash gap before a real replay does.
     if !record.db_snapshot_sha256.is_empty()
         && record.db_snapshot_sha256.len() != record.db_snapshots.len()
     {
@@ -1796,10 +1716,6 @@ fn plan_db_exec(repo_root: &Path, record: &StoredActionRecord) -> UndoStep {
                 backup_used: Some(snap_path.to_string_lossy().into_owned()),
             };
         }
-        // If the action record carries a hash, verify the on-disk body
-        // matches it. A mismatch here flags snapshot tampering — exactly
-        // the round-2 left-open item — and we refuse rather than
-        // pretend the dry-run would have worked.
         if let Some(expected) = record.db_snapshot_sha256.get(idx) {
             let bytes = match fs::read(&snap_path) {
                 Ok(b) => b,
@@ -1883,22 +1799,10 @@ fn latest_run_from_symlink(runs_root: &Path) -> Result<Option<String>> {
     } else {
         base.join(link_target)
     };
-    // Canonicalize *before* the prefix check so we cannot be fooled by:
-    //   - `..` traversal embedded in the symlink target (lexical
-    //     `starts_with` accepts `<runs_root>/../../etc/...` because the
-    //     string prefix is preserved even though the resolved path
-    //     escapes `runs_root`);
-    //   - symlinks anywhere in `runs_root`'s ancestor chain that make
-    //     the canonical and lexical forms diverge.
-    // If canonicalization fails (target missing, broken link, …) we
-    // fall through to "no symlinked run available" rather than handing
-    // back a path we can't reason about.
     let Ok(canonical_target) = target.canonicalize() else {
         return Ok(None);
     };
     let Ok(canonical_root) = runs_root.canonicalize() else {
-        // If runs_root itself does not exist we can't have a valid
-        // latest symlink under it.
         return Ok(None);
     };
     if !canonical_target.is_dir() || !canonical_target.starts_with(&canonical_root) {
@@ -1930,11 +1834,6 @@ fn mark_report_undone(run_dir_path: &Path, run_id: &str) -> Result<()> {
     );
     let bytes = serde_json::to_vec_pretty(&map).map_err(BeadsError::Json)?;
 
-    // Atomic write: tmp + rename. A raw fs::write truncates the file
-    // first, so a crash mid-write would leave report.json either empty
-    // or torn — exactly the failure mode the chokepoint's execute_atomic
-    // exists to prevent. Use the same tmp-then-rename pattern here so
-    // undo bookkeeping is itself crash-safe.
     let parent = report.parent().unwrap_or_else(|| Path::new("."));
     let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(BeadsError::Io)?;
     tmp.write_all(&bytes).map_err(BeadsError::Io)?;
@@ -1963,10 +1862,6 @@ fn now_ns() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos())
 }
-
-// =============================================================================
-// explain (stub)
-// =============================================================================
 
 /// Execute `br doctor explain <finding-id>`. WP6 ships a stub envelope;
 /// the full evidence-expansion path lands in a later pass.
@@ -2014,10 +1909,6 @@ pub fn execute_explain(args: &DoctorExplainArgs, _repo_root: &Path) -> Result<()
     }
     Ok(())
 }
-
-// =============================================================================
-// --robot-triage
-// =============================================================================
 
 /// Lightweight finding shape for the triage envelope.
 #[derive(Debug, Clone, Serialize)]
@@ -2093,10 +1984,6 @@ pub fn emit_robot_triage(envelope: &TriageEnvelope) {
     }
 }
 
-// =============================================================================
-// tests
-// =============================================================================
-
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -2123,14 +2010,12 @@ mod tests {
         assert!(v["exit_codes"].is_array());
         assert!(v["write_scopes"].is_array());
         assert!(v["env_vars"].is_array());
-        // Inner contract still intact.
         assert_eq!(v["contract_version"], "1");
     }
 
     #[test]
     fn test_doctor_robot_docs_includes_exit_codes() {
         let body = robot_handbook_body();
-        // Spot-check the most critical exit codes are documented.
         for code in ["0", "1", "2", "3", "4", "5", "73"] {
             assert!(
                 body.contains(&format!("`{code}`")),
@@ -2151,12 +2036,9 @@ mod tests {
         fs::write(beads.join("issues.jsonl"), b"{}\n").unwrap();
         let args = DoctorHealthArgs { json: false };
         let start = Instant::now();
-        // Use the inner pure helper to avoid println noise in test.
         let beads_present = beads.is_dir();
         let elapsed_pre = start.elapsed();
         let _ = beads_present;
-        // The full execute_health writes to stdout — call it and check
-        // wall-clock from start.
         let started = Instant::now();
         let code = execute_health(&args, tmp.path()).expect("health");
         let dur = started.elapsed();
@@ -2197,9 +2079,6 @@ mod tests {
 
     #[test]
     fn doctor_health_flags_schema_incompatible_database() {
-        // #464: a database file that exists but carries a schema version this
-        // binary refuses to mutate ("Schema version mismatch: expected N,
-        // found M") must not read as "healthy" — agents gate on this tripwire.
         let tmp = unique_temp_root("health-schema-stale");
         let repo = tmp.path();
         let beads = repo.join(".beads");
@@ -2245,16 +2124,12 @@ mod tests {
 
     #[test]
     fn doctor_health_accepts_current_schema_database() {
-        // Guard against a false positive: a genuine current-schema database
-        // must still read as healthy (the header probe returns the expected
-        // version, not a spurious mismatch).
         let tmp = unique_temp_root("health-schema-ok");
         let repo = tmp.path();
         let beads = repo.join(".beads");
         fs::create_dir_all(&beads).unwrap();
         let db_path = beads.join("beads.db");
         {
-            // A fresh database is created at CURRENT_SCHEMA_VERSION.
             let _storage = crate::storage::SqliteStorage::open(&db_path).unwrap();
         }
         fs::write(beads.join("issues.jsonl"), b"").unwrap();
@@ -2280,9 +2155,7 @@ mod tests {
     fn test_doctor_ls_returns_empty_when_no_runs() {
         let tmp = unique_temp_root("ls-empty");
         let args = DoctorLsArgs { json: true };
-        // No .doctor/runs/ exists yet — ls must succeed and report 0.
         execute_ls(&args, tmp.path()).expect("ls");
-        // Now create the runs dir empty.
         fs::create_dir_all(tmp.path().join(".doctor/runs")).unwrap();
         execute_ls(&args, tmp.path()).expect("ls (existing dir, empty)");
     }
@@ -2462,14 +2335,11 @@ mod tests {
     fn test_doctor_undo_restores_from_backup() {
         let tmp = unique_temp_root("undo");
         let repo = tmp.path();
-        // Set up a workspace with a tracked file.
         let beads = repo.join(".beads");
         fs::create_dir_all(&beads).unwrap();
         let target = beads.join("foo.txt");
         fs::write(&target, b"original").unwrap();
 
-        // Create an initial doctor run-dir and write through the
-        // chokepoint.
         let initial_run = run_dir::create_run_dir(repo).expect("create run");
         let actions_file = OpenOptions::new()
             .create(true)
@@ -2495,20 +2365,16 @@ mod tests {
             },
         )
         .expect("mutate");
-        // After the write, the live file is "updated".
         assert_eq!(fs::read(&target).unwrap(), b"updated");
 
-        // Now run undo.
         let args = DoctorUndoArgs {
             run_id: initial_run.run_id.clone(),
             dry_run: false,
             json: true,
         };
         execute_undo(&args, repo).expect("undo");
-        // The original bytes are back.
         assert_eq!(fs::read(&target).unwrap(), b"original");
 
-        // Idempotence: running undo again is a no-op.
         execute_undo(&args, repo).expect("undo idempotent");
         assert_eq!(fs::read(&target).unwrap(), b"original");
     }
@@ -2872,7 +2738,6 @@ mod tests {
         let repo = tmp.path();
         let runs_root = repo.join(".doctor").join("runs");
         fs::create_dir_all(&runs_root).unwrap();
-        // Three subdirs with sortable names; latest is the largest.
         for name in [
             "20260101T000000Z__a",
             "20260301T000000Z__b",
@@ -2952,12 +2817,6 @@ mod tests {
         fs::create_dir_all(run_dir.join("backups")).unwrap();
         fs::write(run_dir.join("actions.jsonl"), b"").unwrap();
 
-        // Lexical target contains `..` but canonicalizes back inside
-        // runs_root. Pre-fix, this would also pass (string prefix
-        // matches accidentally). Post-fix, canonicalization is what
-        // makes it pass — and the parallel test
-        // `..._rejects_symlink_traversal_outside_runs_root` ensures
-        // the escape case still fails.
         symlink(
             "runs/20260101T000000Z__legit/../20260101T000000Z__legit",
             repo.join(".doctor/latest"),
@@ -2980,14 +2839,10 @@ mod tests {
         let snap_rel = ".doctor/runs/r/backups/db/cache.json";
         let snap_abs = repo.join(snap_rel);
         fs::create_dir_all(snap_abs.parent().unwrap()).unwrap();
-        // Write a "genuine" snapshot body and record its hash. Then
-        // overwrite the file (simulating tampering) and ask the plan
-        // path what it thinks.
         let genuine = b"{\"schema_version\":\"br.doctor.db_snapshot.v1\",\"rows\":[]}";
         fs::write(&snap_abs, genuine).unwrap();
         let expected_sha = sha256_bytes_hex_prefixed(genuine);
 
-        // Tamper.
         fs::write(
             &snap_abs,
             b"{\"schema_version\":\"br.doctor.db_snapshot.v1\",\"rows\":[{\"injected\":true}]}",

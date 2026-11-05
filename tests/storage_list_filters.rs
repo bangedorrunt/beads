@@ -18,15 +18,10 @@ use beads::model::{IssueType, Priority, Status};
 use beads::storage::ListFilters;
 use common::{fixtures::IssueBuilder, test_db};
 
-// ============================================================================
-// STATUS FILTER TESTS
-// ============================================================================
-
 #[test]
 fn filter_by_single_status_open() {
     let mut storage = test_db();
 
-    // Create issues with different statuses
     let open_issue = IssueBuilder::new("open-issue")
         .with_status(Status::Open)
         .build();
@@ -43,7 +38,7 @@ fn filter_by_single_status_open() {
 
     let filters = ListFilters {
         statuses: Some(vec![Status::Open]),
-        include_closed: true, // Need to include closed to test status filter independently
+        include_closed: true,
         ..Default::default()
     };
 
@@ -124,7 +119,6 @@ fn filter_by_closed_status_requires_include_closed() {
     storage.create_issue(&open_issue, "tester").unwrap();
     storage.create_issue(&closed_issue, "tester").unwrap();
 
-    // Without include_closed, closed issues are excluded even if in statuses filter
     let filters_no_include = ListFilters {
         statuses: Some(vec![Status::Closed]),
         include_closed: false,
@@ -134,7 +128,6 @@ fn filter_by_closed_status_requires_include_closed() {
     let results = storage.list_issues(&filters_no_include).unwrap();
     assert_eq!(results.len(), 0);
 
-    // With include_closed, we can filter to just closed
     let filters_with_include = ListFilters {
         statuses: Some(vec![Status::Closed]),
         include_closed: true,
@@ -145,10 +138,6 @@ fn filter_by_closed_status_requires_include_closed() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, closed_issue.id);
 }
-
-// ============================================================================
-// PRIORITY FILTER TESTS
-// ============================================================================
 
 #[test]
 fn filter_by_single_priority_critical() {
@@ -205,7 +194,6 @@ fn filter_by_multiple_priorities() {
     storage.create_issue(&p3, "tester").unwrap();
     storage.create_issue(&p4, "tester").unwrap();
 
-    // Filter for high-priority items (P0 and P1)
     let filters = ListFilters {
         priorities: Some(vec![Priority::CRITICAL, Priority::HIGH]),
         ..Default::default()
@@ -260,10 +248,6 @@ fn filter_by_all_priority_levels() {
         }
     }
 }
-
-// ============================================================================
-// TYPE FILTER TESTS
-// ============================================================================
 
 #[test]
 fn filter_by_single_type_bug() {
@@ -369,10 +353,6 @@ fn filter_by_all_issue_types() {
     }
 }
 
-// ============================================================================
-// ASSIGNEE FILTER TESTS
-// ============================================================================
-
 #[test]
 fn filter_by_specific_assignee() {
     let mut storage = test_db();
@@ -436,7 +416,6 @@ fn assignee_filter_is_case_sensitive() {
         .build();
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Lowercase should not match
     let filters_lowercase = ListFilters {
         assignee: Some("alice".to_string()),
         ..Default::default()
@@ -444,7 +423,6 @@ fn assignee_filter_is_case_sensitive() {
     let results = storage.list_issues(&filters_lowercase).unwrap();
     assert_eq!(results.len(), 0);
 
-    // Exact case should match
     let filters_exact = ListFilters {
         assignee: Some("Alice".to_string()),
         ..Default::default()
@@ -452,10 +430,6 @@ fn assignee_filter_is_case_sensitive() {
     let results = storage.list_issues(&filters_exact).unwrap();
     assert_eq!(results.len(), 1);
 }
-
-// ============================================================================
-// TITLE CONTAINS FILTER TESTS
-// ============================================================================
 
 #[test]
 fn filter_by_title_contains() {
@@ -494,7 +468,6 @@ fn filter_by_title_contains_case_insensitive() {
     storage.create_issue(&issue2, "tester").unwrap();
     storage.create_issue(&issue3, "tester").unwrap();
 
-    // SQLite LIKE is case-insensitive by default
     let filters = ListFilters {
         title_contains: Some("api".to_string()),
         ..Default::default()
@@ -511,7 +484,6 @@ fn filter_by_title_contains_partial_match() {
     let issue = IssueBuilder::new("Authentication system").build();
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Partial match should work
     let filters = ListFilters {
         title_contains: Some("Auth".to_string()),
         ..Default::default()
@@ -522,15 +494,10 @@ fn filter_by_title_contains_partial_match() {
     assert_eq!(results[0].title, "Authentication system");
 }
 
-// ============================================================================
-// LIMIT FILTER TESTS
-// ============================================================================
-
 #[test]
 fn filter_with_limit() {
     let mut storage = test_db();
 
-    // Create 5 issues
     for i in 0..5 {
         let issue = IssueBuilder::new(&format!("limit-test-{i}")).build();
         storage.create_issue(&issue, "tester").unwrap();
@@ -554,7 +521,6 @@ fn filter_with_limit_zero_returns_all() {
         storage.create_issue(&issue, "tester").unwrap();
     }
 
-    // Limit of 0 should return all (per implementation)
     let filters = ListFilters {
         limit: Some(0),
         ..Default::default()
@@ -617,10 +583,6 @@ fn filter_with_limit_larger_than_result_count() {
     assert_eq!(results.len(), 3);
 }
 
-// ============================================================================
-// INCLUDE_CLOSED FILTER TESTS
-// ============================================================================
-
 #[test]
 fn default_excludes_closed_issues() {
     let mut storage = test_db();
@@ -635,7 +597,6 @@ fn default_excludes_closed_issues() {
     storage.create_issue(&open_issue, "tester").unwrap();
     storage.create_issue(&closed_issue, "tester").unwrap();
 
-    // Default filters (include_closed = false)
     let filters = ListFilters::default();
 
     let results = storage.list_issues(&filters).unwrap();
@@ -680,7 +641,6 @@ fn tombstone_excluded_by_default() {
     storage.create_issue(&active_issue, "tester").unwrap();
     storage.create_issue(&deleted_issue, "tester").unwrap();
 
-    // Delete to create tombstone
     storage
         .delete_issue(&deleted_issue.id, "deleter", "test cleanup", None)
         .unwrap();
@@ -691,10 +651,6 @@ fn tombstone_excluded_by_default() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, active_issue.id);
 }
-
-// ============================================================================
-// INCLUDE_TEMPLATES FILTER TESTS
-// ============================================================================
 
 #[test]
 fn default_excludes_templates() {
@@ -708,7 +664,6 @@ fn default_excludes_templates() {
     storage.create_issue(&regular_issue, "tester").unwrap();
     storage.create_issue(&template_issue, "tester").unwrap();
 
-    // Default filters (include_templates = false)
     let filters = ListFilters::default();
 
     let results = storage.list_issues(&filters).unwrap();
@@ -737,10 +692,6 @@ fn include_templates_returns_all() {
     assert_eq!(results.len(), 2);
 }
 
-// ============================================================================
-// COMBINED FILTER TESTS
-// ============================================================================
-
 #[test]
 fn combined_status_and_priority_filters() {
     let mut storage = test_db();
@@ -762,7 +713,6 @@ fn combined_status_and_priority_filters() {
     storage.create_issue(&open_p2, "tester").unwrap();
     storage.create_issue(&inprog_p0, "tester").unwrap();
 
-    // Filter for open AND critical
     let filters = ListFilters {
         statuses: Some(vec![Status::Open]),
         priorities: Some(vec![Priority::CRITICAL]),
@@ -795,7 +745,6 @@ fn combined_type_and_assignee_filters() {
     storage.create_issue(&bug_bob, "tester").unwrap();
     storage.create_issue(&feature_alice, "tester").unwrap();
 
-    // Filter for bugs assigned to alice
     let filters = ListFilters {
         types: Some(vec![IssueType::Bug]),
         assignee: Some("alice".to_string()),
@@ -811,19 +760,16 @@ fn combined_type_and_assignee_filters() {
 fn combined_title_and_limit_filters() {
     let mut storage = test_db();
 
-    // Create multiple API-related issues
     for i in 0..5 {
         let issue = IssueBuilder::new(&format!("API endpoint {i}")).build();
         storage.create_issue(&issue, "tester").unwrap();
     }
 
-    // Also create non-API issues
     for i in 0..3 {
         let issue = IssueBuilder::new(&format!("Database task {i}")).build();
         storage.create_issue(&issue, "tester").unwrap();
     }
 
-    // Filter for API issues with limit
     let filters = ListFilters {
         title_contains: Some("API".to_string()),
         limit: Some(3),
@@ -833,7 +779,6 @@ fn combined_title_and_limit_filters() {
     let results = storage.list_issues(&filters).unwrap();
     assert_eq!(results.len(), 3);
 
-    // All should have API in title
     for issue in &results {
         assert!(issue.title.contains("API"));
     }
@@ -843,7 +788,6 @@ fn combined_title_and_limit_filters() {
 fn combined_multiple_statuses_types_priorities() {
     let mut storage = test_db();
 
-    // Create a variety of issues
     let issues = vec![
         IssueBuilder::new("multi-combo-1")
             .with_status(Status::Open)
@@ -871,7 +815,6 @@ fn combined_multiple_statuses_types_priorities() {
         storage.create_issue(issue, "tester").unwrap();
     }
 
-    // Complex filter: (Open OR InProgress) AND (Bug OR Feature) AND (Critical OR High)
     let filters = ListFilters {
         statuses: Some(vec![Status::Open, Status::InProgress]),
         types: Some(vec![IssueType::Bug, IssueType::Feature]),
@@ -881,20 +824,14 @@ fn combined_multiple_statuses_types_priorities() {
 
     let results = storage.list_issues(&filters).unwrap();
 
-    // Should only match issue 1 (open, bug, high)
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].title, "multi-combo-1");
 }
-
-// ============================================================================
-// SORT ORDER TESTS
-// ============================================================================
 
 #[test]
 fn results_sorted_by_priority_then_created_at() {
     let mut storage = test_db();
 
-    // Create issues with different priorities (in non-priority order)
     let low = IssueBuilder::new("sort-low")
         .with_priority(Priority::LOW)
         .build();
@@ -912,15 +849,10 @@ fn results_sorted_by_priority_then_created_at() {
     let filters = ListFilters::default();
     let results = storage.list_issues(&filters).unwrap();
 
-    // Should be sorted by priority (P0, P2, P3 for our created issues)
-    assert_eq!(results[0].priority, Priority::CRITICAL); // P0
-    assert_eq!(results[1].priority, Priority::MEDIUM); // P2
-    assert_eq!(results[2].priority, Priority::LOW); // P3
+    assert_eq!(results[0].priority, Priority::CRITICAL);
+    assert_eq!(results[1].priority, Priority::MEDIUM);
+    assert_eq!(results[2].priority, Priority::LOW);
 }
-
-// ============================================================================
-// EDGE CASE TESTS
-// ============================================================================
 
 #[test]
 fn empty_filters_returns_all_non_closed() {
@@ -939,7 +871,6 @@ fn empty_filters_returns_all_non_closed() {
     let filters = ListFilters::default();
     let results = storage.list_issues(&filters).unwrap();
 
-    // Default excludes closed
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, open.id);
 }
@@ -957,7 +888,6 @@ fn empty_status_vec_returns_all() {
     };
 
     let results = storage.list_issues(&filters).unwrap();
-    // Empty vec in filter should not restrict results
     assert_eq!(results.len(), 1);
 }
 
@@ -986,13 +916,11 @@ fn filter_with_special_characters_in_title() {
     let issue = IssueBuilder::new("Test % wildcard _ underscore").build();
     storage.create_issue(&issue, "tester").unwrap();
 
-    // SQL LIKE special characters should be handled
     let filters = ListFilters {
         title_contains: Some("%".to_string()),
         ..Default::default()
     };
 
     let results = storage.list_issues(&filters).unwrap();
-    // Should match because title contains literal %
     assert_eq!(results.len(), 1);
 }

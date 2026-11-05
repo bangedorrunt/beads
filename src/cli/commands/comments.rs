@@ -313,7 +313,6 @@ fn render_comments_list_rich(
 
     for (i, comment) in comments.iter().enumerate() {
         if i > 0 {
-            // Separator between comments
             content.append_styled(
                 &"\u{2500}".repeat(40.min(width.saturating_sub(4))),
                 theme.dimmed.clone(),
@@ -321,7 +320,6 @@ fn render_comments_list_rich(
             content.append("\n\n");
         }
 
-        // Author and timestamp
         content.append_styled(
             &format!("@{}", sanitize_terminal_inline(&comment.author)),
             theme.username.clone(),
@@ -333,7 +331,6 @@ fn render_comments_list_rich(
         );
         content.append("\n");
 
-        // Comment body
         content.append(sanitize_terminal_text(comment.body.trim_end_matches('\n')).as_ref());
         content.append("\n\n");
     }
@@ -380,7 +377,6 @@ fn render_comment_added_rich(issue_id: &str, comment: &Comment, ctx: &OutputCont
 
     console.print("");
 
-    // Show the comment that was added
     let mut comment_text = Text::new("");
     comment_text.append_styled(
         &format!("@{}", sanitize_terminal_inline(&comment.author)),
@@ -488,7 +484,6 @@ mod tests {
     fn test_resolve_author_with_override() {
         init_test_logging();
         info!("test_resolve_author_with_override: starting");
-        // When author override is provided, it should be used
         let result = resolve_author(Some("custom_author"), Some("actor_name"));
         assert_eq!(result, "custom_author");
         info!("test_resolve_author_with_override: assertions passed");
@@ -498,7 +493,6 @@ mod tests {
     fn test_resolve_author_empty_override_uses_actor() {
         init_test_logging();
         info!("test_resolve_author_empty_override_uses_actor: starting");
-        // Empty override should fall through to actor
         let result = resolve_author(Some(""), Some("actor_name"));
         assert_eq!(result, "actor_name");
         info!("test_resolve_author_empty_override_uses_actor: assertions passed");
@@ -508,7 +502,6 @@ mod tests {
     fn test_resolve_author_whitespace_override_uses_actor() {
         init_test_logging();
         info!("test_resolve_author_whitespace_override_uses_actor: starting");
-        // Whitespace-only override should fall through to actor
         let result = resolve_author(Some("   "), Some("actor_name"));
         assert_eq!(result, "actor_name");
         info!("test_resolve_author_whitespace_override_uses_actor: assertions passed");
@@ -518,7 +511,6 @@ mod tests {
     fn test_resolve_author_no_override_uses_actor() {
         init_test_logging();
         info!("test_resolve_author_no_override_uses_actor: starting");
-        // No override should use actor
         let result = resolve_author(None, Some("actor_name"));
         assert_eq!(result, "actor_name");
         info!("test_resolve_author_no_override_uses_actor: assertions passed");
@@ -528,9 +520,6 @@ mod tests {
     fn test_resolve_author_empty_actor_falls_through() {
         init_test_logging();
         info!("test_resolve_author_empty_actor_falls_through: starting");
-        // Empty actor should fall through to env/USER/LOGNAME/USERNAME/unknown
-        // Since we can't easily control env, just test that it doesn't panic
-        // and returns something non-empty
         let result = resolve_author(None, Some(""));
         assert!(!result.is_empty());
         info!("test_resolve_author_empty_actor_falls_through: assertions passed");
@@ -637,7 +626,6 @@ mod tests {
             message: Some("message content".to_string()),
         };
         let result = read_comment_text(&args).unwrap();
-        // File should take precedence
         assert!(result.contains("File content"));
         info!("test_read_comment_text_file_takes_precedence: assertions passed");
     }

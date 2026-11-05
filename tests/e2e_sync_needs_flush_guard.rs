@@ -96,7 +96,6 @@ fn armed_workspace_with_merged_issue() -> (BrWorkspace, std::path::PathBuf) {
         flush.stderr
     );
 
-    // Step 1: make the JSONL copy of the local issue stale, import, local wins.
     make_jsonl_record_stale(&issues_path, &local_id);
     let import = run_br(
         &workspace,
@@ -105,8 +104,6 @@ fn armed_workspace_with_merged_issue() -> (BrWorkspace, std::path::PathBuf) {
     );
     assert!(import.status.success(), "import failed: {}", import.stderr);
 
-    // The import must have armed needs_flush without any dirty rows;
-    // status --json exposes both counters.
     let status = run_br(
         &workspace,
         [
@@ -120,7 +117,6 @@ fn armed_workspace_with_merged_issue() -> (BrWorkspace, std::path::PathBuf) {
     );
     assert!(status.status.success(), "status failed: {}", status.stderr);
 
-    // Step 2: simulate `git pull` merging a JSONL with an issue the DB lacks.
     let mut contents = fs::read_to_string(&issues_path).expect("read jsonl");
     contents.push_str(MERGED_ISSUE_LINE);
     fs::write(&issues_path, contents).expect("append merged issue");
@@ -135,7 +131,6 @@ fn e2e_flush_only_needs_flush_does_not_destroy_merged_issues() {
     let _log = common::test_log("e2e_flush_only_needs_flush_does_not_destroy_merged_issues");
     let (workspace, issues_path) = armed_workspace_with_merged_issue();
 
-    // Step 3: the recommended pre-commit flush must refuse, not clobber.
     let flush = run_br(
         &workspace,
         ["sync", "--flush-only", "--no-auto-import"],
@@ -163,7 +158,6 @@ fn e2e_flush_only_needs_flush_does_not_destroy_merged_issues() {
         flush.stderr
     );
 
-    // Recovery: import the merged JSONL, then the flush succeeds losslessly.
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--no-auto-flush"],
@@ -198,8 +192,6 @@ fn e2e_auto_flush_needs_flush_does_not_destroy_merged_issues() {
     let _log = common::test_log("e2e_auto_flush_needs_flush_does_not_destroy_merged_issues");
     let (workspace, issues_path) = armed_workspace_with_merged_issue();
 
-    // A mutating command with auto-flush enabled (but auto-import disabled,
-    // as in `git pull` racing a command) must not clobber bd-merged1.
     let create = run_br(
         &workspace,
         [
@@ -263,8 +255,6 @@ fn e2e_hard_delete_flush_still_prunes_purged_issues() {
         "victim must be in JSONL before the purge"
     );
 
-    // Soft-delete then purge with auto-flush disabled so the explicit
-    // flush-only path is the one that has to prune the purged ID.
     let del = run_br(
         &workspace,
         [

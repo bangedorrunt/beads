@@ -66,7 +66,6 @@ fn parse_fences_impl(description: &str) -> ParsedFences {
             _ => {}
         }
         if out.verify_command.is_some() && !out.citations.is_empty() {
-            // Both found; nothing below can contribute.
             break;
         }
     }
@@ -95,7 +94,6 @@ fn extract_single_fenced_line(
                 }
                 interior.push(inner);
             }
-            // Unterminated fence: not a legal VERIFY fence.
             return None;
         }
     }
@@ -173,7 +171,6 @@ pub fn sync_fences_into_typed_fields(
             let updates = crate::storage::IssueUpdate {
                 verify: issue.verify.clone().map(Some),
                 principles_append: issue.principles.clone(),
-                // Import REPLACES the set, it does not extend an existing one.
                 principles_clear: true,
                 skip_cache_rebuild: true,
                 ..crate::storage::IssueUpdate::default()
@@ -231,7 +228,6 @@ mod tests {
         assert!(apply_to_issue(&mut issue));
         assert_eq!(issue.verify.as_deref(), Some("cargo build"));
 
-        // Later fence edit ignored: field already set.
         issue.description = Some("## VERIFY\n```\ncargo test\n```\n".to_string());
         assert!(!apply_to_issue(&mut issue));
         assert_eq!(issue.verify.as_deref(), Some("cargo build"));

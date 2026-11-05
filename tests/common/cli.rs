@@ -219,7 +219,6 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    // Reuse run_br_with_env with empty env vars
     run_br_with_env(
         workspace,
         args,
@@ -306,26 +305,9 @@ where
     K: AsRef<OsStr>,
     V: AsRef<OsStr>,
 {
-    // Default e2e runs un-throttled so history-mechanics tests (backup
-    // chronology, prune, restore) observe one `.br_history` snapshot per
-    // mutation. Set before caller `env_vars` so a test can override this to
-    // exercise the #313 snapshot throttle.
     cmd.env("BR_HISTORY_MIN_INTERVAL_SECS", "0");
-    // Keep each fixture's Git configuration hermetic by default, while still
-    // allowing tests of effective global configuration to supply another
-    // HOME explicitly.
     cmd.env("HOME", root);
-    // `error`, not `beads=debug`. Debug tracing goes to stderr, which
-    // (a) `br doctor`'s own `rust_log` check flags as an agent-hostile
-    // setting — so every "healthy workspace" doctor assertion failed purely
-    // because the harness set it — and (b) drowns the assertions that match
-    // on stderr contents. Tests that specifically want verbose tracing pass
-    // RUST_LOG through the caller `env_vars`, which are applied after these
-    // defaults and so still win.
     cmd.env("RUST_LOG", "error");
-    // Colour off by default so text assertions see bare output. Set before
-    // the caller `env_vars` so a colour-path test can pass `NO_COLOR=""`
-    // (the no-color.org convention for "unset") and exercise ANSI output.
     cmd.env("NO_COLOR", "1");
     cmd.envs(env_vars);
     cmd.env("RUST_BACKTRACE", "1");
@@ -380,7 +362,6 @@ fn create_priority(args: &[OsString]) -> u8 {
             token.strip_prefix("--priority=").map(str::to_string)
         };
         if let Some(raw) = raw {
-            // `-p` accepts `0`-`4` and `P0`-`P4`.
             let digits = raw.trim().trim_start_matches(['P', 'p']);
             if let Ok(priority) = digits.parse::<u8>() {
                 return priority;
@@ -440,8 +421,6 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    // Returned as String because `common::harness` logs the argv it ran and
-    // `log_command` takes `&[String]`; `Command::args` accepts either.
     gate_create_args_os(args)
         .into_iter()
         .map(|arg| arg.to_string_lossy().into_owned())

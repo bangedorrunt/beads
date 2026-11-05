@@ -119,14 +119,12 @@ proptest! {
                 Op::SetParent { issue, parent } => {
                     let issue_id = format!("p-{issue}");
                     let parent_id = parent.map(|p| format!("p-{p}"));
-                    // Self-parent is a separate validator concern; skip if that
                     if parent_id.as_deref() == Some(issue_id.as_str()) { continue; }
                     let _ = storage.set_parent(
                         &issue_id,
                         parent_id.as_deref(),
                         "proptest",
                     );
-                    // Either Ok or a structured BeadsError; never panics
                 }
                 Op::AddBlocks { issue, blocker } => {
                     let issue_id = format!("p-{issue}");
@@ -142,13 +140,9 @@ proptest! {
             }
         }
 
-        // INVARIANT: every issue has at most 1 parent-child dep
         for i in 0..n {
             let issue_id = format!("p-{i}");
             let deps = storage.get_dependencies(&issue_id).unwrap_or_default();
-            // Filter via the dep types to count parent-child only.
-            // get_dependencies returns plain IDs; we need to inspect the
-            // raw dependencies. Using the issue payload is more reliable.
             let Ok(Some(issue)) = storage.get_issue(&issue_id) else {
                 continue;
             };

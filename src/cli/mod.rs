@@ -1039,7 +1039,7 @@ pub struct CreateArgs {
 
     /// Issue title (alternative to positional argument)
     #[arg(long = "title", conflicts_with = "title")]
-    pub title_flag: Option<String>, // Handled in logic
+    pub title_flag: Option<String>,
 
     /// Issue type (task, bug, feature, etc.)
     #[arg(long = "type", short = 't', add = ArgValueCompleter::new(issue_type_completer))]
@@ -1059,8 +1059,6 @@ pub struct CreateArgs {
     pub priority: Option<String>,
 
     /// Description (required — title alone is not a brief)
-    // Markdown bodies routinely begin with a list marker ("- item"), which
-    // clap otherwise parses as an unknown flag in the space-separated form.
     #[arg(long, short = 'd', visible_alias = "body", allow_hyphen_values = true)]
     pub description: Option<String>,
 
@@ -1121,8 +1119,6 @@ pub struct CreateArgs {
     pub status: Option<String>,
 
     /// Acceptance criteria recorded on the initial issue (beads#408).
-    // Markdown checklists routinely begin with a list marker ("- [ ] item"),
-    // which clap otherwise parses as an unknown flag.
     #[arg(long, visible_alias = "acceptance", allow_hyphen_values = true)]
     pub acceptance_criteria: Option<String>,
 
@@ -1136,8 +1132,6 @@ pub struct CreateArgs {
     #[arg(long = "agent-context")]
     pub agent_context: Option<String>,
 
-    // ADR-0001 §5.2 typed work-ledger fields. These write typed columns,
-    // never description markdown.
     /// VERIFY command that proves this bead done (required; single line).
     #[arg(long = "verify", value_name = "CMD", allow_hyphen_values = true)]
     pub verify: Option<String>,
@@ -1195,9 +1189,6 @@ pub struct CreateArgs {
     #[arg(long, short = 'f')]
     pub file: Option<std::path::PathBuf>,
 
-    // Tier 1 attribution (issue #312, Layer 3 — capture-only). Recorded on the
-    // creation audit event as a trail; NEVER gated or enforced on. Match the
-    // flag/env names used by `br close`.
     /// Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only.
     #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
     pub agent_name: Option<String>,
@@ -1229,8 +1220,6 @@ pub struct QuickArgs {
     pub labels: Vec<String>,
 
     /// Description
-    // Markdown bodies routinely begin with a list marker ("- item"), which
-    // clap otherwise parses as an unknown flag in the space-separated form.
     #[arg(long, short = 'd', visible_alias = "body", allow_hyphen_values = true)]
     pub description: Option<String>,
 
@@ -1255,8 +1244,6 @@ pub struct UpdateArgs {
     pub title: Option<String>,
 
     /// Update description
-    // Markdown bodies routinely begin with a list marker ("- item"), which
-    // clap otherwise parses as an unknown flag in the space-separated form.
     #[arg(long, short = 'd', visible_alias = "body", allow_hyphen_values = true)]
     pub description: Option<String>,
 
@@ -1367,8 +1354,6 @@ pub struct UpdateArgs {
     #[arg(long = "agent-context")]
     pub agent_context: Option<String>,
 
-    // ADR-0001 §5.2 typed work-ledger fields. These write typed columns,
-    // never description markdown. `--principle` appends citations.
     /// Set the VERIFY command that proves this bead done (empty clears).
     #[arg(long = "verify", value_name = "CMD", allow_hyphen_values = true)]
     pub verify: Option<String>,
@@ -2565,8 +2550,6 @@ pub struct DeferArgs {
     #[arg(long, value_name = "COMMENT", allow_hyphen_values = true)]
     pub transition_comment: Option<String>,
 
-    // Tier 1 attribution (issue #312, Layer 3 — capture-only). Recorded on the
-    // defer status-change audit event; NEVER gated or enforced on.
     /// Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only.
     #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
     pub agent_name: Option<String>,
@@ -2631,8 +2614,6 @@ pub struct UndeferArgs {
     #[arg(long, value_name = "COMMENT", allow_hyphen_values = true)]
     pub transition_comment: Option<String>,
 
-    // Tier 1 attribution (issue #312, Layer 3 — capture-only). Recorded on the
-    // undefer status-change audit event; NEVER gated or enforced on.
     /// Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only.
     #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
     pub agent_name: Option<String>,
@@ -2830,12 +2811,6 @@ pub struct CloseArgs {
     #[arg(long = "expected-revision", value_name = "N")]
     pub expected_revision: Option<u64>,
 
-    // Closure-time policy gates (issue #274 — Phase 1).
-    //
-    // All fields below are inert when the project has no `.beads/policy.yaml`
-    // file. Solo-dev workflows see no behavior change; only opt-in repos
-    // observe gating or attribution capture.
-    //
     /// Tier 1 attribution: agent name (env: BR_AGENT_NAME).
     #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
     pub agent_name: Option<String>,
@@ -2983,8 +2958,6 @@ pub struct ReopenArgs {
     #[arg(long)]
     pub robot: bool,
 
-    // Tier 1 attribution (issue #312, Layer 3 — capture-only). Recorded on the
-    // reopen status-change audit event; NEVER gated or enforced on.
     /// Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only.
     #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
     pub agent_name: Option<String>,
@@ -3994,7 +3967,7 @@ mod tests {
         "`--agents <PATH>` | Offline Agent Mail agent snapshot",
         "br coordination status --reservations reservations.json --agents agents.jsonl --json",
         "`issue-with-counts`, `issue-details`,",
-    ]; // NOTE: no `beads://` URI sentinel — the MCP surface was removed (ADR-0002 W1).
+    ];
 
     fn assert_all_top_level_commands_are_documented() {
         let command = Cli::command();

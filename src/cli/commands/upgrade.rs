@@ -220,10 +220,6 @@ fn execute_upgrade(args: &UpgradeArgs, current_version: &str, ctx: &OutputContex
         ctx.info(&format!("Downloading {latest_version}..."));
     }
 
-    // Perform the update only after the downloaded archive matches the release
-    // checksum asset. This command handles the release asset
-    // download/extract/replace sequence directly because br releases publish a
-    // separate `<archive>.sha256` asset.
     let status = update_with_checksum(updater.as_ref(), &release).map_err(|e| {
         let msg = e.to_string();
         if msg.contains("archive-tar") || msg.contains("ArchiveNotEnabled") || msg.contains("tar") {
@@ -327,7 +323,7 @@ fn asset_target_name() -> &'static str {
         "aarch64-unknown-linux-gnu" => "linux_arm64",
         "aarch64-unknown-linux-musl" => "linux_musl_arm64",
         "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu" => "windows_amd64",
-        other => other, // fall back to the raw triple for unknown targets
+        other => other,
     }
 }
 
@@ -636,17 +632,12 @@ fn version_newer(new: &str, current: &str) -> bool {
         match n.cmp(c) {
             std::cmp::Ordering::Greater => return true,
             std::cmp::Ordering::Less => return false,
-            std::cmp::Ordering::Equal => {} // Continue to next part
+            std::cmp::Ordering::Equal => {}
         }
     }
 
-    // If all compared parts are equal, the one with more parts is newer
     new_parts.len() > current_parts.len()
 }
-
-// ─────────────────────────────────────────────────────────────
-// Rich Output Rendering
-// ─────────────────────────────────────────────────────────────
 
 /// Render update check results with rich formatting.
 fn render_check_rich(result: &UpdateCheckResult, ctx: &OutputContext) {
@@ -656,7 +647,6 @@ fn render_check_rich(result: &UpdateCheckResult, ctx: &OutputContext) {
 
     let mut content = Text::new("");
 
-    // Version comparison
     content.append_styled("Current version:  ", theme.dimmed.clone());
     content.append_styled(&result.current_version, theme.emphasis.clone());
     content.append("\n");
@@ -670,7 +660,6 @@ fn render_check_rich(result: &UpdateCheckResult, ctx: &OutputContext) {
     }
     content.append("\n\n");
 
-    // Status message
     if result.update_available {
         content.append_styled("↑ ", theme.success.clone());
         content.append_styled("Update available! ", theme.success.clone());

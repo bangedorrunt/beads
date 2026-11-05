@@ -78,8 +78,6 @@ fn delete_display_text(value: &str) -> String {
 fn describe_touching_edges(storage: &SqliteStorage, ids: &[String]) -> Result<Vec<String>> {
     let mut edges = Vec::new();
     for id in ids {
-        // Outgoing edges live in the dependencies table, not on the issue
-        // row — `get_issue` leaves them empty.
         for dep in storage.get_dependencies_full(id)? {
             edges.push(format!(
                 "{} -> {} ({})",
@@ -118,7 +116,6 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    // 1. Collect IDs from args and/or file
     let mut ids: Vec<String> = args.ids.clone();
 
     if let Some(ref file_path) = args.from_file {
@@ -127,9 +124,6 @@ pub fn execute(
     }
 
     if ids.is_empty() {
-        // `br delete --hard` with no IDs is the tombstone garbage-collector:
-        // purge every tombstone in the current workspace (#367). Plain
-        // `br delete` with no IDs remains a usage error.
         if args.hard {
             let beads_dir = config::discover_beads_dir_with_cli(cli)?;
             return purge_all_tombstones(args, cli, ctx, &beads_dir);
@@ -137,12 +131,8 @@ pub fn execute(
         return Err(BeadsError::validation("ids", "no issue IDs provided"));
     }
 
-    // A tombstone must say why it exists. `--reason` lost its silent
-    // "delete" default; the purge path above creates no tombstone and so
-    // needs none.
     let reason = require_delete_reason(args.reason.as_deref())?;
 
-    // Deduplicate
     let mut ids: Vec<String> = ids
         .into_iter()
         .collect::<HashSet<_>>()
@@ -156,14 +146,12 @@ pub fn execute(
         return execute_routed(args, cli, ctx, &beads_dir, routed_batches);
     }
 
-    // 2. Open storage
     let mut storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
     let config_layer = storage_ctx.load_config(cli)?;
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
     let ids = sorted_unique_strings(resolve_issue_ids(&storage_ctx.storage, &resolver, &ids)?);
     let (result, detached_edges) = {
-        // 3. Check for dependents (if not --force/--cascade/--detach)
         let delete_set: HashSet<String> = ids.iter().cloned().collect();
         let blocked_dependents = collect_direct_dependents(&storage_ctx.storage, &ids)?;
         let cascade_dependents = if args.cascade {
@@ -176,9 +164,6 @@ pub fn execute(
         };
 
         if !blocked_dependents.is_empty() && !args.force && !args.cascade && !args.detach {
-            // Preview mode: show what would happen.
-            // Compute the full transitive closure so the user sees the true blast
-            // radius of --cascade (not just first-level dependents).
             let full_cascade: Vec<String> =
                 collect_sorted_cascade_dependents(&storage_ctx.storage, &ids)?;
             if ctx.is_json() || ctx.is_toon() {
@@ -238,7 +223,6 @@ pub fn execute(
             return Ok(());
         }
 
-        // 4. Dry-run mode
         if args.dry_run {
             let cascade_ids = cascade_dependents.clone().unwrap_or_default();
             if ctx.is_json() || ctx.is_toon() {
@@ -312,27 +296,21 @@ pub fn execute(
             return Ok(());
         }
 
-        // 5. Build final delete set
         let mut final_delete_set: HashSet<String> = delete_set;
         if let Some(cascade_ids) = &cascade_dependents {
             final_delete_set.extend(cascade_ids.iter().cloned());
         }
 
-        // 6. Get actor
         let actor = config::resolve_actor(&config_layer);
 
-        // 7. Perform deletion
         let mut result = DeleteResult::new();
 
-        // --detach: snapshot every touching edge first so each removal is
-        // reported; blast radius stays the explicit id list (no cascade).
         let detached_edges = if args.detach {
             describe_touching_edges(&storage_ctx.storage, &ids)?
         } else {
             Vec::new()
         };
 
-        // First, remove all dependency links for issues being deleted
         let mut batch_has_mutated = false;
         for id in &final_delete_set {
             let deps_removed = retry_mutation_with_jsonl_recovery(
@@ -348,19 +326,16 @@ pub fn execute(
             }
         }
 
-        // Track orphaned issues (only relevant for --force/--detach mode)
         if (args.force || args.detach) && !args.cascade {
             result.orphaned_issues.clone_from(&blocked_dependents);
         }
 
-        // Delete each issue (create tombstone, then purge if --hard)
         let mut final_ids: Vec<String> = final_delete_set.into_iter().collect();
         final_ids.sort();
         for id in &final_ids {
             if args.hard {
                 result.labels_removed += storage_ctx.storage.get_labels(id)?.len();
                 result.events_removed += storage_ctx.storage.count_issue_events(id)?;
-                // Hard delete: physically remove from DB so it's pruned from JSONL
                 retry_mutation_with_jsonl_recovery(
                     &mut storage_ctx,
                     !batch_has_mutated,
@@ -401,7 +376,6 @@ pub fn execute(
         Ok(())
     })?;
 
-    // 9. Output
     if ctx.is_json() || ctx.is_toon() {
         if ctx.is_toon() {
             ctx.toon(&result);
@@ -569,8 +543,6 @@ fn execute_routed(
     local_beads_dir: &Path,
     routed_batches: Vec<config::routing::RoutedIssueBatch>,
 ) -> Result<()> {
-    // execute() already refused a missing reason; this keeps the routed path
-    // safe on its own, since a routed batch is still a tombstone.
     require_delete_reason(args.reason.as_deref())?;
     let normalized_local_beads_dir = crate::sync::path::canonicalize(local_beads_dir)
         .unwrap_or_else(|_| local_beads_dir.to_path_buf());
@@ -719,11 +691,6 @@ fn prepare_delete_route(
 ) -> Result<PreparedDeleteRoute> {
     let routed_write_lock =
         acquire_routed_workspace_write_lock(beads_dir, auto_flush_external, cli.lock_timeout)?;
-    // Reuse the routed authority for every storage open on this route (both
-    // the preparation open below and the later `apply_delete_route` reopen
-    // through the stored `route_cli`); acquiring the same database-family
-    // lock from a second descriptor in this process would self-deadlock
-    // until the lock timeout (#409 routed cluster).
     let mut route_cli = cli.clone();
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
     let cli = &route_cli;
@@ -751,12 +718,6 @@ fn prepare_delete_route(
         resolved_ids.clone()
     };
 
-    // --detach snapshots touching edges pre-mutation so each removal is
-    // reported; prepares run before any route applies, so this is exact.
-    // --detach conflicts with --cascade at the clap layer, so final ids
-    // here are always the explicit list (never a transitive closure).
-    // Reuses this route's already-open storage handle: a second open under
-    // the routed write lock would self-deadlock (#409).
     let detached_edges = if args.detach {
         describe_touching_edges(&storage_ctx.storage, &final_delete_ids)?
     } else {
@@ -781,8 +742,6 @@ fn apply_delete_route(
     route: &PreparedDeleteRoute,
     ctx: &OutputContext,
 ) -> Result<DeleteResult> {
-    // Every route in this function tombstones, so the reason must hold here
-    // too, whichever caller prepared the route.
     let reason = require_delete_reason(args.reason.as_deref())?;
     let mut storage_ctx = config::open_storage_with_cli(&route.beads_dir, &route.route_cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, &route.route_cli)?;
@@ -980,7 +939,6 @@ fn read_ids_from_file(path: &Path) -> Result<Vec<String>> {
 
         let trimmed = line.trim();
 
-        // Skip empty lines and comments
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
@@ -1003,13 +961,11 @@ fn collect_cascade_dependents(
         let dependents = storage.get_blocked_issue_ids(&id)?;
         for dep_id in dependents {
             if all_ids.insert(dep_id.clone()) {
-                // New ID, add to processing queue
                 to_process.push(dep_id);
             }
         }
     }
 
-    // Remove the initial IDs (they're handled separately)
     for id in initial_ids {
         all_ids.remove(id);
     }
@@ -1092,7 +1048,6 @@ fn render_dependents_warning_rich(
         content.append("\n");
     }
 
-    // Show transitive dependents if the full cascade set is larger
     let direct_set: HashSet<&String> = direct_dependents.iter().collect();
     let transitive: Vec<&String> = full_cascade
         .iter()
@@ -1170,7 +1125,6 @@ fn render_dry_run_rich(
 
     let mut content = Text::new("");
 
-    // Main issues to delete
     content.append_styled("Would delete ", theme.dimmed.clone());
     content.append_styled(&format!("{}", ids.len()), theme.emphasis.clone());
     content.append_styled(" issue(s):\n\n", theme.dimmed.clone());
@@ -1186,7 +1140,6 @@ fn render_dry_run_rich(
         content.append("\n");
     }
 
-    // Cascade section
     if !cascade_ids.is_empty() {
         content.append("\n");
         content.append_styled("Would cascade delete ", theme.dimmed.clone());
@@ -1205,7 +1158,6 @@ fn render_dry_run_rich(
         }
     }
 
-    // Orphan section
     if !orphan_ids.is_empty() {
         content.append("\n");
         content.append_styled("Would orphan ", theme.dimmed.clone());
@@ -1257,7 +1209,6 @@ fn render_delete_result_rich(
 
     let mut content = Text::new("");
 
-    // Deleted items
     content.append_styled("Deleted ", theme.success.clone());
     content.append_styled(&format!("{}", result.deleted_count), theme.emphasis.clone());
     content.append_styled(" issue(s):\n\n", theme.success.clone());
@@ -1273,7 +1224,6 @@ fn render_delete_result_rich(
         content.append("\n");
     }
 
-    // Dependencies removed
     if result.dependencies_removed > 0 {
         content.append("\n");
         content.append_styled("Removed ", theme.dimmed.clone());
@@ -1284,7 +1234,6 @@ fn render_delete_result_rich(
         content.append_styled(" dependency link(s)", theme.dimmed.clone());
     }
 
-    // Detached edges (--detach reports each one)
     if !detached_edges.is_empty() {
         content.append("\n");
         content.append_styled("Detached ", theme.dimmed.clone());
@@ -1297,7 +1246,6 @@ fn render_delete_result_rich(
         }
     }
 
-    // Orphaned issues
     if !result.orphaned_issues.is_empty() {
         content.append("\n\n");
         content.append_styled("Orphaned ", theme.warning.clone());
@@ -1478,11 +1426,9 @@ mod tests {
         let issue = create_test_issue("bd-del1", "Test Delete");
         storage.create_issue(&issue, "tester").unwrap();
 
-        // Verify issue exists
         let before = storage.get_issue("bd-del1").unwrap().unwrap();
         assert_eq!(before.status, Status::Open);
 
-        // Delete it
         let deleted = storage
             .delete_issue("bd-del1", "tester", "test deletion", None)
             .unwrap();
@@ -1510,7 +1456,6 @@ mod tests {
         info!("test_cascade_dependents_collection: starting");
         let mut storage = SqliteStorage::open_memory().unwrap();
 
-        // Create issues: A -> B -> C (C depends on B, B depends on A)
         let a = create_test_issue("bd-a", "Issue A");
         let b = create_test_issue("bd-b", "Issue B");
         let c = create_test_issue("bd-c", "Issue C");
@@ -1519,7 +1464,6 @@ mod tests {
         storage.create_issue(&b, "tester").unwrap();
         storage.create_issue(&c, "tester").unwrap();
 
-        // Add dependencies
         storage
             .mutate("test_add_deps", "tester", |tx, _ctx| {
                 tx.execute_with_params(
@@ -1534,11 +1478,10 @@ mod tests {
             })
             .unwrap();
 
-        // Collect cascade from A
         let cascade = collect_cascade_dependents(&storage, &["bd-a".to_string()]).unwrap();
         assert!(cascade.contains("bd-b"));
         assert!(cascade.contains("bd-c"));
-        assert!(!cascade.contains("bd-a")); // Initial ID not included
+        assert!(!cascade.contains("bd-a"));
         info!("test_cascade_dependents_collection: assertions passed");
     }
 
@@ -1614,7 +1557,6 @@ mod tests {
         info!("test_preview_cascade_closure_exceeds_direct_dependents: starting");
         let mut storage = SqliteStorage::open_memory().unwrap();
 
-        // Chain: A → B → C → D (D depends on C, C depends on B, B depends on A)
         let a = create_test_issue("bd-a", "Issue A");
         let b = create_test_issue("bd-b", "Issue B");
         let c = create_test_issue("bd-c", "Issue C");
@@ -1643,19 +1585,15 @@ mod tests {
             })
             .unwrap();
 
-        // Direct dependents of A: only B (first-level)
         let direct = collect_direct_dependents(&storage, &["bd-a".to_string()]).unwrap();
         assert_eq!(direct, vec!["bd-b".to_string()]);
 
-        // Full cascade closure: B, C, and D (the complete transitive set)
         let cascade = collect_sorted_cascade_dependents(&storage, &["bd-a".to_string()]).unwrap();
         assert_eq!(
             cascade,
             vec!["bd-b".to_string(), "bd-c".to_string(), "bd-d".to_string()]
         );
 
-        // The cascade closure MUST be a strict superset of direct dependents
-        // This is the invariant that the preview must reflect
         assert!(cascade.len() > direct.len());
         for dep in &direct {
             assert!(cascade.contains(dep));

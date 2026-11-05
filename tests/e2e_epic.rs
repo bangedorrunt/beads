@@ -26,10 +26,6 @@ fn create_issue(workspace: &BrWorkspace, title: &str, issue_type: &str) -> Strin
     parse_created_id(&created.stdout)
 }
 
-// ============================================================================
-// SUCCESS PATH TESTS
-// ============================================================================
-
 #[test]
 fn e2e_epic_status_shows_progress() {
     let _log = common::test_log("e2e_epic_status_shows_progress");
@@ -38,7 +34,6 @@ fn e2e_epic_status_shows_progress() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an epic
     let create_epic = run_br(
         &workspace,
         ["create", "Test Epic", "--type", "epic"],
@@ -51,7 +46,6 @@ fn e2e_epic_status_shows_progress() {
     );
     let epic_id = parse_created_id(&create_epic.stdout);
 
-    // Create two child tasks
     let create_task1 = run_br(
         &workspace,
         ["create", "Task 1", "--type", "task"],
@@ -76,7 +70,6 @@ fn e2e_epic_status_shows_progress() {
     );
     let task2_id = parse_created_id(&create_task2.stdout);
 
-    // Add children to epic via parent-child dependencies
     let dep1 = run_br(
         &workspace,
         ["dep", "add", &task1_id, &epic_id, "--type", "parent-child"],
@@ -91,7 +84,6 @@ fn e2e_epic_status_shows_progress() {
     );
     assert!(dep2.status.success(), "dep add 2 failed: {}", dep2.stderr);
 
-    // Check epic status - should show 0/2 closed
     let status = run_br(
         &workspace,
         ["epic", "status", "--json"],
@@ -114,7 +106,6 @@ fn e2e_epic_status_shows_progress() {
     assert_eq!(epic_entry["closed_children"], 0);
     assert_eq!(epic_entry["eligible_for_close"], false);
 
-    // Text output should show progress
     let status_text = run_br(&workspace, ["epic", "status"], "epic_status_text");
     assert!(
         status_text.status.success(),
@@ -136,7 +127,6 @@ fn e2e_epic_status_eligible_when_all_children_closed() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create epic with one child
     let create_epic = run_br(
         &workspace,
         ["create", "Closeable Epic", "--type", "epic"],
@@ -160,7 +150,6 @@ fn e2e_epic_status_eligible_when_all_children_closed() {
     );
     assert!(dep.status.success());
 
-    // Initially not eligible
     let status1 = run_br(
         &workspace,
         ["epic", "status", "--json"],
@@ -172,7 +161,6 @@ fn e2e_epic_status_eligible_when_all_children_closed() {
     let epic1 = json1.iter().find(|e| e["epic"]["id"] == epic_id).unwrap();
     assert_eq!(epic1["eligible_for_close"], false);
 
-    // Close the child task (use --force since parent-child deps are blocking)
     let gate = run_br(
         &workspace,
         [
@@ -203,7 +191,6 @@ fn e2e_epic_status_eligible_when_all_children_closed() {
         close_task.stderr
     );
 
-    // Now should be eligible
     let status2 = run_br(
         &workspace,
         ["epic", "status", "--json"],
@@ -226,7 +213,6 @@ fn e2e_epic_close_eligible_closes_epics() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create epic with one child
     let create_epic = run_br(
         &workspace,
         ["create", "Auto-closeable Epic", "--type", "epic"],
@@ -250,7 +236,6 @@ fn e2e_epic_close_eligible_closes_epics() {
     );
     assert!(dep.status.success());
 
-    // Close the child (use --force since parent-child deps are blocking)
     let gate = run_br(
         &workspace,
         [
@@ -277,14 +262,12 @@ fn e2e_epic_close_eligible_closes_epics() {
     );
     assert!(close_task.status.success());
 
-    // Verify epic is open before close-eligible
     let show_before = run_br(&workspace, ["show", &epic_id, "--json"], "show_before");
     assert!(show_before.status.success());
     let payload_before = extract_json_payload(&show_before.stdout);
     let show_json_before: Value = serde_json::from_str(&payload_before).unwrap();
     assert_eq!(show_json_before["status"], "open");
 
-    // Run close-eligible
     let close_eligible = run_br(
         &workspace,
         ["epic", "close-eligible", "--json"],
@@ -306,7 +289,6 @@ fn e2e_epic_close_eligible_closes_epics() {
             .any(|id| id == &epic_id)
     );
 
-    // Verify epic is now closed
     let show_after = run_br(&workspace, ["show", &epic_id, "--json"], "show_after");
     assert!(show_after.status.success());
     let payload_after = extract_json_payload(&show_after.stdout);
@@ -329,7 +311,6 @@ fn e2e_epic_close_eligible_dry_run() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create epic with one closed child
     let create_epic = run_br(
         &workspace,
         ["create", "Dry Run Epic", "--type", "epic"],
@@ -379,7 +360,6 @@ fn e2e_epic_close_eligible_dry_run() {
     );
     assert!(close_task.status.success());
 
-    // Run dry-run - should show what would be closed
     let dry_run = run_br(
         &workspace,
         ["epic", "close-eligible", "--dry-run"],
@@ -396,7 +376,6 @@ fn e2e_epic_close_eligible_dry_run() {
         dry_run.stdout
     );
 
-    // Epic should still be open
     let show = run_br(
         &workspace,
         ["show", &epic_id, "--json"],
@@ -419,7 +398,6 @@ fn e2e_epic_status_eligible_only_filter() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create two epics - one eligible, one not
     let create_epic1 = run_br(
         &workspace,
         ["create", "Eligible Epic", "--type", "epic"],
@@ -436,7 +414,6 @@ fn e2e_epic_status_eligible_only_filter() {
     assert!(create_epic2.status.success());
     let epic2_id = parse_created_id(&create_epic2.stdout);
 
-    // Add closed child to epic1
     let create_task1 = run_br(
         &workspace,
         ["create", "Task 1", "--type", "task"],
@@ -482,7 +459,6 @@ fn e2e_epic_status_eligible_only_filter() {
     );
     assert!(close_task1.status.success());
 
-    // Add open child to epic2
     let create_task2 = run_br(
         &workspace,
         ["create", "Task 2", "--type", "task"],
@@ -498,14 +474,12 @@ fn e2e_epic_status_eligible_only_filter() {
     );
     assert!(dep2.status.success());
 
-    // Without filter - should see both epics
     let status_all = run_br(&workspace, ["epic", "status", "--json"], "status_all");
     assert!(status_all.status.success());
     let payload_all = extract_json_payload(&status_all.stdout);
     let json_all: Vec<Value> = serde_json::from_str(&payload_all).unwrap();
     assert_eq!(json_all.len(), 2, "should have 2 epics");
 
-    // With --eligible-only - should see only epic1
     let status_eligible = run_br(
         &workspace,
         ["epic", "status", "--eligible-only", "--json"],
@@ -518,10 +492,6 @@ fn e2e_epic_status_eligible_only_filter() {
     assert_eq!(json_eligible[0]["epic"]["id"], epic1_id);
 }
 
-// ============================================================================
-// EDGE CASE TESTS
-// ============================================================================
-
 #[test]
 fn e2e_epic_childless_epic_not_eligible() {
     let _log = common::test_log("e2e_epic_childless_epic_not_eligible");
@@ -530,7 +500,6 @@ fn e2e_epic_childless_epic_not_eligible() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create epic with no children
     let create_epic = run_br(
         &workspace,
         ["create", "Childless Epic", "--type", "epic"],
@@ -539,7 +508,6 @@ fn e2e_epic_childless_epic_not_eligible() {
     assert!(create_epic.status.success());
     let epic_id = parse_created_id(&create_epic.stdout);
 
-    // Check status
     let status = run_br(&workspace, ["epic", "status", "--json"], "epic_status");
     assert!(status.status.success());
     let payload = extract_json_payload(&status.stdout);
@@ -553,7 +521,6 @@ fn e2e_epic_childless_epic_not_eligible() {
         "childless epic should not be eligible for close"
     );
 
-    // close-eligible should not close it
     let close_eligible = run_br(
         &workspace,
         ["epic", "close-eligible", "--json"],
@@ -618,16 +585,12 @@ fn e2e_epic_nested_epics() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create parent epic
     let parent_id = create_issue(&workspace, "Parent Epic", "epic");
 
-    // Create child epic
     let child_id = create_issue(&workspace, "Child Epic", "epic");
 
-    // Create a task under the child epic
     let task_id = create_issue(&workspace, "Nested Task", "task");
 
-    // Set up relationships: task -> child epic, child epic -> parent epic
     let dep1 = run_br(
         &workspace,
         ["dep", "add", &task_id, &child_id, "--type", "parent-child"],
@@ -649,7 +612,6 @@ fn e2e_epic_nested_epics() {
     );
     assert!(dep2.status.success());
 
-    // Check status - parent should have child epic as child
     let status = run_br(&workspace, ["epic", "status", "--json"], "epic_status");
     assert!(status.status.success());
     let payload = extract_json_payload(&status.stdout);
@@ -667,7 +629,6 @@ fn e2e_epic_nested_epics() {
         "child epic should have 1 child (the task)"
     );
 
-    // Close the task (use --force since parent-child deps are blocking)
     let gate = run_br(
         &workspace,
         [
@@ -694,7 +655,6 @@ fn e2e_epic_nested_epics() {
     );
     assert!(close_task.status.success());
 
-    // Child epic should now be eligible
     let status2 = run_br(
         &workspace,
         ["epic", "status", "--json"],
@@ -710,7 +670,6 @@ fn e2e_epic_nested_epics() {
         "child epic should be eligible"
     );
 
-    // Parent epic is not eligible yet (child epic is open)
     let parent_epic2 = json2.iter().find(|e| e["epic"]["id"] == parent_id).unwrap();
     assert_eq!(
         parent_epic2["eligible_for_close"], false,
@@ -726,7 +685,6 @@ fn e2e_epic_no_epics_message() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Don't create any epics, just tasks
     let create_task = run_br(
         &workspace,
         ["create", "Just a task", "--type", "task"],
@@ -734,7 +692,6 @@ fn e2e_epic_no_epics_message() {
     );
     assert!(create_task.status.success());
 
-    // Epic status should say no epics
     let status = run_br(&workspace, ["epic", "status"], "epic_status_none");
     assert!(status.status.success());
     assert!(
@@ -743,7 +700,6 @@ fn e2e_epic_no_epics_message() {
         status.stdout
     );
 
-    // JSON output should be empty array
     let status_json = run_br(
         &workspace,
         ["epic", "status", "--json"],
@@ -763,7 +719,6 @@ fn e2e_epic_close_eligible_no_eligible_message() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create epic with open child
     let create_epic = run_br(
         &workspace,
         ["create", "Open Children Epic", "--type", "epic"],
@@ -787,7 +742,6 @@ fn e2e_epic_close_eligible_no_eligible_message() {
     );
     assert!(dep.status.success());
 
-    // close-eligible should say no epics eligible
     let close_eligible = run_br(
         &workspace,
         ["epic", "close-eligible"],
@@ -810,7 +764,6 @@ fn e2e_epic_multiple_children_partial_progress() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create epic with 5 children
     let create_epic = run_br(
         &workspace,
         ["create", "Large Epic", "--type", "epic"],
@@ -839,7 +792,6 @@ fn e2e_epic_multiple_children_partial_progress() {
         task_ids.push(task_id);
     }
 
-    // Check status - 0/5 closed
     let status1 = run_br(&workspace, ["epic", "status", "--json"], "status_0_of_5");
     assert!(status1.status.success());
     let payload1 = extract_json_payload(&status1.stdout);
@@ -848,7 +800,6 @@ fn e2e_epic_multiple_children_partial_progress() {
     assert_eq!(epic1["total_children"], 5);
     assert_eq!(epic1["closed_children"], 0);
 
-    // Close 3 tasks (use --force since parent-child deps are blocking)
     for task_id in task_ids.iter().take(3) {
         let gate = run_br(
             &workspace,
@@ -877,7 +828,6 @@ fn e2e_epic_multiple_children_partial_progress() {
         assert!(close.status.success());
     }
 
-    // Check status - 3/5 closed, not eligible
     let status2 = run_br(&workspace, ["epic", "status", "--json"], "status_3_of_5");
     assert!(status2.status.success());
     let payload2 = extract_json_payload(&status2.stdout);
@@ -887,7 +837,6 @@ fn e2e_epic_multiple_children_partial_progress() {
     assert_eq!(epic2["closed_children"], 3);
     assert_eq!(epic2["eligible_for_close"], false);
 
-    // Text output should show 60% progress
     let status_text = run_br(&workspace, ["epic", "status"], "status_text_partial");
     assert!(status_text.status.success());
     assert!(
@@ -901,7 +850,6 @@ fn e2e_epic_multiple_children_partial_progress() {
         status_text.stdout
     );
 
-    // Close remaining tasks (use --force since parent-child deps are blocking)
     for task_id in task_ids.iter().skip(3) {
         let gate = run_br(
             &workspace,
@@ -934,7 +882,6 @@ fn e2e_epic_multiple_children_partial_progress() {
         assert!(close.status.success());
     }
 
-    // Now should be eligible
     let status3 = run_br(&workspace, ["epic", "status", "--json"], "status_5_of_5");
     assert!(status3.status.success());
     let payload3 = extract_json_payload(&status3.stdout);
@@ -952,7 +899,6 @@ fn e2e_epic_closed_epic_not_shown() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create and close an epic
     let create_epic = run_br(
         &workspace,
         ["create", "Already Closed Epic", "--type", "epic"],
@@ -987,7 +933,6 @@ fn e2e_epic_closed_epic_not_shown() {
     );
     assert!(close_epic.status.success());
 
-    // Epic status should not show closed epics
     let status = run_br(&workspace, ["epic", "status", "--json"], "epic_status");
     assert!(status.status.success());
     let payload = extract_json_payload(&status.stdout);
@@ -1000,15 +945,12 @@ fn e2e_epic_closed_epic_not_shown() {
 
 #[test]
 fn e2e_epic_deleted_child_removes_dependency() {
-    // When a child task is deleted, its dependencies are also removed.
-    // This means the epic loses that child entirely (not just counts it as closed).
     let _log = common::test_log("e2e_epic_deleted_child_removes_dependency");
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create epic with one child
     let create_epic = run_br(
         &workspace,
         ["create", "Tombstone Test Epic", "--type", "epic"],
@@ -1032,7 +974,6 @@ fn e2e_epic_deleted_child_removes_dependency() {
     );
     assert!(dep.status.success());
 
-    // Verify initial state: epic has 1 child
     let status_before = run_br(
         &workspace,
         ["epic", "status", "--json"],
@@ -1047,7 +988,6 @@ fn e2e_epic_deleted_child_removes_dependency() {
         .unwrap();
     assert_eq!(epic_before["total_children"], 1);
 
-    // Delete the task (creates tombstone and removes dependencies)
     let delete_task = run_br(
         &workspace,
         [
@@ -1061,7 +1001,6 @@ fn e2e_epic_deleted_child_removes_dependency() {
     );
     assert!(delete_task.status.success());
 
-    // After deletion, epic should have 0 children (dependency was removed)
     let status = run_br(
         &workspace,
         ["epic", "status", "--json"],
@@ -1076,7 +1015,6 @@ fn e2e_epic_deleted_child_removes_dependency() {
         "deleted child's dependency should be removed"
     );
     assert_eq!(epic["closed_children"], 0);
-    // Childless epic is not eligible for auto-close
     assert_eq!(
         epic["eligible_for_close"], false,
         "childless epic should not be eligible"
@@ -1091,7 +1029,6 @@ fn e2e_epic_create_rejects_closed_parent() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create and close an (childless) epic.
     let create_epic = run_br(
         &workspace,
         ["create", "Finished Epic", "--type", "epic"],
@@ -1130,8 +1067,6 @@ fn e2e_epic_create_rejects_closed_parent() {
         close_epic.stderr
     );
 
-    // F16 (bd-9ewu): filing new work under the finished grouping is refused at
-    // cut time, and the error names the remedy.
     let create_child = run_br(
         &workspace,
         ["create", "Late Child", "--parent", &epic_id],
@@ -1144,7 +1079,6 @@ fn e2e_epic_create_rejects_closed_parent() {
     let err = format!("{}{}", create_child.stdout, create_child.stderr);
     assert!(err.contains("reopen"), "error names the remedy: {err}");
 
-    // Dropping --parent cuts the same bead cleanly.
     let create_ok = run_br(
         &workspace,
         ["create", "Late Child"],

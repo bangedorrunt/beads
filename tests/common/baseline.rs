@@ -29,10 +29,6 @@ use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
-// =============================================================================
-// Configuration
-// =============================================================================
-
 /// Configuration for regression detection, populated from environment variables.
 #[derive(Debug, Clone)]
 pub struct RegressionConfig {
@@ -54,8 +50,8 @@ pub struct RegressionConfig {
 impl Default for RegressionConfig {
     fn default() -> Self {
         Self {
-            duration_threshold: 1.20, // 20% regression allowed
-            rss_threshold: 1.30,      // 30% memory regression allowed
+            duration_threshold: 1.20,
+            rss_threshold: 1.30,
             baseline_file: PathBuf::from("target/benchmark-results/baseline.json"),
             strict_mode: false,
         }
@@ -94,17 +90,13 @@ impl RegressionConfig {
     #[allow(dead_code)]
     pub fn ci() -> Self {
         Self {
-            duration_threshold: 1.10, // 10% regression in CI
-            rss_threshold: 1.20,      // 20% memory regression in CI
+            duration_threshold: 1.10,
+            rss_threshold: 1.20,
             strict_mode: true,
             ..Self::default()
         }
     }
 }
-
-// =============================================================================
-// Baseline Storage
-// =============================================================================
 
 /// Expected baseline metrics for a single operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,10 +220,6 @@ impl BaselineStore {
     }
 }
 
-// =============================================================================
-// Regression Detection
-// =============================================================================
-
 /// Result of a regression check.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegressionResult {
@@ -325,14 +313,12 @@ impl RegressionResult {
         let change_pct = (ratio_change - 1.0) * 100.0;
 
         let (duration_status, duration_reason) = if ratio_change <= 1.0 {
-            // Improvement or same
             let improvement = (1.0 - ratio_change) * 100.0;
             (
                 RegressionStatus::Ok,
                 format!("{improvement:.1}% faster than baseline"),
             )
         } else if ratio_change <= config.duration_threshold {
-            // Within threshold
             (
                 RegressionStatus::Ok,
                 format!(
@@ -341,7 +327,6 @@ impl RegressionResult {
                 ),
             )
         } else {
-            // Regression
             (
                 RegressionStatus::Regression,
                 format!(
@@ -412,10 +397,6 @@ impl RegressionResult {
     }
 }
 
-// =============================================================================
-// Regression Summary
-// =============================================================================
-
 /// Summary of regression checks for a benchmark run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegressionSummary {
@@ -483,11 +464,10 @@ impl RegressionSummary {
             .filter(|r| r.status == RegressionStatus::Ok && r.baseline_ratio.is_some())
             .count();
 
-        // In strict mode, any regression means failure
         let passed = if config.strict_mode {
             regression_count == 0
         } else {
-            true // In non-strict mode, we just warn
+            true
         };
 
         Self {
@@ -540,7 +520,6 @@ impl RegressionSummary {
                 .change_pct
                 .map_or_else(|| "n/a".to_string(), |p| format!("{:+.1}%", p));
 
-            // Truncate reason for display
             let reason = if result.reason.len() > 30 {
                 format!("{}...", &result.reason[..27])
             } else {
@@ -562,16 +541,12 @@ impl RegressionSummary {
     }
 }
 
-// =============================================================================
-// Baseline Update Helper
-// =============================================================================
-
 /// Helper to update baselines from benchmark results.
 pub fn update_baselines_from_results(
     store: &mut BaselineStore,
     dataset_name: &str,
     issue_count: usize,
-    comparisons: &[(String, f64, u128, u128, Option<f64>)], // (label, ratio, br_ms, bd_ms, rss_ratio)
+    comparisons: &[(String, f64, u128, u128, Option<f64>)],
 ) {
     let timestamp = chrono::Utc::now().to_rfc3339();
 
@@ -629,7 +604,6 @@ mod tests {
             notes: None,
         };
 
-        // Current is 0.4 (better than baseline 0.5)
         let result = RegressionResult::check("list", "beads", 0.4, None, &baseline, &config);
         assert!(!result.is_regression);
         assert_eq!(result.status, RegressionStatus::Ok);
@@ -648,7 +622,6 @@ mod tests {
             notes: None,
         };
 
-        // Current is 0.55 (10% worse than baseline 0.5, within 20% threshold)
         let result = RegressionResult::check("list", "beads", 0.55, None, &baseline, &config);
         assert!(!result.is_regression);
         assert_eq!(result.status, RegressionStatus::Ok);
@@ -666,7 +639,6 @@ mod tests {
             notes: None,
         };
 
-        // Current is 0.7 (40% worse than baseline 0.5, exceeds 20% threshold)
         let result = RegressionResult::check("list", "beads", 0.7, None, &baseline, &config);
         assert!(result.is_regression);
         assert_eq!(result.status, RegressionStatus::Regression);
@@ -734,7 +706,7 @@ mod tests {
         assert_eq!(summary.no_baseline_count, 1);
         assert_eq!(summary.ok_count, 1);
         assert_eq!(summary.regression_count, 1);
-        assert!(summary.passed); // Non-strict mode
+        assert!(summary.passed);
     }
 
     #[test]
@@ -759,6 +731,6 @@ mod tests {
         }];
 
         let summary = RegressionSummary::from_results(results, &config);
-        assert!(!summary.passed); // Strict mode fails on regression
+        assert!(!summary.passed);
     }
 }

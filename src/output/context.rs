@@ -341,7 +341,6 @@ fn write_toon_issue_counts_object_to_writer<W: Write>(
     push_toon_string_value(&mut line, &issue.id);
     write_toon_newline_and_line(writer, &line)?;
 
-    // Schema v18 typed fields sit right after `id` in serde order.
     if let Some(verify) = issue.verify.as_ref() {
         let mut l = String::new();
         l.push_str("    verify: ");
@@ -537,7 +536,6 @@ fn issue_counts_toon_fields(row: &IssueWithCounts) -> Option<Vec<&'static str>> 
 
     let mut fields = Vec::with_capacity(40);
     fields.push("id");
-    // Schema v18 typed work-ledger fields (serde skips them when unset).
     push_optional_toon_field(&mut fields, issue.verify.as_ref(), "verify");
     if !issue.principles.is_empty() {
         fields.push("principles");
@@ -1227,10 +1225,6 @@ impl OutputContext {
         })
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Mode Checks (no lazy initialization needed - mode is always set)
-    // ─────────────────────────────────────────────────────────────
-
     pub fn mode(&self) -> OutputMode {
         self.mode
     }
@@ -1271,10 +1265,6 @@ impl OutputContext {
         self.theme.get_or_init(Theme::default)
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Output Methods
-    // ─────────────────────────────────────────────────────────────
-
     pub fn print(&self, content: &str) {
         let content = sanitize_terminal_text(content);
         match self.mode {
@@ -1282,7 +1272,7 @@ impl OutputContext {
                 self.console()
                     .print_renderable(&Text::new(content.into_owned()));
             }
-            OutputMode::Quiet | OutputMode::Json | OutputMode::Toon => {} // No console access - zero overhead
+            OutputMode::Quiet | OutputMode::Json | OutputMode::Toon => {}
         }
     }
 
@@ -1353,7 +1343,6 @@ impl OutputContext {
 
     pub fn json<T: serde::Serialize>(&self, value: &T) {
         if self.is_json() {
-            // Stream to stdout to avoid allocating large JSON strings.
             let stdout = io::stdout();
             let mut out = io::BufWriter::with_capacity(JSON_OUTPUT_BUFFER_CAPACITY, stdout.lock());
             if let Err(err) = serde_json::to_writer(&mut out, value) {
@@ -1544,10 +1533,6 @@ impl OutputContext {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Semantic Output Methods
-    // ─────────────────────────────────────────────────────────────
-
     pub fn success(&self, message: &str) {
         let message = sanitize_terminal_inline(message);
         match self.mode {
@@ -1560,7 +1545,7 @@ impl OutputContext {
                 self.console().print_renderable(&text);
             }
             OutputMode::Plain => println!("✓ {}", message),
-            OutputMode::Quiet | OutputMode::Json | OutputMode::Toon => {} //
+            OutputMode::Quiet | OutputMode::Json | OutputMode::Toon => {}
         }
     }
 
@@ -1574,7 +1559,7 @@ impl OutputContext {
                 self.console().print_renderable(&panel);
             }
             OutputMode::Plain | OutputMode::Quiet => eprintln!("Error: {}", message),
-            OutputMode::Json | OutputMode::Toon => {} //
+            OutputMode::Json | OutputMode::Toon => {}
         }
     }
 
@@ -1590,7 +1575,7 @@ impl OutputContext {
                 self.console().print_renderable(&text);
             }
             OutputMode::Plain => eprintln!("Warning: {}", message),
-            OutputMode::Quiet | OutputMode::Json | OutputMode::Toon => {} //
+            OutputMode::Quiet | OutputMode::Json | OutputMode::Toon => {}
         }
     }
 
@@ -1606,7 +1591,7 @@ impl OutputContext {
                 self.console().print_renderable(&text);
             }
             OutputMode::Plain => println!("{}", message),
-            OutputMode::Quiet | OutputMode::Json | OutputMode::Toon => {} //
+            OutputMode::Quiet | OutputMode::Json | OutputMode::Toon => {}
         }
     }
 
@@ -1653,7 +1638,7 @@ impl OutputContext {
                 }
             }
             OutputMode::Quiet => eprintln!("Error: {}", description),
-            OutputMode::Json | OutputMode::Toon => {} //
+            OutputMode::Json | OutputMode::Toon => {}
         }
     }
 }

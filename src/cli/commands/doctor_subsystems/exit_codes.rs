@@ -39,7 +39,7 @@
 //!
 //! [1]: <https://example.invalid/safety-envelope> "see analysis/safety_envelope.md"
 
-#![allow(dead_code)] // WP1 foundation; consumed by WP3-WP12.
+#![allow(dead_code)]
 
 /// Structured doctor exit code.
 ///
@@ -176,8 +176,6 @@ mod tests {
     #[test]
     fn as_str_round_trips_via_all() {
         for code in DoctorExitCode::all() {
-            // Names are non-empty, lowercase ASCII, and match a stable
-            // pattern. We check the most basic shape only.
             let name = code.as_str();
             assert!(!name.is_empty());
             assert!(

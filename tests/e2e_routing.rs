@@ -103,20 +103,14 @@ fn routed_partial_id(issue_id: &str) -> String {
     format!("{prefix}-{partial_hash}")
 }
 
-// =============================================================================
-// PREFIX-BASED ROUTING TESTS
-// =============================================================================
-
 #[test]
 fn e2e_routing_local_prefix_no_routes_file() {
     let _log = common::test_log("e2e_routing_local_prefix_no_routes_file");
     let workspace = BrWorkspace::new();
 
-    // Initialize workspace
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue
     let create = run_br(
         &workspace,
         [
@@ -132,7 +126,6 @@ fn e2e_routing_local_prefix_no_routes_file() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Verify the issue was created locally (no routes.jsonl means local)
     let list = run_br(&workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
@@ -146,14 +139,11 @@ fn e2e_routing_routes_jsonl_local_route() {
     let _log = common::test_log("e2e_routing_routes_jsonl_local_route");
     let workspace = BrWorkspace::new();
 
-    // Initialize workspace
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create routes file with local route (path = ".")
     create_routes_file(&workspace, &[("bd-", ".")]);
 
-    // Create an issue - should use local storage
     let create = run_br(
         &workspace,
         [
@@ -169,7 +159,6 @@ fn e2e_routing_routes_jsonl_local_route() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Verify the issue was created
     let list = run_br(&workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
@@ -183,15 +172,12 @@ fn e2e_routing_routes_jsonl_malformed_line() {
     let _log = common::test_log("e2e_routing_routes_jsonl_malformed_line");
     let workspace = BrWorkspace::new();
 
-    // Initialize workspace
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create malformed routes.jsonl
     let routes_path = workspace.root.join(".beads").join("routes.jsonl");
     fs::write(&routes_path, "not valid json\n").expect("write routes.jsonl");
 
-    // Create an issue - should still work (local fallback) or give clear error
     let create = run_br(
         &workspace,
         [
@@ -206,7 +192,6 @@ fn e2e_routing_routes_jsonl_malformed_line() {
         "create",
     );
 
-    // Either succeeds with local fallback or fails with clear error
     if !create.status.success() {
         assert!(
             create.stderr.contains("Invalid route")
@@ -222,15 +207,12 @@ fn e2e_routing_routes_jsonl_malformed_line() {
 fn e2e_routing_routes_jsonl_external_route() {
     let _log = common::test_log("e2e_routing_routes_jsonl_external_route");
 
-    // Use separate workspaces for main and external projects
     let main_workspace = BrWorkspace::new();
     let external_workspace = BrWorkspace::new();
 
-    // Initialize main workspace
     let init = run_br(&main_workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Initialize external workspace
     let init_external = run_br(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
@@ -238,11 +220,9 @@ fn e2e_routing_routes_jsonl_external_route() {
         init_external.stderr
     );
 
-    // Set a different prefix for external project
     let external_config = external_workspace.root.join(".beads").join("config.yaml");
     fs::write(&external_config, "issue_prefix: ext\n").expect("write external config");
 
-    // Create routes file in main workspace pointing to external workspace
     let routes_path = main_workspace.root.join(".beads").join("routes.jsonl");
     let route_entry = format!(
         r#"{{"prefix":"ext-","path":"{}"}}"#,
@@ -250,7 +230,6 @@ fn e2e_routing_routes_jsonl_external_route() {
     );
     fs::write(&routes_path, route_entry).expect("write routes.jsonl");
 
-    // Create an issue in external project
     let create = run_br(
         &external_workspace,
         [
@@ -272,7 +251,6 @@ fn e2e_routing_routes_jsonl_external_route() {
         .expect("external id")
         .to_string();
 
-    // Verify the issue exists in external project
     let list = run_br(&external_workspace, ["list", "--json"], "list_external");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
@@ -280,7 +258,6 @@ fn e2e_routing_routes_jsonl_external_route() {
         "Expected issue in external project"
     );
 
-    // Show the external issue from the main workspace via routing
     let show = run_br(
         &main_workspace,
         ["show", &external_id, "--json"],
@@ -2251,8 +2228,6 @@ fn e2e_routing_lint_external_issue_via_main_workspace() {
     let create_json: Value =
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let issue_id = create_json["id"].as_str().expect("issue id").to_string();
-    // `missing` below is the incomplete-brief finding, so strip the
-    // harness-supplied verify/principles back off the external issue.
     let strip = run_br(
         &external_workspace,
         ["update", &issue_id, "--verify", "", "--clear-principles"],
@@ -2350,9 +2325,6 @@ fn e2e_routing_label_add_failure_does_not_mutate_earlier_batches() {
         !label_add.status.success(),
         "expected routed label add with missing external issue to fail"
     );
-    // In JSON mode the structured error envelope is the whole of stdout
-    // (issue #336), so "no partial success output" means the payload is an
-    // error rather than a per-issue success list.
     let label_add_json: Value = serde_json::from_str(label_add.stdout.trim())
         .expect("failing routed label add should still emit one parseable JSON payload");
     assert!(
@@ -3065,34 +3037,23 @@ fn e2e_routing_show_mixed_no_db_batches_preserve_local_db_override() {
     );
 }
 
-// =============================================================================
-// REDIRECT FILE TESTS
-// =============================================================================
-
 #[test]
 fn e2e_routing_redirect_file_absolute_path() {
     let _log = common::test_log("e2e_routing_redirect_file_absolute_path");
 
-    // Use separate workspaces
     let actual_workspace = BrWorkspace::new();
     let redirect_workspace = BrWorkspace::new();
 
-    // Initialize the actual workspace
     let init = run_br(&actual_workspace, ["init"], "init_actual");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create redirect file pointing to actual beads directory (absolute path)
     let actual_beads = actual_workspace.root.join(".beads");
-    // First create the redirect .beads directory
     fs::create_dir_all(redirect_workspace.root.join(".beads")).expect("create redirect beads");
-    // Then create the redirect file
     create_redirect_file(
         &redirect_workspace.root.join(".beads"),
         actual_beads.to_str().unwrap(),
     );
 
-    // The redirect is used during route resolution, not BEADS_DIR discovery.
-    // Test that creating an issue in the actual workspace works
     let create = run_br(
         &actual_workspace,
         [
@@ -3108,7 +3069,6 @@ fn e2e_routing_redirect_file_absolute_path() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Verify issue exists
     let list = run_br(&actual_workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
@@ -3122,19 +3082,14 @@ fn e2e_routing_redirect_file_relative_path() {
     let _log = common::test_log("e2e_routing_redirect_file_relative_path");
     let workspace = BrWorkspace::new();
 
-    // Initialize workspace
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Test that relative paths in redirect files are handled correctly
-    // by creating a redirect file and verifying the path resolution logic
     let beads_dir = workspace.root.join(".beads");
     let redirect_path = beads_dir.join("redirect");
 
-    // Create a redirect to a relative path (which resolves to same location)
     fs::write(&redirect_path, ".").expect("write redirect");
 
-    // Should work (redirect to "." means same directory)
     let create = run_br(
         &workspace,
         [
@@ -3150,7 +3105,6 @@ fn e2e_routing_redirect_file_relative_path() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Verify issue exists
     let list = run_br(&workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
@@ -3164,11 +3118,9 @@ fn e2e_routing_redirect_missing_target() {
     let _log = common::test_log("e2e_routing_redirect_missing_target");
     let workspace = BrWorkspace::new();
 
-    // Initialize workspace
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create a route to a nonexistent external project
     let routes_path = workspace.root.join(".beads").join("routes.jsonl");
     fs::write(
         &routes_path,
@@ -3176,25 +3128,18 @@ fn e2e_routing_redirect_missing_target() {
     )
     .expect("write routes.jsonl");
 
-    // Create a redirect file in an external route target directory
     let ext_beads = workspace.root.join("ext").join(".beads");
     fs::create_dir_all(&ext_beads).expect("create ext beads");
     create_redirect_file(&ext_beads, "/nonexistent/redirect/target/.beads");
 
-    // Add route to this external project
     fs::write(&routes_path, r#"{"prefix":"ext-","path":"ext"}"#).expect("write routes.jsonl");
 
-    // Trying to show an issue with the ext- prefix should trigger redirect resolution
-    // and fail because the redirect target doesn't exist
     let show = run_br(
         &workspace,
         ["show", "ext-abc123", "--json"],
         "show_missing_redirect",
     );
 
-    // The routing code attempts to follow redirects. If target is missing,
-    // it should produce an error or fall back gracefully.
-    // Check that error messaging is clear when redirect/route fails
     if !show.status.success() {
         assert!(
             show.stdout.contains("not found")
@@ -3206,7 +3151,6 @@ fn e2e_routing_redirect_missing_target() {
             show.stdout
         );
     }
-    // If it succeeds (by falling back to local), that's also acceptable behavior
 }
 
 #[test]
@@ -3214,15 +3158,12 @@ fn e2e_routing_redirect_empty_file() {
     let _log = common::test_log("e2e_routing_redirect_empty_file");
     let workspace = BrWorkspace::new();
 
-    // Initialize workspace
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create empty redirect file
     let redirect_path = workspace.root.join(".beads").join("redirect");
     fs::write(&redirect_path, "").expect("write empty redirect");
 
-    // Should still work (empty redirect is ignored)
     let list = run_br(&workspace, ["list", "--json"], "list");
     assert!(
         list.status.success(),
@@ -3231,21 +3172,17 @@ fn e2e_routing_redirect_empty_file() {
     );
 }
 
-// =============================================================================
 // EXTERNAL DB REFERENCE SAFETY TESTS
-// =============================================================================
 
 #[test]
 fn e2e_routing_db_flag_external_path() {
     let _log = common::test_log("e2e_routing_db_flag_external_path");
     let workspace = BrWorkspace::new();
 
-    // Create external project with beads
     let external_beads = workspace.root.join("external").join(".beads");
     fs::create_dir_all(&external_beads).expect("create external beads dir");
     let external_db = external_beads.join("beads.db");
 
-    // Initialize external database using --db flag
     let init = run_br_with_env(
         &workspace,
         ["init"],
@@ -3254,7 +3191,6 @@ fn e2e_routing_db_flag_external_path() {
     );
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Use --db flag to point to external database
     let create = run_br(
         &workspace,
         [
@@ -3272,7 +3208,6 @@ fn e2e_routing_db_flag_external_path() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Verify issue exists in external project
     let list = run_br(
         &workspace,
         ["--db", external_db.to_str().unwrap(), "list", "--json"],
@@ -3351,10 +3286,6 @@ fn e2e_config_get_db_flag_invalid_target_fails_instead_of_falling_back() {
         ],
         "config_get_invalid_db_target",
     );
-    // config get for YAML-backed keys (issue_prefix) succeeds even with a
-    // corrupt DB because the config layer reads from the sibling config.yaml.
-    // The --db flag influences which .beads/ directory the config is loaded
-    // from, so the value from the broken workspace's config.yaml is returned.
     assert!(
         get.status.success(),
         "config get for YAML-backed key should succeed even with corrupt DB: {}",
@@ -3400,20 +3331,14 @@ fn e2e_config_delete_db_flag_invalid_target_preserves_yaml() {
     );
 }
 
-// The `br changelog` subcommand was removed in the wave-5 strip, so the
-// former "changelog resolves git references in the targeted repo" routing
-// test has no subject; the routing machinery it exercised is covered by the
-// close/reopen/gate routing tests above.
 #[test]
 fn e2e_routing_path_normalization() {
     let _log = common::test_log("e2e_routing_path_normalization");
     let workspace = BrWorkspace::new();
 
-    // Create actual project
     let actual_beads = workspace.root.join("actual").join(".beads");
     fs::create_dir_all(&actual_beads).expect("create actual beads dir");
 
-    // Initialize
     let init = run_br_with_env(
         &workspace,
         ["init"],
@@ -3422,7 +3347,6 @@ fn e2e_routing_path_normalization() {
     );
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Use path with .. components that normalizes to a valid path
     let db_with_dotdot = workspace
         .root
         .join("actual")
@@ -3444,16 +3368,11 @@ fn e2e_routing_path_normalization() {
     );
 }
 
-// =============================================================================
-// ERROR MESSAGE CLARITY TESTS
-// =============================================================================
-
 #[test]
 fn e2e_routing_not_initialized_error() {
     let _log = common::test_log("e2e_routing_not_initialized_error");
     let workspace = BrWorkspace::new();
 
-    // Run command without initialization
     let list = run_br(&workspace, ["list", "--json"], "list_not_init");
     assert!(
         !list.status.success(),
@@ -3473,7 +3392,6 @@ fn e2e_routing_invalid_beads_dir_env() {
     let _log = common::test_log("e2e_routing_invalid_beads_dir_env");
     let workspace = BrWorkspace::new();
 
-    // Use BEADS_DIR pointing to nonexistent directory
     let list = run_br_with_env(
         &workspace,
         ["list", "--json"],
@@ -3484,7 +3402,6 @@ fn e2e_routing_invalid_beads_dir_env() {
         !list.status.success(),
         "Expected failure for invalid BEADS_DIR"
     );
-    // Should fall back to discovery and fail with not initialized
     assert!(
         list.stdout.contains("not initialized")
             || list.stdout.contains("br init")
@@ -3499,15 +3416,12 @@ fn e2e_routing_invalid_beads_dir_env() {
 fn e2e_routing_show_external_issue_not_found() {
     let _log = common::test_log("e2e_routing_show_external_issue_not_found");
 
-    // Use separate workspaces to avoid init conflicts
     let main_workspace = BrWorkspace::new();
     let external_workspace = BrWorkspace::new();
 
-    // Initialize main workspace
     let init = run_br(&main_workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Initialize external workspace
     let init_ext = run_br(&external_workspace, ["init"], "init_external");
     assert!(
         init_ext.status.success(),
@@ -3515,11 +3429,9 @@ fn e2e_routing_show_external_issue_not_found() {
         init_ext.stderr
     );
 
-    // Set a different prefix for external project
     let external_config = external_workspace.root.join(".beads").join("config.yaml");
     fs::write(&external_config, "issue_prefix: ext\n").expect("write external config");
 
-    // Create routes file in main workspace pointing to external workspace
     let routes_path = main_workspace.root.join(".beads").join("routes.jsonl");
     let route_entry = format!(
         r#"{{"prefix":"ext-","path":"{}"}}"#,
@@ -3527,8 +3439,6 @@ fn e2e_routing_show_external_issue_not_found() {
     );
     fs::write(&routes_path, route_entry).expect("write routes.jsonl");
 
-    // Try to show a nonexistent issue with ext- prefix
-    // This should trigger route resolution to external project
     let show = run_br(
         &main_workspace,
         ["show", "ext-nonexistent", "--json"],

@@ -32,7 +32,6 @@ struct VersionOutput<'a> {
 pub fn execute(args: &VersionArgs, ctx: &OutputContext) -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
 
-    // Handle --short flag: output only version number
     if args.short {
         if !ctx.is_quiet() {
             println!("{version}");
@@ -40,7 +39,6 @@ pub fn execute(args: &VersionArgs, ctx: &OutputContext) -> Result<()> {
         return Ok(());
     }
 
-    // Handle --check flag: check if update is available
     if args.check {
         execute_update_check(version, ctx);
         return Ok(());
@@ -57,7 +55,6 @@ pub fn execute(args: &VersionArgs, ctx: &OutputContext) -> Result<()> {
     let rust_version = option_env!("VERGEN_RUSTC_SEMVER").filter(|s| !s.trim().is_empty());
     let target = option_env!("VERGEN_CARGO_TARGET_TRIPLE").filter(|s| !s.trim().is_empty());
 
-    // Collect enabled features
     let mut features = Vec::new();
     if cfg!(feature = "self_update") {
         features.push("self_update");
@@ -95,7 +92,6 @@ pub fn execute(args: &VersionArgs, ctx: &OutputContext) -> Result<()> {
         return Ok(());
     }
 
-    // Rich output mode
     if matches!(ctx.mode(), OutputMode::Rich) {
         render_version_rich(
             version,
@@ -110,7 +106,6 @@ pub fn execute(args: &VersionArgs, ctx: &OutputContext) -> Result<()> {
         return Ok(());
     }
 
-    // Plain text output
     let mut line = format!("br version {version} ({build})");
     match (branch, commit) {
         (Some(branch), Some(commit)) => {
@@ -149,12 +144,10 @@ fn render_version_rich(
 
     let mut content = Text::new("");
 
-    // Version header with styling
     content.append_styled(&format!("br {version}"), theme.emphasis.clone());
     content.append_styled(&format!(" ({build})"), theme.dimmed.clone());
     content.append("\n\n");
 
-    // Build info section
     let has_build_info =
         commit.is_some() || branch.is_some() || rust_version.is_some() || target.is_some();
 
@@ -191,14 +184,12 @@ fn render_version_rich(
         content.append("\n");
     }
 
-    // Features section
     if !features.is_empty() {
         content.append_styled("Features: ", theme.section.clone());
         content.append_styled(&features.join(", "), theme.success.clone());
         content.append("\n");
     }
 
-    // Wrap in panel
     let panel = Panel::from_rich_text(&content, width)
         .title(Text::styled("br version", theme.panel_title.clone()))
         .box_style(theme.box_style);
@@ -213,7 +204,6 @@ fn render_version_rich(
 /// - 1: Update available
 /// - 2: Error checking for updates
 fn execute_update_check(current_version: &str, ctx: &OutputContext) {
-    // Try to fetch latest version from GitHub releases
     let latest = match fetch_latest_version() {
         Ok(v) => v,
         Err(e) => {
@@ -275,10 +265,8 @@ fn execute_update_check(current_version: &str, ctx: &OutputContext) {
 fn fetch_latest_version() -> Result<String> {
     use std::io::Read;
 
-    // Use GitHub API to get latest release
     let url = github_latest_release_api_url();
 
-    // Build request with User-Agent (required by GitHub)
     let mut handle = std::process::Command::new("curl")
         .args(["-sS", "-H", "User-Agent: br-cli", url.as_str()])
         .stdout(std::process::Stdio::piped())
@@ -299,16 +287,13 @@ fn fetch_latest_version() -> Result<String> {
         ));
     }
 
-    // Parse JSON response
     let json: serde_json::Value = serde_json::from_str(&output)?;
 
-    // Extract tag_name (e.g., "v0.1.7")
     let tag = json
         .get("tag_name")
         .and_then(|v| v.as_str())
         .ok_or_else(|| BeadsError::validation("GitHub response", "missing tag_name"))?;
 
-    // Strip leading "v" if present
     let version = tag.strip_prefix('v').unwrap_or(tag);
     Ok(version.to_string())
 }
@@ -319,7 +304,6 @@ mod tests {
 
     #[test]
     fn test_version_json_schema() {
-        // Test that VersionOutput serializes with expected fields
         let output = VersionOutput {
             version: "1.0.0",
             build: "release",
@@ -342,7 +326,6 @@ mod tests {
 
     #[test]
     fn test_version_json_omits_none_fields() {
-        // Test that None fields are omitted from JSON output
         let output = VersionOutput {
             version: "1.0.0",
             build: "dev",
@@ -358,23 +341,19 @@ mod tests {
         assert!(json.get("branch").is_none());
         assert!(json.get("rust_version").is_none());
         assert!(json.get("target").is_none());
-        assert!(json.get("features").is_none()); // Empty vec is skipped
+        assert!(json.get("features").is_none());
     }
 
     #[test]
     fn test_build_info_present() {
-        // Verify build info env vars are defined at compile time
         let version = env!("CARGO_PKG_VERSION");
         assert!(!version.is_empty());
 
-        // These may or may not be set depending on build environment
-        // but the code should handle both cases gracefully
         let commit = option_env!("VERGEN_GIT_SHA");
         let branch = option_env!("VERGEN_GIT_BRANCH");
 
-        // If set, they should be non-empty strings
         if let Some(c) = commit {
-            assert!(!c.trim().is_empty() || c.is_empty()); // May be empty string
+            assert!(!c.trim().is_empty() || c.is_empty());
         }
         if let Some(b) = branch {
             assert!(!b.trim().is_empty() || b.is_empty());
@@ -383,26 +362,21 @@ mod tests {
 
     #[test]
     fn test_feature_flags_detection() {
-        // Test that feature flags can be detected at compile time
         let mut features = Vec::new();
         if cfg!(feature = "self_update") {
             features.push("self_update");
         }
 
-        // In default build, self_update should be enabled
         #[cfg(feature = "self_update")]
         assert!(features.contains(&"self_update"));
 
-        // Without the feature, the list should be empty
         #[cfg(not(feature = "self_update"))]
         assert!(features.is_empty());
     }
 
     #[test]
     fn test_version_short_format() {
-        // The short format should just be the version number
         let version = env!("CARGO_PKG_VERSION");
-        // Should match semver pattern
         assert!(
             version.contains('.'),
             "Version should contain dots: {version}"

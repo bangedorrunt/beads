@@ -57,32 +57,26 @@ pub fn topk_set(graph: &DiGraph, closed_set: &[bool], k: usize) -> TopKSetResult
         };
     }
 
-    // Initialize working closed set
     let mut current_closed = closed_set.to_vec();
     current_closed.resize(n, false);
 
-    // Count open nodes
     let open_nodes = (0..n).filter(|&i| !current_closed[i]).count();
 
     let mut selected = Vec::new();
     let mut total_gain = 0;
 
     for _ in 0..k {
-        // Find node with maximum marginal gain among open nodes
         let mut best_node: Option<usize> = None;
         let mut best_gain = 0;
         let mut best_unblocked: Vec<usize> = Vec::new();
 
-        // Collect candidates (non-closed nodes)
         let mut candidates: Vec<usize> = (0..n).filter(|&i| !current_closed[i]).collect();
-        // Sort for determinism when gains are equal
         candidates.sort_unstable();
 
         for node in candidates {
             let result = what_if_close(graph, node, &current_closed);
             let gain = result.transitive_unblocks;
 
-            // Prefer higher gain, or lower node index for determinism
             if gain > best_gain || (gain == best_gain && best_node.is_none()) {
                 best_gain = gain;
                 best_node = Some(node);
@@ -97,9 +91,7 @@ pub fn topk_set(graph: &DiGraph, closed_set: &[bool], k: usize) -> TopKSetResult
                     marginal_gain: best_gain,
                     unblocked_ids: best_unblocked.clone(),
                 });
-                // Mark the selected node as closed
                 current_closed[node] = true;
-                // Also mark all cascade nodes as closed (they'll be completed transitively)
                 for &cascade_node in &best_unblocked {
                     if cascade_node < n {
                         current_closed[cascade_node] = true;
@@ -107,7 +99,7 @@ pub fn topk_set(graph: &DiGraph, closed_set: &[bool], k: usize) -> TopKSetResult
                 }
                 total_gain += best_gain;
             }
-            _ => break, // No more beneficial nodes
+            _ => break,
         }
     }
 
@@ -152,46 +144,37 @@ mod tests {
         let mut g = DiGraph::new();
         g.add_node("a");
         let result = topk_set(&g, &[false], 5);
-        // Single node with no dependents has no gain
         assert!(result.items.is_empty());
         assert_eq!(result.total_gain, 0);
     }
 
     #[test]
     fn test_simple_chain() {
-        // 0 -> 1 -> 2 -> 3
-        // Completing 0 unblocks 1,2,3 (gain=3)
-        // Then 1 is closed, 2,3 remain but no more gain from selecting 1
         let g = make_graph(&[(0, 1), (1, 2), (2, 3)]);
         let result = topk_set(&g, &[false; 4], 5);
 
         assert!(!result.items.is_empty());
-        // First selection should be 0 (highest impact)
         assert_eq!(result.items[0].node, 0);
         assert_eq!(result.items[0].marginal_gain, 3);
     }
 
     #[test]
     fn test_fork_pattern() {
-        // Hub -> A, B, C (hub unblocks 3)
         let g = make_graph(&[(0, 1), (0, 2), (0, 3)]);
         let result = topk_set(&g, &[false; 4], 5);
 
         assert_eq!(result.items.len(), 1);
-        assert_eq!(result.items[0].node, 0); // Hub
+        assert_eq!(result.items[0].node, 0);
         assert_eq!(result.items[0].marginal_gain, 3);
         assert_eq!(result.total_gain, 3);
     }
 
     #[test]
     fn test_multiple_hubs() {
-        // Hub1 -> {A, B}, Hub2 -> {X, Y, Z}
-        // Hub2 should be picked first (3 > 2)
         let g = make_graph(&[(0, 1), (0, 2), (3, 4), (3, 5), (3, 6)]);
         let result = topk_set(&g, &[false; 7], 5);
 
         assert!(result.items.len() >= 2);
-        // Node 3 (Hub2) has more impact (3) than Node 0 (Hub1, 2)
         assert_eq!(result.items[0].node, 3);
         assert_eq!(result.items[0].marginal_gain, 3);
         assert_eq!(result.items[1].node, 0);
@@ -201,9 +184,6 @@ mod tests {
 
     #[test]
     fn test_submodularity() {
-        // Chain: 0 -> 1 -> 2 -> 3 -> 4
-        // First selection: 0 (gain=4)
-        // After that, no more nodes with positive gain (all unblocked)
         let g = make_graph(&[(0, 1), (1, 2), (2, 3), (3, 4)]);
         let result = topk_set(&g, &[false; 5], 5);
 
@@ -213,20 +193,17 @@ mod tests {
 
     #[test]
     fn test_partially_closed() {
-        // 0 -> 2, 1 -> 2, 2 -> 3
-        // If 0 is already closed, closing 1 unblocks 2 (then 3)
         let g = make_graph(&[(0, 2), (1, 2), (2, 3)]);
         let closed = vec![true, false, false, false];
         let result = topk_set(&g, &closed, 5);
 
         assert!(!result.items.is_empty());
         assert_eq!(result.items[0].node, 1);
-        assert_eq!(result.items[0].marginal_gain, 2); // 2 and 3
+        assert_eq!(result.items[0].marginal_gain, 2);
     }
 
     #[test]
     fn test_limit_respected() {
-        // Many independent chains
         let g = make_graph(&[(0, 1), (2, 3), (4, 5), (6, 7), (8, 9)]);
         let result = topk_set(&g, &[false; 10], 2);
 
@@ -235,22 +212,16 @@ mod tests {
 
     #[test]
     fn test_deterministic() {
-        // Same gains - should pick by node index for determinism
-        // 0 -> 1, 2 -> 3 (both have gain 1)
         let g = make_graph(&[(0, 1), (2, 3)]);
 
-        // Run multiple times
         for _ in 0..5 {
             let result = topk_set(&g, &[false; 4], 5);
-            // Should consistently pick 0 first (lower index)
             assert_eq!(result.items[0].node, 0);
         }
     }
 
     #[test]
     fn test_monotonic_marginal_gains() {
-        // Submodularity: marginal gains should be non-increasing
-        // Tree: 0 -> {1, 2, 3}, 1 -> {4, 5}
         let g = make_graph(&[(0, 1), (0, 2), (0, 3), (1, 4), (1, 5)]);
         let result = topk_set(&g, &[false; 6], 5);
 
@@ -270,7 +241,6 @@ mod tests {
         let closed = vec![true, false, false];
         let result = topk_set(&g, &closed, 5);
 
-        // 1 node closed, 2 open
         assert_eq!(result.open_nodes, 2);
     }
 
@@ -286,7 +256,6 @@ mod tests {
 
     #[test]
     fn test_deep_cascade() {
-        // Deep chain: 0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
         let mut edges = Vec::new();
         for i in 0..9 {
             edges.push((i, i + 1));

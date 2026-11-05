@@ -114,7 +114,6 @@ fn land_full_ceremony_dry_run_names_missing_preconditions() {
     let (workspace, id) = setup_workspace_with_issue("Land ceremony preconditions");
     let sha = commit_citing(&workspace, &id, &format!("feat: land ceremony ({id})"));
 
-    // No sha, no gate row yet: both are named, and the close refuses.
     let dry_no_sha = run_br(
         &workspace,
         ["close", &id, "--dry-run", "--json"],
@@ -141,8 +140,6 @@ fn land_full_ceremony_dry_run_names_missing_preconditions() {
         "dry-run must name the missing gate row (bindings): {items:?}"
     );
 
-    // With the citing sha supplied, the citation is satisfied and only the
-    // gate row remains missing.
     let dry_with_sha = run_br(
         &workspace,
         ["close", &id, "--dry-run", "--commit-sha", &sha, "--json"],
@@ -176,7 +173,6 @@ fn land_full_ceremony_dry_run_plan_writes_nothing() {
     let (workspace, id) = setup_workspace_with_issue("Land ceremony dry plan");
     let sha = commit_citing(&workspace, &id, &format!("feat: land ceremony ({id})"));
 
-    // land --dry-run names the plan: derived gate, note, and the steps.
     let land_dry = run_br(
         &workspace,
         ["land", &id, "--commit-sha", &sha, "--dry-run", "--json"],
@@ -203,7 +199,6 @@ fn land_full_ceremony_dry_run_plan_writes_nothing() {
         step(&payload, name);
     }
 
-    // Dry-runs wrote nothing: no gate row, bead still open.
     let gates = run_br(
         &workspace,
         ["gate", "list", &id, "--json"],
@@ -228,7 +223,6 @@ fn land_full_ceremony_refuses_glued_sha() {
     let (workspace, id) = setup_workspace_with_issue("Land ceremony glued sha");
     let sha = commit_citing(&workspace, &id, &format!("feat: land ceremony ({id})"));
 
-    // ---- sha-token validation refuses a glued `;` -------------------------
     let glued = format!("{sha};");
     let refused = run_br(
         &workspace,
@@ -259,7 +253,6 @@ fn land_full_ceremony_live_close_binds_sha_and_receipt() {
     let (workspace, id) = setup_workspace_with_issue("Land ceremony live close");
     let sha = commit_citing(&workspace, &id, &format!("feat: land ceremony ({id})"));
 
-    // ---- gate + close in one call ----------------------------------------
     let landed = run_br(
         &workspace,
         [
@@ -298,7 +291,6 @@ fn land_full_ceremony_live_close_binds_sha_and_receipt() {
     );
     assert_eq!(step(&payload, "sync")["status"], "next", "{payload}");
 
-    // The close is real, and the recorded verdict row carries the binding.
     let show = run_br(&workspace, ["show", &id, "--json"], "show_closed");
     let payload = parse_json_value(&show.stdout);
     assert_eq!(payload["status"], "closed", "{payload}");
@@ -316,7 +308,6 @@ fn land_full_ceremony_live_close_binds_sha_and_receipt() {
         "the persisted row must carry the binding: {note}"
     );
 
-    // A second dry-run now reports the bead already closed (no duplicate work).
     let dry_closed = run_br(
         &workspace,
         ["close", &id, "--dry-run", "--commit-sha", &sha, "--json"],
@@ -334,7 +325,6 @@ fn land_full_ceremony_live_close_binds_sha_and_receipt() {
 fn land_full_ceremony_release_leases_flag() {
     let _log = common::test_log("land_full_ceremony_release_leases_flag");
 
-    // ---- failure: the close landed, and land says so + names the retry ---
     let (workspace, id) = setup_workspace_with_issue("Land release-lease failure");
     let sha = commit_citing(&workspace, &id, &format!("feat: release failure ({id})"));
     let attempted = run_br_with_env(
@@ -369,7 +359,6 @@ fn land_full_ceremony_release_leases_flag() {
         "the close itself must have landed: {payload}"
     );
 
-    // ---- success: a working toron is invoked with the ceremony's args ----
     let (workspace, id) = setup_workspace_with_issue("Land release-lease success");
     let sha = commit_citing(&workspace, &id, &format!("feat: release success ({id})"));
     let script = workspace.root.join("fake-toron.sh");

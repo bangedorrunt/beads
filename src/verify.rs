@@ -154,11 +154,9 @@ fn is_heavy_marker(arg: &str) -> bool {
 /// matrices and unbounded shells are time bombs — non-runnable band.
 fn estimated_cheap(exec: &str, args: &[String]) -> bool {
     match exec {
-        // cargo: a TARGETED test run (`-p <pkg>` and/or a test filter after
-        // `test`); never the whole workspace matrix or a bare `cargo test`.
         "cargo" => {
             let Some(test_pos) = args.iter().position(|a| a == "test") else {
-                return false; // cargo without `test` is not a verification
+                return false;
             };
             !args.iter().any(|a| is_heavy_marker(a))
                 && (args[test_pos + 1..]
@@ -166,14 +164,8 @@ fn estimated_cheap(exec: &str, args: &[String]) -> bool {
                     .any(|a| a == "-p" || a.starts_with("-p") || a.starts_with("--package"))
                     || args[test_pos + 1..].iter().any(|a| !a.starts_with('-')))
         }
-        // pytest / test runners / python: targeted by default — reject the
-        // known-heavy markers.
         "pytest" | "test" | "python" | "python3" => !args.iter().any(|a| is_heavy_marker(a)),
-        // Bounded shell: must carry an explicit `timeout` bound (quoted
-        // args split on whitespace, so match the token as a substring).
         "sh" | "bash" => args.iter().any(|a| a.contains("timeout")),
-        // An explicit `timeout` wrapper is loop-runnable by definition (the
-        // bound is the caller's call).
         "timeout" => true,
         _ => false,
     }
@@ -206,40 +198,26 @@ pub struct LegalCloseInput<'a> {
 pub fn legal_close(kind: VerdictKind, bead: &LegalCloseInput<'_>) -> bool {
     let runnable = is_loop_runnable(bead.verify);
     match kind {
-        // Row 1 — cheap band: loop-run CommandVerified ONLY.
         VerdictKind::CommandVerified => {
             bead.ac == AcShape::Checkable
                 && bead.priority >= 2
                 && bead.blast == Blast::Normal
                 && runnable
         }
-        // Row 2 — non-runnable band: WorkerReceipt (+ two-tick grace),
-        // TriageVerified (reviewed record evidence; distinct audit meaning
-        // is carried by the kind itself), or an independent unit/live
-        // verification.
         VerdictKind::WorkerReceipt | VerdictKind::TriageVerified => {
             bead.ac == AcShape::Checkable
                 && bead.priority >= 2
                 && bead.blast == Blast::Normal
                 && !runnable
         }
-        // Row 2b — ordered close: a human attester (recorded as provider)
-        // is the independent verifier at P0/P1, where no command can verify.
         VerdictKind::OperatorDirected => {
             bead.ac == AcShape::Checkable && bead.priority <= 1 && bead.blast == Blast::Normal
         }
-        // Rows 2+3 — independent verification. Legal for the non-runnable
-        // band (ADR row 2) and for the P0/P1 / High-blast band (row 3);
-        // illegal only in the cheap band, where a loop-run
-        // CommandVerified is the exclusive proof.
         VerdictKind::UnitTestVerified | VerdictKind::LiveVerified => {
             bead.ac == AcShape::Checkable
                 && !(bead.priority >= 2 && bead.blast == Blast::Normal && runnable)
         }
-        // Row 4 — judgment AC: ReviewerSigned only. Recording any other kind
-        // for a judgment bead is a false verdict.
         VerdictKind::ReviewerSigned => bead.ac == AcShape::Judgment,
-        // Row 5 — never a pass.
         VerdictKind::VerifierBlocked | VerdictKind::VerifierFailed => false,
     }
 }
@@ -263,11 +241,8 @@ mod tests {
         )
     }
 
-    // ---- ADR-0001 §8.4 named contract tests ----
-
     #[test]
     fn legal_close_p3_loop_runnable_accepts_only_command_verified() {
-        // Row 1: cheap band accepts CommandVerified ONLY.
         for kind in VerdictKind::ALL {
             let want = kind == VerdictKind::CommandVerified;
             assert_eq!(
@@ -280,7 +255,6 @@ mod tests {
 
     #[test]
     fn legal_close_p3_loop_runnable_rejects_worker_receipt() {
-        // WorkerReceipt on a loop-runnable VERIFY is a forged-proof path.
         assert!(!legal(
             VerdictKind::WorkerReceipt,
             3,
@@ -288,7 +262,6 @@ mod tests {
             AcShape::Checkable,
             RUNNABLE
         ));
-        // But legal in the non-runnable band.
         assert!(legal(
             VerdictKind::WorkerReceipt,
             3,
@@ -300,8 +273,6 @@ mod tests {
 
     #[test]
     fn legal_close_p0_rejects_command_verified() {
-        // P0/P1 band: independent verification only; CommandVerified is
-        // illegal even on a loop-runnable VERIFY.
         assert!(!legal(
             VerdictKind::CommandVerified,
             0,
@@ -341,8 +312,6 @@ mod tests {
             );
         }
     }
-
-    // ---- Ported loop-runnable examples (flywheel verdict.rs tests) ----
 
     #[test]
     fn loop_run_classifier_accepts_targeted_checks() {
@@ -387,8 +356,6 @@ mod tests {
         assert!(!is_loop_runnable("cargo test $(echo x)"));
     }
 
-    // ---- Table oracle over every cell (ported from flywheel) ----
-
     /// The ADR-0001 §5.3 table, transcribed as a predicate. This is the
     /// oracle the implementation is checked against on every cell.
     fn expected(
@@ -409,9 +376,6 @@ mod tests {
                 ac == Checkable && priority >= 2 && blast == Normal && !runnable
             }
             OperatorDirected => ac == Checkable && priority <= 1 && blast == Normal,
-            // Rows 2+3: independent verification is legal for the
-            // non-runnable band AND the P0/P1 / High band; illegal only in
-            // the cheap band (CommandVerified-exclusive).
             UnitTestVerified | LiveVerified => {
                 ac == Checkable && !(priority >= 2 && blast == Normal && runnable)
             }

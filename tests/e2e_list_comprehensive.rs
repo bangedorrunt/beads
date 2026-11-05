@@ -39,7 +39,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
 
     let mut ids = Vec::new();
 
-    // Issue 1: Open task, P1, labeled "core"
     let issue1 = run_br(
         &workspace,
         ["create", "Core task", "-t", "task", "-p", "1"],
@@ -54,7 +53,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id1);
 
-    // Issue 2: Open bug, P0, labeled "urgent", assigned to "alice"
     let issue2 = run_br(
         &workspace,
         ["create", "Critical bug", "-t", "bug", "-p", "0"],
@@ -76,7 +74,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id2);
 
-    // Issue 3: Open feature, P2, labeled "core" and "frontend", assigned to "bob"
     let issue3 = run_br(
         &workspace,
         ["create", "New feature", "-t", "feature", "-p", "2"],
@@ -100,7 +97,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id3);
 
-    // Issue 4: Closed task, P3
     let issue4 = run_br(
         &workspace,
         ["create", "Old task", "-t", "task", "-p", "3"],
@@ -108,8 +104,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     assert!(issue4.status.success());
     let id4 = parse_created_id(&issue4.stdout);
-    // beads#301: terminal-state transitions go through `br close` so
-    // close-policy fires uniformly. `br update --status closed` is rejected.
     let gate = run_br(
         &workspace,
         [
@@ -148,7 +142,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id4);
 
-    // Issue 5: Deferred epic, P2
     let issue5 = run_br(
         &workspace,
         ["create", "Deferred epic", "-t", "epic", "-p", "2"],
@@ -169,7 +162,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id5);
 
-    // Issue 6: Open task, P4 (backlog), with description containing "searchable"
     let issue6 = run_br(
         &workspace,
         [
@@ -190,10 +182,6 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
 
     (workspace, ids)
 }
-
-// =============================================================================
-// BASIC LISTING TESTS
-// =============================================================================
 
 /// Drop CSI sequences (`ESC [ ... final-byte`) so a coloured run can be
 /// compared against its plain twin.
@@ -276,27 +264,22 @@ fn e2e_list_basic_text_output() {
     let list = run_br(&workspace, ["list"], "list_text");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
-    // Default list excludes closed but includes deferred
-    // Should contain: task1, bug1, feature1, epic1 (deferred), task3 = 5 issues
     for id in &ids[..3] {
         assert!(
             list.stdout.contains(id),
             "list should contain open issue {id}"
         );
     }
-    // Backlog item should be included
     assert!(
         list.stdout.contains(&ids[5]),
         "list should contain backlog item"
     );
 
-    // Deferred issue IS included by default
     assert!(
         list.stdout.contains(&ids[4]),
         "list should contain deferred issue by default"
     );
 
-    // Closed issue should NOT be in default list
     assert!(
         !list.stdout.contains(&ids[3]),
         "list should not contain closed issue by default"
@@ -313,11 +296,8 @@ fn e2e_list_json_output() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Default list excludes closed but includes deferred
-    // Should have 5 issues (4 open + 1 deferred)
     assert_eq!(issues.len(), 5, "expected 5 issues (4 open + 1 deferred)");
 
-    // Verify JSON structure
     for issue in &issues {
         assert!(issue["id"].is_string(), "issue should have id");
         assert!(issue["title"].is_string(), "issue should have title");
@@ -335,19 +315,13 @@ fn e2e_list_csv_output() {
     assert!(list.status.success(), "list csv failed: {}", list.stderr);
 
     let lines: Vec<&str> = list.stdout.lines().collect();
-    // Should have header + data rows
     assert!(lines.len() >= 2, "CSV should have header and data");
 
-    // Check header
     let header = lines[0];
     assert!(header.contains("id"), "CSV header should have id");
     assert!(header.contains("title"), "CSV header should have title");
     assert!(header.contains("status"), "CSV header should have status");
 }
-
-// =============================================================================
-// STATUS FILTERING TESTS
-// =============================================================================
 
 #[test]
 fn e2e_list_status_filter_open() {
@@ -363,7 +337,6 @@ fn e2e_list_status_filter_open() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // All issues should be open
     for issue in &issues {
         assert_eq!(issue["status"], "open");
     }
@@ -383,7 +356,6 @@ fn e2e_list_status_filter_closed() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have exactly 1 closed issue
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"], ids[3]);
     assert_eq!(issues[0]["status"], "closed");
@@ -403,7 +375,6 @@ fn e2e_list_status_filter_deferred() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have exactly 1 deferred issue
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"], ids[4]);
     assert_eq!(issues[0]["status"], "deferred");
@@ -419,10 +390,8 @@ fn e2e_list_all_includes_closed() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have all 6 issues
     assert_eq!(issues.len(), 6, "expected all 6 issues");
 
-    // Verify closed issue is present
     assert!(
         issues.iter().any(|i| i["id"] == ids[3]),
         "closed issue should be included with --all"
@@ -443,10 +412,8 @@ fn e2e_list_multiple_status_filter() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have open and closed issues (5 total: 4 open + 1 closed)
     assert_eq!(issues.len(), 5);
 
-    // Verify statuses
     for issue in &issues {
         let status = issue["status"].as_str().unwrap();
         assert!(
@@ -455,10 +422,6 @@ fn e2e_list_multiple_status_filter() {
         );
     }
 }
-
-// =============================================================================
-// TYPE FILTERING TESTS
-// =============================================================================
 
 #[test]
 fn e2e_list_type_filter_task() {
@@ -474,7 +437,6 @@ fn e2e_list_type_filter_task() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have 2 open tasks (task1 and task3; task2 is closed)
     assert_eq!(issues.len(), 2);
     for issue in &issues {
         assert_eq!(issue["issue_type"], "task");
@@ -495,7 +457,6 @@ fn e2e_list_type_filter_bug() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have exactly 1 bug
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"], ids[1]);
     assert_eq!(issues[0]["issue_type"], "bug");
@@ -515,7 +476,6 @@ fn e2e_list_multiple_type_filter() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have 1 bug + 1 feature = 2 issues
     assert_eq!(issues.len(), 2);
     for issue in &issues {
         let issue_type = issue["issue_type"].as_str().unwrap();
@@ -525,10 +485,6 @@ fn e2e_list_multiple_type_filter() {
         );
     }
 }
-
-// =============================================================================
-// PRIORITY FILTERING TESTS
-// =============================================================================
 
 #[test]
 fn e2e_list_priority_filter_exact() {
@@ -544,7 +500,6 @@ fn e2e_list_priority_filter_exact() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have exactly 1 P0 issue (the critical bug)
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"], ids[1]);
     assert_eq!(issues[0]["priority"], 0);
@@ -555,7 +510,6 @@ fn e2e_list_priority_min() {
     let _log = common::test_log("e2e_list_priority_min");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // priority-min=2 means priority >= 2 (P2, P3, P4 = lower priority)
     let list = run_br(
         &workspace,
         ["list", "--priority-min", "2", "--json"],
@@ -565,8 +519,6 @@ fn e2e_list_priority_min() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have issues with priority >= 2 (feature1 P2, epic1 P2 deferred, task3 P4)
-    // Note: deferred issues ARE included by default
     assert_eq!(issues.len(), 3);
     for issue in &issues {
         let priority = issue["priority"].as_u64().unwrap();
@@ -579,7 +531,6 @@ fn e2e_list_priority_max() {
     let _log = common::test_log("e2e_list_priority_max");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // priority-max=1 means priority <= 1 (P0, P1 = high priority)
     let list = run_br(
         &workspace,
         ["list", "--priority-max", "1", "--json"],
@@ -589,7 +540,6 @@ fn e2e_list_priority_max() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have issues with priority <= 1 (task1 P1, bug1 P0)
     assert_eq!(issues.len(), 2);
     for issue in &issues {
         let priority = issue["priority"].as_u64().unwrap();
@@ -602,7 +552,6 @@ fn e2e_list_priority_range() {
     let _log = common::test_log("e2e_list_priority_range");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // Priority range 1-2
     let list = run_br(
         &workspace,
         [
@@ -619,8 +568,6 @@ fn e2e_list_priority_range() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have P1 and P2 issues (task1 P1, feature1 P2, epic1 P2 deferred)
-    // Note: deferred issues ARE included by default
     assert_eq!(issues.len(), 3);
     for issue in &issues {
         let priority = issue["priority"].as_u64().unwrap();
@@ -631,16 +578,11 @@ fn e2e_list_priority_range() {
     }
 }
 
-// =============================================================================
-// LABEL FILTERING TESTS
-// =============================================================================
-
 #[test]
 fn e2e_list_label_filter_and() {
     let _log = common::test_log("e2e_list_label_filter_and");
     let (workspace, ids) = setup_diverse_workspace();
 
-    // Filter by label "core" (AND logic)
     let list = run_br(
         &workspace,
         ["list", "--label", "core", "--json"],
@@ -650,7 +592,6 @@ fn e2e_list_label_filter_and() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have 2 issues with "core" label (task1, feature1)
     assert_eq!(issues.len(), 2);
     assert!(issues.iter().any(|i| i["id"] == ids[0]));
     assert!(issues.iter().any(|i| i["id"] == ids[2]));
@@ -661,7 +602,6 @@ fn e2e_list_label_filter_multiple_and() {
     let _log = common::test_log("e2e_list_label_filter_multiple_and");
     let (workspace, ids) = setup_diverse_workspace();
 
-    // Filter by labels "core" AND "frontend" (must have both)
     let list = run_br(
         &workspace,
         ["list", "--label", "core", "--label", "frontend", "--json"],
@@ -671,7 +611,6 @@ fn e2e_list_label_filter_multiple_and() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have only feature1 (has both core and frontend)
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"], ids[2]);
 }
@@ -681,7 +620,6 @@ fn e2e_list_label_filter_or() {
     let _log = common::test_log("e2e_list_label_filter_or");
     let (workspace, ids) = setup_diverse_workspace();
 
-    // Filter by labels "urgent" OR "frontend" (any match)
     let list = run_br(
         &workspace,
         [
@@ -698,15 +636,10 @@ fn e2e_list_label_filter_or() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have bug1 (urgent) and feature1 (frontend) = 2 issues
     assert_eq!(issues.len(), 2);
-    assert!(issues.iter().any(|i| i["id"] == ids[1])); // bug1 with urgent
-    assert!(issues.iter().any(|i| i["id"] == ids[2])); // feature1 with frontend
+    assert!(issues.iter().any(|i| i["id"] == ids[1]));
+    assert!(issues.iter().any(|i| i["id"] == ids[2]));
 }
-
-// =============================================================================
-// ASSIGNEE FILTERING TESTS
-// =============================================================================
 
 #[test]
 fn e2e_list_assignee_filter() {
@@ -722,7 +655,6 @@ fn e2e_list_assignee_filter() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have exactly 1 issue assigned to alice (bug1)
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"], ids[1]);
     assert_eq!(issues[0]["assignee"], "alice");
@@ -742,8 +674,6 @@ fn e2e_list_unassigned_filter() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have 3 unassigned non-closed issues: task1, epic1 (deferred), task3
-    // bug1 assigned to alice, feature1 assigned to bob, task2 is closed
     assert_eq!(issues.len(), 3);
     for issue in &issues {
         assert!(
@@ -752,10 +682,6 @@ fn e2e_list_unassigned_filter() {
         );
     }
 }
-
-// =============================================================================
-// TEXT SEARCH TESTS
-// =============================================================================
 
 #[test]
 fn e2e_list_title_contains() {
@@ -771,7 +697,6 @@ fn e2e_list_title_contains() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should match "Critical bug"
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"], ids[1]);
     assert!(issues[0]["title"].as_str().unwrap().contains("Critical"));
@@ -791,14 +716,9 @@ fn e2e_list_desc_contains() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should match the backlog item with "searchable" in description
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"], ids[5]);
 }
-
-// =============================================================================
-// SORTING TESTS
-// =============================================================================
 
 #[test]
 fn e2e_list_sort_by_priority() {
@@ -814,7 +734,6 @@ fn e2e_list_sort_by_priority() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Verify sorted by priority ascending (P0 first)
     let priorities: Vec<u64> = issues
         .iter()
         .map(|i| i["priority"].as_u64().unwrap())
@@ -841,7 +760,6 @@ fn e2e_list_sort_by_priority_reverse() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Verify sorted by priority descending (P4 first)
     let priorities: Vec<u64> = issues
         .iter()
         .map(|i| i["priority"].as_u64().unwrap())
@@ -869,7 +787,6 @@ fn e2e_list_sort_by_title() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Verify sorted by title alphabetically
     let titles: Vec<&str> = issues
         .iter()
         .map(|i| i["title"].as_str().unwrap())
@@ -878,10 +795,6 @@ fn e2e_list_sort_by_title() {
     sorted.sort_unstable();
     assert_eq!(titles, sorted, "issues should be sorted by title");
 }
-
-// =============================================================================
-// LIMIT TESTS
-// =============================================================================
 
 #[test]
 fn e2e_list_limit() {
@@ -893,7 +806,6 @@ fn e2e_list_limit() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have exactly 2 issues
     assert_eq!(issues.len(), 2);
 }
 
@@ -929,8 +841,6 @@ fn e2e_list_limit_zero_unlimited() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should have all 5 non-closed issues (limit=0 means unlimited)
-    // Default list excludes closed but includes deferred
     assert_eq!(issues.len(), 5);
 }
 
@@ -956,10 +866,6 @@ fn e2e_list_limit_zero_with_offset_reports_unpaginated_total() {
     assert_eq!(page["has_more"].as_bool(), Some(false));
 }
 
-// =============================================================================
-// DEFERRED FILTER TESTS
-// =============================================================================
-
 #[test]
 fn e2e_list_deferred_flag() {
     let _log = common::test_log("e2e_list_deferred_flag");
@@ -974,19 +880,13 @@ fn e2e_list_deferred_flag() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should include all open + deferred issues (5 total)
     assert_eq!(issues.len(), 5);
 
-    // Verify deferred issue is present
     assert!(
         issues.iter().any(|i| i["id"] == ids[4]),
         "deferred issue should be included with --deferred flag"
     );
 }
-
-// =============================================================================
-// OUTPUT FORMAT TESTS
-// =============================================================================
 
 #[test]
 fn e2e_list_long_format() {
@@ -1060,7 +960,6 @@ fn e2e_list_csv_custom_fields() {
     let lines: Vec<&str> = list.stdout.lines().collect();
     assert!(lines.len() >= 2);
 
-    // Check header has only requested fields
     let header = lines[0];
     assert_eq!(header, "id,title,priority,assignee");
 }
@@ -1073,7 +972,6 @@ fn e2e_list_csv_escaping() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Create issues with CSV-problematic characters
     let create_comma = run_br(
         &workspace,
         ["create", "Fix login, signup flow"],
@@ -1094,7 +992,6 @@ fn e2e_list_csv_escaping() {
     let lines: Vec<&str> = list.stdout.lines().collect();
     assert!(lines.len() >= 3, "should have header + 2 data rows");
 
-    // Verify the title with comma is quoted
     let csv_text = &list.stdout;
     assert!(
         csv_text.contains("\"Fix login, signup flow\"")
@@ -1102,12 +999,9 @@ fn e2e_list_csv_escaping() {
         "comma in title should be properly handled in CSV"
     );
 
-    // Verify each data row has the same number of commas as the header
-    // (field count consistency)
     let header_fields = lines[0].matches(',').count();
     for (i, line) in lines.iter().enumerate().skip(1) {
         if !line.is_empty() {
-            // For quoted fields, count commas outside quotes
             let unquoted_comma_count = count_csv_field_separators(line);
             assert_eq!(
                 unquoted_comma_count, header_fields,
@@ -1133,16 +1027,11 @@ fn count_csv_field_separators(line: &str) -> usize {
     count
 }
 
-// =============================================================================
-// COMBINED FILTER TESTS
-// =============================================================================
-
 #[test]
 fn e2e_list_combined_filters() {
     let _log = common::test_log("e2e_list_combined_filters");
     let (workspace, ids) = setup_diverse_workspace();
 
-    // Combine type, priority, and label filters
     let list = run_br(
         &workspace,
         [
@@ -1161,7 +1050,6 @@ fn e2e_list_combined_filters() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should match only task1 (task, P1, has core label)
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0]["id"], ids[0]);
 }
@@ -1171,7 +1059,6 @@ fn e2e_list_empty_result() {
     let _log = common::test_log("e2e_list_empty_result");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // Filter that matches nothing
     let list = run_br(
         &workspace,
         [
@@ -1188,13 +1075,8 @@ fn e2e_list_empty_result() {
 
     let issues = parse_list_issues(&list.stdout);
 
-    // Should be empty
     assert!(issues.is_empty(), "expected no matching issues");
 }
-
-// =============================================================================
-// ERROR CASE TESTS
-// =============================================================================
 
 #[test]
 fn e2e_list_before_init_fails() {
@@ -1218,9 +1100,6 @@ fn e2e_list_custom_status() {
     let _log = common::test_log("e2e_list_custom_status");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    // An unknown status value is rejected rather than silently matching
-    // zero issues (#418): a typo must be distinguishable from a genuinely
-    // empty result.
     let unknown = run_br(
         &workspace,
         ["list", "--status", "invalid_status"],
@@ -1241,8 +1120,6 @@ fn e2e_list_custom_status() {
 
 #[test]
 fn e2e_list_custom_type() {
-    // The IssueType vocabulary is closed (ADR-0035): an undeclared type is a
-    // typed refusal, distinguishable from a genuinely empty filter result.
     let _log = common::test_log("e2e_list_custom_type");
     let (workspace, _ids) = setup_diverse_workspace();
 

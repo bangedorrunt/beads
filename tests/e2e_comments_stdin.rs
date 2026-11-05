@@ -21,8 +21,6 @@ fn test_comments_add_from_stdin() {
         ],
         "create",
     );
-    // Extract ID from "✓ Created bd-1: Issue"
-    // Word 0: "✓", Word 1: "Created", Word 2: "bd-1:"
     let id = create
         .stdout
         .split_whitespace()
@@ -30,7 +28,6 @@ fn test_comments_add_from_stdin() {
         .unwrap()
         .trim_end_matches(':');
 
-    // Add comment via stdin using '-'
     let add = run_br_with_stdin(
         &workspace,
         ["comments", "add", id, "--file", "-"],
@@ -43,7 +40,6 @@ fn test_comments_add_from_stdin() {
     }
     assert!(add.status.success());
 
-    // Verify comment
     let list = run_br(&workspace, ["comments", "list", id], "list");
     assert!(list.stdout.contains("This is a comment from stdin"));
 }

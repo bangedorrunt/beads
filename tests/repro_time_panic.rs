@@ -2,7 +2,6 @@
 fn test_parse_flexible_timestamp_panic_on_multibyte() {
     let input = "+10🚀";
     let result = beads::util::time::parse_flexible_timestamp(input, "test");
-    // Should return Err, not panic
     assert!(result.is_err());
 }
 
@@ -10,6 +9,5 @@ fn test_parse_flexible_timestamp_panic_on_multibyte() {
 fn test_parse_relative_time_panic_on_multibyte() {
     let input = "+10🚀";
     let result = beads::util::time::parse_relative_time(input);
-    // Should return None, not panic
     assert!(result.is_none());
 }

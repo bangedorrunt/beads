@@ -209,7 +209,6 @@ mod tests {
     #[test]
     fn help_overlay_has_global_bindings() {
         let help = all_bindings_for_focus("help");
-        // help should still see global nav keys
         assert!(help.iter().any(|b| b.key == "q"));
     }
 }

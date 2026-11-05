@@ -24,7 +24,6 @@ use thiserror::Error;
 /// Design: Structured variants for common cases.
 #[derive(Error, Debug)]
 pub enum BeadsError {
-    // === Storage Errors ===
     /// Database file not found at the specified path.
     #[error("Database not found at '{path}'")]
     DatabaseNotFound { path: PathBuf },
@@ -41,7 +40,6 @@ pub enum BeadsError {
     #[error("Database error: {0}")]
     Database(#[from] crate::storage::db::DbError),
 
-    // === Issue Errors ===
     /// Issue with the specified ID was not found.
     #[error("Issue not found: {id}")]
     IssueNotFound { id: String },
@@ -69,7 +67,6 @@ pub enum BeadsError {
     #[error("Invalid issue ID format: {id}")]
     InvalidId { id: String },
 
-    // === Validation Errors ===
     /// Field validation failed.
     #[error("Validation failed: {field}: {reason}")]
     Validation { field: String, reason: String },
@@ -90,7 +87,6 @@ pub enum BeadsError {
     #[error("Priority must be 0-4, got: {priority}")]
     InvalidPriority { priority: String },
 
-    // === JSONL Errors ===
     /// Failed to parse a line in the JSONL file.
     #[error("JSONL parse error at line {line}: {reason}")]
     JsonlParse { line: usize, reason: String },
@@ -184,7 +180,6 @@ pub enum BeadsError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    // === Dependency Errors ===
     /// Adding the dependency would create a cycle.
     #[error("Cycle detected in dependencies: {path}")]
     DependencyCycle { path: String },
@@ -205,7 +200,6 @@ pub enum BeadsError {
     #[error("Dependency already exists: {from} -> {to}")]
     DuplicateDependency { from: String, to: String },
 
-    // === Configuration Errors ===
     /// Configuration file error.
     #[error("Configuration error: {0}")]
     Config(String),
@@ -230,7 +224,6 @@ pub enum BeadsError {
     #[error("Already initialized at '{path}'")]
     AlreadyInitialized { path: PathBuf },
 
-    // === I/O Errors ===
     /// File system I/O error.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -243,7 +236,6 @@ pub enum BeadsError {
     #[error("YAML error: {0}")]
     Yaml(#[from] serde_yml::Error),
 
-    // === Wrapped errors (for gradual migration) ===
     /// Error with additional context.
     #[error("{context}: {source}")]
     WithContext {
@@ -252,7 +244,6 @@ pub enum BeadsError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    // === Operational Errors ===
     /// Operation refused because cooperative shutdown has already been requested.
     #[error("Shutdown requested")]
     ShuttingDown,
@@ -276,7 +267,6 @@ pub enum BeadsError {
         summary: String,
     },
 
-    // === Policy Errors ===
     /// One or more closure-time policy gates fired.
     ///
     /// Display format intentionally repeats the gate that fired and a

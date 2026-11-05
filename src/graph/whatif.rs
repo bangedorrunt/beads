@@ -48,17 +48,13 @@ impl WhatIfResult {
 pub fn what_if_close(graph: &DiGraph, node: usize, closed_set: &[bool]) -> WhatIfResult {
     let n = graph.len();
     if node >= n || closed_set.get(node).copied().unwrap_or(false) {
-        // Node doesn't exist or is already closed
         return WhatIfResult::empty();
     }
 
-    // Create new closed set with this node added
     let mut new_closed = closed_set.to_vec();
     new_closed.resize(n, false);
     new_closed[node] = true;
 
-    // Find issues that become actionable (directly unblocked)
-    // These are successors of node that had all other blockers already closed
     let mut direct_unblocks = Vec::new();
 
     for &successor in graph.successors_slice(node) {
@@ -66,10 +62,8 @@ pub fn what_if_close(graph: &DiGraph, node: usize, closed_set: &[bool]) -> WhatI
             continue;
         }
 
-        // Was this successor blocked before?
         let was_blocked = !is_actionable(graph, successor, closed_set);
 
-        // Is it unblocked now?
         let now_unblocked = is_actionable(graph, successor, &new_closed);
 
         if was_blocked && now_unblocked {
@@ -77,8 +71,6 @@ pub fn what_if_close(graph: &DiGraph, node: usize, closed_set: &[bool]) -> WhatI
         }
     }
 
-    // Count transitive unblocks (cascade effect)
-    // BFS from direct unblocks, adding nodes as they become actionable
     let cascade_ids = count_cascade(graph, &direct_unblocks, &new_closed);
 
     let transitive_count = cascade_ids.len();
@@ -110,7 +102,6 @@ fn count_cascade(graph: &DiGraph, roots: &[usize], initial_closed: &[bool]) -> V
     let mut cascade = Vec::new();
     let mut queue: VecDeque<usize> = VecDeque::new();
 
-    // Initialize with roots
     for &root in roots {
         if root < n && !visited[root] && !closed[root] {
             visited[root] = true;
@@ -119,18 +110,14 @@ fn count_cascade(graph: &DiGraph, roots: &[usize], initial_closed: &[bool]) -> V
         }
     }
 
-    // BFS: simulate completing each node and check what unblocks
     while let Some(v) = queue.pop_front() {
-        // Mark this node as "completed" for cascade purposes
         closed[v] = true;
 
-        // Check successors
         for &w in graph.successors_slice(v) {
             if visited[w] || closed[w] {
                 continue;
             }
 
-            // Check if all predecessors of w are now resolved
             let all_resolved = graph
                 .predecessors_slice(w)
                 .iter()
@@ -171,7 +158,6 @@ pub fn top_what_if(graph: &DiGraph, closed_set: &[bool], limit: usize) -> Vec<To
         return Vec::new();
     }
 
-    // Get currently actionable nodes (candidates for closing)
     let candidates = actionable_nodes(graph, closed_set);
 
     let mut results: Vec<TopWhatIfEntry> = candidates
@@ -183,7 +169,6 @@ pub fn top_what_if(graph: &DiGraph, closed_set: &[bool], limit: usize) -> Vec<To
         .filter(|e| e.result.transitive_unblocks > 0)
         .collect();
 
-    // Sort by transitive impact (descending), then direct, then node ID for determinism
     results.sort_by(|a, b| {
         b.result
             .transitive_unblocks
@@ -245,7 +230,6 @@ pub fn what_if_close_batch(graph: &DiGraph, nodes: &[usize], closed_set: &[bool]
         return WhatIfResult::empty();
     }
 
-    // Create closed set with all specified nodes added
     let mut new_closed = closed_set.to_vec();
     new_closed.resize(n, false);
     for &node in nodes {
@@ -254,7 +238,6 @@ pub fn what_if_close_batch(graph: &DiGraph, nodes: &[usize], closed_set: &[bool]
         }
     }
 
-    // Find all issues that become directly actionable
     let mut direct_unblocks = Vec::new();
     let mut seen = vec![false; n];
 
@@ -313,8 +296,6 @@ mod tests {
 
     #[test]
     fn test_what_if_simple_chain() {
-        // a -> b -> c
-        // Closing a should unblock b, then c transitively
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -325,8 +306,8 @@ mod tests {
         let closed = vec![false, false, false];
         let result = what_if_close(&graph, a, &closed);
 
-        assert_eq!(result.direct_unblocks, 1); // b
-        assert_eq!(result.transitive_unblocks, 2); // b and c
+        assert_eq!(result.direct_unblocks, 1);
+        assert_eq!(result.transitive_unblocks, 2);
         assert!(result.unblocked_ids.contains(&b));
         assert!(result.cascade_ids.contains(&b));
         assert!(result.cascade_ids.contains(&c));
@@ -334,12 +315,6 @@ mod tests {
 
     #[test]
     fn test_what_if_diamond() {
-        //     a
-        //    / \
-        //   b   c
-        //    \ /
-        //     d
-        // Closing a should unblock b and c directly, then d transitively
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -353,15 +328,13 @@ mod tests {
         let closed = vec![false, false, false, false];
         let result = what_if_close(&graph, a, &closed);
 
-        assert_eq!(result.direct_unblocks, 2); // b and c
-        assert_eq!(result.transitive_unblocks, 3); // b, c, and d
-        assert_eq!(result.parallel_gain, 1); // 2 - 1 = 1
+        assert_eq!(result.direct_unblocks, 2);
+        assert_eq!(result.transitive_unblocks, 3);
+        assert_eq!(result.parallel_gain, 1);
     }
 
     #[test]
     fn test_what_if_partial_close() {
-        // a -> c, b -> c
-        // If a is already closed, closing b unblocks c
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -369,18 +342,15 @@ mod tests {
         graph.add_edge(a, c);
         graph.add_edge(b, c);
 
-        // a is closed
         let closed = vec![true, false, false];
         let result = what_if_close(&graph, b, &closed);
 
-        assert_eq!(result.direct_unblocks, 1); // c
-        assert_eq!(result.transitive_unblocks, 1); // just c
+        assert_eq!(result.direct_unblocks, 1);
+        assert_eq!(result.transitive_unblocks, 1);
     }
 
     #[test]
     fn test_what_if_multi_blocker_not_ready() {
-        // a -> c, b -> c
-        // Neither closed: closing a doesn't unblock c (b still blocks it)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -391,7 +361,7 @@ mod tests {
         let closed = vec![false, false, false];
         let result = what_if_close(&graph, a, &closed);
 
-        assert_eq!(result.direct_unblocks, 0); // c still blocked by b
+        assert_eq!(result.direct_unblocks, 0);
         assert_eq!(result.transitive_unblocks, 0);
     }
 
@@ -410,8 +380,6 @@ mod tests {
 
     #[test]
     fn test_what_if_wide_fanout() {
-        // a -> b1, b2, b3, b4, b5
-        // Closing a unblocks all 5
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         for i in 0..5 {
@@ -424,12 +392,11 @@ mod tests {
 
         assert_eq!(result.direct_unblocks, 5);
         assert_eq!(result.transitive_unblocks, 5);
-        assert_eq!(result.parallel_gain, 4); // 5 - 1
+        assert_eq!(result.parallel_gain, 4);
     }
 
     #[test]
     fn test_what_if_deep_cascade() {
-        // a -> b -> c -> d -> e -> f (chain of 6)
         let mut graph = DiGraph::new();
         let mut prev = graph.add_node("a");
         for i in 1..6 {
@@ -442,15 +409,11 @@ mod tests {
         let result = what_if_close(&graph, 0, &closed);
 
         assert_eq!(result.direct_unblocks, 1);
-        assert_eq!(result.transitive_unblocks, 5); // All 5 subsequent nodes
+        assert_eq!(result.transitive_unblocks, 5);
     }
 
     #[test]
     fn test_top_what_if() {
-        //     a       e
-        //    /|\      |
-        //   b c d     f
-        // a has more impact than e
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -467,11 +430,9 @@ mod tests {
         let top = top_what_if(&graph, &closed, 10);
 
         assert!(!top.is_empty());
-        // a should be first (unblocks 3)
         assert_eq!(top[0].node, a);
         assert_eq!(top[0].result.transitive_unblocks, 3);
 
-        // e should be second (unblocks 1)
         assert!(top.len() >= 2);
         assert_eq!(top[1].node, e);
         assert_eq!(top[1].result.transitive_unblocks, 1);
@@ -494,8 +455,6 @@ mod tests {
 
     #[test]
     fn test_what_if_batch_simple() {
-        // a -> c, b -> c
-        // Closing both a and b should unblock c
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -506,18 +465,12 @@ mod tests {
         let closed = vec![false, false, false];
         let result = what_if_close_batch(&graph, &[a, b], &closed);
 
-        assert_eq!(result.direct_unblocks, 1); // c
+        assert_eq!(result.direct_unblocks, 1);
         assert_eq!(result.transitive_unblocks, 1);
     }
 
     #[test]
     fn test_what_if_batch_cascade() {
-        //     a       b
-        //     |       |
-        //     c       d
-        //      \     /
-        //        e
-        // Closing both a and b unblocks c, d, then e
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -532,13 +485,12 @@ mod tests {
         let closed = vec![false; 5];
         let result = what_if_close_batch(&graph, &[a, b], &closed);
 
-        assert_eq!(result.direct_unblocks, 2); // c and d
-        assert_eq!(result.transitive_unblocks, 3); // c, d, e
+        assert_eq!(result.direct_unblocks, 2);
+        assert_eq!(result.transitive_unblocks, 3);
     }
 
     #[test]
     fn test_all_what_if() {
-        // a -> b, c (isolated)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -548,15 +500,12 @@ mod tests {
         let closed = vec![false, false, false];
         let all = all_what_if(&graph, &closed, 10);
 
-        // Only a has impact (c is isolated, b is blocked)
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].node, a);
     }
 
     #[test]
     fn test_what_if_cycle_handling() {
-        // a -> b -> c -> a (cycle)
-        // Each node should only unblock its direct successor
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -567,18 +516,12 @@ mod tests {
 
         let closed = vec![false, false, false];
 
-        // In a cycle, nothing is actionable, so closing any one
-        // won't immediately unblock anything (all still blocked)
         let result = what_if_close(&graph, a, &closed);
-        // b is unblocked by closing a, but c still needs b, and a needs c
-        // So only b is directly unblocked
         assert!(result.direct_unblocks <= 1);
     }
 
     #[test]
     fn test_what_if_disconnected_components() {
-        // Component 1: a -> b
-        // Component 2: c -> d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -589,12 +532,10 @@ mod tests {
 
         let closed = vec![false; 4];
 
-        // Closing a should only affect component 1
         let result_a = what_if_close(&graph, a, &closed);
         assert_eq!(result_a.transitive_unblocks, 1);
         assert!(result_a.cascade_ids.contains(&b));
 
-        // Closing c should only affect component 2
         let result_c = what_if_close(&graph, c, &closed);
         assert_eq!(result_c.transitive_unblocks, 1);
         assert!(result_c.cascade_ids.contains(&d));
@@ -602,7 +543,6 @@ mod tests {
 
     #[test]
     fn test_cascade_order() {
-        // a -> b -> c -> d (deep chain)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -615,7 +555,6 @@ mod tests {
         let closed = vec![false; 4];
         let result = what_if_close(&graph, a, &closed);
 
-        // Cascade should include b, c, d in order
         assert_eq!(result.cascade_ids.len(), 3);
         assert_eq!(result.cascade_ids[0], b);
         assert_eq!(result.cascade_ids[1], c);

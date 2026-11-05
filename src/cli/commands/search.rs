@@ -84,8 +84,6 @@ pub fn execute_with_storage_ctx(
         outer_ctx.inherited_output_mode(),
         false,
     );
-    // Structured output paginates in Rust (exact total) like `br ready`:
-    // fetch the full match set, then apply offset/limit in render.
     let issues = if matches!(output_format, OutputFormat::Json | OutputFormat::Toon) {
         let mut effective_filters = args.filters.clone();
         effective_filters.limit = Some(0);
@@ -230,9 +228,6 @@ fn render_search_results(
         return Ok(());
     }
 
-    // #445: default corpus excludes closed issues; always surface how many
-    // closed matches that exclusion hid (zero when --all / closed already in
-    // corpus). CSV keeps row-only shape.
     let hidden_closed_count = if matches!(output_format, OutputFormat::Csv) {
         0
     } else {
@@ -343,8 +338,6 @@ fn render_search_results(
     ));
     for issue in &issues {
         let line = format_issue_line_with(issue, format_options);
-        // Trusted styling (untrusted fields already sanitized by the
-        // formatter); `print_line` would escape the colour codes.
         ctx.print_styled_line(&line);
     }
     emit_hidden_closed_note(&ctx, hidden_closed_count);
@@ -537,8 +530,6 @@ fn normalize_whitespace(input: &str) -> String {
 fn build_filters(args: &ListArgs) -> Result<ListFilters> {
     validate_sort_key(args.sort.as_deref())?;
 
-    // `--status all` is the same meta-value `br lint` accepts: no status
-    // filter, every status included (beads-6ilv).
     let all_statuses = super::status_filter_requests_all(&args.status);
     let statuses = if args.status.is_empty() || all_statuses {
         None
@@ -578,7 +569,6 @@ fn build_filters(args: &ListArgs) -> Result<ListFilters> {
             .as_ref()
             .is_some_and(|parsed| parsed.iter().any(Status::is_terminal));
 
-    // Deferred issues are included by default (consistent with "open" status semantics).
     let include_deferred = args.deferred
         || args.all
         || statuses.is_none()
@@ -596,8 +586,6 @@ fn build_filters(args: &ListArgs) -> Result<ListFilters> {
         include_deferred,
         include_templates: false,
         title_contains: args.title_contains.clone(),
-        // #349: search stays capped (a broad text query can match a large
-        // fraction of the corpus); list/ready are complete by default.
         limit: Some(args.limit.unwrap_or(DEFAULT_SEARCH_LIMIT)),
         offset: Some(args.offset.unwrap_or(DEFAULT_LIST_OFFSET)),
         sort: args.sort.clone(),
@@ -660,7 +648,6 @@ fn apply_client_filters(
     let min_priority = args.priority_min.map(i32::from);
     let max_priority = args.priority_max.map(i32::from);
 
-    // Use Regex for efficient case-insensitive search without full description allocations
     let desc_regex = args.desc_contains.as_deref().and_then(|needle| {
         RegexBuilder::new(&regex::escape(needle))
             .case_insensitive(true)
@@ -674,8 +661,6 @@ fn apply_client_filters(
             .ok()
     });
 
-    // Deferred issues are included by default when no status filter is specified,
-    // except `--overdue` keeps deferred work hidden unless requested.
     let include_deferred = args.deferred
         || args.all
         || (!args.overdue && args.status.is_empty())
@@ -950,8 +935,6 @@ mod tests {
 
     #[test]
     fn test_search_matches_comment_bodies() {
-        // beads#416: a token that exists only in a comment body must be
-        // findable — agent workflows put durable handoffs in comments.
         let mut storage = SqliteStorage::open_memory().expect("db");
         let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
         let t2 = Utc.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap();
@@ -971,14 +954,12 @@ mod tests {
 
         let filters = ListFilters::default();
 
-        // Case-insensitive comment-body match on the default path.
         let results = storage
             .search_issues("comment-only-token-20260807", &filters)
             .expect("search");
         let ids: Vec<String> = results.into_iter().map(|issue| issue.id).collect();
         assert_eq!(ids, vec!["bd-101".to_string()]);
 
-        // The default-visible limited-page fast path must agree.
         let limited = ListFilters {
             limit: Some(10),
             ..ListFilters::default()
@@ -989,7 +970,6 @@ mod tests {
         let ids: Vec<String> = results.into_iter().map(|issue| issue.id).collect();
         assert_eq!(ids, vec!["bd-101".to_string()]);
 
-        // A token in no comment or field still returns nothing.
         assert!(
             storage
                 .search_issues("token-that-matches-nothing", &filters)
@@ -1040,8 +1020,6 @@ mod tests {
 
     #[test]
     fn test_search_build_filters_applies_search_defaults_when_cli_omits_pagination() {
-        // #349: search stays capped at DEFAULT_SEARCH_LIMIT (50) by default,
-        // even though list/ready became unlimited.
         let filters = build_filters(&ListArgs::default()).expect("build filters");
 
         assert_eq!(filters.limit, Some(DEFAULT_SEARCH_LIMIT));

@@ -41,10 +41,6 @@ fn doctor_fails_loudly_when_write_lock_is_a_directory() {
     let out = br_cmd(ws).arg("init").output().expect("br init spawned");
     assert!(out.status.success(), "br init failed: {out:?}");
 
-    // Control arm, same workspace: doctor succeeds while the lock node is
-    // still an ordinary file, so the failure below is attributable to the
-    // planted node alone. Without it the assertion pins only "doctor exited
-    // non-zero", which any unrelated breakage would also satisfy.
     let healthy = br_cmd(ws)
         .arg("doctor")
         .output()
@@ -73,7 +69,6 @@ fn doctor_fails_loudly_when_write_lock_is_a_directory() {
         String::from_utf8_lossy(&out.stderr),
     );
 
-    // Fail-closed must not mutate: the directory node survives untouched.
     assert!(
         lock.is_dir(),
         "directory .write.lock was removed or replaced by doctor"
@@ -108,11 +103,6 @@ fn mutating_command_fails_loudly_when_write_lock_is_a_directory() {
     let out = br_cmd(ws).arg("init").output().expect("br init spawned");
     assert!(out.status.success(), "br init failed: {out:?}");
 
-    // Control arm, same workspace and same argv: the create succeeds while
-    // the lock node is still an ordinary file. This is what makes the
-    // assertion below non-vacuous — validation would refuse the very same
-    // command, so without this arm the test passed with the lock guard
-    // deleted and proved nothing about the lock at all.
     let control = br_cmd(ws)
         .args(gated_create_args())
         .output()

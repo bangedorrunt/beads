@@ -650,10 +650,9 @@ fn split_sql_statements(sql: &str) -> Vec<&str> {
     let bytes = sql.as_bytes();
     let len = bytes.len();
     let mut stmts = Vec::new();
-    let mut start = 0; // byte offset where the current statement begins
+    let mut start = 0;
     let mut i = 0;
 
-    // State flags — at most one is true at a time.
     let mut in_single_quote = false;
     let mut in_double_quote = false;
     let mut in_line_comment = false;
@@ -662,7 +661,6 @@ fn split_sql_statements(sql: &str) -> Vec<&str> {
     while i < len {
         let b = bytes[i];
 
-        // --- Line comment state ---
         if in_line_comment {
             if b == b'\n' {
                 in_line_comment = false;
@@ -671,7 +669,6 @@ fn split_sql_statements(sql: &str) -> Vec<&str> {
             continue;
         }
 
-        // --- Block comment state ---
         if in_block_comment {
             if b == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
                 in_block_comment = false;
@@ -682,10 +679,8 @@ fn split_sql_statements(sql: &str) -> Vec<&str> {
             continue;
         }
 
-        // --- Single-quoted string state ---
         if in_single_quote {
             if b == b'\'' {
-                // '' is an escaped quote inside a string literal
                 if i + 1 < len && bytes[i + 1] == b'\'' {
                     i += 2;
                 } else {
@@ -698,7 +693,6 @@ fn split_sql_statements(sql: &str) -> Vec<&str> {
             continue;
         }
 
-        // --- Double-quoted identifier state ---
         if in_double_quote {
             if b == b'"' {
                 if i + 1 < len && bytes[i + 1] == b'"' {
@@ -713,7 +707,6 @@ fn split_sql_statements(sql: &str) -> Vec<&str> {
             continue;
         }
 
-        // --- Top-level parsing ---
         if b == b'\'' {
             in_single_quote = true;
             i += 1;
@@ -727,7 +720,6 @@ fn split_sql_statements(sql: &str) -> Vec<&str> {
             in_block_comment = true;
             i += 2;
         } else if b == b';' {
-            // Statement terminator at top level.
             let stmt = &sql[start..i];
             if !stmt.trim().is_empty() {
                 stmts.push(stmt.trim());
@@ -739,7 +731,6 @@ fn split_sql_statements(sql: &str) -> Vec<&str> {
         }
     }
 
-    // Trailing statement without a final semicolon.
     if start < len {
         let stmt = &sql[start..len];
         if !stmt.trim().is_empty() {
@@ -759,11 +750,6 @@ pub(crate) fn execute_batch(conn: &Connection, sql: &str) -> Result<()> {
     for stmt in split_sql_statements(sql) {
         let res = conn.execute(stmt);
         if let Err(e) = res {
-            // Schema images may not update after ALTER TABLE RENAME during
-            // table rebuilds, causing CREATE INDEX
-            // to fail with "no such column".  These indexes will be retried
-            // on the next open, so we can safely skip them here.
-            // Strip SQL line-comments to get at the real statement.
             let stripped: String = stmt
                 .lines()
                 .map(str::trim)
@@ -806,16 +792,8 @@ fn add_missing_issue_revision_column(conn: &Connection) -> Result<()> {
 ///
 /// Returns an error if the SQL execution fails or pragmas cannot be set.
 pub fn apply_schema(conn: &Connection) -> Result<()> {
-    // Detect a truly fresh (empty) database before any DDL runs.
-    // On a fresh DB, SCHEMA_SQL creates everything at the current version,
-    // so running migrations is unnecessary and harmful — e.g. the v3/v4
-    // migrations DROP+CREATE idx_issues_ready which orphans a page and
-    // causes doctor integrity warnings.
     let is_fresh = !table_exists(conn, "issues");
 
-    // Run pre-schema migrations first to fix any incompatible old tables
-    // This must run BEFORE execute_batch because the batch includes CREATE INDEX
-    // statements that will fail if old tables have missing columns
     let issues_rebuilt = run_pre_schema_migrations(conn).map_err(|e| {
         eprintln!("run_pre_schema_migrations failed: {:?}", e);
         e
@@ -824,24 +802,17 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
     execute_batch(conn, SCHEMA_SQL)?;
 
     if is_fresh {
-        // Fresh database: SCHEMA_SQL already created everything at the
-        // current version. Skip migrations and stamp user_version directly.
         conn.execute(&format!("PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))
             .map_err(|e| {
                 eprintln!("PRAGMA user_version failed: {:?}", e);
                 BeadsError::Database(e)
             })?;
     } else {
-        // Existing database: run migrations for schema upgrades.
-        // If the issues table was rebuilt from scratch, skip migration checks
-        // that reference newly-added columns: the rebuilt table already has
-        // the current shape.
         run_migrations(conn, issues_rebuilt).map_err(|e| {
             eprintln!("run_migrations failed: {:?}", e);
             e
         })?;
 
-        // Mark schema as applied so future opens can skip DDL/migration work.
         conn.execute(&format!("PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))
             .map_err(|e| {
                 eprintln!("PRAGMA user_version failed: {:?}", e);
@@ -854,18 +825,7 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
         e
     })?;
 
-    // On a truly fresh bootstrap, run a defensive `wal_checkpoint(TRUNCATE)`
-    // to reclaim any transient pages frankensqlite allocated while
-    // executing SCHEMA_SQL (CREATE TABLE + ~15 CREATE INDEX statements,
-    // several of which are partial indexes on columns of empty tables).
-    // Without this, a fresh `br init` can leave the database with
     // unreachable pages that sqlite3's `PRAGMA integrity_check` surfaces
-    // as `Page N: never used` — see issue #225.
-    //
-    // Note: page-level anomalies from subsequent writes (e.g., "free space
-    // corruption" — issue #237) are addressed via VACUUM in the rebuild
-    // path and `br doctor --repair`, not here.  Running VACUUM here would
-    // conflict with connections opened immediately after init.
     if is_fresh && let Err(e) = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)") {
         tracing::debug!(
             error = %e,
@@ -1005,9 +965,6 @@ fn add_missing_typed_work_ledger_columns(conn: &Connection) -> Result<()> {
             "revision",
             "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)",
         ),
-        // ADR-0005 §§2-3: additive like the v18 columns; runs for every
-        // reviewed source so migrated DBs gain the columns in place.
-        // Appended after revision (ALTER TABLE appends physically).
         ("deliverable", "deliverable TEXT NOT NULL DEFAULT 'diff'"),
         ("promotes", "promotes TEXT"),
     ] {
@@ -1056,9 +1013,6 @@ pub fn run_reviewed_schema_migration_steps_in_transaction(
         tracing::info!("Migrating database to schema version 15 (transition-scoped gate history)");
         apply_gate_result_history_migration_in_transaction(conn)?;
     } else {
-        // A genuine v15/v16 database already carries the #388 gate-history
-        // schema; attest it instead of re-running the migration so drift is
-        // refused rather than silently papered over.
         attest_gate_result_history_schema(conn)?;
     }
 
@@ -1076,19 +1030,10 @@ pub fn run_reviewed_schema_migration_steps_in_transaction(
         apply_capacity_occupancy_migration_in_transaction(conn)?;
     }
 
-    // v18 (ADR-0001 §5.2, beads_rust-schema-v18-uyb3): typed work-ledger
-    // columns on `issues`. Purely additive and column-aware, so it applies to
-    // every reviewed source (13–17) and leaves already-shaped tables
-    // untouched.
     add_missing_typed_work_ledger_columns(conn)?;
 
-    // v20 (ADR-0035 Spec 4, bd-hj1t): the event log is the source of truth.
-    // Purely additive IF NOT EXISTS tables, safe on every reviewed source.
     apply_event_log_migration_in_transaction(conn)?;
 
-    // #428 integrity gate: the version stamp lands only when integrity_check
-    // agrees. On failure the error propagates and the caller's transaction
-    // rolls back both the DDL and any stamp (#428 anti-pattern guard).
     let row = conn.query_row("PRAGMA integrity_check")?;
     let verdict = row.get(0).and_then(SqliteValue::as_text).unwrap_or("");
     if !verdict.eq_ignore_ascii_case("ok") {
@@ -1133,10 +1078,6 @@ pub fn run_reviewed_schema_migration_steps_in_transaction(
 /// Returns an error (and, on the reviewed path, rolls back the transaction)
 /// when validation, migration, commit, or postcondition checks fail.
 pub fn run_migrations_atomic(conn: &Connection, from: u32, target_version: u32) -> Result<()> {
-    // Stamp-integrity invariant (kept from the reviewed-migration redesign):
-    // the general engine always migrates fully, so accepting any target other
-    // than CURRENT_SCHEMA_VERSION could stamp a partially or over-migrated
-    // database. Refuse before any write, regardless of path.
     let supported_target = current_schema_version_u32()?;
     if target_version != supported_target {
         return Err(BeadsError::internal(format!(
@@ -1169,11 +1110,6 @@ pub fn run_migrations_atomic(conn: &Connection, from: u32, target_version: u32) 
         };
     }
 
-    // General path: re-verify the `user_version == from` precondition on this
-    // connection (closing the TOCTOU window between the chokepoint's read and
-    // this call), run the general engine, stamp, and post-verify. No outer
-    // transaction: `run_migrations` opens BEGIN IMMEDIATE / COMMIT around the
-    // step bundles that need atomicity and SQLite rejects nested BEGINs; the
     // caller's pre-migrate snapshot is the full-rollback safety net.
     let row = conn.query_row("PRAGMA user_version")?;
     let current = row
@@ -1211,8 +1147,6 @@ pub fn run_migrations_atomic(conn: &Connection, from: u32, target_version: u32) 
 }
 
 pub(crate) fn apply_runtime_compatible_schema(conn: &Connection) -> Result<()> {
-    // The table layouts are already safe to operate on, so we can skip the
-    // heavier pre-schema rebuilds and just restore any missing canonical DDL.
     apply_runtime_compatible_schema_ddl(conn)?;
     apply_runtime_pragmas(conn)?;
     Ok(())
@@ -1231,8 +1165,6 @@ pub(crate) fn apply_runtime_compatible_schema_ddl(conn: &Connection) -> Result<(
 }
 
 pub(crate) fn apply_runtime_pragmas(conn: &Connection) -> Result<()> {
-    // New databases should opt into WAL, but steady-state opens should not
-    // reassert the current mode and turn a read path into a write-like one.
     let journal_mode = conn
         .query_row("PRAGMA journal_mode")
         .ok()
@@ -1242,28 +1174,15 @@ pub(crate) fn apply_runtime_pragmas(conn: &Connection) -> Result<()> {
         conn.execute("PRAGMA journal_mode = WAL")?;
     }
 
-    // Enable foreign keys
     conn.execute("PRAGMA foreign_keys = ON")?;
 
     // Performance PRAGMAs (safe with WAL mode)
-    // NORMAL synchronous is safe with WAL: committed data survives OS crash
     conn.execute("PRAGMA synchronous = NORMAL")?;
-    // Use memory for temp tables/indexes instead of disk
     conn.execute("PRAGMA temp_store = MEMORY")?;
-    // 8MB page cache (default is ~2MB), improves read-heavy workloads
     conn.execute("PRAGMA cache_size = -8000")?;
 
-    // Issue #219: Limit WAL file size to 32MB.  Without this, concurrent
-    // writers can cause unbounded WAL growth, which slows reads and
-    // increases checkpoint contention.  SQLite will attempt to keep the WAL
-    // file at or below this size after each checkpoint.
     conn.execute("PRAGMA journal_size_limit = 33554432")?;
 
-    // Issue #219: Disable the automatic WAL checkpoint that fires after
-    // every 1000 pages of WAL growth.  The auto-checkpoint uses PASSIVE
-    // mode internally but can still cause unexpected latency spikes during
-    // write-heavy concurrent operations.  We handle checkpointing manually
-    // in with_write_transaction using PASSIVE mode at a controlled interval.
     conn.execute("PRAGMA wal_autocheckpoint = 0")?;
 
     Ok(())
@@ -1331,14 +1250,8 @@ const ISSUE_COLUMNS: &[(&str, &str)] = &[
     ("ephemeral", "INTEGER NOT NULL DEFAULT 0"),
     ("pinned", "INTEGER NOT NULL DEFAULT 0"),
     ("is_template", "INTEGER NOT NULL DEFAULT 0"),
-    // Appended at the end so SQLite's ALTER TABLE ADD COLUMN on existing DBs
-    // produces the same final column order as a fresh SCHEMA_SQL build.
     ("source_repo_path", "TEXT"),
-    // beads#297: inherited governing instructions, JSON-stored.
     ("agent_context", "TEXT"),
-    // Schema v18 typed work-ledger columns. Keep these in the same order as
-    // SCHEMA_SQL and EXPECTED_ISSUE_COLUMN_ORDER so legacy table rebuilds
-    // produce the complete runtime shape.
     ("verify", "TEXT"),
     ("principles", "TEXT"),
     ("wave", "INTEGER"),
@@ -1351,10 +1264,6 @@ const ISSUE_COLUMNS: &[(&str, &str)] = &[
         "revision",
         "INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)",
     ),
-    // ADR-0005 §§2-3: typed deliverable + advisory promotes link.
-    // Appended at the end like the v18 columns (ALTER TABLE ADD COLUMN
-    // appends physically); deliverable defaults to 'diff' so
-    // pre-ADR-0005 rows stay valid, promotes is nullable.
     ("deliverable", "TEXT NOT NULL DEFAULT 'diff'"),
     ("promotes", "TEXT"),
 ];
@@ -1380,8 +1289,6 @@ const EVENT_COLUMNS: &[(&str, &str)] = &[
     ("new_value", "TEXT"),
     ("comment", "TEXT"),
     ("created_at", "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"),
-    // Tier 1 attribution audit columns (issue #312, Layer 3 capture-only).
-    // Nullable and additive: older databases gain them via ensure_columns().
     ("agent_name", "TEXT"),
     ("harness", "TEXT"),
     ("model", "TEXT"),
@@ -1518,8 +1425,6 @@ const EXPECTED_ISSUE_COLUMN_ORDER: &[&str] = &[
     "is_template",
     "source_repo_path",
     "agent_context",
-    // Schema v18 (ADR-0001 §5.2): typed work-ledger columns, appended at
-    // the end to match ALTER TABLE ADD COLUMN positions on migrated DBs.
     "verify",
     "principles",
     "wave",
@@ -1529,8 +1434,6 @@ const EXPECTED_ISSUE_COLUMN_ORDER: &[&str] = &[
     "ac_shape",
     "blast",
     "revision",
-    // ADR-0005 §§2-3: appended at the end to match ALTER TABLE ADD COLUMN
-    // positions on migrated DBs.
     "deliverable",
     "promotes",
 ];
@@ -1540,9 +1443,6 @@ const EXPECTED_ISSUE_COLUMN_ORDER: &[&str] = &[
 /// table doesn't exist.
 fn issues_column_order_matches(conn: &Connection) -> bool {
     // Use PRAGMA table_info to detect both existence and column order in a
-    // single query.  Avoid querying sqlite_master separately because it can
-    // return inconsistent results when queried multiple times within the same
-    // connection session.
     let Ok(rows) = conn.query("PRAGMA table_info(issues)") else {
         return false;
     };
@@ -1553,7 +1453,7 @@ fn issues_column_order_matches(conn: &Connection) -> bool {
         .collect();
 
     if actual_columns.is_empty() {
-        return true; // Table doesn't exist; will be created fresh by SCHEMA_SQL
+        return true;
     }
 
     if actual_columns.len() != EXPECTED_ISSUE_COLUMN_ORDER.len() {
@@ -1643,17 +1543,12 @@ fn rebuild_issues_table(conn: &Connection) -> Result<()> {
         .collect();
 
     if existing_columns.is_empty() {
-        return Ok(()); // Table is empty or doesn't exist
+        return Ok(());
     }
 
-    // Disable foreign keys during the rebuild because we'll be dropping
-    // and recreating the issues table which is referenced by other tables.
-    // This property is connection-scoped.
     conn.execute("PRAGMA foreign_keys = OFF")?;
 
     let result = (|| -> Result<()> {
-        // Wrap the entire rebuild in a transaction so a crash between DROP TABLE
-        // and RENAME cannot lose data.
         conn.execute("BEGIN EXCLUSIVE")?;
 
         if let Err(e) = rebuild_issues_table_inner(conn, &existing_columns) {
@@ -1682,14 +1577,6 @@ fn rebuild_issues_table_inner(conn: &Connection, existing_columns: &[String]) ->
         ));
     }
 
-    // Preserve exact DDL for operator-defined indexes attached to the canonical
-    // issues table. Dropping the table removes every attached index, but only
-    // br-owned indexes are recreated by SCHEMA_SQL. Without this snapshot an
-    // extension UNIQUE index (and therefore its constraint) silently vanishes
-    // whenever a legacy issues table needs a canonical rebuild.
-    //
-    // Fork adaptation of upstream c987575923: classify canonical indexes via
-    // REQUIRED_RUNTIME_INDEXES (we do not carry upstream ISSUES_RUNTIME_INDEXES).
     let index_rows = conn.query(
         "SELECT name, sql FROM main.sqlite_master
          WHERE type = 'index' AND tbl_name = 'issues' AND sql IS NOT NULL",
@@ -1713,15 +1600,8 @@ fn rebuild_issues_table_inner(conn: &Connection, existing_columns: &[String]) ->
         }
     }
 
-    // Create the new table with canonical column order
-    // Use a temporary name to avoid conflicts
     conn.execute("DROP TABLE IF EXISTS issues_rebuild_tmp")?;
 
-    // Build CREATE TABLE for the new table with only columns that exist in the old table
-    // plus any missing columns with defaults
-    // Build the canonical column list: id, content_hash, title, then the
-    // rest of ISSUE_COLUMNS (skipping content_hash which is already placed).
-    // This order must match EXPECTED_ISSUE_COLUMN_ORDER and SCHEMA_SQL.
     let all_expected: Vec<(&str, &str)> = std::iter::once(("id", "TEXT PRIMARY KEY"))
         .chain(std::iter::once(("content_hash", "TEXT")))
         .chain(std::iter::once((
@@ -1748,8 +1628,6 @@ fn rebuild_issues_table_inner(conn: &Connection, existing_columns: &[String]) ->
     );
     conn.execute(&create_sql)?;
 
-    // Copy only columns that exist in the source table so SQLite can apply
-    // declared defaults for newer columns that are absent in legacy schemas.
     let mut projected_columns = Vec::new();
     for (col_name, _) in &all_expected {
         if existing_columns.iter().any(|c| c == col_name) {
@@ -1763,21 +1641,17 @@ fn rebuild_issues_table_inner(conn: &Connection, existing_columns: &[String]) ->
         ));
     }
 
-    // Copy data out to the temp table.
     let copy_out_sql = format!(
         "INSERT INTO issues_rebuild_tmp ({cols}) SELECT {cols} FROM issues",
         cols = projected_columns.join(", ")
     );
     conn.execute(&copy_out_sql)?;
 
-    // Drop the original table, then CREATE it fresh (not via RENAME) so
-    // every engine sees the complete column set immediately.
     conn.execute("DROP TABLE issues")?;
 
     let create_canonical = format!("CREATE TABLE issues ({})", create_cols.join(", "));
     conn.execute(&create_canonical)?;
 
-    // Copy data back.
     let copy_back_sql = format!(
         "INSERT INTO issues ({cols}) SELECT {cols} FROM issues_rebuild_tmp",
         cols = projected_columns.join(", ")
@@ -1786,10 +1660,6 @@ fn rebuild_issues_table_inner(conn: &Connection, existing_columns: &[String]) ->
 
     conn.execute("DROP TABLE issues_rebuild_tmp")?;
 
-    // Canonical indexes are deliberately left for SCHEMA_SQL (or the reviewed
-    // migration's canonical-index pass) so stale br-owned definitions are not
-    // preserved. Operator-defined indexes retain their exact recorded DDL and
-    // enforcement semantics.
     for sql in extension_index_sql {
         conn.execute(&sql)?;
     }
@@ -1812,10 +1682,7 @@ fn rebuild_issues_table_inner(conn: &Connection, existing_columns: &[String]) ->
 /// Best-effort: per-column failures are logged but do not abort the
 /// caller, so a single broken column never blocks bootstrap.
 fn backfill_storage_null_in_default_columns(conn: &Connection) {
-    // (table, column, default_sql_literal). Mirrors the NOT NULL DEFAULT
-    // clauses in SCHEMA_SQL and the *_COLUMNS migration constants.
     const COLUMNS: &[(&str, &str, &str)] = &[
-        // issues
         ("issues", "description", "''"),
         ("issues", "design", "''"),
         ("issues", "acceptance_criteria", "''"),
@@ -1827,13 +1694,10 @@ fn backfill_storage_null_in_default_columns(conn: &Connection) {
         ("issues", "ephemeral", "0"),
         ("issues", "pinned", "0"),
         ("issues", "is_template", "0"),
-        // dependencies
         ("dependencies", "type", "'blocks'"),
         ("dependencies", "created_by", "''"),
-        // comments
         ("comments", "author", "''"),
         ("comments", "text", "''"),
-        // events
         ("events", "event_type", "''"),
         ("events", "actor", "''"),
     ];
@@ -1857,15 +1721,12 @@ fn backfill_storage_null_in_default_columns(conn: &Connection) {
 
 fn kv_table_uses_primary_key(conn: &Connection, table: &str) -> bool {
     // Use PRAGMA table_info instead of sqlite_master to detect whether
-    // the `key` column is declared as PRIMARY KEY; repeated sqlite_master
-    // reads can be inconsistent across queries.
     let sql = format!("PRAGMA table_info('{table}')");
     let Ok(rows) = conn.query(&sql) else {
         return false;
     };
 
     // In PRAGMA table_info output, column index 5 is the `pk` flag.
-    // If `key` column has pk > 0, the table uses PRIMARY KEY.
     rows.iter().any(|row| {
         let col_name = row.get(1).and_then(SqliteValue::as_text);
         let pk_flag = row.get(5).and_then(SqliteValue::as_integer).unwrap_or(0);
@@ -1875,7 +1736,6 @@ fn kv_table_uses_primary_key(conn: &Connection, table: &str) -> bool {
 
 fn kv_table_needs_canonical_rebuild(conn: &Connection, table: &str, expected_index: &str) -> bool {
     // Use PRAGMA table_info for the existence check instead of sqlite_master,
-    // which can return inconsistent results mid-migration.
     let table_has_rows = conn
         .query(&format!("PRAGMA table_info('{table}')"))
         .is_ok_and(|rows| !rows.is_empty());
@@ -1939,9 +1799,6 @@ fn legacy_active_order_index_shape(conn: &Connection) -> bool {
 /// CREATE INDEX statements that will fail if old tables have missing columns.
 /// Returns `true` if the issues table was rebuilt during pre-migrations.
 fn run_pre_schema_migrations(conn: &Connection) -> Result<bool> {
-    // Legacy schemas used PRIMARY KEY on config/metadata key columns.
-    // Rebuild to plain key-value tables so standard sqlite integrity checks
-    // are not tripped by unsupported unique-index maintenance behavior.
     if kv_table_needs_canonical_rebuild(conn, "config", "idx_config_key") {
         rebuild_kv_table_without_unique(conn, "config")?;
     }
@@ -1949,21 +1806,11 @@ fn run_pre_schema_migrations(conn: &Connection) -> Result<bool> {
         rebuild_kv_table_without_unique(conn, "metadata")?;
     }
 
-    // Drop blocked_issues_cache if it exists but is not canonical. The table is
-    // a derived cache, so rebuilding is preferable to preserving legacy NULLs
-    // or weak constraints that can poison later command reads.
-    // The main schema will recreate it with the correct structure.
     if table_exists(conn, "blocked_issues_cache") && !blocked_cache_table_canonical(conn) {
         conn.execute("DROP TABLE IF EXISTS blocked_issues_cache")?;
     }
 
-    // Rebuild the issues table if columns are out of order or missing.
-    // This fixes "no such column" errors on databases created with
-    // older br versions where ALTER TABLE ADD COLUMN appended columns in
-    // a different position than the canonical CREATE TABLE definition.
-    // issues_column_order_matches handles both existence and column order
     // checks via PRAGMA table_info, avoiding redundant sqlite_master queries
-    // whose results can be inconsistent mid-rebuild.
     let issues_rebuilt = if issues_column_order_matches(conn) {
         false
     } else {
@@ -1971,24 +1818,12 @@ fn run_pre_schema_migrations(conn: &Connection) -> Result<bool> {
         true
     };
 
-    // After a full rebuild the issues table already has the canonical schema,
-    // so skip ensure_columns entirely (the rebuild already produced the
-    // current shape).
     if !issues_rebuilt {
         ensure_columns(conn, "issues", ISSUE_COLUMNS)?;
     }
     ensure_columns(conn, "dependencies", DEPENDENCY_COLUMNS)?;
     ensure_columns(conn, "comments", COMMENT_COLUMNS)?;
     ensure_columns(conn, "events", EVENT_COLUMNS)?;
-
-    // Intentionally do not rebuild idx_issues_ready here.
-    //
-    // Older databases may have a stale partial-index predicate, but that is a
-    // performance issue rather than a correctness issue. On large file-backed
-    // databases, exercising DROP INDEX through frankensqlite currently trips an
-    // out-of-memory failure. Additionally, frankensqlite's in-memory schema
-    // representation does not reliably preserve partial-index predicates, so br
-    // cannot distinguish a stale ready index from a current one at open time.
 
     Ok(issues_rebuilt)
 }
@@ -2025,11 +1860,6 @@ pub(crate) fn runtime_schema_compatible(conn: &Connection) -> bool {
     let blocked_cache_ok = blocked_cache_table_canonical(conn);
     let child_counters_ok = table_has_columns(conn, "child_counters", &["parent_id", "last_child"]);
     let gate_history_ok = attest_gate_result_history_schema(conn).is_ok();
-    // v16/v17 capacity tables (#384). Checking them here means a database
-    // stamped at the current version but missing these tables (e.g. one
-    // produced by a pre-#398 reviewed migration, which never created them)
-    // is healed by `apply_schema` on the next open instead of failing at
-    // runtime with "no such table".
     let capacity_ok = table_has_columns(
         conn,
         "capacity_exemptions",
@@ -2094,12 +1924,7 @@ pub(crate) fn runtime_schema_compatible(conn: &Connection) -> bool {
 /// This handles upgrades for tables that may have been created with older schemas.
 #[allow(clippy::too_many_lines)]
 fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
-    // Migration: ensure blocked_issues_cache has the canonical derived-cache
-    // schema, including NOT NULL payload columns. Older br/bd paths could
-    // leave a nullable blocked_by column with stale NULL cache rows.
     if !blocked_cache_table_canonical(conn) {
-        // Table needs update - drop and recreate (it's a cache, data is regenerated)
-        // Wrap in transaction so concurrent opens don't see a partially migrated state
         conn.execute("BEGIN IMMEDIATE")?;
         let result = (|| -> Result<()> {
             conn.execute("DROP TABLE IF EXISTS blocked_issues_cache")?;
@@ -2124,39 +1949,30 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         conn.execute("COMMIT")?;
     }
 
-    // Migration: ensure compaction_level is never NULL (bd compatibility)
     let has_compaction_level = column_exists(conn, "issues", "compaction_level");
 
     if has_compaction_level {
         conn.execute("UPDATE issues SET compaction_level = 0 WHERE compaction_level IS NULL")?;
     }
 
-    // Migration: Ensure filter columns are NOT NULL (v3)
     let user_version = conn
         .query_row("PRAGMA user_version")?
         .get(0)
         .and_then(SqliteValue::as_integer)
         .unwrap_or(0);
 
-    // Skip v3/v4 migration when the issues table was just rebuilt from scratch
-    // (it already has canonical NOT NULL constraints and the correct index).
-    // Querying columns via UPDATE/CREATE INDEX here would fail if a stale
-    // schema image survived the rebuild.
     if !issues_rebuilt {
         if user_version < 3
             && table_exists(conn, "issues")
             && issues_filter_columns_require_v3_rebuild(conn)
         {
             tracing::info!("Migrating database to schema version 3 (NOT NULL filter columns)");
-            // 1. Backfill NULL values
             conn.execute("UPDATE issues SET ephemeral = 0 WHERE ephemeral IS NULL")?;
             conn.execute("UPDATE issues SET pinned = 0 WHERE pinned IS NULL")?;
             conn.execute("UPDATE issues SET is_template = 0 WHERE is_template IS NULL")?;
 
-            // 2. Rebuild the table to apply NOT NULL constraints
             rebuild_issues_table(conn)?;
 
-            // 3. Recreate the optimized ready index
             conn.execute("DROP INDEX IF EXISTS idx_issues_ready")?;
             conn.execute(
                 "CREATE INDEX idx_issues_ready
@@ -2181,14 +1997,7 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
             )?;
         }
 
-        // v5: Drop the old DESC index so the idempotent CREATE INDEX IF NOT
-        // EXISTS below recreates it without DESC.  Frankensqlite's B-tree
-        // implementation stores DESC index entries in a different physical
         // order than C sqlite3 expects, causing `PRAGMA integrity_check` to
-        // report "entries are out of order for their declared key directions".
-        // Removing DESC eliminates the false positive while SQLite's query
-        // planner still reverse-scans the ASC index efficiently for
-        // ORDER BY ... created_at DESC queries.
         if user_version < 5 {
             tracing::info!(
                 "Migrating database to schema version 5 (remove DESC from active list index)"
@@ -2196,18 +2005,6 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
             conn.execute("DROP INDEX IF EXISTS idx_issues_list_active_order")?;
         }
 
-        // v6: Repair datetime columns and legacy status values.
-        //
-        // External tools (including pre-Rust bd flows and direct SQLite edits)
-        // have occasionally written integer epoch microseconds into DATETIME
-        // columns, and imported JSONL has carried the Go-beads "done" status
-        // unchanged via the Status::Custom fallback. Both corrupt the JSONL
-        // export: the reader's legacy `as_text().unwrap_or("")` path mapped
-        // integer datetimes to UNIX_EPOCH (updated_at rows becoming
-        // 1970-01-01) and dropped optional datetimes (closed_at → null),
-        // while downstream tools (bv, bd-style consumers) reject an unknown
-        // "done" status entirely. This migration rewrites the data in place
-        // so every row is fully-typed and uses canonical status strings.
         if user_version < 6 && table_exists(conn, "issues") {
             tracing::info!(
                 "Migrating database to schema version 6 (normalize datetime columns and legacy status aliases)"
@@ -2217,23 +2014,11 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         }
     }
 
-    // v7: Historical content-hash rebuild. For databases older than v7 that
-    // open under current br, compute the current canonical format directly
-    // instead of replaying obsolete intermediate encodings. Marking rows dirty
-    // is intentional: per-issue export hashes were computed with an older
-    // algorithm, so the next flush must rewrite JSONL tracking metadata.
     if user_version < 7 && table_exists(conn, "issues") {
         tracing::info!("Migrating database to schema version 7 (content hashes)");
         rebuild_content_hashes_for_current_format(conn)?;
     }
 
-    // v9: Add close_metadata table for closure-time policy gates (issue #274).
-    //
-    // Pure additive migration: a brand-new dedicated table to capture the
-    // optional Phase 1 fields (Tier 1 attribution + policy bypass auditing).
-    // Older databases get the table on next open; no existing rows or columns
-    // change. Repos that never enable a policy never read or write to it, so
-    // the migration is a no-op for solo-dev workflows.
     if user_version < 9 {
         tracing::info!(
             "Migrating database to schema version 9 (close_metadata table for policy gates)"
@@ -2260,16 +2045,7 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         )?;
     }
 
-    // v8: Backfill storage-class NULL values in NOT NULL DEFAULT columns.
-    //
-    // Older databases — particularly those carrying history from Go bd or
-    // br versions where ALTER TABLE ADD COLUMN ran without a DEFAULT
-    // clause — accumulate storage-class NULL in columns declared NOT NULL
     // DEFAULT. `PRAGMA integrity_check` then flags these as constraint
-    // violations even though `WHERE col IS NULL` won't always match them
-    // (the planner can use partial indexes that bypass the check). We use
-    // `typeof(col) = 'null'` to detect storage-class NULLs directly and
-    // backfill with each column's declared default. See issue #269.
     if user_version < 8 {
         tracing::info!(
             "Migrating database to schema version 8 (backfill storage-NULL in NOT NULL DEFAULT columns)"
@@ -2277,23 +2053,6 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         backfill_storage_null_in_default_columns(conn);
     }
 
-    // Note: source_repo and is_template column backfills are handled in
-    // run_pre_schema_migrations() via ensure_columns(). Repeating ALTER TABLE
-    // here can create duplicate column definitions on some engines.
-
-    // v10: Ensure source_repo_path column is present on the issues table
-    // (beads#289) for migration paths that call `run_migrations` directly
-    // and therefore skip `run_pre_schema_migrations`/`ensure_columns`. Without
-    // this guard, a direct v9 -> v10 migration could stamp user_version=10 with
-    // the column still missing, and the next open would fast-path past schema
-    // setup and start hitting "no such column: source_repo_path" on every
-    // INSERT/UPDATE.
-    //
-    // Idempotent: skipped when the column already exists. The ADD COLUMN
-    // appends at the end, matching SCHEMA_SQL and EXPECTED_ISSUE_COLUMN_ORDER.
-    // If the pre-schema path rebuilt `issues`, skip this check: the rebuilt
-    // table already has the current shape, making a second column probe
-    // redundant.
     if !issues_rebuilt
         && user_version < 10
         && table_exists(conn, "issues")
@@ -2305,13 +2064,6 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         conn.execute("ALTER TABLE issues ADD COLUMN source_repo_path TEXT")?;
     }
 
-    // Migration v10 -> v11 (beads#297): add `agent_context TEXT` to
-    // `issues` for inherited governing instructions emitted on
-    // `br update --status in_progress` / `--claim` and `br show`.
-    // Pure additive — existing rows get NULL and existing consumers ignore
-    // it. Same idempotence pattern as the v10 source_repo_path migration:
-    // skipped when the column already exists, skipped when the table was
-    // just rebuilt from scratch (rebuild already produced the v11 layout).
     if !issues_rebuilt
         && user_version < 11
         && table_exists(conn, "issues")
@@ -2323,12 +2075,6 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         conn.execute("ALTER TABLE issues ADD COLUMN agent_context TEXT")?;
     }
 
-    // Migration v11 -> v12 (beads#319): add the `gate_results` table for
-    // workflow gate engine (#312, layer 2). Pure additive — a new table, no
-    // existing-row rewrite. Idempotent via CREATE TABLE IF NOT EXISTS, so it
-    // is safe to run on every open regardless of `user_version`. The canonical
-    // DDL also lives in SCHEMA_SQL for fresh databases; re-asserting here keeps
-    // upgraded databases in lock-step.
     if user_version < 12 {
         tracing::info!("Migrating database to schema version 12 (gate_results table - beads#319)");
         execute_batch(
@@ -2350,13 +2096,6 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         )?;
     }
 
-    // Migration v12 -> v13 (beads#312, Layer 3 capture-only): add Tier 1
-    // attribution columns (`agent_name`, `harness`, `model`) to the `events`
-    // table so create/update/status-mutating commands can record self-reported
-    // agent identity as an audit trail. Pure additive, nullable columns — no
-    // existing rows change, no enforcement is performed, and the JSONL sync
-    // surface is unaffected (events are DB-only). Idempotent: ensure_columns
-    // skips columns that already exist, mirroring the v10/v11 ADD COLUMN guards.
     if user_version < 13 && table_exists(conn, "events") {
         tracing::info!(
             "Migrating database to schema version 13 (events attribution columns - beads#312)"
@@ -2364,29 +2103,16 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         ensure_columns(conn, "events", EVENT_COLUMNS)?;
     }
 
-    // v14: Recompute stored issue content hashes after switching from
-    // NUL-separated fields to length-prefixed fields. Existing v7-v13
-    // databases may contain hashes where embedded NUL bytes can blur field
-    // boundaries, so rewrite the issue hash and force JSONL tracking metadata
-    // to refresh on the next flush.
     if (7..14).contains(&user_version) && table_exists(conn, "issues") {
         tracing::info!("Migrating database to schema version 14 (length-prefixed content hashes)");
         rebuild_content_hashes_for_current_format(conn)?;
     }
 
-    // v15 (GitHub #388): preserve every workflow-gate verdict in an
-    // append-only table bound to an exact status revision and target
-    // transition. The legacy gate_results table is intentionally retained as
-    // historical, unscoped evidence; its rows never satisfy a v15 transition.
     if user_version < 15 {
         tracing::info!("Migrating database to schema version 15 (transition-scoped gate history)");
         apply_gate_result_history_migration_in_transaction(conn)?;
     }
 
-    // v16 (GitHub #384 phase 4): audited issue-specific capacity exemptions.
-    // A state table holds the latest exemption per (issue, capacity); an
-    // append-only history table preserves every grant/renew/revoke/expire/
-    // left_status action. Pure additive — new tables only, no row rewrites.
     if user_version < 16 {
         tracing::info!(
             "Migrating database to schema version 16 (capacity exemptions - GitHub #384 phase 4)"
@@ -2394,10 +2120,6 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         apply_capacity_exemptions_migration_in_transaction(conn)?;
     }
 
-    // v17 (GitHub #384 phase 5): capacity occupancy attribution. One row per
-    // issue recording who moved it into its current status, so actor/
-    // harness/session capacity scopes can count occupancy inside the
-    // admission transaction. Pure additive — a new table only.
     if user_version < 17 {
         tracing::info!(
             "Migrating database to schema version 17 (capacity occupancy - GitHub #384 phase 5)"
@@ -2405,16 +2127,8 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         apply_capacity_occupancy_migration_in_transaction(conn)?;
     }
 
-    // v18 (ADR-0001 §5.2, beads_rust-schema-v18-uyb3): typed work-ledger
-    // columns on `issues`. Purely additive — every column is nullable or
-    // defaulted, so schema-17 rows remain valid.
-    //
-    // #428 integrity gate: the version stamp is applied INSIDE the same
     // transaction as the DDL, and `PRAGMA integrity_check` runs before
-    // COMMIT. Any disagreement rolls the stamp AND the DDL back and fails
-    // the migration, so a malformed database can never end up stamped 18.
     // (`PRAGMA user_version` is journaled like any other header write, so
-    // ROLLBACK reverts it.)
     if user_version < 18 && table_exists(conn, "issues") {
         tracing::info!("Migrating database to schema version 18 (typed work-ledger columns)");
         conn.execute("BEGIN IMMEDIATE")?;
@@ -2442,23 +2156,11 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
         }
     }
 
-    // v19 (ADR-0004): durable optimistic-concurrency revision. The column is
-    // additive and defaults legacy rows to revision 1; keep the operation
-    // idempotent because ordinary opens may encounter partially-shaped v18
-    // databases produced by an interrupted migration.
     if user_version < 19 && table_exists(conn, "issues") {
         tracing::info!("Migrating database to schema version 19 (issue revisions)");
         add_missing_issue_revision_column(conn)?;
     }
 
-    // Migration: Add missing indexes for bd parity
-    // These use IF NOT EXISTS so they're safe to run multiple times
-
-    // Self-heal idx_issues_list_active_order shape: databases created before
-    // the COALESCE predicate change carry the OR-form partial predicate, which
-    // C SQLite's planner cannot derive from the list query's WHERE clause —
-    // INDEXED BY then fails with 'no query solution'. Detect by SQL text and
-    // drop; the IF NOT EXISTS batch below recreates it in COALESCE form.
     if legacy_active_order_index_shape(conn) {
         tracing::info!(
             "Migrating idx_issues_list_active_order to planner-provable COALESCE partial predicate"
@@ -2517,7 +2219,6 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
     ",
     )?;
 
-    // Drop legacy index names (safe if absent)
     execute_batch(
         conn,
         r"
@@ -2528,9 +2229,6 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
     ",
     )?;
 
-    // v20 (ADR-0035 Spec 4, bd-hj1t): the event log is the source of truth;
-    // issues/JSONL are projections. Tables only — dual-write lands next.
-    // Idempotent: ordinary opens may encounter partially-shaped databases.
     execute_batch(
         conn,
         r"
@@ -2621,11 +2319,6 @@ fn repair_integer_datetime_columns(conn: &Connection) -> Result<()> {
         "deleted_at",
         "compacted_at",
     ];
-    // Must stay in lock-step with datetime_from_epoch_auto in
-    // src/storage/sqlite.rs. Each threshold is the smallest integer that,
-    // in that unit, still lands within ±2286 AD — i.e. 10^10 seconds,
-    // 10^13 ms, 10^16 µs, 10^19 ns all represent the same year 2286,
-    // giving non-overlapping magnitude buckets.
     for column in DATETIME_COLUMNS {
         if !column_exists(conn, "issues", column) {
             continue;
@@ -2936,7 +2629,6 @@ fn rebuild_content_hashes_for_current_format_in_transaction(
         let pinned = row_bool(row, 14);
         let is_template = row_bool(row, 15);
 
-        // Unknown wire values fail loud (bd-bqyb) — never silent Customs.
         let status = status_raw.parse::<Status>().map_err(|e| {
             crate::error::BeadsError::Config(format!(
                 "stored issue has unknown status {status_raw:?}: {e}"
@@ -2991,9 +2683,6 @@ fn rebuild_content_hashes_for_current_format_in_transaction(
 }
 
 fn rebuild_content_hashes_for_current_format(conn: &Connection) -> Result<usize> {
-    // Pre-compute once and pass explicitly: legacy DBs created before the
-    // `DEFAULT CURRENT_TIMESTAMP` was added to `dirty_issues.marked_at`
-    // reject INSERTs that omit the column.
     let marked_at = Utc::now().to_rfc3339();
     conn.execute("BEGIN IMMEDIATE")?;
     match rebuild_content_hashes_for_current_format_in_transaction(conn, &marked_at) {
@@ -3053,14 +2742,10 @@ mod tests {
 
     #[test]
     fn test_apply_schema() {
-        // Bind the temp file: dropping it here would unlink the database
-        // before the connection ever writes to it, leaving `Connection::open`
-        // pointed at a dangling path.
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_db.path().to_string_lossy().into_owned()).unwrap();
         apply_schema(&conn).expect("Failed to apply schema");
 
-        // Verify a few tables exist
         let tables: Vec<String> = conn
             .query("SELECT name FROM sqlite_master WHERE type='table'")
             .unwrap()
@@ -3072,8 +2757,6 @@ mod tests {
         assert!(tables.contains(&"dependencies".to_string()));
         assert!(tables.contains(&"config".to_string()));
         assert!(tables.contains(&"dirty_issues".to_string()));
-        // v20 (ADR-0035 Spec 4, bd-hj1t): the event log is the source of
-        // truth; projections rebuild from it.
         assert!(tables.contains(&"event_log".to_string()));
         assert!(tables.contains(&"generation_manifest".to_string()));
         let row = conn
@@ -3088,7 +2771,6 @@ mod tests {
             .and_then(|v| v.as_text())
             .unwrap_or("")
             .to_string();
-        // In-memory DBs use MEMORY journaling, regardless of what we set
         assert!(journal_mode.to_uppercase() == "WAL" || journal_mode.to_uppercase() == "MEMORY");
 
         let row = conn.query_row("PRAGMA foreign_keys").unwrap();
@@ -3103,11 +2785,6 @@ mod tests {
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         apply_schema(&conn).expect("Failed to apply schema");
 
-        // Seed one row per integer epoch unit (seconds / ms / µs / ns), all
-        // encoding the same instant 2026-04-20T02:18:08Z. The migration's
-        // magnitude detection must recover the same year/day/time regardless
-        // of unit — previously it hard-coded /1000000.0 and would corrupt
-        // the other three rows.
         let rows: [(&str, i64); 4] = [
             ("bug-sec", 1_776_651_488),
             ("bug-ms", 1_776_651_488_000),
@@ -3122,7 +2799,6 @@ mod tests {
             conn.execute(&stmt).expect("seed integer datetime row");
         }
 
-        // Sanity: every updated_at/closed_at must be integer-typed pre-repair.
         for (id, _) in rows {
             let row = conn
                 .query_row(&format!(
@@ -3169,7 +2845,6 @@ mod tests {
             );
         }
 
-        // Idempotency: a second pass is a no-op and leaves the rows TEXT.
         repair_integer_datetime_columns(&conn).expect("second pass should succeed");
         let row = conn
             .query_row("SELECT typeof(updated_at) FROM issues WHERE id='bug-us'")
@@ -3184,11 +2859,6 @@ mod tests {
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         apply_schema(&conn).expect("Failed to apply schema");
 
-        // The issues CHECK constraint forbids closed without closed_at, so
-        // we seed rows that are legally in the `done` state (status NOT IN
-        // ('closed','tombstone') ⇒ closed_at must be NULL). The migration
-        // will promote them to `closed` and backfill closed_at from
-        // updated_at.
         conn.execute(
             "INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at) \
              VALUES ('legacy-done', 'bd legacy', 'done', 2, 'task', '2026-04-02T20:00:00Z', '2026-04-03T01:00:00Z')",
@@ -3641,12 +3311,8 @@ mod tests {
 
     #[test]
     fn test_reviewed_migration_to_current_creates_event_log() {
-        // bd-hj1t: the reviewed path (doctor migrate-schema) must land the
-        // v20 event tables, not just the auto-migrate ensure block.
         let (_temp, conn) =
             reviewed_v14_with_gate_history_schema(GATE_RESULT_HISTORY_MIGRATION_SQL);
-        // apply_schema already created the v20 tables: drop them so the
-        // reviewed migration itself must recreate them.
         conn.execute("DROP TABLE event_log").expect("drop log");
         conn.execute("DROP TABLE generation_manifest")
             .expect("drop manifest");
@@ -3662,10 +3328,6 @@ mod tests {
 
     #[test]
     fn test_reviewed_migration_refuses_unreviewed_edges_before_writes() {
-        // NOTE (merge 2026-07-28): the former `(12, current)` case is gone —
-        // pre-reviewed-era versions (< 13) deliberately keep the shipped
-        // general upgrade path (see test_db_migrate_happy_path's 7->current),
-        // while the stamp-integrity refusals below are fully retained.
         for (from, target) in [(13, 14), (14, 14), (15, 15), (13, 16)] {
             let temp = TempDir::new().expect("tempdir");
             let db_path = temp.path().join(format!("refuse-{from}-{target}.db"));
@@ -3890,8 +3552,6 @@ mod tests {
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         apply_schema(&conn).expect("Failed to apply schema");
 
-        // Re-create dirty_issues without the DEFAULT to mirror what
-        // a DB initialized under the pre-v7 schema looks like in the wild.
         conn.execute("DROP TABLE dirty_issues").unwrap();
         conn.execute(
             "CREATE TABLE dirty_issues (
@@ -3927,21 +3587,12 @@ mod tests {
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         apply_schema(&conn).expect("Failed to apply schema");
 
-        // Seed a row with all required columns set, then force storage-NULLs
-        // into the columns the migration is supposed to heal. We rely on
-        // direct UPDATEs reaching the storage layer; if the engine refuses
-        // any individual UPDATE, the corresponding assertion below still
-        // exercises the no-op path of the migration.
         conn.execute(
             "INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at) \
              VALUES ('bd-null', 'legacy null row', 'open', 2, 'task', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
         )
         .expect("seed row");
 
-        // Best-effort: not every column accepts a direct NULL update under
-        // every storage engine. The migration must only act on columns
-        // that *do* hold storage-NULL values, so we forge as many as the
-        // engine allows and verify the migration heals every successful one.
         let columns_to_null: &[&str] = &[
             "description",
             "design",
@@ -3961,13 +3612,8 @@ mod tests {
             ));
         }
 
-        // Run the v8 migration directly so this test stays focused on the
-        // backfill behaviour rather than the surrounding migration ladder.
         backfill_storage_null_in_default_columns(&conn);
 
-        // Idempotent: every NOT NULL DEFAULT column must hold a non-NULL
-        // storage class after the backfill, regardless of which UPDATE-to-
-        // NULL succeeded above.
         for column in columns_to_null {
             let row = conn
                 .query_row(&format!(
@@ -3982,7 +3628,6 @@ mod tests {
             );
         }
 
-        // Second pass is a no-op (the UPDATEs touch zero rows).
         backfill_storage_null_in_default_columns(&conn);
         let row = conn
             .query_row("SELECT typeof(notes) FROM issues WHERE id = 'bd-null'")
@@ -3993,18 +3638,10 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn test_reviewed_migration_refuses_9_to_10_without_applying_later_steps() {
-        // The explicit reviewed migration hook is deliberately not the
-        // automatic open-time migration ladder. A request for the old 9->10
-        // edge must be rejected before either its v10 ALTER or any newer v11-
-        // v15 step runs; otherwise a caller-controlled target could stamp a
-        // partially or over-migrated database.
         let temp = TempDir::new().expect("tempdir");
         let db_path = temp.path().join("legacy_v9.db");
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
 
-        // Hand-build the canonical v9 issues table: all the columns that
-        // existed before #289 landed, in the canonical EXPECTED order, but
-        // intentionally missing the source_repo_path tail column.
         execute_batch(
             &conn,
             r"
@@ -4066,8 +3703,6 @@ mod tests {
         )
         .expect("seed v14 sentinel");
 
-        // Stamp the legacy version so the open-path would otherwise
-        // short-circuit and skip migrations.
         conn.execute("PRAGMA user_version = 9")
             .expect("stamp legacy user_version");
 
@@ -4141,10 +3776,6 @@ mod tests {
             .and_then(SqliteValue::as_text)
             .expect("issues table SQL should be present");
 
-        // Use trailing space to disambiguate from `source_repo_path` (which
-        // contains `source_repo` as a prefix). The column declaration is
-        // `source_repo TEXT ...`, so the space-suffixed form matches the
-        // canonical declaration site exactly once.
         assert_eq!(
             issues_sql.matches("source_repo ").count(),
             1,
@@ -4167,15 +3798,10 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn test_schema_parity_conformance() {
-        // Bind the temp file: dropping it here would unlink the database
-        // before the connection ever writes to it, leaving `Connection::open`
-        // pointed at a dangling path.
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_db.path().to_string_lossy().into_owned()).unwrap();
         apply_schema(&conn).expect("Failed to apply schema");
 
-        // === ISSUES TABLE ===
-        // Verify column defaults
         let issues_cols: Vec<(String, String, i32, Option<String>)> = conn
             .query("PRAGMA table_info(issues)")
             .unwrap()
@@ -4199,7 +3825,6 @@ mod tests {
             })
             .collect();
 
-        // Check required defaults for bd parity
         let col_map: std::collections::HashMap<_, _> = issues_cols
             .iter()
             .map(|(name, typ, notnull, dflt)| {
@@ -4207,28 +3832,24 @@ mod tests {
             })
             .collect();
 
-        // status must default to 'open'
         assert_eq!(
             col_map.get("status").map(|c| c.2.as_deref()),
             Some(Some("'open'")),
             "status should default to 'open'"
         );
 
-        // priority must default to 2
         assert_eq!(
             col_map.get("priority").map(|c| c.2.as_deref()),
             Some(Some("2")),
             "priority should default to 2"
         );
 
-        // issue_type must default to 'task'
         assert_eq!(
             col_map.get("issue_type").map(|c| c.2.as_deref()),
             Some(Some("'task'")),
             "issue_type should default to 'task'"
         );
 
-        // created_at and updated_at must default to CURRENT_TIMESTAMP
         assert_eq!(
             col_map.get("created_at").map(|c| c.2.as_deref()),
             Some(Some("CURRENT_TIMESTAMP")),
@@ -4240,7 +3861,6 @@ mod tests {
             "updated_at should default to CURRENT_TIMESTAMP"
         );
 
-        // === VERIFY KEY INDEXES EXIST ===
         let indexes: HashSet<String> = conn
             .query("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL")
             .unwrap()
@@ -4248,7 +3868,6 @@ mod tests {
             .filter_map(|row| row.get(0).and_then(|v| v.as_text()).map(String::from))
             .collect();
 
-        // Core indexes
         assert!(
             indexes.contains("idx_issues_status"),
             "missing idx_issues_status"
@@ -4270,7 +3889,6 @@ mod tests {
             "missing idx_issues_updated_at"
         );
 
-        // Export/sync indexes
         assert!(
             indexes.contains("idx_issues_content_hash"),
             "missing idx_issues_content_hash"
@@ -4280,7 +3898,6 @@ mod tests {
             "missing external_ref index"
         );
 
-        // Special state indexes
         assert!(
             indexes.contains("idx_issues_ephemeral"),
             "missing idx_issues_ephemeral"
@@ -4294,7 +3911,6 @@ mod tests {
             "missing idx_issues_tombstone"
         );
 
-        // Time-based indexes
         assert!(
             indexes.contains("idx_issues_due_at"),
             "missing idx_issues_due_at"
@@ -4304,13 +3920,10 @@ mod tests {
             "missing idx_issues_defer_until"
         );
 
-        // Ready work composite index (critical for performance)
         assert!(
             indexes.contains("idx_issues_ready"),
             "missing idx_issues_ready composite index"
         );
-        // Widened ready group (#354): non-partial composite must exist on real DBs
-        // so a configured `status IN (...)` ready query stays index-covered.
         assert!(
             indexes.contains("idx_issues_status_priority_created"),
             "missing idx_issues_status_priority_created composite index"
@@ -4320,7 +3933,6 @@ mod tests {
             "missing idx_issues_list_active_order composite index"
         );
 
-        // === DEPENDENCIES TABLE ===
         let deps_cols: Vec<(String, Option<String>)> = conn
             .query("PRAGMA table_info(dependencies)")
             .unwrap()
@@ -4341,21 +3953,18 @@ mod tests {
             .map(|(name, dflt)| (name.as_str(), dflt.clone()))
             .collect();
 
-        // type must default to 'blocks'
         assert_eq!(
             deps_map.get("type").cloned().flatten().as_deref(),
             Some("'blocks'"),
             "dependencies.type should default to 'blocks'"
         );
 
-        // metadata must default to '{}'
         assert_eq!(
             deps_map.get("metadata").cloned().flatten().as_deref(),
             Some("'{}'"),
             "dependencies.metadata should default to '{{}}'"
         );
 
-        // Dependency indexes (bd parity)
         assert!(
             indexes.contains("idx_dependencies_issue"),
             "missing idx_dependencies_issue"
@@ -4381,7 +3990,6 @@ mod tests {
             "missing idx_dependencies_blocking"
         );
 
-        // Labels indexes
         assert!(
             indexes.contains("idx_labels_label"),
             "missing idx_labels_label"
@@ -4391,7 +3999,6 @@ mod tests {
             "missing idx_labels_issue"
         );
 
-        // === BLOCKED_ISSUES_CACHE TABLE ===
         let cache_cols: Vec<String> = conn
             .query("PRAGMA table_info(blocked_issues_cache)")
             .unwrap()
@@ -4404,7 +4011,6 @@ mod tests {
             "blocked_issues_cache should have 'issue_id' column"
         );
 
-        // Must have blocked_by (not blocked_by_json) and blocked_at
         assert!(
             cache_cols.contains(&"blocked_by".to_string()),
             "blocked_issues_cache should have 'blocked_by' column (not 'blocked_by_json')"
@@ -4418,36 +4024,26 @@ mod tests {
             "blocked_issues_cache should NOT have old 'blocked_by_json' column"
         );
 
-        // Verify blocked_cache index exists
         assert!(
             indexes.contains("idx_blocked_cache_blocked_at"),
             "missing idx_blocked_cache_blocked_at"
         );
 
-        // === TEST CLOSED-AT CONSTRAINT ===
-        // Insert an issue with defaults (will get status='open', closed_at=NULL)
         conn.execute("INSERT INTO issues (id, title) VALUES ('test-1', 'Test Issue')")
             .expect("Should allow open issue without closed_at");
 
-        // A CHECK constraint should reject an insert of a closed issue
-        // without closed_at; accept either outcome for older files where the
-        // constraint is absent.
         let result = conn.execute(
             "INSERT INTO issues (id, title, status) VALUES ('test-2', 'Closed', 'closed')",
         );
         if result.is_ok() {
-            // CHECK not enforced — clean up the row so later assertions
-            // are not affected by the extra row.
             let _ = conn.execute("DELETE FROM issues WHERE id = 'test-2'");
         }
 
-        // Insert closed issue with closed_at - should succeed
         conn.execute(
             "INSERT INTO issues (id, title, status, closed_at) VALUES ('test-3', 'Closed', 'closed', CURRENT_TIMESTAMP)",
         )
         .expect("Should allow closed issue with closed_at");
 
-        // Insert tombstone without closed_at - should succeed (tombstones exempt)
         conn.execute(
             "INSERT INTO issues (id, title, status) VALUES ('test-4', 'Tombstone', 'tombstone')",
         )
@@ -4457,14 +4053,9 @@ mod tests {
     /// Test that migrations correctly upgrade old schemas.
     #[test]
     fn test_migration_blocked_cache_upgrade() {
-        // Bind the temp file: dropping it here would unlink the database
-        // before the connection ever writes to it, leaving `Connection::open`
-        // pointed at a dangling path.
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_db.path().to_string_lossy().into_owned()).unwrap();
 
-        // Create old-style blocked_issues_cache with blocked_by_json
-        // Using a complete issues table schema so index migrations succeed
         execute_batch(
             &conn,
             r"
@@ -4514,10 +4105,8 @@ mod tests {
         )
         .unwrap();
 
-        // Run migrations
         run_migrations(&conn, false).unwrap();
 
-        // Verify columns were updated
         let cols: Vec<String> = conn
             .query("PRAGMA table_info(blocked_issues_cache)")
             .unwrap()
@@ -4614,14 +4203,9 @@ mod tests {
     /// Migration: drop old blocked_issues_cache missing issue_id column.
     #[test]
     fn test_migration_blocked_cache_missing_issue_id() {
-        // Bind the temp file: dropping it here would unlink the database
-        // before the connection ever writes to it, leaving `Connection::open`
-        // pointed at a dangling path.
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_db.path().to_string_lossy().into_owned()).unwrap();
 
-        // Old-style cache table with 'id' column instead of 'issue_id'
-        // Using a complete issues table schema so index migrations succeed
         execute_batch(
             &conn,
             r"
@@ -4673,7 +4257,6 @@ mod tests {
         )
         .unwrap();
 
-        // Apply full schema (includes pre-migrations)
         apply_schema(&conn).unwrap();
 
         let cols: Vec<String> = conn
@@ -4704,9 +4287,6 @@ mod tests {
     /// Migration: add missing issue columns for older schemas.
     #[test]
     fn test_migration_adds_missing_issue_columns() {
-        // Bind the temp file: dropping it here would unlink the database
-        // before the connection ever writes to it, leaving `Connection::open`
-        // pointed at a dangling path.
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_db.path().to_string_lossy().into_owned()).unwrap();
 
@@ -4739,10 +4319,6 @@ mod tests {
             "created_by",
             "updated_at",
             "source_repo",
-            // Pins the v10 column-add: a legacy `(id, title)`-only table opened
-            // by a v10+ binary must end up with `source_repo_path` present, so
-            // the live INSERT/UPDATE SQL emitted by the storage layer doesn't
-            // crash with "no such column" on the very next write.
             "source_repo_path",
             "compaction_level",
             "sender",
@@ -4829,9 +4405,6 @@ mod tests {
 
     #[test]
     fn test_rebuild_issues_table_errors_when_canonical_columns_are_missing() {
-        // Bind the temp file: dropping it here would unlink the database
-        // before the connection ever writes to it, leaving `Connection::open`
-        // pointed at a dangling path.
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_db.path().to_string_lossy().into_owned()).unwrap();
 
@@ -4882,9 +4455,6 @@ mod tests {
     /// Migration: add missing dependency type column for older schemas.
     #[test]
     fn test_migration_adds_missing_dependency_type() {
-        // Bind the temp file: dropping it here would unlink the database
-        // before the connection ever writes to it, leaving `Connection::open`
-        // pointed at a dangling path.
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_db.path().to_string_lossy().into_owned()).unwrap();
 
@@ -4918,9 +4488,6 @@ mod tests {
 
     #[test]
     fn test_migration_rebuilds_legacy_config_metadata_primary_keys() {
-        // Bind the temp file: dropping it here would unlink the database
-        // before the connection ever writes to it, leaving `Connection::open`
-        // pointed at a dangling path.
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_db.path().to_string_lossy().into_owned()).unwrap();
 
@@ -4943,9 +4510,7 @@ mod tests {
 
         apply_schema(&conn).unwrap();
 
-        // key column should no longer be PRIMARY KEY in rebuilt tables.
         // Use PRAGMA table_info (not the newer table-valued function form)
-        // for broad engine compatibility.
         let config_key_pk = conn
             .query("PRAGMA table_info('config')")
             .unwrap()
@@ -4964,7 +4529,6 @@ mod tests {
             .unwrap_or(0);
         assert_eq!(metadata_key_pk, 0);
 
-        // Migration should preserve existing values.
         let config_latest = conn
             .query_row_with_params(
                 "SELECT value FROM config WHERE key = ?",
@@ -5019,9 +4583,6 @@ mod tests {
 
     #[test]
     fn test_active_list_query_plan_uses_composite_index() {
-        // Bind the temp file: dropping it here would unlink the database
-        // before the connection ever writes to it, leaving `Connection::open`
-        // pointed at a dangling path.
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_db.path().to_string_lossy().into_owned()).unwrap();
         apply_schema(&conn).expect("schema");
@@ -5043,8 +4604,6 @@ mod tests {
             .filter_map(|row| row.get(3).and_then(|v| v.as_text()).map(String::from))
             .collect();
 
-        // Query plans may legitimately use the composite index or fall
-        // back to SCAN; accept either.
         let uses_index = details
             .iter()
             .any(|detail| detail.contains("idx_issues_list_active_order"));
@@ -5055,8 +4614,6 @@ mod tests {
             "expected planner to use idx_issues_list_active_order or SCAN, got: {details:?}"
         );
     }
-
-    // ---- split_sql_statements tests ----
 
     #[test]
     fn test_split_normal_multi_statement() {
@@ -5088,7 +4645,6 @@ mod tests {
 
     #[test]
     fn test_split_escaped_quotes_in_string() {
-        // SQL escapes single quotes by doubling them: 'it''s'
         let sql = "INSERT INTO t(v) VALUES('it''s;here'); SELECT 2";
         let stmts = split_sql_statements(sql);
         assert_eq!(stmts.len(), 2);
@@ -5156,7 +4712,7 @@ mod schema18_tests {
     /// secondary-index page so `PRAGMA integrity_check` reports malformed
     /// AFTER the migration's DDL and stamp would have run (#428 anti-pattern
     /// guard).
-    #[allow(clippy::too_many_lines)] // fixture setup reads linearly
+    #[allow(clippy::too_many_lines)]
     fn v17_db_with_corrupt_index() -> (TempDir, Connection) {
         use std::io::{Seek, SeekFrom, Write};
 
@@ -5212,8 +4768,6 @@ mod schema18_tests {
             "fixture must start corrupted; got {pre:?}"
         );
 
-        // The gated migration must fail closed instead of leaving a v18
-        // stamp over a malformed database (#428 anti-pattern).
         let result = run_migrations(&conn, false);
         assert!(result.is_err(), "migration must fail on integrity failure");
 
@@ -5250,16 +4804,12 @@ mod schema18_tests {
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         apply_schema(&conn).expect("apply current schema");
 
-        // Seed one row, then strip the v18 shape to build a genuine
-        // schema-17 database: none of the typed work-ledger columns exist.
         conn.execute(
             "INSERT INTO issues (id, content_hash, title, status, priority, issue_type, created_at, updated_at) \
              VALUES ('bd-reviewed-v17', 'hash-v17', 'W4-era row', 'open', 2, 'task', \
                      '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')",
         )
         .expect("seed issue");
-        // A schema-17 database predates the wave-gate index, and SQLite
-        // refuses to drop a column an index still names.
         conn.execute("DROP INDEX IF EXISTS idx_issues_wave")
             .expect("drop wave-gate index");
         for name in TYPED_WORK_LEDGER_COLUMNS {
@@ -5319,7 +4869,6 @@ mod schema18_tests {
             );
         }
 
-        // Existing rows stay valid under the uyb3 defaults.
         let ac_shape = conn
             .query_row("SELECT ac_shape FROM issues WHERE id = 'bd-reviewed-v17'")
             .expect("read ac_shape");
@@ -5347,7 +4896,7 @@ mod schema18_tests {
     /// capacity-occupancy table does not exist yet), then corrupt a
     /// secondary-index page so `PRAGMA integrity_check` reports malformed
     /// BEFORE any migration runs (#428 defect class at source v16).
-    #[allow(clippy::too_many_lines)] // fixture setup reads linearly
+    #[allow(clippy::too_many_lines)]
     fn v16_db_with_corrupt_index() -> (TempDir, Connection) {
         use std::io::{Seek, SeekFrom, Write};
 
@@ -5356,7 +4905,6 @@ mod schema18_tests {
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open");
         apply_schema(&conn).expect("apply current schema");
 
-        // Shape down to genuine v16: strip the v17 capacity-occupancy table.
         conn.execute("DROP TABLE IF EXISTS capacity_occupancy")
             .expect("drop v17 occupancy table");
         conn.execute("PRAGMA user_version = 16").expect("stamp 16");
@@ -5447,9 +4995,6 @@ mod schema18_tests {
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         apply_schema(&conn).expect("apply current schema");
 
-        // Seed one row, then strip the v17/v18 shapes to build a genuine
-        // schema-16 database: no capacity-occupancy table, none of the typed
-        // work-ledger columns.
         conn.execute(
             "INSERT INTO issues (id, content_hash, title, status, priority, issue_type, created_at, updated_at) \
              VALUES ('bd-reviewed-v16', 'hash-v16', 'v0.2.19-era row', 'open', 2, 'task', \
@@ -5458,8 +5003,6 @@ mod schema18_tests {
         .expect("seed issue");
         conn.execute("DROP TABLE IF EXISTS capacity_occupancy")
             .expect("drop v17 occupancy table");
-        // A schema-16 database predates the wave-gate index, and SQLite
-        // refuses to drop a column an index still names.
         conn.execute("DROP INDEX IF EXISTS idx_issues_wave")
             .expect("drop wave-gate index");
         for name in TYPED_WORK_LEDGER_COLUMNS {
@@ -5528,7 +5071,6 @@ mod schema18_tests {
             );
         }
 
-        // Existing rows stay valid under the uyb3 defaults.
         let ac_shape = conn
             .query_row("SELECT ac_shape FROM issues WHERE id = 'bd-reviewed-v16'")
             .expect("read ac_shape");
@@ -5551,8 +5093,6 @@ mod schema18_tests {
             current_schema_version_u32().expect("current version")
         );
 
-        // The migrated database must come out integrity-clean (#428): the
-        // success report and integrity_check may never disagree again.
         let integrity = conn
             .query_row("PRAGMA integrity_check")
             .expect("post-migration integrity_check executes");

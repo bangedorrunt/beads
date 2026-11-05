@@ -7,7 +7,6 @@ fn test_create_deps_colon_title() {
     let temp = TempDir::new().unwrap();
     let beads_dir = temp.path().join(".beads");
 
-    // Initialize the beads directory
     let mut cmd = Command::cargo_bin("br").unwrap();
     cmd.arg("init")
         .env("BEADS_DIR", &beads_dir)

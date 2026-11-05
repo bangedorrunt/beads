@@ -96,10 +96,6 @@ pub fn install_pipe_tolerant_panic_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |payload| {
         if is_stdout_broken_pipe_panic(payload.payload()) {
-            // Read-only text commands: the reader hung up. Exit like a
-            // well-behaved filter instead of aborting (#434 /
-            // beads_rust-3fna). exit() skips Drop/WAL flush, but so did the
-            // abort it replaces, and these commands hold no write lock.
             std::process::exit(0);
         }
         previous(payload);
@@ -136,8 +132,6 @@ pub fn restore_default_sigpipe() {
 fn restore_default_sigpipe_unix() {
     // SAFETY: `SIG_DFL` is a constant disposition rather than a function
     // pointer, so there is no handler whose lifetime or async-signal-safety
-    // must be upheld, and `SIGPIPE` is a valid signal number on every Unix
-    // target this crate builds for.
     let previous = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     if previous == libc::SIG_ERR {
         tracing::warn!(
@@ -169,10 +163,6 @@ fn install_unix() {
     let mut signals = match Signals::new([SIGINT, SIGTERM, SIGHUP]) {
         Ok(signals) => signals,
         Err(err) => {
-            // If we can't install a handler we fall back to default
-            // signal action (process termination). Logging here keeps
-            // the failure visible without aborting startup, since the
-            // user's command is already in flight.
             tracing::warn!(
                 error = %err,
                 "failed to install shutdown signal handler; SIGTERM/SIGINT/SIGHUP \
@@ -187,33 +177,11 @@ fn install_unix() {
         .spawn(move || {
             for signo in signals.forever() {
                 let exit = 128 + signo;
-                // Publish in this exact order:
-                //   1. Reserve the exit code via `compare_exchange`
-                //      from 0 → `exit`. Only the first writer wins, so
-                //      a re-entrant signal cannot overwrite the value
-                //      a `main` thread reader is about to consume.
-                //   2. Set the "requested" flag with `Release`
-                //      ordering. Any reader that observes the flag set
-                //      via an `Acquire` load is therefore guaranteed
-                //      to also see the matching exit code (Step 1
-                //      happens-before Step 2 by program order, and
-                //      the Release on Step 2 publishes both writes
-                //      together).
-                //
-                // Reversing this order would let `is_requested()`
-                // return true while `exit_code()` still saw the
-                // initial 0, which would cause a racing main thread
-                // to silently miss the signal.
                 let was_first = SHUTDOWN_EXIT_CODE
                     .compare_exchange(0, exit, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok();
                 SHUTDOWN_REQUESTED.store(true, Ordering::Release);
                 if !was_first {
-                    // Second strike: bypass main, accept that any
-                    // remaining WAL frames are forfeit — the user
-                    // explicitly asked to bail out now.
-                    // `signal_hook::low_level::exit` wraps `_exit`
-                    // and is async-signal-safe for exactly this case.
                     signal_hook::low_level::exit(exit);
                 }
             }
@@ -248,11 +216,6 @@ fn install_unix() {
 /// on this path anyway (they don't under `std::process::exit` either), so
 /// the only cleanup we owe here is flushing the std stream buffers, which
 /// this function does on every platform before exiting.
-// The single `unsafe` block below is the `#439` Windows `TerminateProcess`
-// carve-out sanctioned in Cargo.toml's `[lints.rust]` note (alongside
-// `sync::db_inode_lock` and `restore_default_sigpipe_unix`); without this
-// attribute the crate-level `#![deny(unsafe_code)]` fails every
-// `x86_64-pc-windows-msvc` build.
 #[allow(unsafe_code)]
 pub fn exit_process(code: i32) -> ! {
     use std::io::Write as _;
@@ -261,17 +224,12 @@ pub fn exit_process(code: i32) -> ! {
     #[cfg(windows)]
     {
         // SAFETY: `GetCurrentProcess` returns the pseudo-handle for this
-        // process, which is always valid to pass to `TerminateProcess`.
-        // Terminating our own process is the entire point; buffers were
-        // flushed above and no Rust invariants outlive the process.
         unsafe {
             windows_sys::Win32::System::Threading::TerminateProcess(
                 windows_sys::Win32::System::Threading::GetCurrentProcess(),
                 code as u32,
             );
         }
-        // TerminateProcess only returns on failure; fall through to the
-        // standard path rather than looping.
     }
     std::process::exit(code);
 }
@@ -288,10 +246,6 @@ mod tests {
         install();
         install();
         install();
-        // The flag itself is process-global; clearing it here keeps
-        // other tests in the same binary unaffected by an accidental
-        // earlier install. We only touch it when no signal has been
-        // observed, which is the common case in unit tests.
         if !is_requested() {
             SHUTDOWN_REQUESTED.store(false, Ordering::Release);
             SHUTDOWN_EXIT_CODE.store(0, Ordering::Release);
@@ -300,12 +254,6 @@ mod tests {
 
     #[test]
     fn exit_code_is_none_until_signal_fires() {
-        // We don't fire a real signal in unit tests because that
-        // would race with cargo's own Ctrl-C handling and make
-        // assertions order-dependent across the rest of the test
-        // binary. Asserting the unsignalled invariant here pins down
-        // the API contract, while the signalled path is verified
-        // implicitly by the binary's exit-code behaviour at runtime.
         if !is_requested() {
             assert_eq!(exit_code(), None);
         }

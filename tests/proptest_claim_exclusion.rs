@@ -41,10 +41,6 @@ fn make_open_issue(suffix: &str, title: &str, priority: Priority) -> Issue {
         deleted_by: None,
         delete_reason: None,
         original_type: None,
-        // ADR-0001 §5.5: ready candidates must carry a single-line VERIFY
-        // command and (priority <= 2) a principles citation. The property
-        // under test is claim-exclusion, not dispatchability, so the fixture
-        // always creates dispatchable shapes for any priority band.
         verify: Some("cargo test --lib".to_string()),
         principles: Vec::from([beads::model::PrincipleCitation {
             name: "test-the-property".to_string(),

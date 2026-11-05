@@ -21,7 +21,6 @@ fn issue_with_id(id: &str, title: &str) -> Issue {
 fn export_import_roundtrip_preserves_relationships() {
     let mut storage = SqliteStorage::open_memory().unwrap();
     let mut alpha = fixtures::issue("Alpha");
-    // Ensure created_at is strictly before any updates (SQLite CURRENT_TIMESTAMP has low precision)
     alpha.created_at = Utc::now() - Duration::hours(1);
     alpha.updated_at = alpha.created_at;
     let mut beta = fixtures::issue("Beta");
@@ -240,17 +239,14 @@ fn import_rejects_conflict_markers() {
 
 #[test]
 fn export_empty_db_guard_blocks_overwrite() {
-    // Empty database should not overwrite non-empty JSONL without --force
     let storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create existing JSONL with content
     let existing = issue_with_id("test-existing", "Existing issue");
     let json = serde_json::to_string(&existing).unwrap();
     fs::write(&path, format!("{json}\n")).unwrap();
 
-    // Try to export empty database (should fail)
     let config = ExportConfig {
         force: false,
         ..Default::default()
@@ -267,17 +263,14 @@ fn export_empty_db_guard_blocks_overwrite() {
 
 #[test]
 fn export_empty_db_guard_bypassed_with_force() {
-    // Empty database CAN overwrite non-empty JSONL with --force
     let storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create existing JSONL with content
     let existing = issue_with_id("test-existing", "Existing issue");
     let json = serde_json::to_string(&existing).unwrap();
     fs::write(&path, format!("{json}\n")).unwrap();
 
-    // Export empty database with force (should succeed)
     let config = ExportConfig {
         force: true,
         ..Default::default()
@@ -289,168 +282,133 @@ fn export_empty_db_guard_bypassed_with_force() {
     assert_eq!(export.exported_count, 0);
 }
 
-// ===== Tombstone Protection Tests =====
-
 #[test]
 fn import_tombstone_protection_prevents_resurrection() {
-    // Tombstones in DB should never be resurrected by import
     let mut storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create a tombstone in the database
     let mut tombstone = issue_with_id("test-tomb", "Tombstone issue");
     tombstone.status = Status::Tombstone;
     tombstone.deleted_at = Some(Utc::now());
     storage.create_issue(&tombstone, "tester").unwrap();
 
-    // Create JSONL trying to resurrect the tombstone
     let mut incoming = issue_with_id("test-tomb", "Resurrected issue");
     incoming.status = Status::Open;
     incoming.updated_at = Utc::now() + Duration::hours(1);
     let json = serde_json::to_string(&incoming).unwrap();
     fs::write(&path, format!("{json}\n")).unwrap();
 
-    // Import should skip the tombstone
     let result =
         import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-")).unwrap();
     assert_eq!(result.tombstone_skipped, 1);
 
-    // Verify the issue is still a tombstone
     let still_tombstone = storage.get_issue("test-tomb").unwrap().unwrap();
     assert_eq!(still_tombstone.status, Status::Tombstone);
 }
 
-// ===== Collision Detection Tests =====
-
 #[test]
 fn import_collision_by_id_updates_when_newer() {
-    // When importing an issue with same ID but newer timestamp, it should update
     let mut storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create existing issue with older timestamp
     let mut existing = issue_with_id("test-001", "Old title");
     existing.updated_at = Utc::now() - Duration::hours(1);
     storage.create_issue(&existing, "tester").unwrap();
 
-    // Create JSONL with same ID but newer timestamp
     let mut incoming = issue_with_id("test-001", "New title");
     incoming.updated_at = Utc::now();
     let json = serde_json::to_string(&incoming).unwrap();
     fs::write(&path, format!("{json}\n")).unwrap();
 
-    // Import should update
     let result =
         import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-")).unwrap();
     assert_eq!(result.imported_count, 1);
 
-    // Verify the update
     let updated = storage.get_issue("test-001").unwrap().unwrap();
     assert_eq!(updated.title, "New title");
 }
 
 #[test]
 fn import_collision_by_id_skips_when_older() {
-    // When importing an issue with same ID but older timestamp, it should skip
     let mut storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create existing issue with newer timestamp
     let mut existing = issue_with_id("test-001", "Newer title");
     existing.created_at = Utc::now() - Duration::hours(2);
     existing.updated_at = Utc::now();
     storage.create_issue(&existing, "tester").unwrap();
 
-    // Create JSONL with same ID but older timestamp
     let mut incoming = issue_with_id("test-001", "Older title");
     incoming.created_at = existing.created_at;
     incoming.updated_at = Utc::now() - Duration::hours(1);
     let json = serde_json::to_string(&incoming).unwrap();
     fs::write(&path, format!("{json}\n")).unwrap();
 
-    // Import should skip
     let result =
         import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-")).unwrap();
     assert_eq!(result.skipped_count, 1);
 
-    // Verify no change
     let unchanged = storage.get_issue("test-001").unwrap().unwrap();
     assert_eq!(unchanged.title, "Newer title");
 }
 
 #[test]
 fn import_collision_by_external_ref() {
-    // When importing an issue with matching external_ref, it should match (phase 1)
     let mut storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create existing issue with external_ref
     let mut existing = issue_with_id("test-001", "Existing");
     existing.external_ref = Some("JIRA-123".to_string());
     existing.updated_at = Utc::now() - Duration::hours(1);
     storage.create_issue(&existing, "tester").unwrap();
 
-    // Create JSONL with SAME external_ref and same ID, newer timestamp
     let mut incoming = issue_with_id("test-001", "Incoming updated");
     incoming.external_ref = Some("JIRA-123".to_string());
     incoming.updated_at = Utc::now();
     let json = serde_json::to_string(&incoming).unwrap();
     fs::write(&path, format!("{json}\n")).unwrap();
 
-    // Import should update (matched by external_ref in phase 1)
     let result =
         import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-")).unwrap();
     assert_eq!(result.imported_count, 1);
 
-    // Verify the update
     let updated = storage.get_issue("test-001").unwrap().unwrap();
     assert_eq!(updated.title, "Incoming updated");
 }
 
-// ===== Ephemeral Issue Tests =====
-
 #[test]
 fn import_skips_ephemeral_issues() {
-    // Ephemeral issues should be skipped during import
     let mut storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create JSONL with ephemeral issue
     let mut ephemeral = issue_with_id("test-eph", "Ephemeral issue");
     ephemeral.ephemeral = true;
     let json = serde_json::to_string(&ephemeral).unwrap();
     fs::write(&path, format!("{json}\n")).unwrap();
 
-    // Import should skip
     let result =
         import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-")).unwrap();
     assert_eq!(result.skipped_count, 1);
     assert_eq!(result.imported_count, 0);
 
-    // Verify the issue was not created
     assert!(storage.get_issue("test-eph").unwrap().is_none());
 }
 
-// ===== Prefix Validation Tests =====
-
 #[test]
 fn import_skip_prefix_validation_allows_mismatch() {
-    // With skip_prefix_validation, mismatched prefixes should be allowed
     let mut storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create JSONL with different prefix
     let issue = issue_with_id("other-001", "Different prefix");
     let json = serde_json::to_string(&issue).unwrap();
     fs::write(&path, format!("{json}\n")).unwrap();
 
-    // Import with skip_prefix_validation should succeed
     let config = ImportConfig {
         skip_prefix_validation: true,
         ..Default::default()
@@ -459,74 +417,57 @@ fn import_skip_prefix_validation_allows_mismatch() {
     assert_eq!(result.imported_count, 1);
 }
 
-// ===== Deterministic Export Tests =====
-
 #[test]
 fn export_produces_deterministic_content_hash() {
-    // Multiple exports of the same data should produce the same content hash
     let mut storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
 
-    // Create test issue
     let issue = issue_with_id("test-det", "Deterministic test");
     storage.create_issue(&issue, "tester").unwrap();
 
     let config = ExportConfig::default();
 
-    // Export twice to different files
     let path1 = temp.path().join("export1.jsonl");
     let path2 = temp.path().join("export2.jsonl");
 
     let result1 = export_to_jsonl(&storage, &path1, &config).unwrap();
     let result2 = export_to_jsonl(&storage, &path2, &config).unwrap();
 
-    // Hashes should be identical
     assert_eq!(result1.content_hash, result2.content_hash);
     assert!(!result1.content_hash.is_empty());
 }
 
-// ===== Empty Lines Handling Tests =====
-
 #[test]
 fn import_handles_empty_lines_gracefully() {
-    // JSONL with empty lines interspersed should still import correctly
     let mut storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create JSONL with empty lines
     let issue = issue_with_id("test-001", "Valid issue");
     let json = serde_json::to_string(&issue).unwrap();
     let content = format!("\n\n{json}\n\n\n");
     fs::write(&path, content).unwrap();
 
-    // Import should succeed, ignoring empty lines
     let result =
         import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-")).unwrap();
     assert_eq!(result.imported_count, 1);
 }
 
-// ===== New Issue Creation Tests =====
-
 #[test]
 fn import_creates_new_issues() {
-    // New issues (not in DB) should be created
     let mut storage = SqliteStorage::open_memory().unwrap();
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create JSONL with new issue
     let issue = issue_with_id("test-new", "Brand new issue");
     let json = serde_json::to_string(&issue).unwrap();
     fs::write(&path, format!("{json}\n")).unwrap();
 
-    // Import should create the issue
     let result =
         import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-")).unwrap();
     assert_eq!(result.imported_count, 1);
     assert_eq!(result.skipped_count, 0);
 
-    // Verify the issue exists
     let created = storage.get_issue("test-new").unwrap().unwrap();
     assert_eq!(created.title, "Brand new issue");
 }
@@ -537,7 +478,6 @@ fn import_repopulates_export_hashes() {
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Create and export an issue
     let issue = issue_with_id("test-hash", "Hash Test");
     storage.create_issue(&issue, "tester").unwrap();
     let export_result = export_to_jsonl(&storage, &path, &ExportConfig::default()).unwrap();
@@ -550,20 +490,16 @@ fn import_repopulates_export_hashes() {
     .unwrap();
     let original_hash = export_result.issue_hashes[0].1.clone();
 
-    // Verify hash exists
     assert_eq!(
         storage.get_export_hash("test-hash").unwrap().unwrap().0,
         original_hash
     );
 
-    // Clear hash manually
     storage.clear_all_export_hashes().unwrap();
     assert!(storage.get_export_hash("test-hash").unwrap().is_none());
 
-    // Import the file back
     import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-")).unwrap();
 
-    // Verify hash is restored
     let (restored_hash, _) = storage.get_export_hash("test-hash").unwrap().unwrap();
     assert_eq!(restored_hash, original_hash);
 }
@@ -616,7 +552,6 @@ fn import_deduplicates_export_hash_rebuild_when_multiple_records_target_same_iss
 
 #[test]
 fn import_rejects_invalid_id_format() {
-    // Import now validates issues, so invalid IDs should be rejected.
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
     let issue = issue_with_id("test-INVALID", "Invalid ID");
@@ -635,16 +570,11 @@ fn import_rejects_invalid_id_format() {
 }
 
 // governed-by: ADR-0001
-// Wave-5 L1 (beads_rust-schema-v18-uyb3): schema-17 JSONL lines carry none of
-// the typed work-ledger fields; import must fill serde defaults and persist
-// them through the v18 columns.
 #[test]
 fn schema18_import_of_schema17_jsonl_fills_defaults() {
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Raw schema-17 line: no verify/principles/wave/pin/commit_sha/
-    // close_verdict/ac_shape/blast keys at all.
     let legacy_line = r#"{"id":"bd-schema17","title":"legacy row","status":"open","priority":2,"issue_type":"task","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","created_by":"ubuntu"}"#;
     fs::write(&path, format!("{legacy_line}\n")).unwrap();
 
@@ -658,7 +588,6 @@ fn schema18_import_of_schema17_jsonl_fills_defaults() {
         .unwrap()
         .expect("legacy row imported");
 
-    // Serde defaults filled for every absent v18 field.
     assert!(issue.verify.is_none(), "verify defaults to None");
     assert!(
         issue.principles.is_empty(),
@@ -682,7 +611,6 @@ fn schema18_import_of_schema17_jsonl_fills_defaults() {
         "blast defaults to normal"
     );
 
-    // Round-trip: enriched fields survive export + re-import.
     let mut updated = issue.clone();
     updated.verify = Some("cargo test --offline schema18".to_string());
     updated.principles = vec![beads::model::PrincipleCitation {
@@ -726,9 +654,7 @@ fn legacy_jsonl_without_revision_imports_with_revision_one() {
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
 
-    // Raw legacy line: no `revision` key (and none of the newer v18 fields).
     let legacy_line = r#"{"id":"bd-legacy-rev","title":"legacy row","status":"open","priority":2,"issue_type":"task","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","created_by":"ubuntu"}"#;
-    // Explicit-revision line: a newer record that carries its own token.
     let revised_line = r#"{"id":"bd-revised-rev","title":"revised row","status":"open","priority":2,"issue_type":"task","created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-02T00:00:00Z","created_by":"ubuntu","revision":7}"#;
     fs::write(&path, format!("{legacy_line}\n{revised_line}\n")).unwrap();
 
@@ -749,7 +675,6 @@ fn legacy_jsonl_without_revision_imports_with_revision_one() {
         "explicit `revision` in the source record is preserved"
     );
 
-    // Round-trip: both tokens survive export + re-import unchanged.
     let out_path = temp.path().join("out.jsonl");
     export_to_jsonl(&storage, &out_path, &ExportConfig::default()).unwrap();
 
@@ -800,8 +725,6 @@ fn gates_jsonl_roundtrip_flush_import() {
             )
             .unwrap();
 
-        // FLUSH: one call exports both files; the sidecar lands next to the
-        // issues export with the derived name.
         export_to_jsonl(&storage, &issues_path, &ExportConfig::default()).unwrap();
         export_gates_to_jsonl(&storage, &gates_path, &ExportConfig::default()).unwrap();
     }
@@ -814,7 +737,6 @@ fn gates_jsonl_roundtrip_flush_import() {
     );
     assert_eq!(sidecar.lines().count(), 1, "one row per line");
 
-    // WIPE: simulate a fresh clone — no database, only the JSONL pair.
     fs::remove_file(&db_path).unwrap();
 
     let mut fresh = SqliteStorage::open(&db_path).unwrap();
@@ -871,7 +793,6 @@ fn gate_sidecar_refuses_an_orphan_row_without_losing_the_rest() {
         export_gates_to_jsonl(&storage, &gates_path, &ExportConfig::default()).unwrap();
     }
 
-    // One orphan row: same verdict, but naming an issue that does not exist.
     let mut sidecar = fs::read_to_string(&gates_path).unwrap();
     let orphan = sidecar
         .lines()
@@ -882,7 +803,6 @@ fn gate_sidecar_refuses_an_orphan_row_without_losing_the_rest() {
     sidecar.push('\n');
     fs::write(&gates_path, &sidecar).unwrap();
 
-    // WIPE: a fresh clone - no database, only the JSONL pair.
     fs::remove_file(&db_path).unwrap();
     let mut fresh = SqliteStorage::open(&db_path).unwrap();
     import_from_jsonl(
@@ -893,7 +813,6 @@ fn gate_sidecar_refuses_an_orphan_row_without_losing_the_rest() {
     )
     .unwrap();
 
-    // The load must SUCCEED: the orphan row is refused, the good row lands.
     let import =
         import_gates_from_jsonl(&mut fresh, &gates_path, &ImportConfig::default()).unwrap();
     assert_eq!(import.total, 2, "both rows are in the sidecar");
@@ -924,10 +843,9 @@ fn ledger_data_hash_covers_issues_and_gates_sidecar() {
 
     fs::write(&issues_path, "{\"id\":\"test-h1\"}\n").unwrap();
 
-    fs::write(&gates_path, "").unwrap(); // absent sidecar == empty frame
+    fs::write(&gates_path, "").unwrap();
     let baseline = compute_ledger_data_hash(&issues_path, &gates_path).unwrap();
 
-    // Same content, different path: identical hash.
     let twin_issues = temp.path().join("twin.jsonl");
     fs::write(&twin_issues, "{\"id\":\"test-h1\"}\n").unwrap();
     assert_eq!(
@@ -935,12 +853,10 @@ fn ledger_data_hash_covers_issues_and_gates_sidecar() {
         compute_ledger_data_hash(&twin_issues, &gates_path)
     );
 
-    // A verdict-row change flips the combined hash.
     fs::write(&gates_path, "{\"issue_id\":\"test-g1\",\"passed\":true}\n").unwrap();
     let after_gate = compute_ledger_data_hash(&issues_path, &gates_path).unwrap();
     assert_ne!(baseline, after_gate);
 
-    // So does an issue-row change.
     fs::write(&issues_path, "{\"id\":\"test-h2\"}\n").unwrap();
     assert_ne!(
         after_gate,
@@ -976,7 +892,6 @@ fn fence_import_copies_verify_once_then_ignores_later_fence_edits() {
     legacy.notes = None;
     storage.create_issue(&legacy, "tester").unwrap();
 
-    // First import: fence contents land in the typed fields.
     let outcome = sync_fences_into_typed_fields(&mut storage, "fence-import").unwrap();
     assert_eq!(outcome.issues_updated, 1, "the legacy bead gets stamped");
 
@@ -999,7 +914,6 @@ fn fence_import_copies_verify_once_then_ignores_later_fence_edits() {
         "import is lossless: description untouched"
     );
 
-    // Later fence edit: fields are already set, so the edit is IGNORED.
     let mut edited = stamped.clone();
     edited.description = Some(
         "Work items.\n\n## VERIFY\n```\ncargo test --offline something_else_entirely\n```\n\n\
@@ -1079,8 +993,6 @@ fn import_persists_inline_dependencies_and_rejects_unresolvable_targets() {
         serde_json::to_string(&issue).unwrap()
     };
 
-    // Happy path: resolvable in-file target + external:* cross-tracker
-    // targets all persist; counted == persisted.
     let lines = [
         mk(
             "test-a",

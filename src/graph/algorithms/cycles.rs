@@ -49,9 +49,6 @@ pub fn tarjan_scc(graph: &DiGraph) -> SCCResult {
         }
     }
 
-    // A single-node SCC is a cycle only when it carries a self-loop
-    // (beads_viewer's Go analyzer counts those; the original Rust port
-    // missed them — fixed here, see docs/research/bv-analysis-map.md).
     let cycle_count = state
         .components
         .iter()
@@ -85,16 +82,13 @@ impl TarjanState<'_> {
 
         for &w in self.graph.successors_slice(v) {
             if self.indices[w] == usize::MAX {
-                // Not visited
                 self.strongconnect(w);
                 self.lowlink[v] = self.lowlink[v].min(self.lowlink[w]);
             } else if self.on_stack[w] {
-                // On stack = in current SCC
                 self.lowlink[v] = self.lowlink[v].min(self.indices[w]);
             }
         }
 
-        // If v is a root node, pop the stack to get SCC
         if self.lowlink[v] == self.indices[v] {
             let mut component = Vec::new();
             loop {
@@ -137,7 +131,6 @@ pub fn enumerate_cycles(graph: &DiGraph, max_cycles: usize) -> Vec<Vec<usize>> {
     let mut blocked_map: Vec<HashSet<usize>> = vec![HashSet::new(); n];
     let mut stack: Vec<usize> = Vec::new();
 
-    // Helper: unblock a node and recursively unblock dependents
     fn unblock(u: usize, blocked: &mut [bool], blocked_map: &mut [HashSet<usize>]) {
         blocked[u] = false;
         let dependents: Vec<usize> = blocked_map[u].drain().collect();
@@ -148,13 +141,11 @@ pub fn enumerate_cycles(graph: &DiGraph, max_cycles: usize) -> Vec<Vec<usize>> {
         }
     }
 
-    // Run Johnson's algorithm starting from each node
     for start in 0..n {
         if cycles.len() >= max_cycles {
             break;
         }
 
-        // Reset blocked state
         blocked.fill(false);
         for s in &mut blocked_map {
             s.clear();
@@ -188,7 +179,6 @@ struct CircuitState<'a> {
 }
 
 impl CircuitState<'_> {
-    // Circuit search from start vertex.
     fn circuit(
         &mut self,
         v: usize,
@@ -204,13 +194,11 @@ impl CircuitState<'_> {
         self.blocked[v] = true;
 
         for &w in self.graph.successors_slice(v) {
-            // Only consider nodes >= min_node (Johnson's optimization)
             if w < self.min_node {
                 continue;
             }
 
             if w == start {
-                // Found a cycle
                 self.cycles.push(self.stack.clone());
                 found = true;
                 if self.cycles.len() >= self.max_cycles {
@@ -258,10 +246,6 @@ pub fn enumerate_cycles_with_info(graph: &DiGraph, max_cycles: usize) -> CycleEn
         count,
     }
 }
-
-// ============================================================================
-// Cycle Break Suggestions
-// ============================================================================
 
 /// A suggestion for which edge to remove to break cycles.
 #[derive(Debug, Clone, Serialize)]
@@ -318,11 +302,9 @@ pub fn cycle_break_suggestions(
         };
     }
 
-    // Enumerate actual cycles to count edge participation
     let cycle_info = enumerate_cycles_with_info(graph, max_cycles_to_enumerate);
     let cycles = &cycle_info.cycles;
 
-    // Build a map of edge -> cycles it appears in
     let mut edge_cycle_count: std::collections::HashMap<(usize, usize), usize> =
         std::collections::HashMap::new();
 
@@ -330,7 +312,6 @@ pub fn cycle_break_suggestions(
         if cycle.len() < 2 {
             continue;
         }
-        // Count edges in this cycle
         for i in 0..cycle.len() {
             let from = cycle[i];
             let to = cycle[(i + 1) % cycle.len()];
@@ -338,7 +319,6 @@ pub fn cycle_break_suggestions(
         }
     }
 
-    // Build set of nodes in non-trivial SCCs
     let cycle_nodes: HashSet<usize> = scc
         .components
         .iter()
@@ -346,7 +326,6 @@ pub fn cycle_break_suggestions(
         .flat_map(|c| c.iter().copied())
         .collect();
 
-    // Find all edges within cycle SCCs
     let mut suggestions: Vec<CycleBreakItem> = Vec::new();
 
     for &from in &cycle_nodes {
@@ -368,7 +347,6 @@ pub fn cycle_break_suggestions(
         }
     }
 
-    // Sort by: cycles_broken desc, collateral asc
     suggestions.sort_by(|a, b| match b.cycles_broken.cmp(&a.cycles_broken) {
         std::cmp::Ordering::Equal => a.collateral.cmp(&b.collateral),
         other => other,
@@ -393,7 +371,6 @@ pub fn quick_cycle_break_edges(graph: &DiGraph, limit: usize) -> Vec<CycleBreakI
         return Vec::new();
     }
 
-    // Build set of nodes in non-trivial SCCs
     let cycle_nodes: HashSet<usize> = scc
         .components
         .iter()
@@ -406,14 +383,13 @@ pub fn quick_cycle_break_edges(graph: &DiGraph, limit: usize) -> Vec<CycleBreakI
     for &from in &cycle_nodes {
         for &to in graph.successors_slice(from) {
             if cycle_nodes.contains(&to) {
-                // Heuristic: edges with low total degree are better to remove
                 let collateral =
                     graph.successors_slice(from).len() + graph.predecessors_slice(to).len();
 
                 suggestions.push(CycleBreakItem {
                     from,
                     to,
-                    cycles_broken: 1, // Unknown without enumeration
+                    cycles_broken: 1,
                     collateral,
                     from_id: graph.node_id(from),
                     to_id: graph.node_id(to),
@@ -422,7 +398,6 @@ pub fn quick_cycle_break_edges(graph: &DiGraph, limit: usize) -> Vec<CycleBreakI
         }
     }
 
-    // Sort by collateral (prefer low-impact edges)
     suggestions.sort_by_key(|s| s.collateral);
     suggestions.truncate(limit);
     suggestions
@@ -434,8 +409,6 @@ mod tests {
 
     #[test]
     fn test_scc_single_node_self_loop_is_cycle() {
-        // beads_viewer's Go analyzer counts single-node self-loops as
-        // cycles; the original Rust port missed them (fixed above).
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         graph.add_edge(a, a);
@@ -480,14 +453,11 @@ mod tests {
         let a = graph.add_node("a");
         graph.add_edge(a, a);
         let result = tarjan_scc(&graph);
-        // Self-loop creates SCC of size 1 with edge to itself
-        // Tarjan considers this a cycle
         assert!(result.has_cycles || result.components[0].len() == 1);
     }
 
     #[test]
     fn test_scc_simple_cycle() {
-        // a -> b -> c -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -499,7 +469,6 @@ mod tests {
         let result = tarjan_scc(&graph);
         assert!(result.has_cycles);
         assert_eq!(result.cycle_count, 1);
-        // One SCC with all 3 nodes
         let big_scc = result.components.iter().find(|c| c.len() > 1);
         assert!(big_scc.is_some());
         assert_eq!(big_scc.unwrap().len(), 3);
@@ -507,7 +476,6 @@ mod tests {
 
     #[test]
     fn test_scc_dag() {
-        // a -> b -> c (no cycles)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -517,14 +485,11 @@ mod tests {
 
         let result = tarjan_scc(&graph);
         assert!(!result.has_cycles);
-        // Each node is its own SCC
         assert_eq!(result.components.len(), 3);
     }
 
     #[test]
     fn test_scc_two_cycles() {
-        // Cycle 1: a -> b -> a
-        // Cycle 2: c -> d -> c
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -549,7 +514,6 @@ mod tests {
 
     #[test]
     fn test_enumerate_dag() {
-        // a -> b -> c (no cycles)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -563,7 +527,6 @@ mod tests {
 
     #[test]
     fn test_enumerate_simple_cycle() {
-        // a -> b -> c -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -579,7 +542,6 @@ mod tests {
 
     #[test]
     fn test_enumerate_two_node_cycle() {
-        // a -> b -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -593,8 +555,6 @@ mod tests {
 
     #[test]
     fn test_enumerate_max_limit() {
-        // Create graph with multiple cycles
-        // a <-> b <-> c <-> d with interconnections
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -609,18 +569,12 @@ mod tests {
         graph.add_edge(d, a);
         graph.add_edge(a, d);
 
-        // Limit to 2 cycles
         let cycles = enumerate_cycles(&graph, 2);
         assert_eq!(cycles.len(), 2);
     }
 
     #[test]
     fn test_enumerate_diamond_with_back_edge() {
-        //     a
-        //    / \
-        //   b   c
-        //    \ /
-        //     d -> a (back edge creates cycle)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -633,13 +587,11 @@ mod tests {
         graph.add_edge(d, a);
 
         let cycles = enumerate_cycles(&graph, 100);
-        // Two cycles: a->b->d->a and a->c->d->a
         assert_eq!(cycles.len(), 2);
     }
 
     #[test]
     fn test_enumerate_with_info() {
-        // a -> b -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -650,11 +602,8 @@ mod tests {
         assert_eq!(result.count, 1);
         assert!(!result.truncated);
 
-        // With limit of 1, we should get exactly 1 cycle and not be truncated
-        // (since there's only 1 cycle to find)
         let result_one = enumerate_cycles_with_info(&graph, 1);
         assert_eq!(result_one.count, 1);
-        // Truncated because we hit the limit (count >= max)
         assert!(result_one.truncated);
     }
 
@@ -676,18 +625,16 @@ mod tests {
 
     #[test]
     fn test_complex_graph() {
-        // Multiple interconnected cycles
         let mut graph = DiGraph::new();
         for i in 0..5 {
             graph.add_node(&format!("n{}", i));
         }
-        // Create some cycles
         graph.add_edge(0, 1);
         graph.add_edge(1, 2);
-        graph.add_edge(2, 0); // Cycle: 0->1->2->0
+        graph.add_edge(2, 0);
         graph.add_edge(2, 3);
         graph.add_edge(3, 4);
-        graph.add_edge(4, 2); // Cycle: 2->3->4->2
+        graph.add_edge(4, 2);
 
         let scc = tarjan_scc(&graph);
         assert!(scc.has_cycles);
@@ -696,13 +643,8 @@ mod tests {
         assert!(cycles.len() >= 2);
     }
 
-    // ========================================================================
-    // Cycle Break Suggestion Tests
-    // ========================================================================
-
     #[test]
     fn test_cycle_break_dag() {
-        // a -> b -> c (no cycles)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -718,7 +660,6 @@ mod tests {
 
     #[test]
     fn test_cycle_break_simple() {
-        // a -> b -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -727,9 +668,8 @@ mod tests {
 
         let result = cycle_break_suggestions(&graph, 10, 100);
         assert_eq!(result.total_cycles, 1);
-        assert_eq!(result.suggestions.len(), 2); // Both edges are candidates
+        assert_eq!(result.suggestions.len(), 2);
 
-        // Both edges participate in 1 cycle
         for s in &result.suggestions {
             assert_eq!(s.cycles_broken, 1);
         }
@@ -737,7 +677,6 @@ mod tests {
 
     #[test]
     fn test_cycle_break_triangle() {
-        // a -> b -> c -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -748,9 +687,8 @@ mod tests {
 
         let result = cycle_break_suggestions(&graph, 10, 100);
         assert_eq!(result.total_cycles, 1);
-        assert_eq!(result.suggestions.len(), 3); // 3 edges in cycle
+        assert_eq!(result.suggestions.len(), 3);
 
-        // All edges participate in 1 cycle
         for s in &result.suggestions {
             assert_eq!(s.cycles_broken, 1);
         }
@@ -758,11 +696,6 @@ mod tests {
 
     #[test]
     fn test_cycle_break_shared_edge() {
-        //     a
-        //    / \
-        //   b   c
-        //    \ /
-        //     d -> a (creates two cycles sharing d->a)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -772,12 +705,11 @@ mod tests {
         graph.add_edge(a, c);
         graph.add_edge(b, d);
         graph.add_edge(c, d);
-        graph.add_edge(d, a); // Shared back edge
+        graph.add_edge(d, a);
 
         let result = cycle_break_suggestions(&graph, 10, 100);
         assert_eq!(result.total_cycles, 2);
 
-        // d->a should be ranked first (breaks 2 cycles)
         let best = &result.suggestions[0];
         assert_eq!(best.from, d);
         assert_eq!(best.to, a);
@@ -786,7 +718,6 @@ mod tests {
 
     #[test]
     fn test_cycle_break_includes_ids() {
-        // a -> b -> a
         let mut graph = DiGraph::new();
         graph.add_node("issue-1");
         graph.add_node("issue-2");
@@ -803,23 +734,20 @@ mod tests {
 
     #[test]
     fn test_cycle_break_limit() {
-        // Many edges in cycle
         let mut graph = DiGraph::new();
         for i in 0..10 {
             graph.add_node(&format!("n{}", i));
         }
-        // Create a 10-node cycle
         for i in 0..10 {
             graph.add_edge(i, (i + 1) % 10);
         }
 
         let result = cycle_break_suggestions(&graph, 3, 100);
-        assert_eq!(result.suggestions.len(), 3); // Limited to 3
+        assert_eq!(result.suggestions.len(), 3);
     }
 
     #[test]
     fn test_quick_cycle_break() {
-        // a -> b -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -829,9 +757,8 @@ mod tests {
         let suggestions = quick_cycle_break_edges(&graph, 10);
         assert_eq!(suggestions.len(), 2);
 
-        // Sorted by collateral
         for s in &suggestions {
-            assert_eq!(s.cycles_broken, 1); // Heuristic value
+            assert_eq!(s.cycles_broken, 1);
         }
     }
 
@@ -848,9 +775,6 @@ mod tests {
 
     #[test]
     fn test_cycle_break_disconnected_cycles() {
-        // Two separate cycles
-        // Cycle 1: a -> b -> a
-        // Cycle 2: c -> d -> c
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -863,13 +787,11 @@ mod tests {
 
         let result = cycle_break_suggestions(&graph, 10, 100);
         assert_eq!(result.total_cycles, 2);
-        assert_eq!(result.suggestions.len(), 4); // 2 edges per cycle
+        assert_eq!(result.suggestions.len(), 4);
     }
 
     #[test]
     fn test_cycle_break_collateral_ordering() {
-        // a -> b -> a  (small cycle)
-        // a -> c -> d -> a (larger cycle through same node)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -882,11 +804,8 @@ mod tests {
         graph.add_edge(d, a);
 
         let result = cycle_break_suggestions(&graph, 10, 100);
-        // Should have suggestions sorted by cycles_broken desc, then collateral asc
-        // Check that suggestions are not empty
         assert!(!result.suggestions.is_empty());
 
-        // Verify ordering: if same cycles_broken, lower collateral first
         for i in 1..result.suggestions.len() {
             let prev = &result.suggestions[i - 1];
             let curr = &result.suggestions[i];

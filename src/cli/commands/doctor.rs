@@ -252,16 +252,11 @@ impl DoctorRepairSession {
     /// [`Self::with_fixer`] before each `mutate()` call.
     fn new(repo_root: &Path, dry_run: bool) -> Result<Self> {
         let run = run_dir::create_run_dir(repo_root)?;
-        // Re-open the actions.jsonl in append mode under our own handle —
-        // create_run_dir already touches the file, but doesn't return a
-        // handle.
         let actions_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&run.actions_file)?;
         let mut capabilities = Capabilities::for_repo(repo_root);
-        // Allow the root .gitignore explicitly. It lives at <repo_root>/
-        // which is outside .beads/ and .doctor/.
         capabilities.write_scopes.push(repo_root.join(".gitignore"));
         let ctx = MutateContext {
             run_id: run.run_id.clone(),
@@ -761,14 +756,6 @@ fn push_check(
     message: Option<String>,
     details: Option<serde_json::Value>,
 ) {
-    // Pass-3 finding-id schema unification: if the check name has
-    // a canonical FM mapping in CHECK_NAME_TO_FINDING_ID, inject
-    // `finding_id` into the details payload so agents see it
-    // inline next to every check (no separate capabilities-envelope
-    // lookup required). The injection is additive: callers that
-    // pass a JSON object get a new key; callers that pass non-object
-    // or None get a fresh object wrapping the FM id alongside the
-    // original details under a "data" key.
     let details_with_fm = match finding_id_for(name) {
         Some(fm) => Some(inject_finding_id(details, fm)),
         None => details,
@@ -792,9 +779,6 @@ fn inject_finding_id(details: Option<serde_json::Value>, fm: &'static str) -> se
     match details {
         None => serde_json::json!({ "finding_id": fm }),
         Some(Value::Object(mut map)) => {
-            // First-write wins: don't override a caller-supplied
-            // finding_id (preserves the contract that detectors can
-            // assert authority over their own FM mapping).
             map.entry("finding_id".to_string())
                 .or_insert(Value::String(fm.to_string()));
             Value::Object(map)
@@ -826,7 +810,6 @@ fn inject_finding_id(details: Option<serde_json::Value>, fm: &'static str) -> se
 /// breaking change to the agent-facing contract; appending new
 /// rows is additive.
 pub(crate) const CHECK_NAME_TO_FINDING_ID: &[(&str, &str)] = &[
-    // state_files (pass-1 archaeology + pass-1 / pass-2 detectors)
     ("jsonl.parse", "fm-state_files-jsonl-malformed-utf8"),
     ("sync.merge_pending", "fm-state_files-sync-merge-pending"),
     (
@@ -925,11 +908,9 @@ pub(crate) const CHECK_NAME_TO_FINDING_ID: &[(&str, &str)] = &[
     ("sqlite3.integrity_check", FM_SQLITE_PAGE_MALFORMED),
     ("db.write_probe", FM_SQLITE_PAGE_MALFORMED),
     ("db.null_defaults", "fm-schemas-missing-required-column"),
-    // schemas
     ("schema.tables", FM_MISSING_REQUIRED_TABLE),
     ("schema.columns", FM_MISSING_REQUIRED_COLUMN),
     ("schema.inspect", "fm-schemas-issue-column-order-divergence"),
-    // configs
     ("beads_dir", "fm-configs-metadata-json-stale"),
     ("metadata", "fm-configs-metadata-json-stale"),
     ("metadata.json", "fm-configs-metadata-json-stale"),
@@ -939,7 +920,6 @@ pub(crate) const CHECK_NAME_TO_FINDING_ID: &[(&str, &str)] = &[
     ),
     ("gitignore.root", "fm-configs-gitignore-leaking-beads"),
     ("config.yaml", "fm-configs-yaml-malformed"),
-    // agent_coordination
     (
         "audit.suspect_close_reasons",
         "fm-agent_coordination-suspect-close-reason",
@@ -948,30 +928,22 @@ pub(crate) const CHECK_NAME_TO_FINDING_ID: &[(&str, &str)] = &[
         "policy.workflow_statuses",
         "fm-agent_coordination-workflow-status-out-of-set",
     ),
-    // routes_external
     ("routes_jsonl", "fm-routes_external-routes-jsonl-corrupt"),
     ("routes.targets", "fm-routes_external-route-target-missing"),
-    // observability
     ("rust_log", "fm-observability-rust-log-noisy-breaks-json"),
-    // permissions
     ("permissions.beads_dir", "fm-permissions-beads-dir-readonly"),
-    // external_artifacts
     (
         "binary_version",
         "fm-external_artifacts-binary-version-mismatch",
     ),
-    // concurrency_primitives
     (
         "write_lock",
         "fm-concurrency_primitives-orphaned-write-lock",
     ),
-    // #329: `--no-db` (JSONL-only) mode marker — enumerates DB-backed checks
-    // that were intentionally skipped.
     (
         "db.no_db_mode",
         "fm-state_files-no-db-mode-db-checks-skipped",
     ),
-    // #350: dependency-graph JSONL-audit findings.
     (
         "dep.dead_closed_blocking_edges",
         "fm-dependencies-dead-closed-blocking-edges",
@@ -988,7 +960,7 @@ pub(crate) const CHECK_NAME_TO_FINDING_ID: &[(&str, &str)] = &[
 /// over the static table; N is small (~32) so a HashMap would be
 /// overkill for a per-doctor-run call.
 #[must_use]
-#[allow(dead_code)] // public-by-design lookup helper; the table is also iterated directly by capabilities_doctor.
+#[allow(dead_code)]
 fn finding_id_for(check_name: &str) -> Option<&'static str> {
     CHECK_NAME_TO_FINDING_ID
         .iter()
@@ -1106,7 +1078,6 @@ fn fix_fence_import_if_warned(
     ctx: &OutputContext,
     session: Option<&mut DoctorRepairSession>,
 ) -> bool {
-    // Plan from a read-only view first: which issues get what.
     /// One planned fence-import write: issue id, verify command to stamp
     /// (when its typed field is empty), and citations to write (same guard).
     type FenceImportPlanEntry = (
@@ -1356,11 +1327,6 @@ fn repair_stale_drafts_under_write_authority(
             }
         }
     };
-    // The chokepoint is what keeps `--dry-run` honest: `record_legacy_op`
-    // prints `[dry-run] would mutate …` and returns without invoking the
-    // closure, so the expiry (and its `stale_drafts_expired` count) never
-    // happens. Calling straight through, as this fixer used to, is the one
-    // shape that lets a dry run write the database.
     if let Some(session) = session {
         let family_paths = existing_sqlite_family_paths_for_legacy_op(db_path);
         let family_refs: Vec<&Path> = family_paths.iter().map(PathBuf::as_path).collect();
@@ -1403,7 +1369,6 @@ fn check_gate_verdict_orphans(beads_dir: &Path, db_path: &Path, checks: &mut Vec
         std::collections::HashSet::new()
     };
 
-    // Open the database read-only for the closed-with-verdict query.
     let orphan_ids = (|| {
         let storage =
             crate::storage::SqliteStorage::open_current_read_only(db_path)?.ok_or_else(|| {
@@ -1626,10 +1591,6 @@ fn append_count_mismatch_anomaly(check: &CheckResult, anomalies: &mut Vec<Anomal
         return;
     };
 
-    // Only emit the cardinality-only finding when counts actually differ.
-    // The check now warns on equal-count + diverging-id-set too (#286);
-    // in that case we want the dedicated `DbJsonlIdSetMismatch` anomaly,
-    // not the misleading `count_mismatch` one.
     if db_count != jsonl_count {
         push_anomaly(
             anomalies,
@@ -1640,10 +1601,6 @@ fn append_count_mismatch_anomaly(check: &CheckResult, anomalies: &mut Vec<Anomal
         );
     }
 
-    // If the check carried an `id_delta` payload, emit the set-mismatch
-    // anomaly with the per-side breakdown so operators see *which* ids
-    // diverged, not just that some did. The payload is the same shape
-    // produced by `IdDelta::to_json`.
     if let Some(id_delta) = details.get("id_delta") {
         let only_db = id_delta
             .get("only_db")
@@ -1796,15 +1753,6 @@ fn append_doctor_check_anomalies(check: &CheckResult, anomalies: &mut Vec<Anomal
         "sync.metadata" => {
             append_sync_metadata_anomalies(check, anomalies);
         }
-        // `beads-a53h`: the *aged* check is what identifies stale
-        // artifacts. Its sibling `db.recovery_artifacts` is information-only
-        // and lists every preserved backup regardless of age (see
-        // `check_recovery_artifacts_aged`'s doc comment), so driving the
-        // anomaly from it reported a backup written seconds earlier by the
-        // running repair as "stale recovery artifacts present" — dragging
-        // `workspace_health` to `degraded` and citing, as evidence of an
-        // unhealthy workspace, the forensic copies the repair had just made
-        // and already enumerated in `recovery_audit.verified_backups`.
         "db.recovery_artifacts.aged" if matches!(check.status, CheckStatus::Warn) => {
             push_anomaly(anomalies, AnomalyClass::StaleRecoveryArtifacts);
         }
@@ -1964,10 +1912,6 @@ fn report_has_page_corruption(report: &DoctorReport) -> bool {
         }
         check.message.as_deref().is_some_and(|msg| {
             let lower = msg.to_lowercase();
-            // Match structural page corruption that VACUUM can fix.
-            // Note: "out of order" for DESC indexes is a known frankensqlite
-            // B-tree artifact (not fixable by VACUUM) and is handled as benign
-            // in integrity_messages_only_benign instead.
             lower.contains("free space corruption")
                 || lower.contains("malformed")
                 || lower.contains("disk image")
@@ -2104,7 +2048,6 @@ fn write_probe_after_repair(
     };
     let _ = conn.execute("PRAGMA busy_timeout=5000");
 
-    // Use a probe ID that cannot collide with real issues.
     let probe_id = "__doctor_write_probe__";
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -2123,9 +2066,6 @@ fn write_probe_after_repair(
             ],
         )?;
 
-        // Read it back inside the same transaction to verify the read path
-        // agrees with what we just wrote. CTE-wrap per #254 so the probe
-        // cannot hit a cached plan and report false-healthy.
         let rows = conn.query_with_params(
             "WITH target(id_value) AS (SELECT ?) \
              SELECT i.id FROM issues AS i, target AS t \
@@ -2139,8 +2079,6 @@ fn write_probe_after_repair(
             return Err("read-after-write divergence".into());
         }
 
-        // Always ROLLBACK — the probe is non-destructive.  No data is
-        // persisted, so JSONL export state stays clean.
         conn.execute("ROLLBACK")?;
         write_authority.verify_database_authority()?;
         Ok(())
@@ -2153,7 +2091,6 @@ fn write_probe_after_repair(
         }
         Err(err) => {
             tracing::warn!(error = %err, "Post-repair write probe failed — DB may still be corrupt");
-            // Best-effort rollback in case we're stuck mid-transaction.
             let _ = conn.execute("ROLLBACK");
             false
         }
@@ -2269,11 +2206,6 @@ fn is_benign_post_rebuild_finding(check: &CheckResult) -> bool {
         return false;
     }
     match check.name.as_str() {
-        // `br_path_dupes` reports the host's $PATH shape (two `br` installs).
-        // A database rebuild cannot change $PATH, so treating the warning as
-        // a verification failure made `--repair` exit 7 on dual-install
-        // hosts even when the rebuilt database was fully healthy
-        // (beads-ozdh). The warning still surfaces in the report.
         "db.recovery_artifacts" | "rust_log" | "br_path_dupes" => true,
         "sync.metadata" => is_pending_export_only_sync_metadata(check),
         _ => false,
@@ -2355,7 +2287,6 @@ fn is_preserved_dirty_count_divergence(
         return false;
     };
     if only_db.len() != only_db_count {
-        // Preview clipped: we cannot attribute every divergent row.
         return false;
     }
     only_db.iter().all(|id| {
@@ -2502,8 +2433,6 @@ struct EarlyRepairSummary {
 impl EarlyRepairSummary {
     fn applied(self) -> bool {
         if self.dry_run {
-            // `chokepoint::mutate` reports success for a dry-run no-op, so every
-            // `*_repaired` flag below is set either way. A plan is not a repair.
             return false;
         }
         self.gitignore
@@ -2608,10 +2537,6 @@ impl EarlyRepairSummary {
 
     fn messages(self) -> Vec<String> {
         if self.dry_run {
-            // A dry run performs no write, so every sentence below would be a
-            // false past-tense claim. Name the planned work through the same
-            // labels the recovery audit uses, so the two channels cannot
-            // disagree about what the plan is.
             return vec![dry_run_plan_message(&self.action_labels())];
         }
         let mut messages = Vec::new();
@@ -2764,9 +2689,6 @@ fn database_sidecar_paths(db_path: &Path) -> Vec<(PathBuf, &'static str)> {
             "rollback journal",
         ),
     ];
-    // beads_rust-avhq: legacy engine sidecars (fsqlite era) must be as
-    // visible to inspection as the classic family — the files outlive the
-    // engine that produced them.
     for suffix in config::LEGACY_SIDECAR_SUFFIXES {
         paths.push((PathBuf::from(format!("{db_string}{suffix}")), "legacy"));
     }
@@ -2802,11 +2724,6 @@ fn inspect_database_sidecars(db_path: &Path) -> Result<SidecarInspection> {
     }
 
     if wal_kind.is_regular_file() && !shm_kind.exists() {
-        // Real SQLite recovers a leftover WAL automatically on the next
-        // open (checkpoint-on-close removed the SHM but not the WAL, or a
-        // writer died mid-flight). Informational only: quarantining the WAL
-        // would discard committed frames. The db.write_probe check
-        // validates liveness.
         inspection.informational_findings.push(format!(
             "WAL sidecar exists without a matching SHM sidecar at {} (leftover WAL is recovered automatically on the next open)",
             PathBuf::from(format!("{}-wal", db_path.to_string_lossy())).display()
@@ -2823,11 +2740,6 @@ fn inspect_database_sidecars(db_path: &Path) -> Result<SidecarInspection> {
     }
 
     if shm_kind.is_regular_file() && wal_kind.is_regular_file() {
-        // Real SQLite semantics: the -shm/-wal pair exists while any
-        // connection is live and is checkpointed + removed on the next
-        // clean close of the last connection, so a resting pair is harmless
-        // heritage from an unclean exit. Record it informationally instead
-        // of degrading health or deleting committed WAL content.
         inspection.informational_findings.push(format!(
             "WAL and SHM sidecars at {} are a normal live-engine family (SQLite checkpoints and removes them on the next clean close)",
             PathBuf::from(format!("{}-shm", db_path.to_string_lossy())).display()
@@ -3027,8 +2939,6 @@ const FOREIGN_DEBRIS_SCAN_LIMIT: usize = 4096;
 /// what it is — so this is reported for the operator to act on and is never
 /// auto-repaired.
 fn is_foreign_recovery_debris_dir_name(name: &str) -> bool {
-    // br's own state directories are `.br_recovery` and `.br_history`; never
-    // report those as foreign.
     if name.starts_with(".br_") {
         return false;
     }
@@ -3269,23 +3179,15 @@ fn gate_verdict_row_count(db_path: &Path) -> usize {
         return 0;
     }
     let Ok(conn) = Connection::open(db_path.to_string_lossy().into_owned()) else {
-        // An unopenable database is the other checks' problem, not a reason to
-        // invent a verdict count and block a repair that might fix it.
         return 0;
     };
     let _ = conn.execute("PRAGMA busy_timeout=5000");
     let mut total = 0usize;
     for table in ["gate_results", "gate_result_history"] {
-        // A missing or unreadable table is not an error: older schemas have no
-        // gate history, and there is nothing to lose that does not exist.
         let sql = format!("SELECT count(*) FROM {table}");
         let Ok(row) = conn.query_row(&sql) else {
             continue;
         };
-        // Checked, not `as usize`: clippy is right that an i64 -> usize cast can
-        // truncate on 32-bit and silently drop a negative. A count is never
-        // negative, so anything else means the query returned something that is
-        // not a count, and clamping to 0 is the honest reading.
         let n = row.get(0).and_then(SqliteValue::as_integer).unwrap_or(0);
         total += usize::try_from(n).unwrap_or(0);
     }
@@ -3476,18 +3378,6 @@ fn repair_database_from_jsonl_after_preflight(
         cli.as_layer(),
     ]);
 
-    // Snapshot any local tombstones and dirty live issues before the
-    // JSONL rebuild. `doctor --repair` reaches this branch only after
-    // light repairs failed (or never applied) and the on-disk DB reports
-    // errors, so the storage handle here might be limping — but the
-    // snapshot helpers are already fault-tolerant (warn+empty on
-    // enumeration failure, warn+partial on per-issue failure) and the
-    // cost of trying is a few selects. Without this, repair would
-    // silently wipe any tombstone the user deleted but had not yet
-    // flushed to JSONL (same hazard that `br sync --import-only
-    // --rebuild` preserves via snapshot/restore) and any creation or
-    // edit that had not yet been flushed (GitHub #394), since the
-    // rebuild only replays what's in the JSONL.
     let (preserved_tombstones, preserved_dirty_issues) =
         preserved_state_for_doctor_rebuild(db_path, source);
 
@@ -3916,16 +3806,6 @@ fn repair_recoverable_db_state_under_write_authority(
         return repair;
     }
 
-    // A truncated/garbage `-wal` makes the engine refuse to open the
-    // database at all. The normal startup path quarantines that sidecar
-    // before opening; local repair must do the same or it silently skips
-    // the very repair the operator ran `--repair` for.
-    //
-    // Only retry when the main database file is itself a real SQLite image:
-    // if the primary file is not a database, moving its sidecar aside cannot
-    // help and the JSONL rebuild path owns that case. Both open attempts go
-    // through the authority-verified doctor opener so the database-family
-    // write authority is checked on either side of the quarantine.
     let open_for_repair = || {
         open_doctor_storage_under_write_authority(db_path, write_authority).or_else(|first_err| {
             if !db_file_has_sqlite_header(db_path) {
@@ -4111,12 +3991,6 @@ fn repair_partial_indexes_under_write_authority(
     }
 }
 
-// Route anomalous SQLite sidecar quarantine through the doctor
-// chokepoint. These are removals from the live `.beads/` surface in
-// operator terms, so AGENTS.md's no-delete invariant means they must be
-// explicit `Op::Rename` moves into the per-run quarantine tree. That gives
-// `doctor undo` a concrete inverse move instead of a legacy audit line
-// that only points at the vanished source path.
 fn repair_database_sidecars(
     db_path: &Path,
     repair: &mut LocalRepairResult,
@@ -4174,8 +4048,6 @@ fn quarantine_anomalous_sidecars(
                     .join(name);
 
                 match chokepoint::mutate(&session.ctx, source, Op::Rename { to: dest.clone() }) {
-                    // A dry run's `mutate` reports success for a no-op, so
-                    // counting it would claim a quarantine that never happened.
                     Ok(result) if result.ok && !session.is_dry_run() => {
                         quarantined.push(dest.display().to_string());
                     }
@@ -4350,8 +4222,6 @@ fn required_schema_checks(conn: &Connection, checks: &mut Vec<CheckResult>) -> R
         "child_counters",
     ];
 
-    // Fallback: if sqlite_master returned nothing (frankensqlite may not
-    // support it), probe each required table directly.
     if tables.is_empty() {
         for &table in &required_tables {
             let probe = format!("SELECT 1 FROM {table} LIMIT 1");
@@ -4494,9 +4364,6 @@ fn check_integrity(conn: &Connection, checks: &mut Vec<CheckResult>) {
             None,
         );
     } else if integrity_messages_only_benign(&messages) {
-        // Unused-page notices and partial-index row mismatches are known frankensqlite
-        // artifacts.  The data is intact (write probe passes), so report Warn rather
-        // than Error.
         push_check(
             checks,
             "sqlite.integrity_check",
@@ -4557,14 +4424,10 @@ fn check_export_hash_cache_divergence(
         return;
     }
     let Some(stored) = latest_metadata_value(conn, "jsonl_content_hash") else {
-        // No cached row at all (or only the empty default sentinel):
-        // first sync has not populated the hash yet, so avoid hashing
-        // the JSONL just to report OK.
         push_check(checks, "db.export_hash_cache", CheckStatus::Ok, None, None);
         return;
     };
     let Ok(computed) = crate::sync::compute_jsonl_hash(jsonl) else {
-        // JSONL unreadable: a different FM owns this surface.
         push_check(checks, "db.export_hash_cache", CheckStatus::Ok, None, None);
         return;
     };
@@ -4611,8 +4474,6 @@ fn check_base_jsonl_missing_post_flush(
     checks: &mut Vec<CheckResult>,
 ) {
     let anchor = beads_dir.join("beads.base.jsonl");
-    // Cheap fast-path: if the anchor exists (any kind: regular,
-    // symlink, etc.) the file-based check already handled it.
     if fs::symlink_metadata(&anchor).is_ok() {
         push_check(
             checks,
@@ -4627,9 +4488,6 @@ fn check_base_jsonl_missing_post_flush(
     match last_export {
         Some(stamp) if !stamp.is_empty() => {
             if workspace_verifiably_in_sync(conn, jsonl_path) {
-                // DB and JSONL agree (`br sync --status` would say
-                // "In sync"), so nothing is lost: the anchor is derivable
-                // from the live JSONL and the next flush/merge recreates it.
                 push_check(
                     checks,
                     "base_jsonl.missing_post_flush",
@@ -4662,7 +4520,6 @@ fn check_base_jsonl_missing_post_flush(
             );
         }
         _ => {
-            // No prior export → fresh workspace; missing is legitimate.
             push_check(
                 checks,
                 "base_jsonl.missing_post_flush",
@@ -4780,9 +4637,6 @@ fn existing_sqlite_family_paths_for_legacy_op(db_path: &Path) -> Vec<PathBuf> {
 
 fn check_wal_oversized(db_path: &Path, checks: &mut Vec<CheckResult>, pre_open_size: Option<u64>) {
     let path = sqlite_wal_sidecar_path(db_path);
-    // Prefer the live stat, but fall back to the pre-open snapshot: a clean
-    // database open checkpoints and REMOVES the WAL, so an oversized WAL can
-    // disappear between inspection start and this check.
     let bytes = fs::symlink_metadata(&path)
         .ok()
         .filter(|meta| meta.is_file() && !meta.file_type().is_symlink())
@@ -4975,7 +4829,7 @@ fn truncate_oversized_regular_wal_if_needed(wal_path: &Path) -> Result<()> {
 /// Like `fix_wal_oversized_if_warned`, this uses `record_legacy_mutation`
 /// (NOT `Op::DbExec`) because `VACUUM` cannot run inside a transaction.
 #[cfg(test)]
-#[allow(dead_code)] // Retains the standalone harness entry point for future bloat fixtures.
+#[allow(dead_code)]
 fn fix_db_bloat_via_vacuum_if_warned(
     db_path: &Path,
     report: &DoctorReport,
@@ -5047,12 +4901,6 @@ fn fix_db_bloat_via_vacuum_if_warned_under_write_authority(
             true
         }
         Err(err) => {
-            // `beads-ymik`: log unconditionally. `ctx.warning` is
-            // suppressed in JSON mode, so a VACUUM the operator explicitly
-            // opted into with `--unsafe-auto-fix` could fail and leave no
-            // trace anywhere in the payload — after which the repair reports
-            // "No errors detected; nothing to repair." for a finding it had
-            // just been pointed at by name.
             tracing::warn!(
                 error = %err,
                 db_path = %db_path.display(),
@@ -5177,8 +5025,6 @@ fn check_db_bloat_vs_jsonl(
 const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 
 fn path_is_inside_workspace(path: &Path, repo_root: &Path) -> bool {
-    // Repair fixers widen write_scopes for selected JSONL paths, so the
-    // workspace check must resolve `..` components and symlinks first.
     let (Ok(path), Ok(repo_root)) = (fs::canonicalize(path), fs::canonicalize(repo_root)) else {
         return false;
     };
@@ -5256,7 +5102,6 @@ fn fix_jsonl_utf8_bom_if_warned(
     let Some(path) = jsonl_path else {
         return false;
     };
-    // TOCTOU defense: re-read at fix time.
     let Ok(bytes) = fs::read(path) else {
         return false;
     };
@@ -5532,7 +5377,6 @@ fn fix_jsonl_trailing_newline_if_warned(
     let Some(path) = jsonl_path else {
         return false;
     };
-    // TOCTOU defense: re-check last byte at fix time.
     let Ok(mut f) = fs::File::open(path) else {
         return false;
     };
@@ -5797,10 +5641,6 @@ fn check_jsonl_duplicate_ids(jsonl_path: Option<&Path>, checks: &mut Vec<CheckRe
 /// per-run quarantine so no bytes are deleted.
 const ORPHAN_TMP_AGE_THRESHOLD_SECS: u64 = 60 * 60;
 
-// case_sensitive_file_extension_comparisons fires on `name.ends_with(".tmp")`
-// because clippy prefers Path::extension(). We deliberately match exact-case
-// `.tmp` (BR's atomic-write writers produce lowercase) and the secondary
-// `*.tmp.<digits>` shape doesn't have `.tmp` as the Path extension.
 #[allow(clippy::case_sensitive_file_extension_comparisons)]
 fn is_orphan_tmp_name(name: &str) -> bool {
     name.ends_with(".tmp")
@@ -6000,7 +5840,6 @@ fn fix_jsonl_world_writable_if_warned(
         }
         let current = meta.permissions().mode();
         if (current & 0o002) == 0 {
-            // TOCTOU: caller may have already chmod'd between detect and fix.
             return false;
         }
         if !path_is_inside_workspace(path, &session.ctx.repo_root) {
@@ -6012,7 +5851,6 @@ fn fix_jsonl_world_writable_if_warned(
             }
             return false;
         }
-        // Keep every other bit; only the world-write bit changes.
         let new_mode = current & !0o002;
         session.set_fixer("doctor.jsonl_world_writable_chmod");
         session
@@ -6090,8 +5928,6 @@ fn check_inner_gitignore_present(beads_dir: &Path, checks: &mut Vec<CheckResult>
             return;
         }
         Err(_) => {
-            // Uninspectable but present (perms issue?) — leave to the
-            // permissions check.
             push_check(
                 checks,
                 "gitignore.beads_inner_present",
@@ -6125,8 +5961,6 @@ fn check_inner_gitignore_present(beads_dir: &Path, checks: &mut Vec<CheckResult>
         return;
     }
     let Ok(contents) = fs::read_to_string(&path) else {
-        // Unreadable but present (perms issue?) — leave to the
-        // permissions check.
         push_check(
             checks,
             "gitignore.beads_inner_present",
@@ -6331,7 +6165,6 @@ fn fix_inner_gitignore_if_warned(
     let path = beads_dir.join(".gitignore");
     let existing = match fs::symlink_metadata(&path) {
         Ok(meta) if meta.file_type().is_symlink() => {
-            // Refuse to convert a symlink into a regular file.
             return false;
         }
         Ok(_) => fs::read_to_string(&path).unwrap_or_default(),
@@ -6393,8 +6226,6 @@ fn br_binaries_in_path_str(path_var: &str) -> Vec<PathBuf> {
     for dir in std::env::split_paths(path_var) {
         let candidate = dir.join("br");
         let canonical = candidate.canonicalize().ok();
-        // Dedupe by canonical path so a/PATH/br and b/PATH/br both
-        // pointing to the same file via symlinks count once.
         let key = canonical.clone().unwrap_or_else(|| candidate.clone());
         if seen.contains(&key) {
             continue;
@@ -6466,8 +6297,6 @@ fn check_config_yaml_secret_mode(beads_dir: &Path, checks: &mut Vec<CheckResult>
         );
         return;
     };
-    // Skip symlinks; the existing config.yaml check covers symlink-shape
-    // concerns and we shouldn't follow into out-of-scope targets.
     if meta.file_type().is_symlink() {
         push_check(
             checks,
@@ -6497,7 +6326,6 @@ fn check_config_yaml_secret_mode(beads_dir: &Path, checks: &mut Vec<CheckResult>
         return;
     }
     let Ok(contents) = fs::read_to_string(&config) else {
-        // Unreadable → covered by the regular config.yaml check.
         push_check(
             checks,
             "permissions.config_yaml_secrets",
@@ -6508,11 +6336,6 @@ fn check_config_yaml_secret_mode(beads_dir: &Path, checks: &mut Vec<CheckResult>
         return;
     };
     let lower = contents.to_ascii_lowercase();
-    // Match common secret-shaped tokens. Substring match keeps the
-    // detector cheap and false-positive-prone — operators who genuinely
-    // want a comment about "passwords" can ignore the warning. We
-    // surface the matched keyword in details so the operator can
-    // verify quickly.
     let matched: Vec<&str> = SECRET_KEYWORDS
         .iter()
         .copied()
@@ -6605,11 +6428,9 @@ fn fix_config_yaml_secret_mode_if_warned(
             return false;
         }
         let current = meta.permissions().mode();
-        // Already secured — TOCTOU defense.
         if (current & 0o006) == 0 {
             return false;
         }
-        // Strip world-read AND world-write; preserve every other bit.
         let new_mode = current & !0o006;
         session.set_fixer("doctor.config_yaml_secret_chmod");
         match chokepoint::mutate(&session.ctx, &path, Op::Chmod { mode: new_mode }) {
@@ -6669,9 +6490,6 @@ fn check_doctor_runs_dir_size(repo_root: &Path, checks: &mut Vec<CheckResult>) {
             return;
         }
         Err(_) => {
-            // Unreadable runs dir is suspicious but a different FM owns
-            // permissions issues; emit Ok here and let the permissions
-            // detectors carry the signal.
             push_check(checks, "doctor.runs_dir", CheckStatus::Ok, None, None);
             return;
         }
@@ -6723,12 +6541,10 @@ fn check_doctor_runs_dir_size(repo_root: &Path, checks: &mut Vec<CheckResult>) {
 fn check_doctor_runs_creatable(repo_root: &Path, checks: &mut Vec<CheckResult>) {
     let doctor_dir = repo_root.join(".doctor");
     let Ok(meta) = fs::symlink_metadata(&doctor_dir) else {
-        // Missing is fine — the dir will be created on first --repair.
         push_check(checks, "doctor.runs_creatable", CheckStatus::Ok, None, None);
         return;
     };
     if !meta.is_dir() {
-        // `.doctor` exists but isn't a directory; a different FM owns this.
         push_check(checks, "doctor.runs_creatable", CheckStatus::Ok, None, None);
         return;
     }
@@ -6736,12 +6552,6 @@ fn check_doctor_runs_creatable(repo_root: &Path, checks: &mut Vec<CheckResult>) 
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = meta.permissions().mode();
-        // Owner-write bit on the directory. POSIX semantics: writing
-        // INTO a directory (creating a new entry) requires `w` on the
-        // dir, not on the parent. We check the owner bit because the
-        // doctor only ever runs as the workspace owner — group/other
-        // writability is a separate concern (and we already flag
-        // world-writable JSONL).
         if (mode & 0o200) == 0 {
             push_check(
                 checks,
@@ -6784,7 +6594,6 @@ fn check_doctor_runs_creatable(repo_root: &Path, checks: &mut Vec<CheckResult>) 
 fn check_recovery_dir_writable(db_path: &Path, beads_dir: &Path, checks: &mut Vec<CheckResult>) {
     let recovery_dir = config::recovery_dir_for_db_path(db_path, beads_dir);
     let Ok(meta) = fs::symlink_metadata(&recovery_dir) else {
-        // Missing is fine — the dir is created on demand by the recovery path.
         push_check(
             checks,
             "permissions.recovery_dir",
@@ -6795,7 +6604,6 @@ fn check_recovery_dir_writable(db_path: &Path, beads_dir: &Path, checks: &mut Ve
         return;
     };
     if !meta.is_dir() {
-        // `.br_recovery` exists but isn't a directory; a different FM owns this.
         push_check(
             checks,
             "permissions.recovery_dir",
@@ -6857,7 +6665,6 @@ fn check_recovery_dir_writable(db_path: &Path, beads_dir: &Path, checks: &mut Ve
 fn check_write_lock_writable(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
     let lock_path = beads_dir.join(".write.lock");
     let Ok(meta) = fs::symlink_metadata(&lock_path) else {
-        // Missing is fine — created on first mutating call.
         push_check(
             checks,
             "permissions.write_lock",
@@ -6868,9 +6675,6 @@ fn check_write_lock_writable(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
         return;
     };
     if meta.file_type().is_symlink() || !meta.is_file() {
-        // The non-regular shape itself is flagged (as an error) by the
-        // `write_lock` check; stay Ok here so one defect is not
-        // double-counted, but say why the permission probe is skipped.
         push_check(
             checks,
             "permissions.write_lock",
@@ -6934,7 +6738,6 @@ fn check_write_lock_writable(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
 fn check_root_gitignore_writable(repo_root: &Path, checks: &mut Vec<CheckResult>) {
     let gitignore = repo_root.join(".gitignore");
     let Ok(meta) = fs::symlink_metadata(&gitignore) else {
-        // Missing is fine — the gitignore_repair fixer creates one.
         push_check(
             checks,
             "permissions.root_gitignore",
@@ -6999,7 +6802,6 @@ fn check_dirty_bitmap_divergence(conn: &Connection, checks: &mut Vec<CheckResult
     let Ok(rows) = conn.query(
         "SELECT COUNT(*) FROM dirty_issues d LEFT JOIN issues i ON d.issue_id = i.id WHERE i.id IS NULL",
     ) else {
-        // dirty_issues missing → upstream schema check covers it.
         push_check(checks, "dirty_bitmap", CheckStatus::Ok, None, None);
         return;
     };
@@ -7015,7 +6817,6 @@ fn check_dirty_bitmap_divergence(conn: &Connection, checks: &mut Vec<CheckResult
         push_check(checks, "dirty_bitmap", CheckStatus::Ok, None, None);
         return;
     }
-    // Sample up to 5 orphan ids for the operator.
     let sample: Vec<String> = match conn.query(
         "SELECT d.issue_id FROM dirty_issues d LEFT JOIN issues i ON d.issue_id = i.id WHERE i.id IS NULL LIMIT 5",
     ) {
@@ -7084,8 +6885,6 @@ fn fix_dirty_bitmap_orphans_if_warned(
         sql: format!("DELETE FROM dirty_issues WHERE {DIRTY_BITMAP_ORPHAN_PREDICATE}"),
         args: Vec::new(),
         affected_tables: vec!["dirty_issues".to_string()],
-        // The DELETE's WHERE clause; the chokepoint snapshots every row
-        // that matches this predicate so `doctor undo` can restore them.
         affected_predicate: Some(DIRTY_BITMAP_ORPHAN_PREDICATE.to_string()),
     };
     match chokepoint::mutate(&session.ctx, db_path, op) {
@@ -7527,7 +7326,6 @@ fn is_historical_cycle_close_label(label: &str) -> bool {
 }
 
 fn check_suspect_close_reasons(conn: &Connection, checks: &mut Vec<CheckResult>) {
-    // Default patterns: (case-insensitive substring matches; lowercase form below)
     let default_patterns: &[&str] = &[
         "forced close due to cycle",
         "due to dep cycle",
@@ -7535,7 +7333,6 @@ fn check_suspect_close_reasons(conn: &Connection, checks: &mut Vec<CheckResult>)
         "temporarily closed",
         "wip close",
     ];
-    // Default allowlist: substrings that must never be flagged
     let default_allowlist: &[&str] = &[
         "auto-closed by doctor",
         "closed by epic close-eligible",
@@ -7543,12 +7340,6 @@ fn check_suspect_close_reasons(conn: &Connection, checks: &mut Vec<CheckResult>)
         "superseded by",
     ];
 
-    // Query closed beads' id, close_reason, labels (joined as ASCII-unit-
-    // separated, since `br update --add-label` rejects this character so
-    // it can never appear inside a label and is a safe split delimiter).
-    // GROUP_CONCAT separator can't contain commas in case a label ever
-    // does — the validator forbids commas today, but we don't want to
-    // create a latent bug if the schema ever changes.
     let rows = match conn.query(
         "SELECT i.id, i.close_reason,
                 COALESCE(GROUP_CONCAT(l.label, char(31)), '') AS labels
@@ -7594,9 +7385,6 @@ fn check_suspect_close_reasons(conn: &Connection, checks: &mut Vec<CheckResult>)
             continue;
         }
 
-        // Skip only if a label is the documented dated historical-triage marker.
-        // Split on ASCII unit separator (matches the GROUP_CONCAT separator
-        // above; safe even if a label ever contained a comma).
         let has_historical_label = labels.split('\x1f').any(is_historical_cycle_close_label);
         if has_historical_label {
             continue;
@@ -7604,12 +7392,10 @@ fn check_suspect_close_reasons(conn: &Connection, checks: &mut Vec<CheckResult>)
 
         let reason_lower = reason.to_lowercase();
 
-        // Skip if any allowlist substring matches
         if default_allowlist.iter().any(|a| reason_lower.contains(a)) {
             continue;
         }
 
-        // Match against suspect patterns
         if let Some(matched) = default_patterns.iter().find(|p| reason_lower.contains(*p)) {
             matches.push(serde_json::json!({
                 "bead_id": id,
@@ -7674,18 +7460,9 @@ fn check_workflow_statuses(conn: &Connection, beads_dir: &Path, checks: &mut Vec
     };
     let workflow = &policy.workflow;
     if !workflow.is_enforced() {
-        // No strict workflow configured — stay silent.
         return;
     }
 
-    // Tombstones (rows with `deleted_at` set) are deletion markers, not
-    // workflow states: their `status` is `tombstone` because `br delete`
-    // writes it, and the recommended remediation (`br update --status`)
-    // is rejected for deleted issues. Flagging them would warn on every
-    // workspace that has ever deleted an issue and would fail post-repair
-    // verification whenever a rebuild legitimately preserves an unflushed
-    // tombstone. The audit governs live issues only, so deleted rows are
-    // excluded by the query itself.
     let rows = match conn.query(
         "SELECT id, status FROM issues WHERE status IS NOT NULL AND deleted_at IS NULL ORDER BY id",
     ) {
@@ -7846,7 +7623,6 @@ fn check_recoverable_anomalies(conn: &Connection, checks: &mut Vec<CheckResult>)
 /// (issue #269 covers the legacy backfill, #177 the typeof-vs-IS-NULL
 /// rationale).
 const NULL_DEFAULT_CHECKS: &[(&str, &str, &str)] = &[
-    // issues
     (
         "issues",
         "description",
@@ -7902,7 +7678,6 @@ const NULL_DEFAULT_CHECKS: &[(&str, &str, &str)] = &[
         "is_template",
         "UPDATE issues SET is_template = 0 WHERE typeof(is_template) = 'null'",
     ),
-    // dependencies
     (
         "dependencies",
         "type",
@@ -7913,7 +7688,6 @@ const NULL_DEFAULT_CHECKS: &[(&str, &str, &str)] = &[
         "created_by",
         "UPDATE dependencies SET created_by = '' WHERE typeof(created_by) = 'null'",
     ),
-    // comments
     (
         "comments",
         "author",
@@ -7929,7 +7703,6 @@ const NULL_DEFAULT_CHECKS: &[(&str, &str, &str)] = &[
         "created_at",
         "UPDATE comments SET created_at = CURRENT_TIMESTAMP WHERE typeof(created_at) = 'null'",
     ),
-    // events
     (
         "events",
         "event_type",
@@ -7952,11 +7725,6 @@ const NULL_DEFAULT_CHECKS: &[(&str, &str, &str)] = &[
 /// Detects rows inserted before the `DEFAULT ''` was added to the schema
 /// (e.g., events.actor or comments.author without DEFAULT).
 fn check_null_defaults(conn: &Connection, checks: &mut Vec<CheckResult>) {
-    // NOTE: We use typeof(column) = 'null' instead of column IS NULL because
-    // SQLite's query planner can use partial indexes (e.g., WHERE actor != '')
-    // that cause IS NULL predicates to silently return 0 rows even when NULLs
-    // exist in the table.  typeof() bypasses the index and checks the actual
-    // storage class.  See issue #177 for details.
     let queries: &[(&str, &str, &str)] = NULL_DEFAULT_CHECKS;
 
     let mut null_findings = Vec::new();
@@ -7974,7 +7742,6 @@ fn check_null_defaults(conn: &Connection, checks: &mut Vec<CheckResult>) {
                 }));
             }
         }
-        // Err case: table might not exist yet; skip silently
     }
 
     if null_findings.is_empty() {
@@ -8040,8 +7807,6 @@ fn fix_null_defaults_if_warned(
         }
         return false;
     };
-    // The (table, column) pairs the detector flagged. We act only on these,
-    // and only with vetted SQL from NULL_DEFAULT_CHECKS.
     let flagged: Vec<(String, String)> = finding
         .details
         .as_ref()
@@ -8227,8 +7992,6 @@ fn check_sqlite_cli_integrity(db_path: &Path, checks: &mut Vec<CheckResult>) {
             );
         }
         Ok(messages) if integrity_messages_only_benign(&messages) => {
-            // Treat never-used page notices and partial-index row mismatches as warnings
-            // (known frankensqlite artifacts).
             push_check(
                 checks,
                 "sqlite3.integrity_check",
@@ -8250,11 +8013,6 @@ fn check_sqlite_cli_integrity(db_path: &Path, checks: &mut Vec<CheckResult>) {
             if message.contains("No such file or directory")
                 || message.contains("failed to run sqlite3") =>
         {
-            // An absent sqlite3 CLI is a benign host state, not a workspace
-            // defect: the built-in integrity_check above still ran.
-            // Warn here would pin `doctor.ok = false` (`!has_non_ok`, #292)
-            // on every machine without sqlite3 in PATH — the same
-            // benign-state-reported-as-warn class as #432.
             push_check(
                 checks,
                 "sqlite3.integrity_check",
@@ -8323,10 +8081,6 @@ fn check_merge_artifacts(
         let Some(name) = name.to_str() else {
             continue;
         };
-        // `beads.base.jsonl` is the canonical 3-way merge anchor written
-        // by `br sync --merge` (see sync/mod.rs:5035). It is NOT a stuck
-        // temp artifact — the fixer and detector must both treat it as
-        // protected so a clean workspace doesn't get falsely flagged.
         if name == "beads.base.jsonl" {
             continue;
         }
@@ -8334,9 +8088,6 @@ fn check_merge_artifacts(
             || name.contains(".left.jsonl")
             || name.contains(".right.jsonl")
         {
-            // beads#344/#328: carry per-file classification plus a
-            // cheap conflict-marker scan so agents can distinguish a
-            // benign leftover from a half-merged file without opening it.
             let path = entry.path();
             artifacts.push(serde_json::json!({
                 "path": path.display().to_string(),
@@ -8356,7 +8107,6 @@ fn check_merge_artifacts(
             CheckStatus::Warn,
             Some("Merge artifacts detected in .beads/".to_string()),
             Some(serde_json::json!({
-                // Back-compat: existing consumers key on `files`.
                 "files": files,
                 "artifacts": artifacts,
                 "canonical_jsonl": canonical_jsonl.display().to_string(),
@@ -8391,10 +8141,6 @@ fn check_base_jsonl(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
     let meta = match fs::symlink_metadata(&base_path) {
         Ok(m) => m,
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            // Missing-on-fresh-clone is legitimate. Without DB access at
-            // this layer we cannot distinguish "fresh" from "post-flush
-            // missing", so report Ok and let case (c) land in a future
-            // cycle.
             push_check(checks, "base_jsonl", CheckStatus::Ok, None, None);
             return;
         }
@@ -8413,9 +8159,6 @@ fn check_base_jsonl(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
         }
     };
 
-    // (a) Symlink → reject outright. Symlinked merge anchors are an
-    // attacker shape: a malicious actor could point the anchor at any
-    // file on disk and `br sync --merge` would diff against it.
     if meta.file_type().is_symlink() {
         push_check(
             checks,
@@ -8433,10 +8176,6 @@ fn check_base_jsonl(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
         return;
     }
 
-    // (b) Stale anchor: base mtime older than live JSONL mtime AND the
-    // live JSONL is non-empty. A stale anchor leaks the wrong base into
-    // 3-way merges. We compare only file mtimes (no content hash) at
-    // this layer to keep the detector pure-stat.
     let live = beads_dir.join("issues.jsonl");
     let Ok(live_meta) = fs::symlink_metadata(&live) else {
         push_check(checks, "base_jsonl", CheckStatus::Ok, None, None);
@@ -8606,7 +8345,6 @@ fn check_routes_jsonl(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
     let routes_path = beads_dir.join("routes.jsonl");
 
     if !routes_path.is_file() {
-        // Routes are optional. Absence is not a finding.
         push_check(
             checks,
             "routes_jsonl",
@@ -8956,7 +8694,6 @@ fn rust_log_volume(raw: Option<&str>) -> RustLogVolume {
     if normalized.is_empty() {
         return RustLogVolume::Quiet;
     }
-    // Plain bare levels.
     match normalized.as_str() {
         "off" | "error" | "warn" => return RustLogVolume::Quiet,
         "info" => {
@@ -8977,10 +8714,6 @@ fn rust_log_volume(raw: Option<&str>) -> RustLogVolume {
         _ => {}
     }
 
-    // Composite directive: any segment of the form `<mod>=<level>`,
-    // `<level>`, or target-only `<mod>` that enables info/debug/trace
-    // triggers warn. Upstream EnvFilter treats target-only directives as
-    // `trace`.
     for segment in normalized.split(',') {
         let seg = segment.trim();
         if seg.is_empty() {
@@ -9066,7 +8799,6 @@ fn check_permissions_beads_dir(beads_dir: &Path, checks: &mut Vec<CheckResult>) 
 
     let mut readonly: Vec<serde_json::Value> = Vec::new();
 
-    // The directory itself.
     if let Ok(meta) = fs::metadata(beads_dir) {
         let mode = meta.permissions().mode() & 0o777;
         if mode & 0o200 == 0 {
@@ -9078,9 +8810,6 @@ fn check_permissions_beads_dir(beads_dir: &Path, checks: &mut Vec<CheckResult>) 
             }));
         }
     } else {
-        // Missing .beads/ is the beads_dir check's job, not this
-        // detector's. Emit an Ok ack with the absent context so
-        // downstream agents see the detector ran.
         push_check(
             checks,
             "permissions.beads_dir",
@@ -9094,7 +8823,6 @@ fn check_permissions_beads_dir(beads_dir: &Path, checks: &mut Vec<CheckResult>) 
         return;
     }
 
-    // Critical children.
     for child_name in &["issues.jsonl", "beads.db"] {
         let child = beads_dir.join(child_name);
         let Ok(meta) = fs::metadata(&child) else {
@@ -9196,7 +8924,6 @@ fn check_config_yaml(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
         }
     };
 
-    // Empty file is acceptable (treated as "all defaults").
     if body.trim().is_empty() {
         push_check(
             checks,
@@ -9211,10 +8938,6 @@ fn check_config_yaml(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
         return;
     }
 
-    // Try parsing as a generic `serde_yml::Value` first — that lets us
-    // surface the precise parse error without coupling to the full
-    // ConfigLayer schema (which is stricter; an unknown-field warning
-    // there is different from a malformed YAML structure).
     match serde_yml::from_str::<serde_yml::Value>(&body) {
         Ok(_) => {
             push_check(
@@ -9229,9 +8952,6 @@ fn check_config_yaml(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
             );
         }
         Err(err) => {
-            // serde_yml's Display includes line/col when available; the
-            // doctor exposes the raw message so operators don't have to
-            // re-run `br` themselves to see it.
             push_check(
                 checks,
                 "config.yaml",
@@ -9285,7 +9005,6 @@ fn check_metadata_json(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
         Err(err) => return push_metadata_json_read_error(&metadata_path, &err, checks),
     };
 
-    // Empty file is treated as malformed (the loader does the same).
     if body.trim().is_empty() {
         push_metadata_json_empty(&metadata_path, checks);
         return;
@@ -9560,8 +9279,6 @@ fn push_metadata_json_drift(
 fn check_binary_version_mismatch(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
     let binary_version_str = env!("CARGO_PKG_VERSION");
 
-    // Walk upward from beads_dir.parent() looking for a Cargo.toml
-    // whose [package].name == "beads".
     let Some(repo_root) = find_beads_rust_repo_root(beads_dir) else {
         push_check(
             checks,
@@ -9580,7 +9297,6 @@ fn check_binary_version_mismatch(beads_dir: &Path, checks: &mut Vec<CheckResult>
 
     let cargo_toml_path = repo_root.join("Cargo.toml");
     let Some(tree_version_str) = read_cargo_toml_version(&cargo_toml_path) else {
-        // Cargo.toml unreadable or missing version — silent.
         push_check(
             checks,
             "binary_version",
@@ -9717,7 +9433,6 @@ fn parse_cargo_toml_package_field(body: &str, field: &str) -> Option<String> {
             continue;
         }
         if let Some(rest) = line.strip_prefix('[') {
-            // New section starts; check if it's [package].
             let section = rest.trim_end_matches(']').trim();
             in_package = section == "package";
             continue;
@@ -9725,12 +9440,10 @@ fn parse_cargo_toml_package_field(body: &str, field: &str) -> Option<String> {
         if !in_package {
             continue;
         }
-        // Match `<field> = "..."` (single or double quoted).
         if let Some(rest) = line.strip_prefix(field) {
             let rest = rest.trim_start();
             if let Some(rest) = rest.strip_prefix('=') {
                 let rest = rest.trim();
-                // Strip optional inline comment.
                 let val_with_quotes = rest.split('#').next().unwrap_or("").trim();
                 if val_with_quotes.starts_with('"') && val_with_quotes.ends_with('"') {
                     return Some(val_with_quotes[1..val_with_quotes.len() - 1].to_string());
@@ -9798,12 +9511,6 @@ fn check_orphaned_write_lock(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
         return;
     };
 
-    // Fail closed on any non-regular node (beads-5sej): startup's
-    // `OpenOptions` on the lock path follows a symlink, so a symlinked
-    // `.write.lock` silently relocates mutual exclusion to the target
-    // inode, and a directory/fifo/device node breaks acquisition
-    // outright. Classified via lstat only — the target is never
-    // traversed and the node is never touched.
     if !meta.file_type().is_file() {
         push_write_lock_non_file(&lock_path, &meta, checks);
         return;
@@ -9812,16 +9519,11 @@ fn check_orphaned_write_lock(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
     let threshold_secs = stale_lock_threshold_secs();
 
     let Ok(modified) = meta.modified() else {
-        // mtime unreadable — emit Ok with explicit "deferring" note
-        // rather than warn (the operator can't act on what we can't
-        // measure).
         push_write_lock_mtime_unreadable(&lock_path, checks);
         return;
     };
 
     let Ok(age) = std::time::SystemTime::now().duration_since(modified) else {
-        // Clock skew: mtime is in the future. Surface as Warn with
-        // a distinct reason so the operator sees the clock issue.
         push_write_lock_future_mtime(&lock_path, checks);
         return;
     };
@@ -9832,7 +9534,6 @@ fn check_orphaned_write_lock(beads_dir: &Path, checks: &mut Vec<CheckResult>) {
         return;
     }
 
-    // Stale-mtime candidate: probe before classifying (GitHub #395).
     match probe_write_lock_is_free(&lock_path) {
         Some(true) => push_write_lock_free_despite_age(&lock_path, age_secs, checks),
         Some(false) => push_write_lock_held_by_live_process(&lock_path, age_secs, checks),
@@ -10217,8 +9918,6 @@ fn fix_merge_artifacts_if_warned(
         let Some(name) = file_name.to_str() else {
             continue;
         };
-        // The canonical 3-way merge anchor is sacred — never quarantine it
-        // (sync/mod.rs writes this for legitimate merges).
         if name == "beads.base.jsonl" {
             continue;
         }
@@ -10325,16 +10024,9 @@ fn fix_startup_cache_entries_if_warned(
     };
 
     if poisoned.is_empty() {
-        // Detector saw poisoning but it cleared between report and fix —
-        // nothing to do.
         return false;
     }
 
-    // The cache dir is outside the default workspace scope ({.beads/,
-    // .doctor/}). Authorize the mutation by appending the resolved
-    // cache dir to the session's write_scopes. The chokepoint's
-    // `ensure_in_scope` accepts any path whose canonical form starts
-    // with a registered scope, so a single push is enough.
     if !session
         .ctx
         .capabilities
@@ -10450,11 +10142,6 @@ fn fix_recovery_artifacts_aged_if_warned(
         let Some(name) = source.file_name() else {
             continue;
         };
-        // Preserve the .br_recovery/ subdirectory hint in the quarantine
-        // layout so an operator inspecting the run-dir can tell which
-        // artifacts came from the recovery dir vs which were bare
-        // .bad_<TS> siblings. The destination always lives under
-        // .doctor/ (in scope) regardless of source location.
         let dest = session
             .run
             .root
@@ -10620,7 +10307,6 @@ fn fix_base_jsonl_symlink_if_warned(
     ctx: &OutputContext,
     session: Option<&mut DoctorRepairSession>,
 ) -> bool {
-    // Locate the base_jsonl Warn whose details.kind == "symlink".
     let symlink_finding = report.checks.iter().find(|c| {
         c.name == "base_jsonl"
             && c.status == CheckStatus::Warn
@@ -10643,9 +10329,6 @@ fn fix_base_jsonl_symlink_if_warned(
     };
 
     let source = beads_dir.join("beads.base.jsonl");
-    // Re-confirm symlink at fix time (TOCTOU defense — if the operator
-    // moved the symlink between detect and fix, we want to no-op
-    // rather than mutate an unintended target).
     match fs::symlink_metadata(&source) {
         Ok(meta) if meta.file_type().is_symlink() => {}
         _ => return false,
@@ -10738,19 +10421,10 @@ fn fix_base_jsonl_stale_if_warned(
             return false;
         }
     };
-    // Defensive: never regenerate from an empty JSONL (would silently
-    // truncate the anchor and lose any forensic value). The detector
-    // already skips when live is empty, but re-check at fix time
-    // (TOCTOU defense).
     if live_bytes.is_empty() {
         return false;
     }
 
-    // The detector deliberately uses only mtimes so its common path stays
-    // stat-only. A later write can therefore make issues.jsonl newer even
-    // when its bytes still match the anchor. Do not turn that harmless
-    // timestamp drift into a recorded mutation: repair must be idempotent,
-    // and an identical anchor is already the exact desired state.
     if fs::read(&anchor).is_ok_and(|anchor_bytes| anchor_bytes == live_bytes) {
         return false;
     }
@@ -10822,8 +10496,6 @@ fn fix_orphan_tmp_files_if_warned(
         return false;
     };
 
-    // Re-run the detector at fix time. Anything that's no-longer-orphan
-    // (e.g., a peer process just wrote it) must not be touched.
     let Ok(entries) = fs::read_dir(beads_dir) else {
         return false;
     };
@@ -11047,8 +10719,6 @@ fn compute_db_jsonl_id_delta(conn: &Connection, jsonl_path: &Path) -> Result<IdD
     use std::collections::HashSet;
     use std::io::{BufRead, BufReader};
 
-    // DB side: include the same filter the cardinality check uses so
-    // counts and ids agree on the same population.
     let rows = conn.query(
         "SELECT id FROM issues \
          WHERE (ephemeral = 0 OR ephemeral IS NULL) AND id NOT LIKE '%-wisp-%'",
@@ -11060,11 +10730,6 @@ fn compute_db_jsonl_id_delta(conn: &Connection, jsonl_path: &Path) -> Result<IdD
         }
     }
 
-    // JSONL side: re-parse each record. We can't reuse the validator's
-    // summary here because it doesn't carry the id set, and threading
-    // the set through `JsonlCountState` would require touching every
-    // callsite of `check_jsonl`. The re-read is bounded to once per
-    // doctor run and only happens on the warn path.
     let file = std::fs::File::open(jsonl_path)?;
     let reader = BufReader::with_capacity(2 * 1024 * 1024, file);
     let mut jsonl_ids: HashSet<String> = HashSet::new();
@@ -11074,14 +10739,9 @@ fn compute_db_jsonl_id_delta(conn: &Connection, jsonl_path: &Path) -> Result<IdD
         if trimmed.is_empty() {
             continue;
         }
-        // Lightweight extract: pull just `id` rather than deserializing
-        // the full Issue. Doctor isn't a hot path but the JSONL can be
-        // large and we don't need the rest of the fields.
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
             && let Some(id) = value.get("id").and_then(serde_json::Value::as_str)
         {
-            // Apply the same wisp filter as the DB query so the
-            // comparison stays apples-to-apples.
             if id.contains("-wisp-") {
                 continue;
             }
@@ -11296,9 +10956,7 @@ fn push_matching_count_id_delta_check(
     }
 }
 
-// ============================================================================
 // SYNC SAFETY CHECKS (beads-0v1.2.6)
-// ============================================================================
 
 /// Check if the JSONL path is within the sync allowlist.
 ///
@@ -11310,7 +10968,6 @@ fn push_matching_count_id_delta_check(
 fn check_sync_jsonl_path(jsonl_path: &Path, beads_dir: &Path, checks: &mut Vec<CheckResult>) {
     let check_name = "sync_jsonl_path";
 
-    // 1. Check if path is valid UTF-8
     if let Some(_name) = jsonl_path.file_name().and_then(|n| n.to_str()) {
         // 2. Check for git path access (critical safety invariant)
         let git_check = validate_no_git_path(jsonl_path);
@@ -11363,7 +11020,6 @@ fn check_sync_jsonl_path(jsonl_path: &Path, beads_dir: &Path, checks: &mut Vec<C
             return;
         }
 
-        // 3. Check if path is within beads_dir allowlist
         let path_validation = validate_sync_path(jsonl_path, beads_dir);
         match path_validation {
             PathValidation::Allowed => {
@@ -11457,7 +11113,6 @@ fn check_sync_jsonl_path(jsonl_path: &Path, beads_dir: &Path, checks: &mut Vec<C
                 );
             }
             PathValidation::GitPathAttempt { path } => {
-                // Already handled above, but include for completeness
                 push_check(
                     checks,
                     check_name,
@@ -11507,7 +11162,6 @@ fn check_sync_conflict_markers(jsonl_path: &Path, checks: &mut Vec<CheckResult>)
                     None,
                 );
             } else {
-                // Format first few markers for display
                 let preview: Vec<serde_json::Value> = markers
                     .iter()
                     .take(5)
@@ -11562,12 +11216,10 @@ fn check_sync_metadata(
     jsonl_path: Option<&Path>,
     checks: &mut Vec<CheckResult>,
 ) {
-    // Get metadata for diagnostic details
     let last_import = latest_metadata_value(conn, "last_import_time");
     let last_export = latest_metadata_value(conn, "last_export_time");
     let jsonl_hash = latest_metadata_value(conn, "jsonl_content_hash");
 
-    // Check dirty issues count
     let dirty_count: i64 = conn
         .query_row("SELECT count(*) FROM dirty_issues")
         .ok()
@@ -11588,9 +11240,6 @@ fn check_sync_metadata(
         details["jsonl_hash"] = serde_json::json!(&hash[..16.min(hash.len())]);
     }
 
-    // Determine staleness using the canonical compute_staleness() from sync module.
-    // This avoids duplicating logic that accounts for last_export_time, mtime witness
-    // fast-path, and content hash verification (issue #173).
     let (jsonl_exists, jsonl_newer, db_newer) = if let Some(p) = jsonl_path {
         match SqliteStorage::open(db_path).and_then(|storage| compute_staleness(&storage, p)) {
             Ok(staleness) => (
@@ -11626,18 +11275,6 @@ fn check_sync_metadata(
             );
         }
         (true, false) => {
-            // beads#330: report the pending-import direction at the
-            // same advisory severity as the pending-export direction so
-            // the two drift directions are consistent.
-            //
-            // Exception: a *fresh* workspace (`br init`) leaves an empty
-            // `issues.jsonl` whose mtime trails the DB's last_export, so
-            // `jsonl_newer` reads true even though there is nothing to
-            // import (the empty JSONL and an empty DB agree). Flagging
-            // that as Warn would make `br doctor` exit non-zero on a
-            // brand-new, perfectly healthy workspace. Only Warn when the
-            // JSONL actually carries importable content; the benign
-            // empty-JSONL case stays Ok with a clarifying message.
             let jsonl_has_importable_content = jsonl_path
                 .and_then(|p| std::fs::metadata(p).ok())
                 .is_some_and(|meta| meta.len() > 0);
@@ -11708,9 +11345,6 @@ fn execute_repair_indexes(
     args: &DoctorArgs,
     cli: &config::CliOverrides,
 ) -> Result<()> {
-    // Acquire the workspace write lock the same way --repair does.
-    // A REINDEX inside a transaction is a write, and concurrency with
-    // another writer is operator error.
     let write_authority = if let Some(authority) =
         cli.database_family_write_authority_for(beads_dir, &paths.db_path)
     {
@@ -11750,10 +11384,6 @@ fn execute_repair_indexes(
         );
     }
 
-    // Pre-snapshot backup. Same shape `--repair` uses: copy the live
-    // DB to a sidecar before mutating, restore on any failure inside
-    // the REINDEX transaction. The snapshot path lives next to the
-    // DB so it shares the same filesystem and rename is atomic.
     let snapshot_path = paths.db_path.with_extension("db.pre-repair-indexes");
     let wal_path = PathBuf::from(format!("{}-wal", paths.db_path.to_string_lossy()));
     let shm_path = PathBuf::from(format!("{}-shm", paths.db_path.to_string_lossy()));
@@ -11769,9 +11399,6 @@ fn execute_repair_indexes(
 
     checkpoint_and_snapshot_repair_indexes(&paths.db_path, &snapshot_path, &write_authority)?;
 
-    // Open the DB and enumerate every user-defined index so we don't
-    // reindex sqlite_autoindex_* or any internal index — those are
-    // managed by SQLite and not the partial-index class we're after.
     write_authority.verify_database_authority()?;
     let conn = Connection::open(paths.db_path.to_string_lossy().into_owned())?;
     write_authority.verify_database_authority()?;
@@ -11794,19 +11421,12 @@ fn execute_repair_indexes(
         .collect();
 
     if index_names.is_empty() {
-        // No user indexes — nothing to reindex. Leave the snapshot in
-        // place so the operator has a recoverable pre-state regardless.
         ctx.info("doctor --repair-indexes: no user indexes found; nothing to do");
         conn.close()?;
         write_authority.verify_database_authority()?;
         return Ok(());
     }
 
-    // Run all REINDEX statements inside a single transaction so the
-    // tree is either fully repaired or the live DB returns to its
-    // pre-state on any failure mid-pass. This avoids the
-    // half-rebuilt-tree window the user flagged in their #288 repro
-    // (step 2 -> 3 -> 4 iterative discovery).
     if let Err(err) = conn.execute("BEGIN IMMEDIATE") {
         close_repair_indexes_connection(conn, "after BEGIN IMMEDIATE failed");
         return Err(err.into());
@@ -11835,18 +11455,12 @@ fn execute_repair_indexes(
             Ok(())
         }
         Err(err) => {
-            // Rollback inside the connection first, then restore from
-            // the pre-snapshot for defense in depth — if rollback
-            // itself failed (corrupt WAL etc.), the snapshot is the
-            // authoritative pre-state.
             let _ = conn.execute("ROLLBACK");
             tracing::warn!(
                 error = %err,
                 snapshot = %snapshot_path.display(),
                 "doctor --repair-indexes: REINDEX failed; rolling back from pre-snapshot"
             );
-            // Close the connection before the file copy so we don't
-            // race the SQLite WAL machinery on the live DB.
             close_repair_indexes_connection(conn, "before restoring pre-snapshot");
             restore_repair_indexes_snapshot(
                 paths,
@@ -11866,13 +11480,6 @@ fn checkpoint_and_snapshot_repair_indexes(
     write_authority: &Arc<crate::sync::DatabaseFamilyWriteLock>,
 ) -> Result<()> {
     // WAL-safety contract: checkpoint before snapshot so the `.db`
-    // file alone is a complete pre-state for restore-via-copy. When
-    // checkpoint fails (concurrent reader holding a snapshot,
-    // unsupported journal mode, etc.) we MUST also snapshot the WAL
-    // and SHM sidecars so the restore path can restore the full
-    // pre-state — otherwise a restore would overwrite the live DB
-    // with a snapshot that's missing whatever data the WAL still
-    // held, silently destroying committed-but-uncheckpointed work.
     write_authority.verify_database_authority()?;
     let conn = Connection::open(db_path.to_string_lossy().into_owned())?;
     let checkpoint_complete = match wal_checkpoint_truncate_complete(&conn) {
@@ -11888,16 +11495,6 @@ fn checkpoint_and_snapshot_repair_indexes(
     close_repair_indexes_connection(conn, "after pre-snapshot WAL checkpoint");
     write_authority.verify_database_authority()?;
 
-    // Clear sidecar snapshots from any previous `--repair-indexes`
-    // invocation BEFORE writing the new ones. Without this cleanup,
-    // a previous run that failed checkpoint (and therefore wrote
-    // `<snapshot>-wal` / `<snapshot>-shm`) could leave those files
-    // on disk; if the current run's checkpoint succeeds, we
-    // wouldn't overwrite them, and the restore path would
-    // incorrectly find them and use them as the "pre-state" — a
-    // Frankenstein mix of two different points in time. The
-    // missing-sidecar-snapshot signal is load-bearing in the
-    // restore logic, so we keep it accurate by clearing first.
     let wal_snap = PathBuf::from(format!("{}-wal", snapshot_path.to_string_lossy()));
     let shm_snap = PathBuf::from(format!("{}-shm", snapshot_path.to_string_lossy()));
     for stale in [&wal_snap, &shm_snap] {
@@ -11927,14 +11524,6 @@ fn checkpoint_and_snapshot_repair_indexes(
     })?;
     write_authority.verify_database_authority()?;
 
-    // When checkpoint failed, also snapshot the WAL/SHM sidecars
-    // alongside the `.db` so the restore path can restore the full
-    // pre-state. We use a sidecar-paths convention parallel to the
-    // main snapshot: `<snapshot_path>-wal`, `<snapshot_path>-shm`.
-    // When checkpoint succeeded we deliberately skip — the `.db`
-    // snapshot is complete, and missing sidecar snapshots are the
-    // signal to the restore path that it should delete the live
-    // sidecars (they have no valid pre-state to restore).
     if !checkpoint_complete {
         let wal_live = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
         let shm_live = PathBuf::from(format!("{}-shm", db_path.to_string_lossy()));
@@ -12031,22 +11620,6 @@ fn restore_repair_indexes_snapshot(
     })?;
     write_authority.verify_database_authority()?;
 
-    // WAL/SHM restore handling. Two paths:
-    //
-    // (A) `<snapshot>-wal` / `<snapshot>-shm` exist on disk: the
-    //     pre-snapshot checkpoint failed and we preserved the live
-    //     sidecars verbatim. Copy them back over the live sidecars
-    //     so the post-restore state is byte-identical to the
-    //     pre-repair-indexes pre-state. This is the only path that
-    //     preserves committed-but-uncheckpointed WAL frames the
-    //     user had at the time of the call.
-    //
-    // (B) Sidecar snapshots don't exist: the pre-snapshot checkpoint
-    //     succeeded, so the `.db` snapshot is complete and any live
-    //     WAL/SHM contains only post-snapshot frames from the failed
-    //     REINDEX transaction. Delete the live sidecars so they
-    //     can't replay against the restored `.db` and silently undo
-    //     the rollback.
     for sidecar in sidecars {
         let sidecar_snapshot = PathBuf::from(format!(
             "{}-{}",
@@ -12070,9 +11643,6 @@ fn restore_repair_indexes_snapshot(
                     });
                 }
             }
-            // The snapshot copy stays on disk as forensic evidence
-            // — operators can verify the restore by comparing the
-            // restored sidecar against `<snapshot>-{wal,shm}`.
         } else {
             match std::fs::remove_file(sidecar) {
                 Ok(()) => tracing::debug!(
@@ -12138,8 +11708,6 @@ fn quote_sql_identifier(name: &str) -> String {
 /// resolved `no-db` value. This honors a config-file `no-db: true` as well as
 /// the `--no-db` flag. #329
 fn resolve_doctor_no_db(beads_dir: &Path, cli: &config::CliOverrides) -> bool {
-    // If startup config can't be loaded, fall back to the explicit CLI
-    // override (the conservative, DB-running default is `false`).
     let Ok(startup) = config::load_startup_config(beads_dir) else {
         return cli.no_db.unwrap_or(false);
     };
@@ -12183,10 +11751,6 @@ fn collect_doctor_report_with_mode_and_db_override(
     mode: DoctorInspectionMode,
     no_db: bool,
 ) -> Result<DoctorRun> {
-    // Snapshot the WAL size before ANY database open in this function:
-    // check_pending_sync_merge and the inspection connection each open and
-    // cleanly close the database, which checkpoints and REMOVES a padded or
-    // oversized WAL before check_wal_oversized gets to stat it.
     let pre_open_wal_size = fs::metadata(sqlite_wal_sidecar_path(&paths.db_path))
         .ok()
         .filter(std::fs::Metadata::is_file)
@@ -12194,37 +11758,18 @@ fn collect_doctor_report_with_mode_and_db_override(
     let mut checks = Vec::new();
     check_merge_artifacts(beads_dir, &paths.jsonl_path, &mut checks)?;
     check_base_jsonl(beads_dir, &mut checks);
-    // Pass-5 cycle 10: doctor's own runs dir size (operator-prunable).
     let repo_root = beads_dir.parent().unwrap_or(beads_dir);
     check_doctor_runs_dir_size(repo_root, &mut checks);
-    // Pass-5 cycle 28: writability of `.doctor/` so the next --repair
-    // won't crash deep inside the chokepoint.
     check_doctor_runs_creatable(repo_root, &mut checks);
-    // Pass-5 cycle 30: writability of the active DB recovery dir so the
-    // next --repair won't crash mid-backup.
-    //
-    // #329: this is a DB-backed check (it probes the database's recovery
-    // sidecar dir). Under `--no-db` (the JSONL-only contract) we never open
-    // or recover the DB, so skip it and report it in `db.no_db_mode` below.
     if !no_db {
         check_recovery_dir_writable(&paths.db_path, beads_dir, &mut checks);
     }
-    // Pass-5 cycle 31: writability of `.beads/.write.lock` so we don't
-    // mask EACCES failures as cryptic "could not open lock" errors.
     check_write_lock_writable(beads_dir, &mut checks);
-    // Pass-5 cycle 32: writability of the repo-root `.gitignore` —
-    // surfaces a real blocker to the existing gitignore_repair fixer.
     check_root_gitignore_writable(repo_root, &mut checks);
-    // Pass-5 cycle 11: world-readable config.yaml containing secrets.
     check_config_yaml_secret_mode(beads_dir, &mut checks);
-    // Pass-5 cycle 12: multiple `br` binaries on $PATH (env-based,
-    // not workspace-scoped).
     check_multiple_br_in_path(&mut checks);
-    // Pass-5 cycle 13: .beads/.gitignore present + expected patterns.
     check_inner_gitignore_present(beads_dir, &mut checks);
-    // Pass-5 cycle 15: orphan *.tmp files from interrupted atomic writes.
     check_orphan_tmp_files(beads_dir, &mut checks);
-    // Pass-5 cycle 18: .br_history/ snapshot accumulation (inode pressure).
     check_br_history_size(beads_dir, &mut checks);
     check_root_gitignore(beads_dir, &mut checks);
     check_routes_jsonl(beads_dir, &mut checks);
@@ -12236,31 +11781,15 @@ fn collect_doctor_report_with_mode_and_db_override(
     check_orphaned_write_lock(beads_dir, &mut checks);
     check_routes_targets_resolve(beads_dir, &mut checks);
     check_startup_cache(beads_dir, db_override, &mut checks);
-    // A committed merge is a durable saga, not a generic corruption class.
-    // Surface it before any ordinary DB/JSONL consistency findings so
-    // operators know that only `br sync --merge` may advance the state.
-    // This check still runs in `--no-db` mode because a JSONL-only rewrite
-    // could otherwise overwrite the pending merge's expected artifact.
     check_pending_sync_merge(&paths.db_path, &mut checks);
 
-    // ADR-0001 §5.4: closed beads must prove their closes from a PASS row in
-    // gates.jsonl. DB-backed, so skipped under --no-db like its peers.
     if !no_db {
         check_gate_verdict_orphans(beads_dir, &paths.db_path, &mut checks);
-        // ADR-0035 Spec 4: `q` captures drafts; abandoned ones expire.
         check_stale_drafts(&paths.db_path, &mut checks);
     }
 
-    // The JSONL-side audit always runs — it is the source of truth under the
-    // `--no-db` (JSONL-only) contract.
     let (jsonl_path, jsonl_count) = inspect_doctor_jsonl(beads_dir, paths, mode, &mut checks);
     if no_db {
-        // #329: under `--no-db`, `br` never opens or recovers the SQLite DB,
-        // so the DB-backed checks below would either be meaningless or would
-        // violate the JSONL-only contract by touching the database file.
-        // Skip them and emit a single Ok check that enumerates exactly which
-        // checks were skipped, so robot callers can see the scope of the
-        // reduced run rather than silently missing findings.
         let skipped = [
             "db.recovery_dir_writable",
             "db.bloat_vs_jsonl",
@@ -12278,12 +11807,7 @@ fn collect_doctor_report_with_mode_and_db_override(
             Some(serde_json::json!({ "skipped_checks": skipped })),
         );
     } else {
-        // Capture the WAL size BEFORE any database open: a clean open+close
-        // checkpoints and removes the WAL, so a genuinely oversized WAL
-        // would vanish mid-inspection and never reach check_wal_oversized.
-        // Pass-5 cycle 22: db-to-selected-jsonl size ratio (VACUUM candidate).
         check_db_bloat_vs_jsonl(&paths.db_path, jsonl_path.as_deref(), &mut checks);
-        // Pass-5 cycle 23: selected DB WAL sidecar oversized (checkpoint candidate).
         check_wal_oversized(&paths.db_path, &mut checks, pre_open_wal_size);
         inspect_doctor_database(
             beads_dir,
@@ -12321,18 +11845,11 @@ fn inspect_doctor_jsonl(
     checks: &mut Vec<CheckResult>,
 ) -> (Option<PathBuf>, JsonlCountState) {
     let jsonl_path = select_doctor_jsonl_path(beads_dir, paths);
-    // Pass-5 cycle 14: selected JSONL world-writable security check.
     check_jsonl_world_writable(jsonl_path.as_deref(), checks);
-    // Pass-5 cycle 20: selected JSONL CRLF line endings.
     check_jsonl_crlf_endings(jsonl_path.as_deref(), checks);
-    // Pass-5 cycle 21: UTF-8 BOM at start of selected JSONL.
     check_jsonl_utf8_bom(jsonl_path.as_deref(), checks);
-    // Pass-5 cycle 19: selected JSONL trailing newline convention.
     check_jsonl_trailing_newline(jsonl_path.as_deref(), checks);
-    // Pass-5 cycle 17: oversized JSONL (slow flushes, RAM pressure).
     check_jsonl_oversized(jsonl_path.as_deref(), checks);
-    // Pass-5 cycle 33: scan for duplicate `id` values in the JSONL
-    // (merge-artifact corruption signal).
     check_jsonl_duplicate_ids(jsonl_path.as_deref(), checks);
     let jsonl_count = if let Some(path) = jsonl_path.as_ref() {
         check_sync_jsonl_path(path, beads_dir, checks);
@@ -12362,9 +11879,6 @@ fn inspect_doctor_jsonl(
         JsonlCountState::Missing
     };
 
-    // #350: Full-mode dependency-graph audit over the JSONL source of truth.
-    // Only runs when the JSONL parsed cleanly (a malformed file is already
-    // surfaced by `jsonl.parse` above and would poison the graph).
     if matches!(mode, DoctorInspectionMode::Full)
         && matches!(jsonl_count, JsonlCountState::Available(_))
         && let Some(path) = jsonl_path.as_ref()
@@ -12410,8 +11924,6 @@ fn check_dependency_graph_jsonl(path: &Path, checks: &mut Vec<CheckResult>) {
     let issues = match read_jsonl_issues_for_graph(path) {
         Ok(issues) => issues,
         Err(err) => {
-            // Non-fatal: jsonl.parse already owns the hard parse error. Emit a
-            // Warn so the graph audit's absence is visible, not silent.
             push_check(
                 checks,
                 "dep.dead_closed_blocking_edges",
@@ -12423,20 +11935,12 @@ fn check_dependency_graph_jsonl(path: &Path, checks: &mut Vec<CheckResult>) {
         }
     };
 
-    // Index status by id. Terminal = closed or tombstone (a satisfied blocker).
     let mut status_by_id: std::collections::HashMap<String, crate::model::Status> =
         std::collections::HashMap::with_capacity(issues.len());
     for issue in &issues {
         status_by_id.insert(issue.id.clone(), issue.status.clone());
     }
 
-    // A blocker is "live" (still blocking) when it exists AND is non-terminal.
-    // A blocker is "dead" when its target is terminal OR absent (and not an
-    // external ref, whose state `br` cannot resolve). #432: the two dead
-    // states are opposite conditions — a present-but-terminal blocker is a
-    // SATISFIED dependency (the normal end of completed work), while an
-    // absent one is a DANGLING edge (points at nothing) — so classify rather
-    // than collapse.
     let blocker_fate = |target: &str| -> BlockerFate {
         if target.starts_with("external:") {
             return BlockerFate::Live;
@@ -12453,18 +11957,10 @@ fn check_dependency_graph_jsonl(path: &Path, checks: &mut Vec<CheckResult>) {
     let mut fully_unblocked_issues: Vec<FullyUnblockedIssue> = Vec::new();
 
     for issue in &issues {
-        // Only audit open (non-terminal, non-draft) issues — the work surface.
         if issue.status.is_terminal() || issue.status.is_draft() {
             continue;
         }
 
-        // Forward "blocked_by" edges only: an issue's own `depends_on_id`
-        // targets it is blocked by. Restricted to the forward blocking types
-        // (`blocks`/`conditional-blocks`/`waits-for`) — `parent-child` is
-        // INTENTIONALLY excluded because its blocking direction is reversed
-        // (the parent is blocked by the child, encoded as `issue_id=child,
-        // depends_on_id=parent`), so it is not a forward "blocked_by" edge for
-        // `issue`. This matches the ready-query forward-edge semantics.
         let blocking_targets: Vec<&str> = issue
             .dependencies
             .iter()
@@ -12477,7 +11973,6 @@ fn check_dependency_graph_jsonl(path: &Path, checks: &mut Vec<CheckResult>) {
                 )
             })
             .map(|dep| dep.depends_on_id.as_str())
-            // An issue can't meaningfully block itself; ignore self-edges.
             .filter(|target| *target != issue.id)
             .collect();
 
@@ -12497,9 +11992,6 @@ fn check_dependency_graph_jsonl(path: &Path, checks: &mut Vec<CheckResult>) {
         let dead_count = satisfied.len() + dangling.len();
 
         if dead_count > 0 {
-            // `dead_blockers` is retained for consumers of the pre-#432
-            // shape; `satisfied_blockers`/`dangling_blockers` carry the
-            // discrimination.
             let mut dead: Vec<&str> = Vec::with_capacity(dead_count);
             dead.extend(&satisfied);
             dead.extend(&dangling);
@@ -12514,8 +12006,6 @@ fn check_dependency_graph_jsonl(path: &Path, checks: &mut Vec<CheckResult>) {
             }
         }
 
-        // Fully unblocked: every declared blocker is dead (closed/absent), so
-        // nothing live remains to block this open issue.
         if dead_count == blocking_targets.len() {
             fully_unblocked_issues.push(classify_fully_unblocked(issue));
         }
@@ -12557,8 +12047,6 @@ fn classify_fully_unblocked(issue: &crate::model::Issue) -> FullyUnblockedIssue 
     let mut excluded_reasons: Vec<&'static str> = Vec::new();
     let mut stale_blocked = false;
     match &issue.status {
-        // Open is ready; terminal and draft statuses were filtered out
-        // before this point.
         Status::Open | Status::Closed | Status::Tombstone | Status::Draft => {}
         Status::InProgress => excluded_reasons.push("claimed (status in_progress)"),
         Status::Blocked => stale_blocked = true,
@@ -12632,10 +12120,6 @@ fn emit_dead_closed_blocking_edges(
         return;
     }
     if dangling_edge_issue_ids.is_empty() {
-        // Every dead edge is a satisfied dependency — benign steady state.
-        // Do NOT recommend `br dep remove` here: satisfied edges are project
-        // history (`br dep tree` displays them), and closing work regenerates
-        // the state (#432, and the #426 bulk-delete incident).
         push_check(
             checks,
             "dep.dead_closed_blocking_edges",
@@ -12841,33 +12325,14 @@ fn inspect_existing_doctor_database(
         }
         check_null_defaults(&conn, checks);
         check_integrity(&conn, checks);
-        // Pass-4 cycle 4: detect metadata.jsonl_content_hash drift vs
-        // the JSONL on disk. Uses the SNAPSHOT connection so the live
-        // DB family (incl. SHM/WAL sidecars) is undisturbed.
         check_export_hash_cache_divergence(&conn, jsonl_path, checks);
-        // Pass-5 cycle 7: missing-post-flush anchor (DB-aware variant of
-        // the file-based base_jsonl check). Uses metadata.last_export_time
-        // to distinguish fresh-clone-missing from post-flush-missing.
-        // The anchor file is checked at the REAL beads_dir (db_path's
-        // parent), not the snapshot dir, because the missing-on-disk
-        // condition must reference the live workspace.
         let real_beads_dir = db_path.parent().unwrap_or(db_path);
         check_base_jsonl_missing_post_flush(&conn, real_beads_dir, jsonl_path, checks);
-        // Pass-5 cycle 8: detect orphan rows in dirty_issues (FK
-        // CASCADE bypassed). Uses the snapshot connection so live DB
-        // family is undisturbed.
         check_dirty_bitmap_divergence(&conn, checks);
-        // Pass-5 cycle 34: orphan rows in comments (FK off during delete).
         check_comments_orphans(&conn, checks);
-        // Pass-5 cycle 35: orphan rows in labels (FK off during delete).
         check_labels_orphans(&conn, checks);
-        // Pass-5 cycle 36: orphan rows in dependencies (issue_id side only;
-        // depends_on_id intentionally unguarded for cross-repo refs).
         check_dependencies_orphans(&conn, checks);
-        // beads-m3mi: audit-suspect close_reasons (warn level)
         check_suspect_close_reasons(&conn, checks);
-        // issue #311: flag issues whose status falls outside a strict
-        // workflow.statuses set (no-op unless configured).
         check_workflow_statuses(&conn, real_beads_dir, checks);
         if mode == DoctorInspectionMode::Full {
             if let Err(err) = check_db_count(&conn, jsonl_count, jsonl_path, checks) {
@@ -12909,8 +12374,6 @@ fn inspect_existing_doctor_database(
 /// acquired before the pending-merge gate is violated.
 #[allow(clippy::too_many_lines)]
 pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContext) -> Result<()> {
-    // WP6: dispatch to the agent-ergonomics surface when a subcommand is
-    // present. The flat handler below stays untouched.
     if let Some(sub) = &args.subcommand {
         let undo_write_authority = if let crate::cli::DoctorSubcommand::Undo(undo) = sub
             && !undo.dry_run
@@ -12969,13 +12432,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             checks,
         };
         print_report(&report, ctx)?;
-        // Phase 10 cold-prober finding (`beads-s7nx`): missing
-        // .beads/ is the canonical `no_input` (66) condition per the
-        // documented exit-code dictionary. `br doctor health` already
-        // returns 66 for this case; the flat `br doctor` path used to
-        // exit 1, which conflicted with the per-`DoctorExitCode` contract
-        // and made CI / pre-commit hooks unable to distinguish "no
-        // workspace here" from "workspace has findings".
         crate::shutdown::exit_process(DoctorExitCode::NoInput.as_i32());
     };
 
@@ -12983,15 +12439,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         Ok(paths) => paths,
         Err(err) => {
             let mut checks = Vec::new();
-            // Pass-2 / WP5: when resolve_paths fails (typically because
-            // .beads/config.yaml has a YAML parse error), run the
-            // file-parse detectors that DON'T need a fully-resolved
-            // ConfigPaths handle. `check_config_yaml` surfaces the
-            // precise serde_yml error + the canonical "Open the file"
-            // fix; without this, the operator gets the bare
-            // "Failed to read metadata.json" message which routes
-            // them to the WRONG file (config.yaml is broken, not
-            // metadata.json).
             check_config_yaml(&beads_dir, &mut checks);
             check_metadata_json(&beads_dir, &mut checks);
             push_check(
@@ -13012,62 +12459,17 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         }
     };
 
-    // Round-3 fresh-eyes finding (`beads-sexc`): every other mutating
-    // subcommand (`update`, `delete`, `close`, `dep`, `label`, …) routes its
-    // writes through `acquire_routed_workspace_write_lock` so concurrent
-    // processes cannot tear the on-disk DB family. `--repair` performs the
-    // most invasive mutations of all (VACUUM, REINDEX, JSONL rebuild,
-    // chokepointed file/DB ops), but its execute() previously had no
-    // explicit guard — it relied entirely on `main.rs`'s startup write lock
-    // (see `needs_write_lock()` matching `Commands::Doctor(_)`). That works
-    // when `br doctor` is invoked through the binary, but it offers no
-    // defense-in-depth for callers that exercise `commands::doctor::execute`
-    // directly (e.g., embedded use, future test harnesses) and the failure
-    // mode under contention is opaque (generic `BeadsError::Config` →
-    // exit code 1) instead of the structured `ConcurrencyLost` (exit 5)
-    // documented in `doctor_subsystems::exit_codes`.
-    //
-    // Wire the lock here, BEFORE live report collection, run-dir creation,
-    // fixer dispatch, or mutate() call:
-    //   * If `main.rs` already holds the workspace write lock for this
-    //     beads_dir (the common case under the binary), reuse it — flock()
-    //     is per-open-file-description on Linux and re-locking from a
-    //     fresh handle in the same process would deadlock against our
-    //     own startup guard.
-    //   * Otherwise, acquire the lock ourselves with the configured
-    //     `--lock-timeout`. On contention, exit with structured exit
-    //     code 5 (`ConcurrencyLost`) so agent scripts and CI can
-    //     reliably distinguish "another process held the lock" from
-    //     other failure modes.
-    //
-    // The guard binds to a let in `execute()` so it lives until function
-    // return — RAII drop releases the lock on success, panic, and every
-    // early-return below. Releasing the lock implicitly on panic is
-    // load-bearing: a panicking fixer must not strand the `.write.lock`
-    // file held against subsequent runs.
     let repair_write_authority: Option<Arc<crate::sync::DatabaseFamilyWriteLock>> = if args.repair
         && !args.robot_triage
     {
         if let Some(authority) = cli.database_family_write_authority_for(&beads_dir, &paths.db_path)
         {
-            // main.rs already serialized us against concurrent writers.
-            // Reuse that exact inode-bound capability; a fresh flock
-            // handle in the same process would deadlock on Linux.
             if let Err(err) = authority.verify_database_authority() {
                 emit_concurrency_lost(&beads_dir, &err, ctx, "--repair");
                 crate::shutdown::exit_process(DoctorExitCode::ConcurrencyLost.as_i32());
             }
             Some(Arc::clone(authority))
         } else {
-            // Phase 10 cold-prober finding (`beads-mbpq` P0):
-            // the documented contract is "try-lock or refuse with
-            // exit 5 (concurrency_lost)" — NOT "block up to
-            // --lock-timeout then refuse". Concurrency between two
-            // `br doctor --repair` invocations is an unrecoverable
-            // operator-level condition: blocking for 30s and then
-            // erroring serves nobody. Operators who genuinely want
-            // to wait can pass `--lock-timeout 30000` explicitly;
-            // the default doctor path tries once and refuses fast.
             let timeout_ms = cli.lock_timeout.unwrap_or(0);
             match crate::sync::blocking_database_family_write_lock_with_timeout(
                 &beads_dir,
@@ -13095,17 +12497,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         None
     };
 
-    // Round-5 fresh-eyes follow-through (`beads-73ux`): the WP1
-    // refuse-unsafe gates (schema-version-downgrade,
-    // recovery-fingerprint-integrity) must run BEFORE any
-    // run-dir creation, fixer dispatch, or `mutate()` call — they are
-    // *precondition* checks. We run them AFTER the workspace write lock
-    // is held so a concurrent writer cannot mutate the DB header (and
-    // thus the gate's verdict) between our gate read and the chokepoint
-    // execution. Pure-read; never mutates.
-    //
-    // On Refuse, exit 4 (`RefusedUnsafe`) with a structured envelope.
-    // The lock guard's RAII drop releases `.write.lock` on this exit.
     if args.repair && !args.robot_triage {
         match refuse_gates::run_all(&beads_dir, &paths.db_path) {
             GateOutcome::Allow => {}
@@ -13127,10 +12518,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         refuse_doctor_mutation_if_merge_pending("--repair", &paths.db_path, write_authority, ctx);
     }
 
-    // --repair-indexes (#288): REINDEX-only recovery path, strictly
-    // narrower than --repair. It must run before live report collection
-    // because report collection opens the DB; refuse-unsafe gates need
-    // to inspect the pre-open on-disk state.
     if args.repair_indexes && !args.robot_triage {
         return execute_repair_indexes(&beads_dir, &paths, ctx, args, cli);
     }
@@ -13140,8 +12527,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
     } else {
         DoctorInspectionMode::Full
     };
-    // #329: resolve `--no-db` (JSONL-only) the same way the storage layer does
-    // so DB-backed checks are skipped and reported via `db.no_db_mode`.
     let no_db = resolve_doctor_no_db(&beads_dir, cli);
     let mut initial = collect_doctor_report_with_mode_and_db_override(
         &beads_dir,
@@ -13151,17 +12536,11 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         no_db,
     )?;
 
-    // WP6: --robot-triage short-circuits the flat run with a single
-    // `br.doctor.triage.v1` envelope. Read-only; no further dispatch.
     if args.robot_triage {
         emit_flat_robot_triage(&initial.report);
         return Ok(());
     }
 
-    // Build the per-run session once when --repair is requested. Every repaired
-    // write must have a run-dir, verbatim backup, and actions.jsonl trail. If
-    // the run-dir cannot be created, fail closed before any fixer can fall back
-    // to legacy in-place writes or accidentally ignore --dry-run.
     let mut session: Option<DoctorRepairSession> = if args.repair {
         let repo_root = beads_dir.parent().unwrap_or(&beads_dir);
         Some(DoctorRepairSession::new(repo_root, args.dry_run).map_err(|err| {
@@ -13174,12 +12553,8 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         None
     };
 
-    // Pass-5 cycle 1: per-FM filter built from --only/--skip flags.
-    // The 5 chokepointed fixers below consult the filter; legacy
-    // repair_* paths run unconditionally for now.
     let fixer_filter = FixerFilter::from_args(&args.only, &args.skip);
 
-    // Auto-fix root .gitignore if --repair is passed and the warning is present.
     let gitignore_repaired =
         if args.repair && fixer_filter.allows("fm-configs-gitignore-leaking-beads") {
             let repaired =
@@ -13192,11 +12567,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             false
         };
 
-    // Pass-4 cycle 1: auto-quarantine stuck merge artifacts under --repair.
-    // Per AGENTS.md RULE 1 (no-delete) and the repair-spec for
-    // fm-state_files-merge-artifact-stuck, the fixer moves the artifacts
-    // into <run-dir>/quarantine/.beads/ via the chokepoint so
-    // `doctor undo` can byte-reverse the move.
     let merge_artifacts_repaired =
         if args.repair && fixer_filter.allows("fm-state_files-merge-artifact-stuck") {
             let repaired =
@@ -13209,9 +12579,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             false
         };
 
-    // Pass-4 cycle 2: auto-quarantine poisoned startup-cache files. The
-    // cache lives outside the default workspace, so the fixer extends
-    // the session's write_scopes to include the resolved cache dir.
     let startup_cache_repaired =
         if args.repair && fixer_filter.allows("fm-configs-startup-cache-poisoned") {
             let repaired = fix_startup_cache_if_warned(
@@ -13229,10 +12596,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             false
         };
 
-    // Pass-4 cycle 3: quarantine past-TTL recovery artifacts. The fixer
-    // PRESERVES recent recovery backups (operators commonly need them
-    // for forensic value) and only moves artifacts older than
-    // RECOVERY_AGED_TTL_DAYS into the run-dir quarantine.
     let recovery_aged_repaired =
         if args.repair && fixer_filter.allows("fm-state_files-recovery-artifacts-orphaned") {
             let repaired = fix_recovery_artifacts_aged_if_warned(
@@ -13250,9 +12613,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             false
         };
 
-    // ADR-0001 §5.2 (beads_rust-fence-import-ou8g): stamp empty typed brief
-    // fields from description fences. Self-probing (no report warning keys
-    // it); one-shot by construction, so it no-ops on already-clean trackers.
     let fence_import_repaired =
         if args.repair && fixer_filter.allows("fm-briefs-fence-import-pending") {
             let repaired = fix_fence_import_if_warned(&paths.db_path, ctx, session.as_mut());
@@ -13264,9 +12624,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             false
         };
 
-    // Pass-4 cycle 4: recompute metadata.jsonl_content_hash from the
-    // authoritative JSONL on disk if the cached value has drifted.
-    // JSONL is NEVER mutated; only the cache row updates.
     let export_hash_repaired =
         if args.repair && fixer_filter.allows("fm-caches_indexes-export-hash-cache-divergence") {
             let repaired = fix_export_hash_cache_divergence_if_warned(
@@ -13284,10 +12641,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             false
         };
 
-    // Pass-5 cycle 5: quarantine symlinked merge anchor under --repair.
-    // Only the SYMLINK subset of fm-state_files-base-jsonl-missing-or-stale
-    // is auto-fixed; the stale-anchor subset is regenerated from the
-    // live JSONL bytes by cycle 6's fixer below.
     let base_jsonl_symlink_repaired = if args.repair
         && fixer_filter.allows("fm-state_files-base-jsonl-missing-or-stale")
     {
@@ -13301,8 +12654,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         false
     };
 
-    // Pass-5 cycle 16: quarantine orphan *.tmp files under .beads/
-    // via Op::Rename (same pattern as cycle 1's merge-artifact-stuck).
     let orphan_tmp_repaired =
         if args.repair && fixer_filter.allows("fm-state_files-orphan-tmp-files") {
             let repaired =
@@ -13315,7 +12666,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             false
         };
 
-    // Pass-5 cycle 19: append trailing newline to the selected JSONL via Op::AppendFile.
     let jsonl_eof_newline_repaired =
         if args.repair && fixer_filter.allows("fm-state_files-jsonl-missing-trailing-newline") {
             let repaired = fix_jsonl_trailing_newline_if_warned(
@@ -13333,7 +12683,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         };
     let _ = jsonl_eof_newline_repaired;
 
-    // Pass-5 cycle 21: strip UTF-8 BOM from the selected JSONL via Op::WriteFile.
     let jsonl_bom_repaired =
         if args.repair && fixer_filter.allows("fm-state_files-jsonl-utf8-bom-prefix") {
             let repaired = fix_jsonl_utf8_bom_if_warned(
@@ -13351,7 +12700,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         };
     let _ = jsonl_bom_repaired;
 
-    // Pass-5 cycle 24: convert CRLF→LF in the selected JSONL via Op::WriteFile.
     let jsonl_crlf_repaired =
         if args.repair && fixer_filter.allows("fm-state_files-jsonl-crlf-line-endings") {
             let repaired = fix_jsonl_crlf_endings_if_warned(
@@ -13369,13 +12717,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         };
     let _ = jsonl_crlf_repaired;
 
-    // Pass-5 cycle 6: regenerate the derived merge anchor only after
-    // every content-normalizing JSONL fixer has run. If the live JSONL
-    // contains a BOM, CRLF endings, or lacks its final newline, writing
-    // the anchor first captures the malformed bytes; the normalization
-    // then immediately makes that new anchor stale and forces a second
-    // repair pass. Source-before-derived ordering keeps the repair
-    // idempotent and ensures undo records only one anchor mutation.
     let base_jsonl_stale_repaired =
         if args.repair && fixer_filter.allows("fm-state_files-base-jsonl-missing-or-stale") {
             let repaired =
@@ -13388,7 +12729,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             false
         };
 
-    // Pass-5 cycle 25: strip world-write bit from issues.jsonl via Op::Chmod.
     let jsonl_world_writable_repaired =
         if args.repair && fixer_filter.allows("fm-permissions-jsonl-world-writable") {
             let repaired = fix_jsonl_world_writable_if_warned(
@@ -13406,8 +12746,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         };
     let _ = jsonl_world_writable_repaired;
 
-    // Pass-5 cycle 26: strip world-read/write bits from .beads/config.yaml
-    // when it contains secrets, via Op::Chmod.
     let config_yaml_secret_mode_repaired =
         if args.repair && fixer_filter.allows("fm-permissions-config-yaml-mode-leaks-secrets") {
             let repaired = fix_config_yaml_secret_mode_if_warned(
@@ -13425,8 +12763,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         };
     let _ = config_yaml_secret_mode_repaired;
 
-    // Pass-5 cycle 27: append missing canonical patterns to .beads/.gitignore
-    // via Op::AppendFile.
     let inner_gitignore_repaired =
         if args.repair && fixer_filter.allows("fm-configs-gitignore-leaking-beads") {
             let repaired =
@@ -13440,7 +12776,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         };
     let _ = inner_gitignore_repaired;
 
-    // Pass-5 cycle 29: surgically prune orphan dirty_issues rows via Op::DbExec.
     let dirty_bitmap_orphans_repaired =
         if args.repair && fixer_filter.allows("fm-caches_indexes-dirty-bitmap-divergence") {
             let repaired = fix_dirty_bitmap_orphans_if_warned(
@@ -13458,7 +12793,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         };
     let _ = dirty_bitmap_orphans_repaired;
 
-    // Pass-5 cycle 34: surgically prune orphan comments rows via Op::DbExec.
     let comments_orphans_repaired = if args.repair
         && fixer_filter.allows("fm-caches_indexes-comments-orphans")
     {
@@ -13473,7 +12807,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
     };
     let _ = comments_orphans_repaired;
 
-    // Pass-5 cycle 35: surgically prune orphan labels rows via Op::DbExec.
     let labels_orphans_repaired = if args.repair
         && fixer_filter.allows("fm-caches_indexes-labels-orphans")
     {
@@ -13488,7 +12821,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
     };
     let _ = labels_orphans_repaired;
 
-    // Pass-5 cycle 36: surgically prune orphan dependencies rows via Op::DbExec.
     let dependencies_orphans_repaired =
         if args.repair && fixer_filter.allows("fm-caches_indexes-dependencies-orphans") {
             let repaired = fix_dependencies_orphans_if_warned(
@@ -13532,8 +12864,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         };
     let _ = wal_checkpoint_repaired;
 
-    // Pass-8 cycle 61: backfill schema-declared defaults into NULL NOT-NULL
-    // columns (legacy rows predating a `DEFAULT` addition) via Op::DbExec.
     let null_defaults_repaired =
         if args.repair && fixer_filter.allows("fm-schemas-missing-required-column") {
             let repaired =
@@ -13547,10 +12877,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         };
     let _ = null_defaults_repaired;
 
-    // Pass-10 cycle 62: `--unsafe-auto-fix`-gated VACUUM on db bloat.
-    // VACUUM is normally detect-only (expensive, operator-timed) but
-    // data-equivalent + reversible via the legacy chokepoint snapshot,
-    // so an explicit opt-in is safe.
     let db_bloat_vacuum_repaired = if args.repair
         && args.unsafe_auto_fix
         && fixer_filter.allows("fm-caches_indexes-db-bloat-vs-jsonl")
@@ -13578,20 +12904,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
     };
     let _ = db_bloat_vacuum_repaired;
 
-    // Replay-idempotence reconciliation: the export-hash-cache fixer
-    // above runs BEFORE the JSONL-mutating fixers (BOM strip, CRLF,
-    // trailing-newline, world-writable mode-strip). If any of those
-    // rewrote the JSONL bytes, the cached `metadata.jsonl_content_hash`
-    // is now stale even though the cache fixer's first pass reported
-    // success. Re-run the cache fixer at the end so the workspace is
-    // genuinely quiescent — the second `--repair` invocation under
-    // REPLAY_IDEMPOTENCE=1 finds nothing to do, and the chokepoint
-    // emits zero actions on the no-op replay run.
-    //
-    // The first-pass `export_hash_repaired` flag retains its semantics
-    // (it tracks whether the FIRST cache mismatch was repaired); this
-    // tail call is reported under the same fixer-id and recorded in
-    // actions.jsonl exactly like the first pass.
     let jsonl_was_mutated = jsonl_bom_repaired
         || jsonl_crlf_repaired
         || jsonl_eof_newline_repaired
@@ -13652,27 +12964,12 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
 
     if !args.repair {
         if args.quick {
-            // Phase 8: drop the slow detectors so pre-commit / CI can
-            // gate on a sub-second `br doctor --quick --json`. The
-            // dropped detectors are: db.recoverable_anomalies,
-            // counts.db_vs_jsonl, sync.metadata, sqlite3.integrity_check,
-            // db.write_probe. The remaining checks are all O(file
             // existence) or single PRAGMA so they stay cheap.
             initial
                 .report
                 .checks
                 .retain(|c| !is_quick_suppressed_doctor_check(&c.name));
         }
-        // Per `DoctorExitCode` (and the surface documentation in
-        // `doctor_subsystems/surface.rs`), `br doctor` without `--repair`
-        // should exit `FindingsPresent` (1) whenever any check is not OK
-        // — both WARN and Error. Quick mode already recomputed `ok` this
-        // way after filtering; the full-mode path used to leave `ok`
-        // pinned to `!has_error(&checks)` (set by report construction)
-        // which left WARN findings shaped as `ok: true` in JSON while
-        // we wanted them to fail. Recompute unconditionally so the JSON
-        // `ok` field and the exit code agree on the same predicate
-        // (`!has_non_ok`). See #292.
         initial.report.ok = !has_non_ok(&initial.report.checks);
         print_report(&initial.report, ctx)?;
         if !initial.report.ok {
@@ -13694,11 +12991,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
     let mut local_repair = LocalRepairResult::default();
 
     if initial.report.ok {
-        // Pass-5 cycle 2: legacy repair_* paths now consult the
-        // FixerFilter. AND-ing the predicate against `filter.allows(...)`
-        // makes downstream `if has_X` branches treat a filter-excluded
-        // FM as "no finding to repair", which keeps the
-        // local_repair_audit_record's `verified` invariant intact.
         let has_blocked_cache_rebuild = report_has_blocked_cache_rebuild_finding(&initial.report)
             && fixer_filter.allows(FM_BLOCKED_CACHE_STALE);
         let has_partial_index_warnings = report_has_partial_index_warnings(&initial.report)
@@ -13707,9 +12999,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             && fixer_filter.allows(FM_SQLITE_PAGE_MALFORMED);
         let has_stale_drafts = report_has_stale_drafts_finding(&initial.report);
 
-        // Even when there are no errors, planned deferred cache rebuilds and
-        // integrity warnings can be repaired. Run those local repairs when
-        // --repair is passed and the warnings are present.
         if has_blocked_cache_rebuild
             || has_partial_index_warnings
             || has_warn_page_anomalies
@@ -13814,17 +13103,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
                 );
             }
         } else {
-            // Early-only repair path: when the initial report is OK and no
-            // local-repair-eligible anomalies are present, only the early
-            // fixers (gitignore, merge artifacts, inner_gitignore_append,
-            // orphan rows, WAL checkpoint, null defaults, etc.) may have
-            // fired. Each early fixer re-collects the report on success
-            // (`initial = collect_doctor_report_for_cli(...)` after every
-            // fix), so `initial.report` here is already the post-repair
-            // state — emit it as `post_repair` and surface the
-            // `verified` invariant the test contract / repair surface
-            // expects from any RepairApplied outcome (see
-            // assert_repair_applied_surface in tests/workspace_failure_replay.rs).
             let verified = repair_report_verified(&initial.report);
             let recovery_audit = early_repair.audit_record();
             emit_recovery_audit_record(&recovery_audit);
@@ -13850,10 +13128,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         }
     }
 
-    // Pass-5 cycle 2: gate the post-failure fallback repair_* paths on
-    // the FixerFilter. AND the predicate against `filter.allows(...)`
-    // so the audit chain naturally treats filter-excluded FMs as
-    // "no finding to act on".
     let has_blocked_cache_rebuild = report_has_blocked_cache_rebuild_finding(&initial.report);
     let has_sidecar_anomaly = report_has_sidecar_anomaly(&initial.report);
     if !local_repair.applied()
@@ -13873,7 +13147,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         );
     }
 
-    // Also attempt REINDEX if partial-index warnings are present alongside errors.
     if !local_repair.indexes_reindexed
         && fixer_filter.allows(FM_PARTIAL_INDEX_STALE)
         && report_has_partial_index_warnings(&initial.report)
@@ -13886,10 +13159,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         );
     }
 
-    // VACUUM to fix page-level anomalies (free space corruption, malformed
-    // B-tree pages) caused by frankensqlite's B-tree layer differences with
-    // C sqlite3 (#237, #245).  VACUUM rewrites every page from scratch, so
-    // it fixes both index and table corruption.
     if fixer_filter.allows(FM_SQLITE_PAGE_MALFORMED) && report_has_page_corruption(&initial.report)
     {
         repair_via_vacuum(
@@ -13906,14 +13175,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         initial.clone()
     };
 
-    // #253: the light-repair passes above (notably `reset_blocked_cache_table`
-    // via `repair_recoverable_db_state`) can leave orphaned pages behind that
-    // surface as WARN-level `page N: never used` integrity findings. These
-    // don't flip the DB into ERROR status, so the pre-repair
-    // `report_has_page_corruption` gate misses them — but they're still
-    // page-level residue that VACUUM resolves cleanly. Run VACUUM once to
-    // compact, and re-collect the report.  Guarded by `!local_repair.vacuumed`
-    // so we never loop.
     if !local_repair.vacuumed
         && fixer_filter.allows(FM_SQLITE_PAGE_MALFORMED)
         && report_has_warn_level_page_anomaly(&after_local_repair.report)
@@ -13934,11 +13195,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
     }
 
     if repair_report_verified(&after_local_repair.report) {
-        // Issue #245: REINDEX can fix index ordering so integrity_check
-        // passes, but the underlying B-tree corruption may still cause
-        // writes to fail (reads work, writes get ISSUE_NOT_FOUND).  Run a
-        // write probe to confirm that the DB is truly healthy before
-        // declaring success.
         let write_probe_ok = write_probe_after_repair(&paths.db_path, repair_write_authority);
         if !write_probe_ok {
             let recovery_audit = early_repair.prepend_actions_to_audit(local_repair_audit_record(
@@ -13952,7 +13208,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
                 "Post-repair write probe failed — local repair insufficient, \
                  falling through to full JSONL rebuild"
             );
-            // Don't return early — fall through to JSONL rebuild below.
         } else {
             let repair_message = repair_outcome_message_from_parts(
                 early_repair.messages(),
@@ -13999,14 +13254,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         emit_recovery_audit_record(&recovery_audit);
     }
 
-    // Pass-5 cycle 3: gate the broad JSONL rebuild path on the
-    // FixerFilter. The rebuild addresses multiple FMs simultaneously
-    // (db.open, counts.db_vs_jsonl, schema.tables, schema.columns,
-    // blocked_cache_* rebuild). If `--only` is set and excludes ALL of
-    // them, the operator has explicitly opted out of this remediation class.
-    // Check the filter BEFORE JSONL path and repeat-repair preflights so an
-    // excluded rebuild is reported as a filter refusal, not as a missing-input
-    // or stale-failure artifact problem for work the caller did not ask us to do.
     if !filter_allows_jsonl_rebuild(&fixer_filter) {
         let recovery_audit = early_repair.prepend_actions_to_audit(jsonl_rebuild_audit_record(
             "doctor.jsonl_rebuild",
@@ -14060,16 +13307,6 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
         return Err(BeadsError::Config(reason));
     }
 
-    // Refuse BEFORE rebuilding when gate verdicts exist AND the sidecar cannot
-    // put them back, because the issues JSONL cannot carry them. Reporting
-    // `imported N, skipped 0` while discarding every verdict is a success
-    // message describing the wrong outcome.
-    //
-    // The rebuild itself restores the verdicts from the sidecar
-    // (`crate::sync::restore_gate_verdicts`), so the only destructive case
-    // left is a sidecar that is missing, short, or unreadable. Discarding the
-    // verdicts on purpose is an OPERATOR action: BR_OPERATOR=1 plus the flag
-    // that names the loss.
     {
         if args.allow_gate_verdict_loss && std::env::var("BR_OPERATOR").as_deref() != Ok("1") {
             return Err(BeadsError::Config(
@@ -14274,7 +13511,6 @@ mod tests {
 
     fn sample_issue(id: &str, title: &str) -> Issue {
         Issue {
-            // ADR-0001 §5.5: projection fixtures are dispatchable beads.
             verify: Some("cargo test --offline".to_string()),
             principles: vec![crate::model::PrincipleCitation {
                 name: "prove-it-works".to_string(),
@@ -14446,13 +13682,6 @@ mod tests {
     }
 
     fn run_br(cwd: &Path, args: &[&str]) -> std::process::Output {
-        // `CARGO_BIN_EXE_br` is only set for integration tests; unit tests need a
-        // fallback that still finds the just-built `br` binary.
-        // Freshness trap: `cargo test --lib` does NOT rebuild this binary —
-        // only a full `cargo test` / `cargo build` refreshes target/debug/br.
-        // A stale binary asserts against wrong behavior (observed: the four
-        // pending_merge shell-out tests failing on an otherwise clean tree
-        // until the binary was rebuilt). Rebuild before blaming the tree.
         let br_bin = std::env::var("CARGO_BIN_EXE_br").unwrap_or_else(|_| {
             let manifest_dir = env!("CARGO_MANIFEST_DIR");
             format!("{manifest_dir}/target/debug/br")
@@ -14994,12 +14223,6 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn test_dep_graph_jsonl_flags_dead_edges_and_fully_unblocked() {
-        // #350: fixture graph —
-        //  bd-a (open) blocked_by bd-closed (closed)  -> dead edge + fully unblocked
-        //  bd-b (open) blocked_by bd-open (open)       -> live, not flagged
-        //  bd-c (open) blocked_by bd-missing (absent)  -> dead edge + fully unblocked
-        //  bd-d (open) blocked_by [bd-closed, bd-open] -> 1 dead edge, NOT fully unblocked
-        //  bd-closed (closed) blocked_by ...           -> terminal, skipped
         let temp = TempDir::new().unwrap();
         let jsonl = temp.path().join("issues.jsonl");
         let issues = vec![
@@ -15020,13 +14243,9 @@ mod tests {
         let mut checks = Vec::new();
         check_dependency_graph_jsonl(&jsonl, &mut checks);
 
-        // #432: the dead-edge check warns because bd-c's blocker is DANGLING
-        // (absent from the JSONL). Satisfied edges (bd-a, bd-d -> bd-closed)
-        // are carried in details but do not on their own degrade the check.
         let dead = find_check(&checks, "dep.dead_closed_blocking_edges").expect("dead-edge check");
         assert_eq!(dead.status, CheckStatus::Warn, "{dead:?}");
         let details = dead.details.as_ref().unwrap();
-        // bd-a, bd-c, bd-d each have >=1 dead blocking edge (compat count).
         assert_eq!(
             details.get("count").and_then(serde_json::Value::as_u64),
             Some(3),
@@ -15039,11 +14258,9 @@ mod tests {
             Some(1),
             "only bd-c has a dangling blocker: {dead:?}"
         );
-        // The warn message names only the dangling issue.
         let message = dead.message.as_deref().unwrap();
         assert!(message.contains("bd-c"), "{message}");
         assert!(!message.contains("bd-a"), "{message}");
-        // Per-issue partitions discriminate satisfied vs dangling.
         let issues = details.get("issues").and_then(serde_json::Value::as_array);
         let entry = |id: &str| -> &serde_json::Value {
             issues
@@ -15068,14 +14285,11 @@ mod tests {
             entry("bd-c").get("satisfied_blockers").unwrap(),
             &serde_json::json!([])
         );
-        // Pre-#432 compat key still carries the union.
         assert_eq!(
             entry("bd-d").get("dead_blockers").unwrap(),
             &serde_json::json!(["bd-closed"])
         );
 
-        // #432: fully-unblocked open issues in plain `open` status are the
-        // benign steady state — Ok with details, all listed as ready.
         let unblocked =
             find_check(&checks, "dep.fully_unblocked_open").expect("fully-unblocked check");
         assert_eq!(unblocked.status, CheckStatus::Ok, "{unblocked:?}");
@@ -15087,8 +14301,6 @@ mod tests {
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
-        // bd-a and bd-c are fully unblocked (all blockers dead). bd-d is NOT
-        // (bd-open is still live). bd-b is NOT (its only blocker is live).
         assert!(
             unblocked_ids.contains(&"bd-a".to_string()),
             "{unblocked_ids:?}"
@@ -15120,10 +14332,6 @@ mod tests {
 
     #[test]
     fn test_dep_graph_jsonl_satisfied_only_reports_ok_with_details() {
-        // #432 core scenario: `create` / `dep add` / `close` and nothing
-        // else. The blocker is present and closed — a satisfied dependency —
-        // so BOTH checks must be Ok (doctor.ok stays true) while still
-        // carrying full machine-readable details.
         let temp = TempDir::new().unwrap();
         let jsonl = temp.path().join("issues.jsonl");
         let issues = vec![issue_with_blockers("bd-dep", Status::Open, &["bd-done"]), {
@@ -15151,8 +14359,6 @@ mod tests {
             entry.get("satisfied_blockers").unwrap(),
             &serde_json::json!(["bd-done"])
         );
-        // The benign path must NOT steer operators toward `br dep remove`
-        // (#432 / the #426 bulk-delete incident).
         assert!(details.get("remediation").is_none(), "{dead:?}");
         assert!(
             !dead
@@ -15173,10 +14379,6 @@ mod tests {
 
     #[test]
     fn test_dep_graph_jsonl_stale_blocked_status_warns() {
-        // #432: status still `blocked` while every blocker is closed is the
-        // one derivable real inconsistency — it warns. A deliberately
-        // deferred issue with the same graph shape is excluded-with-reason,
-        // not a finding.
         let temp = TempDir::new().unwrap();
         let jsonl = temp.path().join("issues.jsonl");
         let issues = vec![
@@ -15211,14 +14413,12 @@ mod tests {
         assert!(message.contains("bd-stale"), "{message}");
         assert!(!message.contains("bd-deferred"), "{message}");
 
-        // Satisfied-only edges: the dead-edge check stays Ok.
         let dead = find_check(&checks, "dep.dead_closed_blocking_edges").unwrap();
         assert_eq!(dead.status, CheckStatus::Ok, "{dead:?}");
     }
 
     #[test]
     fn test_dep_graph_jsonl_clean_graph_reports_ok() {
-        // A graph with only live blockers must produce two Ok checks.
         let temp = TempDir::new().unwrap();
         let jsonl = temp.path().join("issues.jsonl");
         let issues = vec![
@@ -16024,7 +15224,7 @@ mod tests {
             verified_backups: Vec::new(),
         };
         let mut session =
-            DoctorRepairSession::new(temp.path(), /* dry_run = */ false).expect("session builds");
+            DoctorRepairSession::new(temp.path(),  false).expect("session builds");
 
         let marker = write_jsonl_rebuild_verification_failed_marker(
             &beads_dir,
@@ -16166,17 +15366,12 @@ mod tests {
 
     #[test]
     fn test_doctor_no_db_skips_db_backed_checks_and_reports_no_db_mode() {
-        // #329: under `--no-db` (JSONL-only), doctor must NOT run the
-        // DB-backed checks and must emit `db.no_db_mode` listing the skipped
-        // checks. The JSONL-side audit still runs.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
 
         let db_path = beads_dir.join("beads.db");
         let jsonl_path = beads_dir.join("issues.jsonl");
-        // A real DB exists on disk so the DB-backed checks WOULD run if not
-        // suppressed; this proves suppression is by the flag, not by absence.
         let _storage = SqliteStorage::open(&db_path).unwrap();
         fs::write(
             &jsonl_path,
@@ -16194,7 +15389,6 @@ mod tests {
             metadata: config::Metadata::default(),
         };
 
-        // no_db = true -> DB-backed checks skipped.
         let run = collect_doctor_report_with_mode_and_db_override(
             &beads_dir,
             &paths,
@@ -16222,7 +15416,6 @@ mod tests {
             "{skipped:?}"
         );
 
-        // None of the DB-backed checks may appear.
         for db_check in [
             "db.exists",
             "db.sidecars",
@@ -16238,13 +15431,11 @@ mod tests {
             );
         }
 
-        // The JSONL-side audit still runs.
         assert!(
             find_check(checks, "jsonl.parse").is_some(),
             "JSONL audit must still run under --no-db"
         );
 
-        // Contrast: with no_db = false, the DB-backed checks DO run.
         let run_db = collect_doctor_report_with_mode_and_db_override(
             &beads_dir,
             &paths,
@@ -16259,7 +15450,6 @@ mod tests {
 
     #[test]
     fn test_check_base_jsonl_missing_is_ok() {
-        // Missing on fresh clone is legitimate; report Ok.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -16272,10 +15462,6 @@ mod tests {
 
     #[test]
     fn test_check_base_jsonl_stale_anchor_warns() {
-        // base.jsonl mtime < live JSONL mtime → warn stale.
-        // Use std::fs::FileTimes to deterministically backdate the base
-        // anchor rather than relying on real-time sleeps (which are
-        // flaky on coarse-mtime filesystems).
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -16310,7 +15496,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_check_base_jsonl_symlink_warns() {
-        // Symlinked anchor → warn (security risk per 401c0495).
         use std::os::unix::fs::symlink;
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
@@ -16334,13 +15519,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_fix_base_jsonl_symlink_refuses_out_of_scope_target() {
-        // Pass-5 cycle 5: the fixer (via the chokepoint's canonicalized
-        // write_scope check) MUST refuse to follow a symlink whose
-        // target resolves outside `.beads/` or `.doctor/`. This is the
         // safety behavior that protects operators against an attacker
-        // shape where the merge anchor points at an arbitrary file.
-        // The detector flags the symlink; the fixer correctly declines
-        // to quarantine it (operator must remove the symlink manually).
         use std::os::unix::fs::symlink;
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
@@ -16365,12 +15544,10 @@ mod tests {
                 .any(|c| c.name == "base_jsonl" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
-        // Out-of-scope symlink target → fixer returns false (chokepoint
         // refuses per safety) AND the symlink remains at its original
-        // path (no partial mutation).
         let result =
             fix_base_jsonl_symlink_if_warned(&beads_dir, &report, &ctx, Some(&mut session));
         assert!(
@@ -16394,14 +15571,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_fix_base_jsonl_symlink_quarantines_in_scope_target() {
-        // Pass-5 cycle 5: when the symlink points at a file INSIDE the
-        // workspace (e.g., a sibling JSONL), the chokepoint allows the
-        // rename and the fixer quarantines the symlink.
         use std::os::unix::fs::symlink;
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // In-scope target lives under .beads/
         let inside_target = beads_dir.join("sibling.jsonl");
         fs::write(&inside_target, b"{\"id\":\"bd-sibling\"}\n").unwrap();
         let symlink_path = beads_dir.join("beads.base.jsonl");
@@ -16422,7 +15595,7 @@ mod tests {
                 .any(|c| c.name == "base_jsonl" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_base_jsonl_symlink_if_warned(
@@ -16432,7 +15605,6 @@ mod tests {
             Some(&mut session),
         ));
 
-        // Source symlink gone, quarantine populated.
         assert!(
             !symlink_path.exists() && fs::symlink_metadata(&symlink_path).is_err(),
             "source symlink should be moved out of .beads/"
@@ -16442,7 +15614,6 @@ mod tests {
             q.exists(),
             "quarantine should hold the moved symlink content at {q:?}"
         );
-        // Sibling target is untouched.
         assert_eq!(
             fs::read(&inside_target).unwrap(),
             b"{\"id\":\"bd-sibling\"}\n",
@@ -16459,8 +15630,6 @@ mod tests {
 
     #[test]
     fn test_fix_base_jsonl_stale_regen_writes_live_bytes() {
-        // Pass-5 cycle 6: stale anchor (older mtime, regular file)
-        // gets regenerated from current JSONL bytes via Op::WriteFile.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -16469,7 +15638,6 @@ mod tests {
         fs::write(&anchor, b"{\"id\":\"bd-old\"}\n").unwrap();
         fs::write(&live, b"{\"id\":\"bd-new-1\"}\n{\"id\":\"bd-new-2\"}\n").unwrap();
 
-        // Backdate the anchor so the detector flags it stale.
         let two_hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
         let anchor_file = std::fs::OpenOptions::new()
             .write(true)
@@ -16496,7 +15664,7 @@ mod tests {
             .and_then(|v| v.as_str());
         assert_eq!(kind, Some("stale"));
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_base_jsonl_stale_if_warned(
@@ -16506,14 +15674,12 @@ mod tests {
             Some(&mut session),
         ));
 
-        // Anchor now contains the live JSONL bytes.
         assert_eq!(
             fs::read(&anchor).unwrap(),
             fs::read(&live).unwrap(),
             "regenerated anchor must equal live JSONL bytes"
         );
 
-        // actions.jsonl records one write_file op.
         let actions = fs::read_to_string(&session.run.actions_file).unwrap();
         let write_count = actions
             .lines()
@@ -16553,7 +15719,7 @@ mod tests {
         let check = find_check(&report.checks, "base_jsonl").expect("check present");
         assert!(matches!(check.status, CheckStatus::Warn));
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_base_jsonl_stale_if_warned(
@@ -16573,17 +15739,13 @@ mod tests {
 
     #[test]
     fn test_fix_base_jsonl_stale_refuses_empty_live_jsonl() {
-        // TOCTOU defense: never regenerate from an empty live JSONL
-        // (would silently truncate the anchor).
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
         let anchor = beads_dir.join("beads.base.jsonl");
         fs::write(&anchor, b"{\"id\":\"bd-anchor\"}\n").unwrap();
-        // Live JSONL is empty (could happen mid-restore).
         fs::write(beads_dir.join("issues.jsonl"), b"").unwrap();
 
-        // Synthesize a stale-finding report so the fixer is invoked.
         let mut report = DoctorReport {
             ok: false,
             workspace_health: Some("degraded".to_string()),
@@ -16598,7 +15760,7 @@ mod tests {
             Some(serde_json::json!({"kind": "stale"})),
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_base_jsonl_stale_if_warned(
@@ -16607,7 +15769,6 @@ mod tests {
             &ctx,
             Some(&mut session),
         ));
-        // Anchor preserved.
         assert_eq!(fs::read(&anchor).unwrap(), b"{\"id\":\"bd-anchor\"}\n");
     }
 
@@ -16660,10 +15821,6 @@ mod tests {
 
     #[test]
     fn test_check_base_jsonl_missing_post_flush_ok_when_verifiably_in_sync() {
-        // Issue #378: a flush-only workspace (anchor never produced) whose DB
-        // and JSONL are verifiably in sync must NOT warn — `br sync --status`
-        // reports "In sync" from the same evidence, and a contradictory
-        // doctor warning is exactly the reported inconsistency.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -16702,9 +15859,6 @@ mod tests {
 
     #[test]
     fn test_check_base_jsonl_missing_post_flush_warns_when_hash_diverged() {
-        // Issue #378: the warning must survive for the genuinely suspicious
-        // shape — export metadata present but the live JSONL no longer
-        // matches the cached content hash.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -16741,7 +15895,6 @@ mod tests {
 
     #[test]
     fn test_check_dirty_bitmap_clean_workspace_ok() {
-        // No orphan rows in dirty_issues → check returns Ok.
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("beads.db");
         let _storage = SqliteStorage::open(&db_path).unwrap();
@@ -16754,13 +15907,10 @@ mod tests {
 
     #[test]
     fn test_check_dirty_bitmap_orphan_row_warns() {
-        // Insert an orphan into dirty_issues with FK guard disabled,
-        // then assert the detector finds it and reports kind details.
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("beads.db");
         let _storage = SqliteStorage::open(&db_path).unwrap();
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
-        // Disable FK enforcement so the orphan insert succeeds.
         let _ = conn.execute("PRAGMA foreign_keys = OFF");
         conn.execute_with_params(
             "INSERT INTO dirty_issues(issue_id, marked_at) VALUES (?1, ?2)",
@@ -16906,11 +16056,9 @@ mod tests {
         let beads_dir = temp.path();
         let db_path = beads_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
-        // Conforming issue.
         storage
             .create_issue(&sample_issue("bd-ok", "Open issue"), "tester")
             .unwrap();
-        // Non-conforming issue: known status outside the allowed set.
         let mut bad = sample_issue("bd-bad", "Has bogus status");
         bad.status = Status::Deferred;
         storage.create_issue(&bad, "tester").unwrap();
@@ -17056,7 +16204,7 @@ mod tests {
                 acquire_doctor_database_write_authority(&beads_dir, &db_path, Some(5_000))
                     .expect("write authority");
             let mut session =
-                DoctorRepairSession::new(temp.path(), /* dry_run = */ true).expect("session");
+                DoctorRepairSession::new(temp.path(),  true).expect("session");
             let mut repair = LocalRepairResult::default();
             repair_stale_drafts_under_write_authority(
                 &db_path,
@@ -17100,7 +16248,7 @@ mod tests {
                 acquire_doctor_database_write_authority(&beads_dir, &db_path, Some(5_000))
                     .expect("write authority");
             let mut session =
-                DoctorRepairSession::new(temp.path(), /* dry_run = */ false).expect("session");
+                DoctorRepairSession::new(temp.path(),  false).expect("session");
             let mut repair = LocalRepairResult::default();
             repair_stale_drafts_under_write_authority(
                 &db_path,
@@ -17182,7 +16330,7 @@ mod tests {
                 .any(|c| c.name == "dependencies.orphans" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_dependencies_orphans_if_warned(
@@ -17291,7 +16439,7 @@ mod tests {
                 .any(|c| c.name == "labels.orphans" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_labels_orphans_if_warned(
@@ -17389,7 +16537,7 @@ mod tests {
                 .any(|c| c.name == "comments.orphans" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_comments_orphans_if_warned(
@@ -17408,13 +16556,6 @@ mod tests {
 
     #[test]
     fn test_fix_null_defaults_backfills_via_chokepoint() {
-        // The canonical events.actor is `TEXT NOT NULL DEFAULT ''`, and SQLite
-        // enforces NOT NULL at INSERT — so to reproduce the detector's intended
-        // target (rows predating a NOT NULL DEFAULT addition during schema
-        // migration, where the storage retained pre-existing NULLs in older
-        // rows) we DROP and recreate `events` locally without NOT NULL on
-        // `actor`. The detector and fixer only touch that column, so a minimal
-        // column set suffices. No FKs reference events.id, so the drop is safe.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -17465,7 +16606,7 @@ mod tests {
             "precondition: detector must warn on the injected NULL"
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_null_defaults_if_warned(
@@ -17475,7 +16616,6 @@ mod tests {
             Some(&mut session),
         ));
 
-        // Detector now clean, and the NULL was backfilled to the schema default ''.
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         let mut after = Vec::new();
         check_null_defaults(&conn, &mut after);
@@ -17493,9 +16633,6 @@ mod tests {
 
     #[test]
     fn test_fix_dirty_bitmap_orphans_prunes_via_chokepoint() {
-        // Insert an orphan dirty_issues row (FK off), then assert the
-        // fixer prunes it through the chokepoint and the post-fix
-        // detector reports clean.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -17530,7 +16667,7 @@ mod tests {
             .any(|c| c.name == "dirty_bitmap" && matches!(c.status, CheckStatus::Warn));
         assert!(warned, "precondition: detector must warn");
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_dirty_bitmap_orphans_if_warned(
@@ -17540,7 +16677,6 @@ mod tests {
             Some(&mut session),
         ));
 
-        // Re-run the detector against the same DB; it must now be clean.
         let mut after = Vec::new();
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         check_dirty_bitmap_divergence(&conn, &mut after);
@@ -17550,10 +16686,6 @@ mod tests {
 
     #[test]
     fn test_fix_dirty_bitmap_orphans_prunes_null_issue_id() {
-        // SQLite permits NULL in a TEXT PRIMARY KEY on legacy tables.
-        // The detector counts that as an orphan via LEFT JOIN; the
-        // fixer must use NOT EXISTS rather than NOT IN so the same row
-        // is actually pruned.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -17590,7 +16722,7 @@ mod tests {
             "precondition: NULL dirty_issues issue_id must warn"
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         assert!(fix_dirty_bitmap_orphans_if_warned(
             &db_path,
@@ -17611,7 +16743,6 @@ mod tests {
 
     #[test]
     fn test_fix_dirty_bitmap_orphans_noop_when_clean() {
-        // No orphan rows → no warning → fixer is a no-op.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -17627,7 +16758,7 @@ mod tests {
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         check_dirty_bitmap_divergence(&conn, &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_dirty_bitmap_orphans_if_warned(
@@ -17640,7 +16771,6 @@ mod tests {
 
     #[test]
     fn test_check_doctor_runs_dir_below_threshold_ok() {
-        // Few run dirs → Ok.
         let temp = TempDir::new().unwrap();
         let runs = temp.path().join(".doctor").join("runs");
         fs::create_dir_all(&runs).unwrap();
@@ -17655,7 +16785,6 @@ mod tests {
 
     #[test]
     fn test_check_doctor_runs_dir_above_threshold_warns() {
-        // >threshold run dirs → Warn with count.
         let temp = TempDir::new().unwrap();
         let runs = temp.path().join(".doctor").join("runs");
         fs::create_dir_all(&runs).unwrap();
@@ -17676,7 +16805,6 @@ mod tests {
 
     #[test]
     fn test_check_doctor_runs_dir_missing_is_ok() {
-        // No .doctor/runs at all → Ok (fresh workspace).
         let temp = TempDir::new().unwrap();
         let mut checks = Vec::new();
         check_doctor_runs_dir_size(temp.path(), &mut checks);
@@ -17686,7 +16814,6 @@ mod tests {
 
     #[test]
     fn test_check_doctor_runs_creatable_ok_when_missing() {
-        // No .doctor/ at all → Ok (will be created on first --repair).
         let temp = TempDir::new().unwrap();
         let mut checks = Vec::new();
         check_doctor_runs_creatable(temp.path(), &mut checks);
@@ -17742,7 +16869,6 @@ mod tests {
             Some("444")
         );
 
-        // Restore so TempDir's drop can clean up.
         fs::set_permissions(&gi, fs::Permissions::from_mode(0o644)).unwrap();
     }
 
@@ -17790,13 +16916,11 @@ mod tests {
             Some("444")
         );
 
-        // Restore so TempDir's drop can clean up.
         fs::set_permissions(&lock, fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     #[test]
     fn test_check_recovery_dir_writable_ok_when_missing() {
-        // No .br_recovery at all → Ok (created on demand).
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -17840,7 +16964,6 @@ mod tests {
             Some("555")
         );
 
-        // Restore so TempDir's drop can clean up.
         fs::set_permissions(&recovery, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
@@ -17871,7 +16994,6 @@ mod tests {
             Some(expected_path.as_str())
         );
 
-        // Restore so TempDir's drop can clean up.
         fs::set_permissions(&recovery, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
@@ -17882,7 +17004,6 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let doctor = temp.path().join(".doctor");
         fs::create_dir_all(&doctor).unwrap();
-        // Strip owner-write so the next --repair can't create a run-dir.
         fs::set_permissions(&doctor, fs::Permissions::from_mode(0o555)).unwrap();
 
         let mut checks = Vec::new();
@@ -17895,15 +17016,12 @@ mod tests {
             Some("555")
         );
 
-        // Restore so TempDir's drop can clean up.
         fs::set_permissions(&doctor, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[cfg(unix)]
     #[test]
     fn test_check_config_yaml_secret_mode_warns_on_world_readable_with_secrets() {
-        // Pass-5 cycle 11: world-readable config.yaml containing a
-        // secret-shaped keyword → warn.
         use std::os::unix::fs::PermissionsExt;
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
@@ -17911,7 +17029,7 @@ mod tests {
         let config = beads_dir.join("config.yaml");
         fs::write(&config, b"github_token: ghp_abc123\n").unwrap();
         let mut perms = fs::metadata(&config).unwrap().permissions();
-        perms.set_mode(0o644); // world-readable
+        perms.set_mode(0o644);
         fs::set_permissions(&config, perms).unwrap();
 
         let mut checks = Vec::new();
@@ -17931,7 +17049,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_check_config_yaml_secret_mode_ok_when_mode_0600() {
-        // mode 0600 → not world-readable → Ok regardless of contents.
         use std::os::unix::fs::PermissionsExt;
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
@@ -17951,7 +17068,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_check_config_yaml_secret_mode_ok_when_no_secrets() {
-        // World-readable but no secret-keywords → Ok.
         use std::os::unix::fs::PermissionsExt;
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
@@ -17971,8 +17087,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_br_binaries_in_path_str_finds_multiple() {
-        // Pass-5 cycle 12: pure helper finds duplicate br executables
-        // across a synthesized PATH string.
         use std::os::unix::fs::PermissionsExt;
         let temp = TempDir::new().unwrap();
         let dir_a = temp.path().join("a");
@@ -17996,7 +17110,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_br_binaries_in_path_str_skips_non_executable() {
-        // Non-executable file shouldn't count as a `br` binary.
         use std::os::unix::fs::PermissionsExt;
         let temp = TempDir::new().unwrap();
         let dir = temp.path().join("d");
@@ -18015,8 +17128,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_br_binaries_in_path_str_dedupes_canonical_path() {
-        // Two PATH entries pointing at the same canonical br via a
-        // symlinked directory should count as one binary.
         use std::os::unix::fs::PermissionsExt;
         use std::os::unix::fs::symlink;
         let temp = TempDir::new().unwrap();
@@ -18037,7 +17148,6 @@ mod tests {
 
     #[test]
     fn test_check_inner_gitignore_present_missing_warns() {
-        // Pass-5 cycle 13: no .beads/.gitignore at all → warn kind="missing".
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18058,9 +17168,6 @@ mod tests {
 
     #[test]
     fn test_check_inner_gitignore_present_complete_ok() {
-        // Complete .gitignore covering every expectation → ok. Written as
-        // the canonical append patterns themselves, which must always
-        // self-satisfy their own probes.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18075,9 +17182,6 @@ mod tests {
 
     #[test]
     fn test_check_inner_gitignore_operator_megamix_equivalents_are_ok() {
-        // Operator-authored equivalents (broad `*.db?*`, `*.lock`) must
-        // satisfy coverage via probes without textual equality with the
-        // canonical patterns.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18095,8 +17199,6 @@ mod tests {
 
     #[test]
     fn test_check_inner_gitignore_flags_missing_db_artifact_family() {
-        // An ignore file missing the WAL-family patterns must warn and
-        // name the patterns it is missing.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18138,7 +17240,6 @@ mod tests {
 
     #[test]
     fn test_gitignore_glob_matches_semantics() {
-        // `*` spans any run including empty; `?` is exactly one char.
         assert!(gitignore_glob_matches("*.db?*", "beads.db-wal"));
         assert!(!gitignore_glob_matches("*.db?*", "beads.db"));
         assert!(gitignore_glob_matches("*.db", "beads.db"));
@@ -18149,11 +17250,9 @@ mod tests {
 
     #[test]
     fn test_check_inner_gitignore_present_incomplete_warns() {
-        // Has .gitignore but missing one expected pattern → warn kind="incomplete".
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // Everything except *.tmp.
         let contents = inner_gitignore_all_append_patterns()
             .into_iter()
             .filter(|pattern| *pattern != "*.tmp")
@@ -18187,9 +17286,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_check_inner_gitignore_present_symlink_warns_even_with_valid_target() {
-        // Git ignore rules in the working tree must be regular files.
-        // Reading through a symlink here would make doctor report a
-        // false healthy state while git ignores the symlinked ignore file.
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
@@ -18216,7 +17312,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_check_jsonl_world_writable_warns_on_world_writable() {
-        // Pass-5 cycle 14: world-writable mode → warn.
         use std::os::unix::fs::PermissionsExt;
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
@@ -18224,7 +17319,7 @@ mod tests {
         let jsonl = beads_dir.join("issues.jsonl");
         fs::write(&jsonl, b"{}\n").unwrap();
         let mut perms = fs::metadata(&jsonl).unwrap().permissions();
-        perms.set_mode(0o666); // world-writable
+        perms.set_mode(0o666);
         fs::set_permissions(&jsonl, perms).unwrap();
 
         let mut checks = Vec::new();
@@ -18236,7 +17331,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_check_jsonl_world_writable_ok_when_mode_0644() {
-        // Mode 0644 (world-readable but not world-writable) → ok.
         use std::os::unix::fs::PermissionsExt;
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
@@ -18255,7 +17349,6 @@ mod tests {
 
     #[test]
     fn test_check_jsonl_world_writable_missing_is_ok() {
-        // No issues.jsonl at all → ok (other checks own the missing case).
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18267,13 +17360,11 @@ mod tests {
 
     #[test]
     fn test_check_orphan_tmp_files_old_tmp_warns() {
-        // Pass-5 cycle 15: a tmp file backdated >1 hour → warn.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
         let tmp_path = beads_dir.join("issues.jsonl.99999.tmp");
         fs::write(&tmp_path, b"partial write").unwrap();
-        // Backdate beyond the 1-hour threshold.
         let two_hours_ago =
             std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60);
         let f = std::fs::OpenOptions::new()
@@ -18300,7 +17391,6 @@ mod tests {
 
     #[test]
     fn test_check_orphan_tmp_files_fresh_tmp_ok() {
-        // Fresh tmp (current mtime) is not orphan — could be an in-flight write.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18314,7 +17404,6 @@ mod tests {
 
     #[test]
     fn test_check_orphan_tmp_files_ignores_non_tmp_files() {
-        // Plain `.jsonl` shouldn't match the tmp pattern even if old.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18342,9 +17431,6 @@ mod tests {
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
         let jsonl = beads_dir.join("issues.jsonl");
-        // 3 records: two share id=bd-aaa, one unique. The second
-        // duplicate intentionally uses valid JSON whitespace that a
-        // literal `"id":"` substring scan would miss.
         fs::write(
             &jsonl,
             "{\"id\":\"bd-aaa\",\"title\":\"first\"}\n\
@@ -18398,7 +17484,6 @@ mod tests {
 
     #[test]
     fn test_check_jsonl_duplicate_ids_missing_is_ok() {
-        // No JSONL path -> ok. Missing-or-empty cases handled by other checks.
         let mut checks = Vec::new();
         check_jsonl_duplicate_ids(None, &mut checks);
         let check = find_check(&checks, "jsonl.duplicate_ids").expect("check present");
@@ -18407,14 +17492,10 @@ mod tests {
 
     #[test]
     fn test_check_jsonl_oversized_warns_above_threshold() {
-        // Pass-5 cycle 17: file size > threshold → warn.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
         let jsonl = beads_dir.join("issues.jsonl");
-        // Write a sparse file beyond the threshold using set_len(). The
-        // OS treats this as zero-filled without actually consuming
-        // 100MB on disk (filesystem-dependent; works on tmpfs/ext4/xfs).
         let f = fs::File::create(&jsonl).unwrap();
         f.set_len(JSONL_OVERSIZED_THRESHOLD_BYTES + 1).unwrap();
         drop(f);
@@ -18433,7 +17514,6 @@ mod tests {
 
     #[test]
     fn test_check_jsonl_oversized_ok_below_threshold() {
-        // Small JSONL → ok.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18447,7 +17527,6 @@ mod tests {
 
     #[test]
     fn test_check_br_history_above_threshold_warns() {
-        // Pass-5 cycle 18: > threshold snapshot files → warn with count.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         let history = beads_dir.join(".br_history");
@@ -18523,7 +17602,6 @@ mod tests {
 
     #[test]
     fn test_check_jsonl_crlf_endings_warns_on_crlf() {
-        // Pass-5 cycle 20: CRLF in JSONL → warn.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18541,7 +17619,6 @@ mod tests {
 
     #[test]
     fn test_check_jsonl_crlf_endings_lf_only_is_ok() {
-        // Plain LF → ok.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18566,7 +17643,6 @@ mod tests {
 
     #[test]
     fn test_check_jsonl_utf8_bom_warns_when_present() {
-        // Pass-5 cycle 21: BOM in JSONL → warn.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18594,8 +17670,6 @@ mod tests {
 
     #[test]
     fn test_fix_jsonl_utf8_bom_strips_via_chokepoint() {
-        // The fixer must rewrite the file without the leading BOM,
-        // preserving the rest of the bytes verbatim.
         let temp = TempDir::new().unwrap();
         let jsonl_dir = temp.path().join("external");
         fs::create_dir_all(&jsonl_dir).unwrap();
@@ -18613,7 +17687,7 @@ mod tests {
         };
         check_jsonl_utf8_bom(Some(&jsonl_path), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_jsonl_utf8_bom_if_warned(
@@ -18653,7 +17727,7 @@ mod tests {
             checks: Vec::new(),
         };
         check_jsonl_utf8_bom(Some(&traversal_path), &mut report.checks);
-        let mut session = DoctorRepairSession::new(&repo, /* dry_run = */ false).expect("session");
+        let mut session = DoctorRepairSession::new(&repo,  false).expect("session");
 
         assert!(!fix_jsonl_utf8_bom_if_warned(
             Some(&traversal_path),
@@ -18675,16 +17749,13 @@ mod tests {
 
     #[test]
     fn test_check_db_bloat_warns_on_high_ratio() {
-        // Pass-5 cycle 22: db >> jsonl by ratio → warn.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // JSONL: just above the 1MB minimum threshold.
         let jsonl_path = beads_dir.join("issues.jsonl");
         let jsonl_f = fs::File::create(&jsonl_path).unwrap();
         jsonl_f.set_len(DB_BLOAT_MIN_JSONL_BYTES + 1024).unwrap();
         drop(jsonl_f);
-        // DB: 20x the JSONL size (well above the 10x threshold).
         let db_path = beads_dir.join("beads.db");
         let db_f = fs::File::create(&db_path).unwrap();
         db_f.set_len((DB_BLOAT_MIN_JSONL_BYTES + 1024) * 20)
@@ -18714,12 +17785,9 @@ mod tests {
         let db_path = beads_dir.join("beads.db");
         fs::write(&db_path, b"not a real db, only the name matters here").unwrap();
 
-        // br's own state directories must never be reported as foreign.
         fs::create_dir_all(beads_dir.join(".br_recovery")).unwrap();
         fs::create_dir_all(beads_dir.join(".br_history")).unwrap();
 
-        // The spellings observed in the wild, including the nesting that a
-        // `cp -r .beads .beads/recovery_<TS>` produces.
         for dir in [
             "recovery",
             "recovery_20260319T032504Z",
@@ -18744,8 +17812,6 @@ mod tests {
         check_foreign_recovery_debris(&beads_dir, &db_path, &mut checks).unwrap();
         let check = find_check(&checks, "db.foreign_recovery_debris").expect("check present");
 
-        // Informational, never a warning: br did not create this and must not
-        // make `br doctor` exit non-zero over another tool's leftovers.
         assert!(matches!(check.status, CheckStatus::Ok), "{check:?}");
 
         let details = check.details.as_ref().expect("details");
@@ -18767,7 +17833,6 @@ mod tests {
             "br's own directories must not be reported as foreign: {dirs:?}"
         );
         assert_eq!(details["files"].as_array().unwrap().len(), 1);
-        // 2048 bytes inside the debris tree + the 1024-byte rebuild sibling.
         assert_eq!(details["bytes"].as_u64(), Some(3072));
         assert_eq!(details["bytes_are_lower_bound"].as_bool(), Some(false));
     }
@@ -18781,8 +17846,6 @@ mod tests {
         let db_path = beads_dir.join("beads.db");
         fs::write(&db_path, b"db").unwrap();
         fs::write(beads_dir.join("issues.jsonl"), b"").unwrap();
-        // A legitimate br backup sibling belongs to `db.recovery_artifacts`,
-        // not to this check.
         fs::write(beads_dir.join("beads.db.bad_20260312T000000Z"), b"x").unwrap();
 
         let mut checks = Vec::new();
@@ -18790,8 +17853,6 @@ mod tests {
         let check = find_check(&checks, "db.foreign_recovery_debris").expect("check present");
         assert!(matches!(check.status, CheckStatus::Ok));
         assert!(check.message.is_none(), "{check:?}");
-        // `push_check` always stamps a `finding_id`, so the absence of debris
-        // is expressed by the payload keys being absent, not by `details`.
         if let Some(details) = check.details.as_ref() {
             assert!(details.get("directories").is_none(), "{check:?}");
             assert!(details.get("files").is_none(), "{check:?}");
@@ -18812,7 +17873,6 @@ mod tests {
             "snapshot_20260322T032111Z"
         ));
         assert!(is_foreign_recovery_debris_dir_name(".beads_snapshot"));
-        // br's own state, and unrelated entries.
         assert!(!is_foreign_recovery_debris_dir_name(".br_recovery"));
         assert!(!is_foreign_recovery_debris_dir_name(".br_history"));
         assert!(!is_foreign_recovery_debris_dir_name("issues.jsonl"));
@@ -18822,7 +17882,6 @@ mod tests {
             "beads.db.rebuild_20260321T073015Z",
             "beads.db"
         ));
-        // `.bad_*` is already owned by `db.recovery_artifacts`.
         assert!(!is_foreign_recovery_debris_file_name(
             "beads.db.bad_20260312T000000Z",
             "beads.db"
@@ -18846,7 +17905,6 @@ mod tests {
         fs::create_dir_all(&beads_dir).unwrap();
         let db_path = beads_dir.join("beads.db");
 
-        // A real, valid database with something in it.
         {
             let mut storage = SqliteStorage::open(&db_path).unwrap();
             for i in 0..50 {
@@ -18859,8 +17917,6 @@ mod tests {
         let header_pages_before = database_header_page_count(&db_path);
         let logical_size = fs::metadata(&db_path).unwrap().len();
 
-        // Append whole zero pages past the logical end. SQLite reads the extent
-        // from the header and ignores these; the file is still valid.
         {
             let mut f = fs::OpenOptions::new().append(true).open(&db_path).unwrap();
             f.write_all(&vec![0_u8; 4096 * APPENDED_PAGES as usize])
@@ -18887,26 +17943,17 @@ mod tests {
             after < bloated_size,
             "VACUUM should reclaim the appended slack: {after} still >= {bloated_size}"
         );
-        // The appended pages must be dropped, not adopted into the database.
-        // The page count is not compared to `header_pages_before` directly:
-        // that reading can lag the true extent by a few pages depending on when
-        // the WAL was folded in. What must hold is that the 64 appended pages
-        // did not become part of the database.
         let header_pages_after = database_header_page_count(&db_path);
         assert!(
             header_pages_after < header_pages_before + APPENDED_PAGES,
             "compaction absorbed the appended pages: {header_pages_after} \
              (was {header_pages_before}, appended {APPENDED_PAGES})"
         );
-        // The decisive invariant: the compacted file has no slack left at all,
-        // so the header's extent and the file length agree exactly. That is
-        // precisely what in-place VACUUM could not achieve on this input.
         assert_eq!(
             u64::from(header_pages_after) * 4096,
             after,
             "compacted file should contain exactly its logical pages"
         );
-        // And the data must survive.
         let storage = SqliteStorage::open(&db_path).unwrap();
         assert!(storage.get_issue("bd-bloat000").unwrap().is_some());
         assert!(storage.get_issue("bd-bloat049").unwrap().is_some());
@@ -18922,7 +17969,6 @@ mod tests {
 
     #[test]
     fn test_check_db_bloat_ok_under_threshold() {
-        // DB only 2x the JSONL → ok.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -18943,8 +17989,6 @@ mod tests {
 
     #[test]
     fn test_check_db_bloat_skip_small_workspaces() {
-        // JSONL < 1 MB minimum → check skipped (ok). DB much larger
-        // doesn't matter; the ratio is meaningless for tiny workspaces.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -19006,7 +18050,6 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // No .gitignore at all → fixer creates it with both canonical patterns.
 
         let mut report = DoctorReport {
             ok: false,
@@ -19016,7 +18059,7 @@ mod tests {
         };
         check_inner_gitignore_present(&beads_dir, &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_inner_gitignore_if_warned(
@@ -19038,7 +18081,6 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // .gitignore has one canonical pattern + a custom one; missing *.tmp.
         fs::write(
             beads_dir.join(".gitignore"),
             "# operator custom\n.write.lock\nlocal-cache/\n",
@@ -19053,7 +18095,7 @@ mod tests {
         };
         check_inner_gitignore_present(&beads_dir, &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_inner_gitignore_if_warned(
@@ -19063,10 +18105,8 @@ mod tests {
             Some(&mut session),
         ));
         let after = fs::read_to_string(beads_dir.join(".gitignore")).unwrap();
-        // Existing operator lines preserved verbatim.
         assert!(after.contains("# operator custom"), "{after:?}");
         assert!(after.contains("local-cache/"), "{after:?}");
-        // Both canonical patterns now present.
         assert!(
             after.lines().any(|l| l.trim() == ".write.lock"),
             "{after:?}"
@@ -19081,7 +18121,6 @@ mod tests {
             let temp = TempDir::new().unwrap();
             let beads_dir = temp.path().join(".beads");
             fs::create_dir_all(&beads_dir).unwrap();
-            // Make .beads/.gitignore a symlink to an external file.
             let external = temp.path().join("external.gitignore");
             fs::write(&external, ".write.lock\n").unwrap();
             std::os::unix::fs::symlink(&external, beads_dir.join(".gitignore")).unwrap();
@@ -19094,19 +18133,16 @@ mod tests {
             };
             check_inner_gitignore_present(&beads_dir, &mut report.checks);
 
-            let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+            let mut session = DoctorRepairSession::new(temp.path(),  false)
                 .expect("session must build");
             let ctx =
                 OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
-            // Detector warned for symlink, but fixer must refuse — operator
-            // intent (compliance, vendored share) cannot be stomped.
             assert!(!fix_inner_gitignore_if_warned(
                 &beads_dir,
                 &report,
                 &ctx,
                 Some(&mut session),
             ));
-            // Symlink still in place pointing at the same target.
             let after_meta = fs::symlink_metadata(beads_dir.join(".gitignore")).unwrap();
             assert!(after_meta.file_type().is_symlink());
         }
@@ -19121,7 +18157,6 @@ mod tests {
         fs::create_dir_all(&beads_dir).unwrap();
         let config = beads_dir.join("config.yaml");
         fs::write(&config, b"github_token: abc123\nfoo: bar\n").unwrap();
-        // World-readable + world-writable; contains secret-shaped keyword.
         fs::set_permissions(&config, fs::Permissions::from_mode(0o666)).unwrap();
         let before = fs::metadata(&config).unwrap().permissions().mode() & 0o777;
 
@@ -19133,7 +18168,7 @@ mod tests {
         };
         check_config_yaml_secret_mode(&beads_dir, &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_config_yaml_secret_mode_if_warned(
@@ -19160,7 +18195,6 @@ mod tests {
         fs::create_dir_all(&beads_dir).unwrap();
         let config = beads_dir.join("config.yaml");
         fs::write(&config, b"foo: bar\n").unwrap();
-        // World-readable but NO secrets → no warn → no fix.
         fs::set_permissions(&config, fs::Permissions::from_mode(0o644)).unwrap();
 
         let mut report = DoctorReport {
@@ -19171,7 +18205,7 @@ mod tests {
         };
         check_config_yaml_secret_mode(&beads_dir, &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_config_yaml_secret_mode_if_warned(
@@ -19193,7 +18227,6 @@ mod tests {
         fs::create_dir_all(&beads_dir).unwrap();
         let jsonl = beads_dir.join("issues.jsonl");
         fs::write(&jsonl, b"{\"id\":\"bd-1\"}\n").unwrap();
-        // Set world-writable mode.
         fs::set_permissions(&jsonl, fs::Permissions::from_mode(0o666)).unwrap();
         let before = fs::metadata(&jsonl).unwrap().permissions().mode() & 0o777;
         assert_ne!(before & 0o002, 0, "precondition: world-write bit set");
@@ -19206,7 +18239,7 @@ mod tests {
         };
         check_jsonl_world_writable(Some(&jsonl), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_jsonl_world_writable_if_warned(
@@ -19221,7 +18254,6 @@ mod tests {
             0,
             "world-write bit must be cleared (mode {after:o})"
         );
-        // Owner/group bits preserved: only the world-write bit changed.
         assert_eq!(after, before & !0o002, "only world-write bit removed");
     }
 
@@ -19244,7 +18276,7 @@ mod tests {
         };
         check_jsonl_world_writable(Some(&jsonl), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         assert!(fix_jsonl_world_writable_if_warned(
             Some(&jsonl),
@@ -19275,7 +18307,7 @@ mod tests {
         };
         check_jsonl_world_writable(Some(&jsonl), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_jsonl_world_writable_if_warned(
@@ -19290,8 +18322,6 @@ mod tests {
 
     #[test]
     fn test_fix_jsonl_crlf_converts_via_chokepoint() {
-        // The fixer must rewrite the file converting CRLF→LF and
-        // preserve every other byte verbatim.
         let temp = TempDir::new().unwrap();
         let jsonl_dir = temp.path().join("external");
         fs::create_dir_all(&jsonl_dir).unwrap();
@@ -19307,7 +18337,7 @@ mod tests {
         };
         check_jsonl_crlf_endings(Some(&jsonl_path), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_jsonl_crlf_endings_if_warned(
@@ -19333,7 +18363,6 @@ mod tests {
 
     #[test]
     fn test_fix_jsonl_crlf_noop_when_clean() {
-        // No CRLF in the warned check → fixer must not mutate.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -19349,10 +18378,9 @@ mod tests {
         let jsonl_path = beads_dir.join("issues.jsonl");
         check_jsonl_crlf_endings(Some(&jsonl_path), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
-        // No "warn" → returns false without touching the file.
         assert!(!fix_jsonl_crlf_endings_if_warned(
             Some(&jsonl_path),
             &report,
@@ -19385,7 +18413,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session = DoctorRepairSession::new(&repo, /* dry_run = */ false).expect("session");
+        let mut session = DoctorRepairSession::new(&repo,  false).expect("session");
 
         assert!(!fix_jsonl_crlf_endings_if_warned(
             Some(&traversal_path),
@@ -19412,10 +18440,6 @@ mod tests {
         fs::create_dir_all(&beads_dir).unwrap();
         let db_path = beads_dir.join("beads.db");
         let wal_writer = create_valid_oversized_wal(&db_path);
-        // Real SQLite checkpoints and REMOVES the WAL when the last
-        // connection closes cleanly, so the writer must stay open for the
-        // oversized-WAL state to exist while doctor inspects it. The lock is
-        // released when `wal_writer` drops at test end.
         let _wal_writer = wal_writer;
         let mut report = DoctorReport {
             ok: false,
@@ -19431,7 +18455,7 @@ mod tests {
                 .any(|c| c.name == "wal_size" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_wal_oversized_if_warned(
@@ -19511,7 +18535,7 @@ mod tests {
         };
         check_wal_oversized(&db_path, &mut report.checks, None);
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_wal_oversized_if_warned(
@@ -19546,7 +18570,6 @@ mod tests {
 
     #[test]
     fn test_check_wal_oversized_ok_on_normal_size() {
-        // 4MB WAL is healthy — SQLite auto-checkpoint runs at ~4MB.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -19562,7 +18585,6 @@ mod tests {
 
     #[test]
     fn test_check_wal_oversized_missing_is_ok() {
-        // No WAL file at all → ok (workspace not in WAL mode or freshly checkpointed).
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -19611,7 +18633,6 @@ mod tests {
 
     #[test]
     fn test_check_jsonl_oversized_missing_is_ok() {
-        // No JSONL at all → ok (other checks cover missing-file case).
         let mut checks = Vec::new();
         check_jsonl_oversized(None, &mut checks);
         let check = find_check(&checks, "jsonl_size").expect("check present");
@@ -19648,10 +18669,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_check_orphan_tmp_files_ignores_symlinked_tmp_names() {
-        // A symlink named like an atomic-write tmp must not be reported
-        // based on its target's mtime. The detector is scoped to real
-        // files under `.beads/`, not external targets reached through
-        // symlinks.
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
@@ -19678,7 +18695,6 @@ mod tests {
 
     #[test]
     fn test_check_orphan_tmp_files_reports_files_sorted() {
-        // Stable robot output matters for agents diffing doctor results.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -19732,7 +18748,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
 
         assert!(fix_orphan_tmp_files_if_warned(
@@ -19791,7 +18807,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
 
         assert!(fix_orphan_tmp_files_if_warned(
@@ -19831,7 +18847,6 @@ mod tests {
 
     #[test]
     fn test_fixer_filter_empty_allows_everything() {
-        // Pass-5 cycle 1: default (no --only/--skip) accepts every FM.
         let filter = FixerFilter::default();
         assert!(filter.allows("fm-anything"));
         assert!(filter.allows("fm-state_files-merge-artifact-stuck"));
@@ -19841,7 +18856,6 @@ mod tests {
 
     #[test]
     fn test_fixer_filter_only_allowlist() {
-        // --only A,B → A and B run; C is blocked.
         let filter = FixerFilter::from_args(&["fm-a".to_string(), "fm-b".to_string()], &[]);
         assert!(filter.allows("fm-a"));
         assert!(filter.allows("fm-b"));
@@ -19851,7 +18865,6 @@ mod tests {
 
     #[test]
     fn test_fixer_filter_skip_blocklist() {
-        // --skip X → X is blocked; everything else runs.
         let filter = FixerFilter::from_args(&[], &["fm-blocked".to_string()]);
         assert!(filter.allows("fm-other"));
         assert!(!filter.allows("fm-blocked"));
@@ -19860,15 +18873,12 @@ mod tests {
 
     #[test]
     fn test_fixer_filter_skip_overrides_only() {
-        // --only A --skip A → A is blocked (skip subtracts from only).
         let filter = FixerFilter::from_args(&["fm-a".to_string()], &["fm-a".to_string()]);
         assert!(!filter.allows("fm-a"));
     }
 
     #[test]
     fn test_fixer_filter_trims_whitespace_and_drops_empties() {
-        // Whitespace + empty strings from comma-split are normalized
-        // away so `--only ,fm-a, ,fm-b,` works.
         let filter = FixerFilter::from_args(
             &["  fm-a  ".to_string(), String::new(), " fm-b".to_string()],
             &[],
@@ -19935,7 +18945,6 @@ mod tests {
                 );
                 prop_assert!(messy.allows(&base));
                 prop_assert_eq!(clean.allows(&base), messy.allows(&base));
-                // An id NOT in the (normalized) allowlist is still denied identically.
                 let other = if base.as_str() == "fm-a" { "fm-b" } else { "fm-a" };
                 prop_assert_eq!(clean.allows(other), messy.allows(other));
             }
@@ -19965,15 +18974,12 @@ mod tests {
             .flat_map(|fixer| fixer.filter_ids.iter().map(String::as_str))
             .collect();
 
-        // Scan the runtime half of this file (everything before the test
-        // module) for the ids the gates actually consult.
         let source = include_str!("doctor.rs");
         let runtime = source
             .split("#[cfg(all(test, unix))]")
             .next()
             .expect("split never yields zero items");
 
-        // Resolve `const FM_*` definitions to their string values.
         let mut const_values: HashMap<String, &str> = HashMap::new();
         for line in runtime.lines() {
             let trimmed = line.trim_start();
@@ -20002,16 +19008,10 @@ mod tests {
                 } else if let Some(value) = const_values.get(arg) {
                     gate_ids.insert((*value).to_string());
                 }
-                // Bare closure vars (the `.any(|fm| filter.allows(fm))`
-                // shape) carry no id here; the array scan below covers
-                // the constants such closures iterate.
                 rest = &after[end..];
             }
         }
 
-        // `filter_allows_jsonl_rebuild` consults an ARRAY of FM_
-        // constants via a closure; pull its idents from the function
-        // body (everything up to the `.iter()` that starts the closure).
         let rebuild_body = runtime
             .split("fn filter_allows_jsonl_rebuild")
             .nth(1)
@@ -20121,9 +19121,6 @@ mod tests {
 
     #[test]
     fn test_fix_merge_artifacts_quarantines_via_chokepoint() {
-        // Pass-4 cycle 1: the fixer must MOVE stuck artifacts into the
-        // run-dir quarantine via Op::Rename (never delete), and the
-        // post-repair detector must report ok.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -20138,11 +19135,9 @@ mod tests {
             ),
         )
         .unwrap();
-        // Plant the merge artifacts.
         fs::write(beads_dir.join("issues.base.jsonl"), b"").unwrap();
         fs::write(beads_dir.join("issues.left.jsonl"), b"").unwrap();
         fs::write(beads_dir.join("issues.right.jsonl"), b"").unwrap();
-        // The canonical anchor must NOT be touched.
         fs::write(beads_dir.join("beads.base.jsonl"), b"canonical-anchor").unwrap();
 
         let paths = config::ConfigPaths {
@@ -20152,7 +19147,7 @@ mod tests {
             metadata: config::Metadata::default(),
         };
 
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
         let report_before = collect_doctor_report(&beads_dir, &paths).expect("doctor report");
         let before_check = find_check(&report_before.report.checks, "jsonl.merge_artifacts")
@@ -20167,22 +19162,18 @@ mod tests {
             Some(&mut session),
         ));
 
-        // Source artifacts gone.
         assert!(!beads_dir.join("issues.base.jsonl").exists());
         assert!(!beads_dir.join("issues.left.jsonl").exists());
         assert!(!beads_dir.join("issues.right.jsonl").exists());
-        // Canonical anchor untouched.
         assert_eq!(
             fs::read(beads_dir.join("beads.base.jsonl")).unwrap(),
             b"canonical-anchor"
         );
-        // Quarantine populated.
         let q = session.run.root.join("quarantine/.beads");
         assert!(q.join("issues.base.jsonl").is_file());
         assert!(q.join("issues.left.jsonl").is_file());
         assert!(q.join("issues.right.jsonl").is_file());
 
-        // actions.jsonl records three rename ops.
         let actions = fs::read_to_string(&session.run.actions_file).unwrap();
         let rename_count = actions
             .lines()
@@ -20190,7 +19181,6 @@ mod tests {
             .count();
         assert_eq!(rename_count, 3, "actions.jsonl: {actions}");
 
-        // Re-detect: status returns to ok.
         let report_after = collect_doctor_report(&beads_dir, &paths).expect("doctor report");
         let after_check = find_check(&report_after.report.checks, "jsonl.merge_artifacts")
             .expect("merge_artifacts check");
@@ -20203,9 +19193,6 @@ mod tests {
 
     #[test]
     fn test_merge_artifacts_warn_carries_classification_and_recovery() {
-        // beads#344/#328: the warn's details must classify each
-        // flagged artifact, scan it for conflict markers, and point at the
-        // canonical JSONL plus the structured recovery actions.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -20220,7 +19207,6 @@ mod tests {
         )
         .unwrap();
         fs::write(beads_dir.join("issues.right.jsonl"), b"{\"id\":\"bd-c\"}\n").unwrap();
-        // The protected anchor must stay excluded from the details.
         fs::write(beads_dir.join("beads.base.jsonl"), b"canonical-anchor").unwrap();
 
         let mut checks = Vec::new();
@@ -20268,8 +19254,6 @@ mod tests {
             "protected anchor must not be classified as an artifact: {details}"
         );
 
-        // Back-compat `files` list survives, and the finding_id wiring
-        // stays on the canonical FM identifier.
         let listed = details["files"].as_array().expect("files list");
         assert_eq!(listed.len(), 3, "{details}");
         assert_eq!(details["finding_id"], "fm-state_files-merge-artifact-stuck");
@@ -20277,8 +19261,6 @@ mod tests {
 
     #[test]
     fn test_fix_merge_artifacts_is_idempotent_no_op_on_second_call() {
-        // The idempotence contract: a second --repair against a clean
-        // workspace must find nothing to quarantine (no actions emitted).
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -20295,10 +19277,9 @@ mod tests {
         };
         let report = collect_doctor_report(&beads_dir, &paths).expect("doctor report");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Json, false, true);
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
 
-        // No artifacts present → no warning → fixer returns false.
         assert!(!fix_merge_artifacts_if_warned(
             &beads_dir,
             &report.report,
@@ -20339,7 +19320,7 @@ mod tests {
             }],
         };
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Json, false, true);
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
 
         assert!(fix_startup_cache_entries_if_warned(
@@ -20495,10 +19476,6 @@ mod tests {
 
     #[test]
     fn dry_run_repair_reports_a_plan_not_an_applied_repair() {
-        // `chokepoint::mutate` reports a successful no-op under `--dry-run`, so
-        // every `*_repaired` flag is set exactly as in a real repair. `dry_run`
-        // is the only thing that can tell the plan from the repair; without it
-        // the envelope told the operator the quarantine had happened.
         assert!(
             !dry_run_plan().applied(),
             "a dry run wrote nothing, so applied() must be false"
@@ -20528,8 +19505,6 @@ mod tests {
             "the plan must still name what it would do"
         );
 
-        // The text channel reads the same `messages()` the JSON envelope does,
-        // so a past-tense sentence there would be the same lie at another door.
         let message = repair_outcome_message_from_parts(dry_run_plan().messages(), None, None);
         assert!(
             message.starts_with("Dry run:") && !message.contains("Quarantined"),
@@ -21404,7 +20379,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session = DoctorRepairSession::new(temp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(temp.path(),  false)
             .expect("session must build");
 
         assert!(fix_jsonl_trailing_newline_if_warned(
@@ -21441,7 +20416,7 @@ mod tests {
             }],
         };
         let mut session =
-            DoctorRepairSession::new(repo.path(), /* dry_run = */ false).expect("session");
+            DoctorRepairSession::new(repo.path(),  false).expect("session");
 
         assert!(!fix_jsonl_trailing_newline_if_warned(
             Some(&external_jsonl),
@@ -21481,7 +20456,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session = DoctorRepairSession::new(&repo, /* dry_run = */ false).expect("session");
+        let mut session = DoctorRepairSession::new(&repo,  false).expect("session");
 
         assert!(!fix_jsonl_trailing_newline_if_warned(
             Some(&traversal_path),
@@ -21589,14 +20564,9 @@ mod tests {
 
     #[test]
     fn test_check_sync_metadata_empty_jsonl_pending_import_stays_ok() -> Result<()> {
-        // beads#330 regression guard: a fresh `br init` leaves an
-        // empty issues.jsonl whose mtime trails the DB, so `jsonl_newer`
-        // reads true with nothing to import. That benign state must stay
-        // Ok so `br doctor` keeps exiting 0 on a brand-new workspace.
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("beads.db");
         let jsonl_path = temp.path().join("issues.jsonl");
-        // Empty JSONL — the fresh-init shape.
         fs::write(&jsonl_path, b"").unwrap();
 
         let storage = SqliteStorage::open(&db_path).unwrap();
@@ -21911,8 +20881,6 @@ mod tests {
 
     #[test]
     fn test_check_database_sidecars_accepts_wal_without_shm() -> Result<()> {
-        // frankensqlite does not create SHM files — WAL without SHM is expected and should
-        // be informational without degrading an otherwise healthy workspace.
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("beads.db");
         fs::write(&db_path, b"sqlite-header-placeholder")?;
@@ -21942,10 +20910,6 @@ mod tests {
 
     #[test]
     fn test_check_database_sidecars_flags_legacy_sidecars_when_db_absent() -> Result<()> {
-        // beads_rust-avhq: fsqlite-era sidecars (-wal-cert, -fsqlite-ns-*)
-        // are invisible to the classic -wal/-shm/-journal inventory. With
-        // the database file gone, the doctor must flag them and list them
-        // as quarantine candidates instead of pretending the family is clean.
         let temp = TempDir::new()?;
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir)?;
@@ -22136,7 +21100,7 @@ mod tests {
         };
 
         let mut session =
-            DoctorRepairSession::new(temp.path(), /* dry_run = */ false).expect("session builds");
+            DoctorRepairSession::new(temp.path(),  false).expect("session builds");
 
         let repair = repair_recoverable_db_state(
             &beads_dir,
@@ -22156,10 +21120,6 @@ mod tests {
             .join("quarantine")
             .join(".beads")
             .join("beads.db-shm");
-        // The storage engine may immediately recreate its own `-shm` when the
-        // repair reopens the database, so the live path existing again is not
-        // a failure. What must hold is that the *orphan* bytes were moved out
-        // rather than left in place.
         assert_ne!(
             fs::read(&shm_path).ok().as_deref(),
             Some(b"orphan shm".as_slice()),
@@ -22203,10 +21163,6 @@ mod tests {
 
     #[test]
     fn test_dry_run_sidecar_quarantine_reports_no_repair() -> Result<()> {
-        // Same orphan sidecar as the test above, planned instead of performed.
-        // `chokepoint::mutate` reports success for a dry-run no-op, so counting
-        // that as a quarantine told the operator a repair had happened while
-        // the orphan bytes sat untouched.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir)?;
@@ -22233,7 +21189,7 @@ mod tests {
         };
 
         let mut session =
-            DoctorRepairSession::new(temp.path(), /* dry_run = */ true).expect("session builds");
+            DoctorRepairSession::new(temp.path(),  true).expect("session builds");
 
         let repair = repair_recoverable_db_state(
             &beads_dir,
@@ -22251,9 +21207,6 @@ mod tests {
             !repair.applied(),
             "a dry run wrote nothing, so applied() must be false"
         );
-        // The live sidecar bytes are deliberately not asserted: opening the
-        // database for inspection may recreate a fresh `-shm`. What must hold
-        // is that no quarantine destination was created.
         let quarantine_path = session
             .run
             .root
@@ -22275,19 +21228,11 @@ mod tests {
 
     #[test]
     fn test_repair_recoverable_db_state_skips_repair_for_valid_wal_without_shm() -> Result<()> {
-        // A leftover WAL without its SHM sibling is an informational Ok under
-        // real SQLite (the SHM is removed before the WAL when a writer exits
-        // uncleanly). repair_recoverable_db_state should NOT attempt any
-        // repair for this condition.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir)?;
         let db_path = beads_dir.join("beads.db");
 
-        // Build a REAL database and detach its WAL: write through a live
-        // connection, stash the -wal aside, close cleanly (checkpoints and
-        // removes -wal/-shm), then reattach the stashed -wal. The result is
-        // a valid database family with a WAL but no SHM.
         let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
         let detached_wal = temp.path().join("detached-wal");
         {
@@ -22324,10 +21269,6 @@ mod tests {
             repair.quarantined_artifacts.is_empty(),
             "valid leftover WAL should not be quarantined"
         );
-        // Real SQLite consumes a leftover WAL on the next clean open+close
-        // (checkpoint-on-close removes -wal/-shm), so "untouched bytes" is
-        // not an achievable contract once any repair pass opens the store.
-        // The no-repair contract is: nothing quarantined, database intact.
         let post = SqliteStorage::open(&db_path).unwrap();
         assert!(
             post.get_issue("bd-wal-no-shm").unwrap().is_some(),
@@ -22754,10 +21695,6 @@ mod tests {
 
     #[test]
     fn locked_database_failure_does_not_blame_the_jsonl() {
-        // beads-krdi: when another process holds the workspace the engine
-        // reports "unable to open database file". The old residual bucket told
-        // the operator the export was corrupt and to hand-edit it — advice that
-        // is both wrong and destructive to a healthy file.
         let err = BeadsError::Database(DbError::CannotOpen {
             path: PathBuf::from("/tmp/ws/.beads/beads.db"),
         });
@@ -22769,7 +21706,6 @@ mod tests {
         assert!(is_database_unavailable_failure(&err));
         assert!(!is_jsonl_content_failure(&err));
 
-        // The other ways the workspace can be held are classified the same way.
         for held in [
             BeadsError::Database(DbError::DatabaseLocked {
                 path: PathBuf::from("/tmp/ws/.beads/beads.db"),
@@ -22803,7 +21739,6 @@ mod tests {
 
     #[test]
     fn jsonl_content_failure_still_points_at_the_export() {
-        // The one class where blaming the JSONL is correct keeps doing so.
         let err = BeadsError::JsonlParse {
             line: 12,
             reason: "missing field `title`".to_string(),
@@ -22820,8 +21755,6 @@ mod tests {
 
     #[test]
     fn unclassified_failure_attributes_no_cause() {
-        // The residual case must describe what happened without inventing a
-        // culprit, and must state that nothing was written.
         let err = BeadsError::Config("run directory is not writable".to_string());
         assert!(!is_database_unavailable_failure(&err));
         assert!(!is_jsonl_content_failure(&err));
@@ -22850,21 +21783,17 @@ mod tests {
 
     #[test]
     fn dry_run_skip_is_reported_as_skipped_not_as_a_failure() {
-        // beads-krdi: `--repair --dry-run` declined to write. Nothing
-        // failed, so it must not be wrapped in a repair-failure message.
         let err = BeadsError::Config(JSONL_REBUILD_DRY_RUN_SKIP_MESSAGE.to_string());
         let outcome = jsonl_rebuild_failure_outcome(&err);
         assert_eq!(outcome, "skipped");
         assert!(jsonl_rebuild_error_is_self_describing(outcome));
 
-        // The authority refusal keeps its own verbatim treatment...
         let refused = BeadsError::Config(format!(
             "{JSONL_REBUILD_AUTHORITY_ERROR_PREFIX}: found 1 merge conflict marker(s)"
         ));
         assert!(jsonl_rebuild_error_is_self_describing(
             jsonl_rebuild_failure_outcome(&refused)
         ));
-        // ...while a genuine failure is still wrapped.
         assert!(!jsonl_rebuild_error_is_self_describing(
             jsonl_rebuild_failure_outcome(&BeadsError::Config("disk full".to_string()))
         ));
@@ -22880,7 +21809,6 @@ mod tests {
         let jsonl_path = beads_dir.join("issues.jsonl");
 
         let issue = Issue {
-            // ADR-0001 §5.5: projection fixtures are dispatchable beads.
             verify: Some("cargo test --offline".to_string()),
             principles: vec![crate::model::PrincipleCitation {
                 name: "prove-it-works".to_string(),
@@ -23094,9 +22022,6 @@ mod tests {
             .unwrap(),
         );
         write_authority.bind_database_inode_for_mutation().unwrap();
-        // Snapshot the on-disk family BEFORE the fixer runs: real SQLite's
-        // VACUUM consumes/removes the -wal/-journal sidecars, so listing
-        // afterwards would under-report the audited family.
         let expected_family = on_disk_db_family_names(&beads_dir, "beads.db");
         let mut session = DoctorRepairSession::new(temp.path(), false).unwrap();
         let mut repair = LocalRepairResult::default();
@@ -23145,9 +22070,6 @@ mod tests {
         fs::write(&wal_path, b"wal-prestate").unwrap();
         fs::write(&journal_path, b"journal-prestate").unwrap();
 
-        // Snapshot the on-disk family BEFORE the fixer runs: the repair open
-        // can consume/remove sidecars, so listing afterwards would
-        // under-report the audited family.
         let expected_family = on_disk_db_family_names(&beads_dir, "beads.db");
         let mut session = DoctorRepairSession::new(temp.path(), false).unwrap();
         let mut repair = LocalRepairResult::default();
@@ -23203,16 +22125,9 @@ mod tests {
                 .unwrap();
         }
 
-        // A short garbage WAL both marks the backup content and blocks the
-        // engine from opening the database — the exact case the local repair
-        // now clears by quarantining the sidecar and retrying. (Journal-family
-        // backup coverage lives in the VACUUM and REINDEX tests, whose repair
-        // paths do not need a successful `SqliteStorage::open`.)
         let wal_path = sqlite_wal_sidecar_path(&db_path);
         fs::write(&wal_path, b"wal-before-blocked-cache").unwrap();
 
-        // The audit records the family as it existed going in; the repair may
-        // legitimately move a corrupt sidecar aside while it runs.
         let expected_family = on_disk_db_family_names(&beads_dir, "beads.db");
 
         let report = DoctorReport {
@@ -23282,13 +22197,6 @@ mod tests {
         assert!(!local_repair.blocked_cache_rebuilt);
     }
 
-    // ===================================================================
-    // #253: WARN-level page anomalies left by the light-repair pass
-    // should trigger a follow-up VACUUM so the DB ends in a clean state
-    // and subsequent `--repair` runs don't report "nothing to repair"
-    // with integrity_check still dirty.
-    // ===================================================================
-
     #[test]
     fn report_has_warn_level_page_anomaly_matches_orphan_page_warn() {
         for msg in [
@@ -23298,7 +22206,7 @@ mod tests {
             "Tree 28 page 28: free space corruption",
         ] {
             let report = DoctorReport {
-                ok: true, // WARNs don't flip ok → false
+                ok: true,
                 workspace_health: None,
                 reliability_audit: None,
                 checks: vec![CheckResult {
@@ -23314,7 +22222,6 @@ mod tests {
             );
         }
 
-        // sqlite3 binary variant should also match (the C sqlite3 cross-check).
         let report = DoctorReport {
             ok: true,
             workspace_health: None,
@@ -23331,7 +22238,6 @@ mod tests {
 
     #[test]
     fn report_has_warn_level_page_anomaly_ignores_non_page_warns() {
-        // "missing from index" is a partial-index REINDEX case, not a VACUUM case.
         let report = DoctorReport {
             ok: true,
             workspace_health: None,
@@ -23345,8 +22251,6 @@ mod tests {
         };
         assert!(!report_has_warn_level_page_anomaly(&report));
 
-        // Out-of-order index warning: known frankensqlite DESC-index artifact,
-        // not a VACUUM case.
         let report = DoctorReport {
             ok: true,
             workspace_health: None,
@@ -23363,9 +22267,6 @@ mod tests {
 
     #[test]
     fn report_has_warn_level_page_anomaly_ignores_error_level_findings() {
-        // ERROR-level findings are handled by the existing
-        // `report_has_page_corruption` path; this predicate is
-        // specifically scoped to WARN-level residue left after light repair.
         let report = DoctorReport {
             ok: false,
             workspace_health: None,
@@ -23427,10 +22328,6 @@ mod tests {
 
     #[test]
     fn jsonl_rebuild_verification_tolerates_benign_post_rebuild_warnings() {
-        // Issue #375: a successful rebuild-from-JSONL always leaves a fresh
-        // recovery backup and can inherit a RUST_LOG nag from the caller's
-        // environment. Neither means the rebuilt DB is unhealthy, so
-        // post-repair verification must still pass.
         let report = DoctorReport {
             ok: true,
             workspace_health: None,
@@ -23456,16 +22353,12 @@ mod tests {
                 },
             ],
         };
-        // Strict verifier (used by the light-repair path) rejects these...
         assert!(!repair_report_verified(&report));
-        // ...but the rebuild path's verifier tolerates them.
         assert!(jsonl_rebuild_repair_verified(&report, &[]));
     }
 
     #[test]
     fn jsonl_rebuild_verification_still_fails_on_real_defects() {
-        // An ERROR-level finding (e.g. rebuilt DB still not openable) flips
-        // report.ok to false and must fail verification.
         let error_report = DoctorReport {
             ok: false,
             workspace_health: None,
@@ -23479,8 +22372,6 @@ mod tests {
         };
         assert!(!jsonl_rebuild_repair_verified(&error_report, &[]));
 
-        // A non-benign WARN (page anomaly) is NOT tolerated even though
-        // report.ok is true: it signals residual corruption after rebuild.
         let page_warn_report = DoctorReport {
             ok: true,
             workspace_health: None,
@@ -23494,8 +22385,6 @@ mod tests {
         };
         assert!(!jsonl_rebuild_repair_verified(&page_warn_report, &[]));
 
-        // A db.sidecars ERROR (dangling non-file sidecar) is not tolerated
-        // even though the check name is on the benign list.
         let sidecar_error_report = DoctorReport {
             ok: false,
             workspace_health: None,
@@ -23539,27 +22428,17 @@ mod tests {
 
     #[test]
     fn jsonl_rebuild_verification_tolerates_pending_export_after_rebuild() {
-        // beads-a53h: a rebuild restores unflushed tombstones that the
-        // JSONL does not carry, so the fresh database is legitimately ahead of
-        // the export with no last_export_time recorded. That is the repair
-        // preserving local state, not a defect, and it must not make a
-        // successful repair exit 7.
         let report = report_with(vec![sync_metadata_warn(false, true)]);
         assert!(jsonl_rebuild_repair_verified(&report, &[]));
-        // The strict verifier used by the light-repair path is unchanged.
         assert!(!repair_report_verified(&report));
     }
 
     #[test]
     fn jsonl_rebuild_verification_rejects_pending_import_after_rebuild() {
-        // The other drift direction stays fatal: we just rebuilt the database
-        // *from* the JSONL, so a JSONL that still reads newer means the rebuild
-        // did not land what it read.
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![sync_metadata_warn(true, false)]),
             &[]
         ));
-        // Divergence (both directions) is likewise not benign.
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![sync_metadata_warn(true, true)]),
             &[]
@@ -23568,7 +22447,6 @@ mod tests {
 
     #[test]
     fn sync_metadata_benignity_fails_closed_without_drift_details() {
-        // Missing details must not be read as "pending export only".
         let no_details = CheckResult {
             name: "sync.metadata".to_string(),
             status: CheckStatus::Warn,
@@ -23581,7 +22459,6 @@ mod tests {
             &[]
         ));
 
-        // So must details that carry only one half of the pair.
         let half_details = CheckResult {
             name: "sync.metadata".to_string(),
             status: CheckStatus::Warn,
@@ -23616,15 +22493,10 @@ mod tests {
 
     #[test]
     fn jsonl_rebuild_verification_tolerates_preserved_dirty_count_divergence() {
-        // GitHub #394: restoring a dirty unflushed issue across the rebuild
-        // leaves the DB one row ahead of the JSONL until the next flush.
-        // That exact divergence — and only that one — must not fail
-        // verification.
         let preserved = vec!["bd-kept".to_string()];
         let report = report_with(vec![count_divergence_warn(&["bd-kept"], &[])]);
         assert!(jsonl_rebuild_repair_verified(&report, &preserved));
 
-        // Without a preserved set, the same divergence stays fatal.
         assert!(!jsonl_rebuild_repair_verified(&report, &[]));
     }
 
@@ -23632,19 +22504,16 @@ mod tests {
     fn preserved_dirty_count_divergence_fails_closed() {
         let preserved = vec!["bd-kept".to_string()];
 
-        // A DB-only id we did NOT restore is unexplained drift.
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![count_divergence_warn(&["bd-kept", "bd-mystery"], &[])]),
             &preserved
         ));
 
-        // A row missing from the DB is record loss, never benign.
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![count_divergence_warn(&["bd-kept"], &["bd-lost"])]),
             &preserved
         ));
 
-        // A warn without the id_delta details cannot be attributed.
         let bare_warn = CheckResult {
             name: "counts.db_vs_jsonl".to_string(),
             status: CheckStatus::Warn,
@@ -23656,8 +22525,6 @@ mod tests {
             &preserved
         ));
 
-        // A clipped preview (only_db shorter than only_db_count) cannot
-        // attribute every divergent row.
         let mut clipped = count_divergence_warn(&["bd-kept"], &[]);
         if let Some(details) = clipped.details.as_mut() {
             details["id_delta"]["only_db_count"] = serde_json::json!(2);
@@ -23670,10 +22537,6 @@ mod tests {
 
     #[test]
     fn fresh_recovery_backups_are_not_classified_as_stale() {
-        // beads-a53h: `db.recovery_artifacts` is information-only and
-        // lists every preserved backup regardless of age, including the one the
-        // running repair just wrote. Only the TTL-based `.aged` sibling may
-        // claim artifacts are stale.
         let mut anomalies = Vec::new();
         append_doctor_check_anomalies(
             &CheckResult {
@@ -23771,10 +22634,6 @@ mod tests {
 
         assert!(repair_report_verified(&clean_report));
     }
-
-    // ========================================================================
-    // beads-m3mi: audit.suspect_close_reasons check tests (added 2026-05-09)
-    // ========================================================================
 
     fn closed_issue_with_reason(id: &str, title: &str, reason: &str) -> Issue {
         let mut issue = sample_issue(id, title);
@@ -23939,28 +22798,6 @@ mod tests {
         );
     }
 
-    // ---------------------------------------------------------------
-    // WP3 chokepoint integration tests (Task E)
-    //
-    // These tests cover the four invariants the WP3 spec requires once
-    // the doctor's WP1 chokepoint becomes load-bearing:
-    //
-    //   1. `--dry-run` writes nothing to disk — neither the target file
-    //      nor an `actions.jsonl` line.
-    //   2. A real (non-dry-run) repair appends to `actions.jsonl` and
-    //      the line parses as JSON with the WP1 schema.
-    //   3. `write_undo_sh` produces an executable bash script.
-    //   4. The "no delete" invariant: when the doctor would otherwise
-    //      remove a file, it instead renames it into the per-run
-    //      quarantine area.
-    //
-    // We exercise these via the gitignore fixer (the only path WP3
-    // wires through `mutate()` end-to-end without touching the
-    // config-crate boundary), plus a direct chokepoint call for the
-    // quarantine-not-delete invariant. The other repair phases (DB
-    // rebuild, sidecar quarantine, REINDEX/VACUUM) are deferred to WP4.
-    // ---------------------------------------------------------------
-
     /// Build a minimal doctor fixture: a repo root containing `.beads/`
     /// and a root `.gitignore` containing an offending pattern that
     /// `fix_root_gitignore_if_warned` will rewrite.
@@ -23970,7 +22807,6 @@ mod tests {
         let gitignore = tmp.join(".gitignore");
         fs::write(&gitignore, b"keep-me\n.beads/\n").unwrap();
 
-        // Synthesise the warning the fixer keys off of.
         let report = DoctorReport {
             ok: false,
             workspace_health: None,
@@ -23994,13 +22830,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (beads_dir, gitignore, report) = make_doctor_fixture(tmp.path());
 
-        // Build the session first — `create_run_dir` may append a
-        // `.doctor/` line to `.gitignore` (this is an idempotent,
-        // documented setup write that happens once per repair run, not
-        // a fixer mutation). Snapshot AFTER session construction so we
-        // measure only what the dry-run fixer attempts.
         let mut session =
-            DoctorRepairSession::new(tmp.path(), /* dry_run = */ true).expect("session must build");
+            DoctorRepairSession::new(tmp.path(),  true).expect("session must build");
         let post_session_baseline = fs::read(&gitignore).unwrap();
         let actions_path = session.run.actions_file.clone();
 
@@ -24008,14 +22839,12 @@ mod tests {
             fix_root_gitignore_if_warned(&beads_dir, &report, &quiet_ctx(), Some(&mut session));
         assert!(result, "fixer must report success even in dry-run");
 
-        // The fixer must not touch the file in dry-run.
         assert_eq!(
             fs::read(&gitignore).unwrap(),
             post_session_baseline,
             "dry-run must not mutate the target file"
         );
 
-        // No actions.jsonl line should have been appended by the fixer.
         let actions = fs::read(&actions_path).unwrap_or_default();
         assert!(
             actions.is_empty(),
@@ -24029,7 +22858,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (beads_dir, _gitignore, report) = make_doctor_fixture(tmp.path());
 
-        let mut session = DoctorRepairSession::new(tmp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(tmp.path(),  false)
             .expect("session must build");
         let actions_path = session.run.actions_file.clone();
         let result =
@@ -24072,7 +22901,7 @@ mod tests {
             details: None,
         });
 
-        let mut session = DoctorRepairSession::new(tmp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(tmp.path(),  false)
             .expect("session must build");
         fs::set_permissions(&gitignore, fs::Permissions::from_mode(0o444)).unwrap();
         let before = fs::read(&gitignore).unwrap();
@@ -24097,7 +22926,7 @@ mod tests {
     #[test]
     fn wp3_repair_creates_undo_sh() {
         let tmp = TempDir::new().unwrap();
-        let session = DoctorRepairSession::new(tmp.path(), /* dry_run = */ false)
+        let session = DoctorRepairSession::new(tmp.path(),  false)
             .expect("session must build");
         run_dir::write_undo_sh(&session.run).expect("undo.sh write");
 
@@ -24114,18 +22943,13 @@ mod tests {
 
     #[test]
     fn wp3_quarantine_renames_not_deletes() {
-        // The "no delete" invariant: when the doctor wants to remove a
-        // file, it must instead `Op::Rename` it into the per-run
-        // quarantine area. We exercise this via a direct chokepoint
-        // call against an orphan `.wal` sidecar — the same kind of file
-        // the sidecar repair targets.
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
         let orphan_wal = beads_dir.join("beads.db-wal");
         fs::write(&orphan_wal, b"orphan-wal-bytes").unwrap();
 
-        let mut session = DoctorRepairSession::new(tmp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(tmp.path(),  false)
             .expect("session must build");
         session.set_fixer("doctor.test.quarantine");
         let quarantine_dst = session.run.root.join("quarantine/.beads/beads.db-wal");
@@ -24139,7 +22963,6 @@ mod tests {
         .expect("rename into quarantine must succeed");
         assert!(result.ok);
 
-        // The orphan must be moved, not deleted.
         assert!(!orphan_wal.exists(), "source must be moved out of .beads/");
         assert!(
             quarantine_dst.exists(),
@@ -24148,8 +22971,6 @@ mod tests {
         );
         assert_eq!(fs::read(&quarantine_dst).unwrap(), b"orphan-wal-bytes");
 
-        // The actions.jsonl line records the rename target so
-        // `doctor undo` and the bash fallback can reverse it.
         let actions = fs::read_to_string(&session.run.actions_file).unwrap();
         let line = actions
             .lines()
@@ -24192,14 +23013,11 @@ mod tests {
         );
     }
 
-    // --- check_routes_jsonl tests (pass-2 / WP5 unblock for routes_external) ---
-
     #[test]
     fn check_routes_jsonl_missing_is_ok() {
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // No routes.jsonl planted.
         let mut checks = Vec::new();
         check_routes_jsonl(&beads_dir, &mut checks);
         let check = find_check(&checks, "routes_jsonl").expect("routes_jsonl present");
@@ -24240,7 +23058,6 @@ mod tests {
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
         let routes = beads_dir.join("routes.jsonl");
-        // One good line + one malformed line.
         fs::write(
             &routes,
             "{\"prefix\":\"api-\",\"path\":\"../api\"}\n\
@@ -24271,7 +23088,6 @@ mod tests {
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
         let routes = beads_dir.join("routes.jsonl");
-        // Missing prefix entirely.
         fs::write(&routes, "{\"path\":\"../api\"}\n").unwrap();
         let mut checks = Vec::new();
         check_routes_jsonl(&beads_dir, &mut checks);
@@ -24480,15 +23296,6 @@ mod tests {
         );
     }
 
-    // --- rust_log_volume / check_rust_log_noisy tests (pass-2 / WP5) ---
-    //
-    // We test the pure classifier `rust_log_volume(Option<&str>)`
-    // directly. The wrapper `check_rust_log_noisy(checks)` reads
-    // `std::env::var("RUST_LOG")` which makes it sensitive to the
-    // ambient test-runner environment — exercising it through the
-    // classifier keeps the tests deterministic without needing
-    // `#![feature(restricted_std)]` or unsafe `std::env::set_var`.
-
     #[test]
     fn rust_log_volume_classifies_unset_like_compiled_default() {
         assert_eq!(rust_log_volume(None), rust_log_default_volume());
@@ -24540,9 +23347,6 @@ mod tests {
 
     #[test]
     fn rust_log_volume_classifies_per_module_directive_with_info_as_noisy() {
-        // Per-module directives that ask for info/debug/trace must
-        // still trip the warn — that's the real-world footgun (a
-        // developer leaves `beads=info` set and forgets).
         let v = rust_log_volume(Some("beads=info"));
         match v {
             RustLogVolume::Noisy { reason } => assert_eq!(reason, "directive_info"),
@@ -24561,7 +23365,6 @@ mod tests {
 
     #[test]
     fn rust_log_volume_classifies_composite_with_one_noisy_directive_as_noisy() {
-        // First directive is quiet, second is noisy → overall noisy.
         let v = rust_log_volume(Some("warn,beads=debug"));
         match v {
             RustLogVolume::Noisy { reason } => assert_eq!(reason, "directive_debug"),
@@ -24592,8 +23395,6 @@ mod tests {
         let v = rust_log_volume(Some("error,beads=off"));
         assert_eq!(v, RustLogVolume::Quiet);
     }
-
-    // --- check_permissions_beads_dir tests (pass-2 / WP5) ---
 
     #[test]
     fn check_permissions_beads_dir_normal_workspace_is_ok() {
@@ -24629,7 +23430,6 @@ mod tests {
 
         let mut checks = Vec::new();
         check_permissions_beads_dir(&beads_dir, &mut checks);
-        // Restore writability so TempDir can clean up.
         let mut restore = fs::metadata(&beads_dir).unwrap().permissions();
         restore.set_mode(0o755);
         fs::set_permissions(&beads_dir, restore).ok();
@@ -24671,7 +23471,6 @@ mod tests {
 
         let mut checks = Vec::new();
         check_permissions_beads_dir(&beads_dir, &mut checks);
-        // Restore for cleanup.
         let mut restore = fs::metadata(&jsonl).unwrap().permissions();
         restore.set_mode(0o644);
         fs::set_permissions(&jsonl, restore).ok();
@@ -24700,8 +23499,6 @@ mod tests {
             find_check(&checks, "permissions.beads_dir").expect("permissions.beads_dir present");
         assert!(matches!(check.status, CheckStatus::Ok));
     }
-
-    // --- check_config_yaml tests (pass-2 / WP5) ---
 
     #[test]
     fn check_config_yaml_missing_is_ok() {
@@ -24757,7 +23554,6 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // Mis-indented mapping: a YAML parser surfaces a clear error.
         let yaml = "id:\n  prefix: \"proj\"\n  - bad\n  invalid_block_mapping\n";
         fs::write(beads_dir.join("config.yaml"), yaml).unwrap();
         let mut checks = Vec::new();
@@ -24787,7 +23583,6 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // Mismatched quotes / control characters in a flow-style value.
         let yaml = "[broken: yaml,\n  with: unterminated: \"quote\n  another: line\n";
         fs::write(beads_dir.join("config.yaml"), yaml).unwrap();
         let mut checks = Vec::new();
@@ -24799,8 +23594,6 @@ mod tests {
             check.status
         );
     }
-
-    // --- check_metadata_json tests (pass-2 / WP5) ---
 
     #[test]
     fn check_metadata_json_missing_is_ok() {
@@ -24960,7 +23753,6 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // Declare files that don't exist.
         let metadata = serde_json::json!({
             "database": tmp.path().join("renamed.db").display().to_string(),
             "jsonl_export": tmp.path().join("renamed.jsonl").display().to_string(),
@@ -24983,7 +23775,6 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // beads.db exists; jsonl_export points at a missing file.
         let db_path = beads_dir.join("beads.db");
         fs::write(&db_path, b"").unwrap();
         let metadata = serde_json::json!({
@@ -25000,8 +23791,6 @@ mod tests {
         assert_eq!(drift.len(), 1, "only the missing field should be flagged");
         assert_eq!(drift[0]["field"], "jsonl_export");
     }
-
-    // --- check_binary_version_mismatch + helpers tests (pass-2 / WP5) ---
 
     #[test]
     fn parse_cargo_toml_package_field_finds_version() {
@@ -25032,7 +23821,6 @@ version = "0.2.6"
 version = "1.0.0"
 name = "other"
 "#;
-        // Must return the [package].version, not [dependencies].version.
         assert_eq!(
             parse_cargo_toml_package_field(body, "version").as_deref(),
             Some("0.2.6")
@@ -25067,8 +23855,6 @@ name = "beads"
 
     #[test]
     fn find_beads_rust_repo_root_finds_self() {
-        // The .beads_dir we pass is /tmp/<dir>/.beads where
-        // <dir>/Cargo.toml has name = "beads".
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
@@ -25089,10 +23875,6 @@ edition = "2024"
     #[test]
     fn find_beads_rust_repo_root_returns_none_for_other_repo() {
         let tmp = TempDir::new().unwrap();
-        // Model an unrelated package nested beneath a beads checkout.
-        // This is also what happens when TMPDIR points inside the checkout:
-        // the nearest package manifest must stop the search before the outer
-        // beads manifest can produce a false-positive match.
         fs::write(
             tmp.path().join("Cargo.toml"),
             r#"[package]
@@ -25105,7 +23887,6 @@ version = "0.99.0"
         let beads_dir = other_repo.join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
         let cargo = other_repo.join("Cargo.toml");
-        // Wrong [package].name.
         fs::write(
             &cargo,
             r#"[package]
@@ -25123,8 +23904,6 @@ version = "1.0.0"
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // No Cargo.toml anywhere upward — common when br runs outside
-        // its own source tree.
         let mut checks = Vec::new();
         check_binary_version_mismatch(&beads_dir, &mut checks);
         let check = find_check(&checks, "binary_version").expect("binary_version present");
@@ -25140,8 +23919,6 @@ version = "1.0.0"
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // Plant a Cargo.toml whose version is FAR ahead of any binary
-        // version we'd ship (99.99.99 > 0.x.y).
         fs::write(
             tmp.path().join("Cargo.toml"),
             r#"[package]
@@ -25175,8 +23952,6 @@ edition = "2024"
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // Plant a Cargo.toml with version "0.0.1" — guaranteed BEHIND
-        // any released binary. Operator may be working on a side branch.
         fs::write(
             tmp.path().join("Cargo.toml"),
             r#"[package]
@@ -25201,8 +23976,6 @@ edition = "2024"
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // Non-semver tree version — silent (operator may be using a
-        // CalVer or git-sha tag).
         fs::write(
             tmp.path().join("Cargo.toml"),
             r#"[package]
@@ -25217,14 +23990,11 @@ version = "2026-05-11-abc123"
         assert!(matches!(check.status, CheckStatus::Ok));
     }
 
-    // --- check_orphaned_write_lock tests (pass-2 / WP5) ---
-
     #[test]
     fn check_orphaned_write_lock_missing_is_ok() {
         let tmp = TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
-        // No .write.lock planted.
         let mut checks = Vec::new();
         check_orphaned_write_lock(&beads_dir, &mut checks);
         let check = find_check(&checks, "write_lock").expect("write_lock present");
@@ -25241,8 +24011,6 @@ version = "2026-05-11-abc123"
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
         fs::write(beads_dir.join(".write.lock"), b"").unwrap();
-        // Fresh file: mtime is now → well within the 300s default
-        // threshold.
         let mut checks = Vec::new();
         check_orphaned_write_lock(&beads_dir, &mut checks);
         let check = find_check(&checks, "write_lock").expect("write_lock present");
@@ -25281,8 +24049,6 @@ version = "2026-05-11-abc123"
             details.get("node_kind").and_then(|v| v.as_str()),
             Some("symlink")
         );
-        // Fail-closed classification must not traverse or disturb either
-        // the symlink or its target.
         let lock_meta = fs::symlink_metadata(beads_dir.join(".write.lock")).unwrap();
         assert!(lock_meta.file_type().is_symlink());
         assert!(target.exists());
@@ -25304,7 +24070,6 @@ version = "2026-05-11-abc123"
             details.get("node_kind").and_then(|v| v.as_str()),
             Some("directory")
         );
-        // Doctor never removes or renames the node.
         assert!(beads_dir.join(".write.lock").is_dir());
     }
 
@@ -25342,7 +24107,6 @@ version = "2026-05-11-abc123"
         fs::create_dir_all(&beads_dir).unwrap();
         let lock_path = beads_dir.join(".write.lock");
         fs::write(&lock_path, b"").unwrap();
-        // Back-date far past any threshold.
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3_600_000);
         let file = fs::OpenOptions::new().write(true).open(&lock_path).unwrap();
         file.set_times(fs::FileTimes::new().set_modified(old))
@@ -25409,10 +24173,6 @@ version = "2026-05-11-abc123"
         );
     }
 
-    // -----------------------------------------------------------------
-    // id-set divergence detection (beads#286)
-    // -----------------------------------------------------------------
-
     /// Helper for the id-delta tests: insert a row into the `issues`
     /// table using only the columns the cardinality query reads (the
     /// schema has many NOT NULL columns we don't care about for this
@@ -25452,7 +24212,6 @@ version = "2026-05-11-abc123"
             Connection::open(db_path.to_string_lossy().into_owned()).expect("open db for read");
         let delta = compute_db_jsonl_id_delta(&conn, &jsonl_path).expect("id delta should succeed");
 
-        // The intersection contains bd-1 and bd-2.
         assert_eq!(delta.both_count, 2);
         assert_eq!(delta.only_db, vec!["bd-only-db".to_string()]);
         assert_eq!(delta.only_jsonl, vec!["bd-only-jsonl".to_string()]);
@@ -25477,10 +24236,6 @@ version = "2026-05-11-abc123"
         assert!(delta.only_db.is_empty());
         assert!(delta.only_jsonl.is_empty());
     }
-
-    // -----------------------------------------------------------------
-    // br doctor --repair-indexes (beads#288)
-    // -----------------------------------------------------------------
 
     #[test]
     fn wal_checkpoint_stats_complete_accepts_full_checkpoint() {
@@ -25536,10 +24291,6 @@ version = "2026-05-11-abc123"
         fs::create_dir_all(&beads_dir).unwrap();
         let db_path = beads_dir.join("beads.db");
 
-        // Seed a real schema (so REINDEX has user indexes to act on)
-        // + a couple of issue rows so the snapshot is a non-trivial
-        // file. The repair-indexes path doesn't touch issues rows,
-        // but the test pins that they're untouched after.
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let issue = sample_issue("bd-ri-1", "indexable");
         storage.create_issue(&issue, "test").unwrap();
@@ -25574,9 +24325,6 @@ version = "2026-05-11-abc123"
             result
         );
 
-        // Pre-snapshot backup must remain on disk so the operator
-        // has a recoverable pre-state — explicitly part of the
-        // contract per the #288 fix comment.
         let snapshot_path = db_path.with_extension("db.pre-repair-indexes");
         assert!(
             snapshot_path.exists(),
@@ -25584,8 +24332,6 @@ version = "2026-05-11-abc123"
             snapshot_path.display(),
         );
 
-        // Issue row must survive the REINDEX — the path is
-        // index-only and must never touch row data.
         let storage = SqliteStorage::open(&db_path).unwrap();
         let reloaded = storage.get_issue("bd-ri-1").unwrap();
         assert!(reloaded.is_some(), "issue row must survive REINDEX");
@@ -25615,10 +24361,6 @@ version = "2026-05-11-abc123"
             .unwrap();
         drop(storage);
 
-        // Plant stale sidecar-snapshot files as if a previous run had
-        // failed its checkpoint and snapshotted them. The contents
-        // are arbitrary — the test only cares that they exist before
-        // and DON'T exist after the next successful invocation.
         let snapshot_path = db_path.with_extension("db.pre-repair-indexes");
         let stale_wal = PathBuf::from(format!("{}-wal", snapshot_path.to_string_lossy()));
         let stale_shm = PathBuf::from(format!("{}-shm", snapshot_path.to_string_lossy()));
@@ -25650,11 +24392,6 @@ version = "2026-05-11-abc123"
         execute_repair_indexes(&beads_dir, &paths, &ctx, &args, &cli)
             .expect("repair-indexes must succeed on healthy DB");
 
-        // Stale sidecar snapshots from the planted previous run must
-        // not survive the new invocation. A successful checkpoint
-        // means the new `.db` snapshot is complete on its own, so the
-        // sidecar snapshots must be cleared — otherwise a future
-        // restore would falsely restore the planted stale WAL.
         assert!(
             !stale_wal.exists(),
             "stale snapshot-wal from previous run must be cleared on a successful checkpoint; still present at {}",
@@ -25666,8 +24403,6 @@ version = "2026-05-11-abc123"
             stale_shm.display(),
         );
 
-        // The current run's `.db` snapshot must exist as forensic
-        // evidence regardless.
         assert!(
             snapshot_path.exists(),
             "current run's pre-snapshot must be retained at {}",
@@ -25780,10 +24515,6 @@ version = "2026-05-11-abc123"
         fs::copy(&db_path, &recent).unwrap();
         fs::copy(&db_path, &bad_sibling).unwrap();
 
-        // Age the artifacts portably: GNU `touch -d` does not exist on BSD
-        // hosts, so set mtimes via python3's os.utime instead. Epoch
-        // timestamp is decades in the past, safely past the aging
-        // threshold.
         let age_script = "import os, sys\nold = 1000000000\nfor path in sys.argv[1:]:\n    os.utime(path, (old, old))\n";
         for path in [&aged, &bad_sibling] {
             let status = Command::new("python3")
@@ -25807,7 +24538,7 @@ version = "2026-05-11-abc123"
             }],
         };
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Json, false, true);
-        let mut session = DoctorRepairSession::new(tmp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(tmp.path(),  false)
             .expect("session must build");
 
         assert!(fix_recovery_artifacts_aged_if_warned(
@@ -25874,7 +24605,7 @@ version = "2026-05-11-abc123"
             }],
         };
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Json, false, true);
-        let mut session = DoctorRepairSession::new(tmp.path(), /* dry_run = */ false)
+        let mut session = DoctorRepairSession::new(tmp.path(),  false)
             .expect("session must build");
         let expected_hash = crate::sync::compute_jsonl_hash(&jsonl_path).unwrap();
 
@@ -26063,8 +24794,6 @@ version = "2026-05-11-abc123"
 
         execute_repair_indexes(&beads_dir, &paths, &ctx, &args, &cli).unwrap();
 
-        // Dry-run must not even take the pre-snapshot — the file
-        // shouldn't exist.
         let snapshot_path = db_path.with_extension("db.pre-repair-indexes");
         assert!(
             !snapshot_path.exists(),
@@ -26072,7 +24801,6 @@ version = "2026-05-11-abc123"
             snapshot_path.display(),
         );
 
-        // DB mtime should not have changed.
         let post_mtime = fs::metadata(&db_path).unwrap().modified().unwrap();
         assert_eq!(
             pre_mtime, post_mtime,
@@ -26082,11 +24810,6 @@ version = "2026-05-11-abc123"
 
     #[test]
     fn compute_db_jsonl_id_delta_skips_wisp_ids() {
-        // Wisp-suffixed ids are intentionally filtered out of the DB
-        // cardinality query (`id NOT LIKE '%-wisp-%'`). The delta
-        // computation must apply the same filter on the JSONL side
-        // so a wisp record present in JSONL but absent from the DB
-        // doesn't surface as a spurious `only_jsonl` finding.
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
@@ -26099,8 +24822,6 @@ version = "2026-05-11-abc123"
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         let delta = compute_db_jsonl_id_delta(&conn, &jsonl_path).unwrap();
 
-        // The wisp id must be filtered out, otherwise the delta would
-        // (incorrectly) report bd-wisp-ephemeral as only_jsonl.
         assert_eq!(delta.both_count, 1);
         assert!(delta.only_db.is_empty(), "{:?}", delta.only_db);
         assert!(
@@ -26110,13 +24831,8 @@ version = "2026-05-11-abc123"
         );
     }
 
-    // --- finding-id table tests (pass-3 / gap item #3) ---
-
     #[test]
     fn finding_id_table_has_no_duplicate_check_names() {
-        // Each check.name maps to AT MOST one canonical FM. A duplicate
-        // row would silently shadow the second entry under the
-        // linear-scan lookup; reject at test time.
         let mut seen: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
         for (name, _) in CHECK_NAME_TO_FINDING_ID {
             assert!(
@@ -26128,10 +24844,6 @@ version = "2026-05-11-abc123"
 
     #[test]
     fn finding_id_table_uses_canonical_fm_form() {
-        // FM identifiers must match `fm-<subsystem>-<slug>` (no
-        // leading/trailing whitespace, no underscores in the
-        // subsystem half — the workspace uses snake_case for
-        // subsystem names and kebab-case for slugs).
         for (name, fm_id) in CHECK_NAME_TO_FINDING_ID {
             assert!(
                 fm_id.starts_with("fm-"),
@@ -26150,7 +24862,6 @@ version = "2026-05-11-abc123"
 
     #[test]
     fn finding_id_for_returns_canonical_form() {
-        // Spot-check three known entries across distinct subsystems.
         assert_eq!(
             finding_id_for("routes_jsonl"),
             Some("fm-routes_external-routes-jsonl-corrupt")
@@ -26261,8 +24972,6 @@ mod bd_lt77_gate_verdict_loss {
             .expect("create gate_results");
         for i in 0..n {
             conn.execute(&format!(
-                // NOT bead-id shaped: a fixture named like a bead trips the
-                // commit guard on every future change to this file.
                 "INSERT INTO gate_results (issue_id) VALUES ('sample-gate-row-{i}')"
             ))
             .expect("insert");

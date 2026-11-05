@@ -87,8 +87,6 @@ fn default_filter(verbosity: u8, quiet: bool) -> String {
         return "error".to_string();
     }
 
-    // The bundled SQLite engine is C and does not emit tracing events, so
-    // filters only need to shape beads's own logs.
     match verbosity {
         0 => {
             if cfg!(debug_assertions) {
@@ -156,7 +154,6 @@ mod tests {
 
     #[test]
     fn resolve_env_filter_falls_back_on_invalid_env() {
-        // Use a string that definitely fails to parse (unbalanced brackets)
         let filter =
             resolve_env_filter_with_override(1, false, Some("[invalid")).expect("fallback filter");
         let rendered = filter.to_string();

@@ -61,9 +61,6 @@ fn execute_inner(args: &CountArgs, ctx: &OutputContext, storage: &SqliteStorage)
     let mut filters = ListFilters::default();
     let types = parse_trimmed_values(&args.types)?;
     let priorities = parse_trimmed_values(&args.priority)?;
-    // `--status all` is the same meta-value `br lint` accepts: no status
-    // filter, every status included (beads-6ilv). Check before parsing:
-    // "all" is not a status and strict parsing rejects it (bd-bqyb).
     if super::status_filter_requests_all(&args.status) {
         filters.include_closed = true;
         filters.include_deferred = true;
@@ -178,10 +175,6 @@ fn resolve_count_grouping(args: &CountArgs) -> Result<Option<CountBy>> {
     Ok(selected.first().map(|(_, by)| *by))
 }
 
-// ─────────────────────────────────────────────────────────────
-// Rich Output Rendering
-// ─────────────────────────────────────────────────────────────
-
 /// Render simple count with rich formatting.
 fn render_count_simple_rich(total: usize, ctx: &OutputContext) {
     let _console = Console::default();
@@ -216,7 +209,6 @@ fn render_count_grouped_rich(
     content.append_styled(&total.to_string(), theme.emphasis.clone());
     content.append("\n\n");
 
-    // Find longest group name for alignment
     let sanitized_groups = groups
         .iter()
         .map(|group| {

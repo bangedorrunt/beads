@@ -22,7 +22,6 @@ pub fn betweenness(graph: &DiGraph) -> Vec<f64> {
 
     let mut bc = vec![0.0; n];
 
-    // Run single-source betweenness from each node
     for s in 0..n {
         single_source_betweenness(graph, s, &mut bc);
     }
@@ -52,23 +51,18 @@ pub fn betweenness_approx(graph: &DiGraph, sample_size: usize, seed: Option<u64>
         return Vec::new();
     }
 
-    // For small graphs or when sample size >= node count, use exact algorithm
     if sample_size >= n {
         return betweenness(graph);
     }
 
     let mut bc = vec![0.0; n];
 
-    // Sample k random pivot nodes
     let pivots = sample_nodes(n, sample_size, seed);
 
-    // Compute partial betweenness from sampled pivots only
     for &pivot in &pivots {
         single_source_betweenness(graph, pivot, &mut bc);
     }
 
-    // Scale up: BC_approx = BC_partial * (n / k)
-    // This extrapolates from the sample to the full graph
     let scale = n as f64 / sample_size as f64;
     for score in &mut bc {
         *score *= scale;
@@ -84,18 +78,15 @@ pub fn betweenness_approx(graph: &DiGraph, sample_size: usize, seed: Option<u64>
 fn single_source_betweenness(graph: &DiGraph, source: usize, bc: &mut [f64]) {
     let n = graph.len();
 
-    // BFS data structures
     let mut stack: Vec<usize> = Vec::with_capacity(n);
     let mut pred: Vec<Vec<usize>> = vec![Vec::new(); n];
-    let mut sigma = vec![0.0f64; n]; // Number of shortest paths through node
-    let mut dist = vec![-1i32; n]; // Distance from source (-1 = unreachable)
-    let mut delta = vec![0.0f64; n]; // Dependency of source on node
+    let mut sigma = vec![0.0f64; n];
+    let mut dist = vec![-1i32; n];
+    let mut delta = vec![0.0f64; n];
 
-    // Initialize source
     sigma[source] = 1.0;
     dist[source] = 0;
 
-    // BFS phase
     let mut queue = VecDeque::new();
     queue.push_back(source);
 
@@ -103,13 +94,11 @@ fn single_source_betweenness(graph: &DiGraph, source: usize, bc: &mut [f64]) {
         stack.push(v);
 
         for &w in graph.successors_slice(v) {
-            // Path discovery: first visit to w
             if dist[w] < 0 {
                 dist[w] = dist[v] + 1;
                 queue.push_back(w);
             }
 
-            // Path counting: is v on a shortest path to w?
             if dist[w] == dist[v] + 1 {
                 sigma[w] += sigma[v];
                 pred[w].push(v);
@@ -117,7 +106,6 @@ fn single_source_betweenness(graph: &DiGraph, source: usize, bc: &mut [f64]) {
         }
     }
 
-    // Accumulation phase (reverse topological order)
     while let Some(w) = stack.pop() {
         for &v in &pred[w] {
             if sigma[w] > 0.0 {
@@ -135,17 +123,13 @@ fn single_source_betweenness(graph: &DiGraph, source: usize, bc: &mut [f64]) {
 fn sample_nodes(n: usize, k: usize, seed: Option<u64>) -> Vec<usize> {
     let mut indices: Vec<usize> = (0..n).collect();
 
-    // Use getrandom for better randomness in WASM, or seed for testing
-    // vendored: deterministic fallback seed (was getrandom in WASM build)
     let mut rng_state = seed.unwrap_or(0x9E3779B97F4A7C15);
 
-    // LCG for shuffling (simple but sufficient for sampling)
     let lcg = |state: &mut u64| -> usize {
         *state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
         (*state >> 33) as usize
     };
 
-    // Fisher-Yates shuffle for first k elements
     let k = k.min(n);
     for i in 0..k {
         let j = i + lcg(&mut rng_state) % (n - i);
@@ -161,10 +145,10 @@ fn sample_nodes(n: usize, k: usize, seed: Option<u64>) -> Vec<usize> {
 /// Balances accuracy vs. speed.
 pub fn recommend_sample_size(node_count: usize) -> usize {
     match node_count {
-        0..=99 => node_count,                // Small: use exact algorithm
-        100..=499 => 50.max(node_count / 5), // Medium: 20% sample
-        500..=1999 => 100,                   // Large: fixed sample for ~10% error
-        _ => 200,                            // XL: larger fixed sample
+        0..=99 => node_count,
+        100..=499 => 50.max(node_count / 5),
+        500..=1999 => 100,
+        _ => 200,
     }
 }
 
@@ -185,7 +169,7 @@ mod tests {
         graph.add_node("a");
         let bc = betweenness(&graph);
         assert_eq!(bc.len(), 1);
-        assert!(bc[0].abs() < f64::EPSILON); // No paths through a single node
+        assert!(bc[0].abs() < f64::EPSILON);
     }
 
     #[test]
@@ -197,15 +181,12 @@ mod tests {
 
         let bc = betweenness(&graph);
         assert_eq!(bc.len(), 2);
-        // Neither node is on a path between other nodes
         assert!(bc[a].abs() < f64::EPSILON);
         assert!(bc[b].abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_betweenness_line() {
-        // a -> b -> c
-        // b is on the path a -> c
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -214,7 +195,6 @@ mod tests {
         graph.add_edge(b, c);
 
         let bc = betweenness(&graph);
-        // b is on the path a->c, so betweenness(b) = 1
         assert!(bc[b] > bc[a], "b should have higher betweenness than a");
         assert!(bc[b] > bc[c], "b should have higher betweenness than c");
         assert!(bc[a].abs() < f64::EPSILON);
@@ -224,11 +204,6 @@ mod tests {
 
     #[test]
     fn test_betweenness_diamond() {
-        //     a
-        //    / \
-        //   b   c
-        //    \ /
-        //     d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -240,8 +215,6 @@ mod tests {
         graph.add_edge(c, d);
 
         let bc = betweenness(&graph);
-        // Two equal-length paths a->d, so b and c share the betweenness
-        // Each is on half the shortest paths
         assert!(
             (bc[b] - bc[c]).abs() < 0.001,
             "b and c should have equal betweenness"
@@ -251,8 +224,6 @@ mod tests {
 
     #[test]
     fn test_betweenness_star_inward() {
-        // Inward star: s1->hub, s2->hub, s3->hub, hub->out
-        // Hub is on all paths from s1/s2/s3 to out
         let mut graph = DiGraph::new();
         let hub = graph.add_node("hub");
         let s1 = graph.add_node("s1");
@@ -265,7 +236,6 @@ mod tests {
         graph.add_edge(hub, out);
 
         let bc = betweenness(&graph);
-        // Hub is on 3 paths (s1->out, s2->out, s3->out)
         assert!(bc[hub] > bc[s1]);
         assert!(bc[hub] > bc[s2]);
         assert!(bc[hub] > bc[s3]);
@@ -274,7 +244,6 @@ mod tests {
 
     #[test]
     fn test_betweenness_cycle() {
-        // a -> b -> c -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -284,15 +253,12 @@ mod tests {
         graph.add_edge(c, a);
 
         let bc = betweenness(&graph);
-        // In a cycle, each node is on some paths
-        // All should have equal betweenness due to symmetry
         let diff = (bc[a] - bc[b]).abs() + (bc[b] - bc[c]).abs();
         assert!(diff < 0.01, "Cycle nodes should have similar betweenness");
     }
 
     #[test]
     fn test_betweenness_approx_fallback() {
-        // When sample_size >= n, should fall back to exact
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -301,7 +267,7 @@ mod tests {
         graph.add_edge(b, c);
 
         let exact = betweenness(&graph);
-        let approx = betweenness_approx(&graph, 10, Some(42)); // sample > node count
+        let approx = betweenness_approx(&graph, 10, Some(42));
 
         assert_eq!(exact.len(), approx.len());
         for (e, a) in exact.iter().zip(approx.iter()) {
@@ -311,7 +277,6 @@ mod tests {
 
     #[test]
     fn test_betweenness_approx_deterministic() {
-        // Same seed should give same results
         let mut graph = DiGraph::new();
         for i in 0..20 {
             graph.add_node(&format!("n{}", i));
@@ -333,8 +298,6 @@ mod tests {
 
     #[test]
     fn test_betweenness_chain() {
-        // a -> b -> c -> d -> e
-        // Middle nodes should have highest betweenness
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -348,9 +311,6 @@ mod tests {
 
         let bc = betweenness(&graph);
 
-        // c should have highest (on paths a->d, a->e, b->d, b->e = 4 paths)
-        // b should be next (on paths a->c, a->d, a->e = 3 paths)
-        // d should be next (on paths a->e, b->e, c->e = 3 paths)
         assert!(bc[c] >= bc[b]);
         assert!(bc[c] >= bc[d]);
         assert!(bc[a].abs() < f64::EPSILON);
@@ -359,9 +319,9 @@ mod tests {
 
     #[test]
     fn test_recommend_sample_size() {
-        assert_eq!(recommend_sample_size(50), 50); // Small: exact
-        assert_eq!(recommend_sample_size(200), 50); // Medium: 20% but min 50
-        assert_eq!(recommend_sample_size(500), 100); // Large: fixed
-        assert_eq!(recommend_sample_size(5000), 200); // XL: larger fixed
+        assert_eq!(recommend_sample_size(50), 50);
+        assert_eq!(recommend_sample_size(200), 50);
+        assert_eq!(recommend_sample_size(500), 100);
+        assert_eq!(recommend_sample_size(5000), 200);
     }
 }

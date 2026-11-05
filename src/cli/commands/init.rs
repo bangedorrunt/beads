@@ -121,7 +121,6 @@ pub fn execute(
 
     let mut created_dir = false;
     if beads_dir.exists() {
-        // Check if DB exists (in cache dir if BEADS_CACHE_DIR is set)
         let effective_db_path = db_path(&beads_dir);
         if effective_db_path.exists() && !force {
             return Err(BeadsError::AlreadyInitialized {
@@ -136,18 +135,14 @@ pub fn execute(
     let effective_db_path = db_path(&beads_dir);
     let db_existed = effective_db_path.exists();
 
-    // Ensure cache directory exists if using BEADS_CACHE_DIR
     if let Some(parent) = effective_db_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // Initialize DB (creates file and applies schema)
     let mut storage = SqliteStorage::open(&effective_db_path)?;
 
     let prefix_was_provided = prefix.is_some();
 
-    // Set prefix in config table if provided, otherwise derive from directory name
-    // Normalize to lowercase since ID validation requires lowercase prefixes
     let actual_prefix = prefix.unwrap_or_else(|| {
         let mut dir_name = "br".to_string();
         if let Ok(canon) = crate::sync::path::canonicalize(base_dir)
@@ -167,7 +162,6 @@ pub fn execute(
     storage.set_config("issue_prefix", &normalized)?;
     let prefix_set = Some(normalized.clone());
 
-    // Write metadata.json
     let metadata_path = beads_dir.join("metadata.json");
     let metadata_existed = path_entry_exists(&metadata_path)?;
     let metadata = r#"{
@@ -180,7 +174,6 @@ pub fn execute(
         write_init_file_if_missing(&metadata_path, metadata.as_bytes())?;
     }
 
-    // Write config.yaml template
     let config_path = beads_dir.join("config.yaml");
     let config_existed = path_entry_exists(&config_path)?;
     if !config_existed {
@@ -194,8 +187,6 @@ pub fn execute(
         write_init_file_if_missing(&config_path, config.as_bytes())?;
     }
 
-    // ADR-0001 §5.3: write the fail-closed default policy. Existing policy
-    // files are never overwritten (operators may have customized gates).
     let policy_path = beads_dir.join(crate::close_policy::POLICY_FILE_NAME);
     if !path_entry_exists(&policy_path)? {
         write_init_file_if_missing(
@@ -204,7 +195,6 @@ pub fn execute(
         )?;
     }
 
-    // Write .gitignore
     let gitignore_path = beads_dir.join(".gitignore");
     let gitignore_existed = path_entry_exists(&gitignore_path)?;
     if !gitignore_existed {
@@ -259,8 +249,6 @@ redirect
         write_init_file_if_missing(&gitignore_path, gitignore.as_bytes())?;
     }
 
-    // Write empty issues.jsonl for compatibility with bv (beads_viewer)
-    // bv expects this file to exist even if there are no issues yet
     let jsonl_path = beads_dir.join("issues.jsonl");
     let jsonl_existed = path_entry_exists(&jsonl_path)?;
     if !jsonl_existed {
@@ -575,7 +563,6 @@ mod tests {
 
         assert!(result.is_ok());
 
-        // Verify prefix was stored
         let db_path = temp_dir.path().join(".beads/beads.db");
         let storage = SqliteStorage::open(&db_path).unwrap();
         let prefix = storage.get_config("issue_prefix").unwrap();
@@ -590,11 +577,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let ctx = OutputContext::from_flags(false, false, true);
 
-        // First init should succeed
         let result1 = execute(None, false, Some(temp_dir.path()), &ctx);
         assert!(result1.is_ok());
 
-        // Second init without force should fail
         let result2 = execute(None, false, Some(temp_dir.path()), &ctx);
 
         assert!(result2.is_err());
@@ -612,7 +597,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let ctx = OutputContext::from_flags(false, false, true);
 
-        // First init
         execute(
             Some("first".to_string()),
             false,
@@ -621,7 +605,6 @@ mod tests {
         )
         .unwrap();
 
-        // Second init with force
         let result = execute(
             Some("second".to_string()),
             true,
@@ -631,7 +614,6 @@ mod tests {
 
         assert!(result.is_ok());
 
-        // Verify new prefix
         let db_path = temp_dir.path().join(".beads/beads.db");
         let storage = SqliteStorage::open(&db_path).unwrap();
         let prefix = storage.get_config("issue_prefix").unwrap();

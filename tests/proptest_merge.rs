@@ -128,10 +128,6 @@ prop_compose! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// merge_issue properties
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
 
@@ -299,10 +295,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// three_way_merge properties
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
@@ -421,7 +413,6 @@ proptest! {
 
         let all_actions = report.kept.len() + report.deleted.len() + report.conflicts.len();
 
-        // At most 1 action per ID (or 0 for NoAction/identical).
         prop_assert!(all_actions <= 1, "At most one action per ID, got {}", all_actions);
     }
 }
@@ -493,11 +484,6 @@ fn three_way_merge_notes_are_byte_identical_across_context_order() {
         ["bd-a", "bd-b", "bd-c", "bd-d", "bd-e", "bd-f"],
     );
 }
-
-// ---------------------------------------------------------------------------
-// Known-status merge semantics (bd-bqyb: Custom variants removed; conflict
-// and convergence are status-agnostic).
-// ---------------------------------------------------------------------------
 
 /// Both sides change to different known statuses → Conflict(BothModified).
 #[test]

@@ -78,7 +78,6 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
         .map(|parent_input| super::resolve_issue_id(storage, &resolver, parent_input))
         .transpose()?;
 
-    // When a parent is specified, generate a child ID (parent.1, parent.2, etc.)
     let id = if let Some(parent_id) = resolved_parent_id.as_deref() {
         if !storage.id_exists(parent_id)? {
             return Err(BeadsError::IssueNotFound {
@@ -139,8 +138,6 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
         id,
         title,
         description: args.description,
-        // ADR-0035 Spec 4: quick capture mints an explicit draft — dispatchable
-        // only after triage promotes it. `ready` excludes drafts by construction.
         status: Status::Draft,
         priority,
         issue_type,
@@ -181,14 +178,10 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
         comments: vec![],
     };
 
-    // Resolve actor and set created_by
     let actor = config::resolve_actor(&layer);
     issue.created_by = Some(actor.clone());
 
-    // Parent dependency
     if let Some(parent_id) = resolved_parent_id.as_ref() {
-        // Double-check cycle even though we are a new issue, to catch logic errors
-        // and ensure the storage would_create_cycle works correctly for prospective links
         if storage.would_create_parent_child_cycle(&issue.id, parent_id, true)? {
             return Err(BeadsError::DependencyCycle {
                 path: format!("{} -> {}", issue.id, parent_id),
@@ -206,7 +199,6 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
         });
     }
 
-    // Compute content hash
     issue.content_hash = Some(issue.compute_content_hash());
 
     IssueValidator::validate(&issue).map_err(BeadsError::from_validation_errors)?;
@@ -223,7 +215,6 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
         crate::util::set_last_touched_id(&last_touched_dir, &created_id);
     }
 
-    // Output
     if ctx.is_json() || ctx.is_toon() {
         let output = serde_json::json!({
             "id": issue.id,

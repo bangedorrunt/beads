@@ -58,8 +58,6 @@ fn import_blocking_cycle(workspace: &BrWorkspace, issue_a_id: &str, issue_b_id: 
                 "metadata": "{}",
                 "thread_id": ""
             }]);
-            // An unchanged issue row is skipped by the import merge (its
-            // embedded dependencies included), so mark the row updated.
             issue["updated_at"] = serde_json::json!("2027-01-01T00:00:00Z");
         }
         lines.push(serde_json::to_string(&issue).expect("serialize issue row"));
@@ -105,17 +103,8 @@ fn e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it() {
     );
     let issue_b_id = parse_created_id(&issue_b.stdout);
 
-    // GH#391: only *blocking* edges participate in cycle detection, and every
-    // interactive surface (`dep add`, `dep import`) refuses a blocking cycle
-    // at insert time, so build the cycle through `sync --import-only` (synced
-    // JSONL deliberately round-trips cyclic graphs losslessly).
     import_blocking_cycle(&workspace, &issue_a_id, &issue_b_id, "archived_cycle");
 
-    // Inside a blocking cycle neither member can close normally (each is
-    // blocked by the other), so archiving the cycle requires --force — the
-    // same escape an operator uses on a real workspace.
-    // Fail-closed close ceremony: recorded PASS gate + commit SHA cited in
-    // the commit message.
     let gate_a = run_br(
         &workspace,
         [
@@ -255,14 +244,8 @@ fn e2e_dep_cycles_active_cycle_exits_nonzero() {
     );
     let issue_b_id = parse_created_id(&issue_b.stdout);
 
-    // GH#391: only *blocking* edges participate in cycle detection, and every
-    // interactive surface (`dep add`, `dep import`) refuses a blocking cycle
-    // at insert time. A synced JSONL can still carry one, so build the cycle
-    // through `sync --import-only` — the surface whose data the detector
-    // exists to diagnose.
     import_blocking_cycle(&workspace, &issue_a_id, &issue_b_id, "active_cycle");
 
-    // JSON surface: cycle data preserved AND non-zero exit.
     let json = run_br(&workspace, ["dep", "cycles", "--json"], "cycles_json");
     assert_eq!(
         json.status.code(),
@@ -275,7 +258,6 @@ fn e2e_dep_cycles_active_cycle_exits_nonzero() {
     assert_eq!(payload["count"], 1, "expected one reported cycle");
     assert_eq!(payload["active_count"], 1, "expected one active cycle");
 
-    // Text surface: same non-zero exit.
     let text = run_br(&workspace, ["dep", "cycles"], "cycles_text");
     assert_eq!(
         text.status.code(),
@@ -318,7 +300,6 @@ fn e2e_create_bulk_dropped_cycle_edge_exits_nonzero() {
         created.stderr
     );
 
-    // The issues themselves are still created despite the dropped edge.
     let list = run_br(&workspace, ["list", "--json"], "list_after_bulk");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     let issues = extract_issues_array(&list.stdout);
@@ -1276,9 +1257,6 @@ fn e2e_close_blocked_requires_force() {
         "close blocked should fail with nothing-to-do: {}",
         close_skip.stdout
     );
-    // Since #336, an all-skipped `close --json` writes TWO JSON documents to
-    // stdout: the close payload followed by the structured NOTHING_TO_DO
-    // error envelope. Parse just the first document.
     let payload = extract_json_payload(&close_skip.stdout);
     let close_json: Value = serde_json::Deserializer::from_str(&payload)
         .into_iter::<Value>()
@@ -1316,10 +1294,6 @@ fn e2e_close_blocked_requires_force() {
     let issues: Value = serde_json::from_str(&payload).expect("show json");
     assert_eq!(issues["status"].as_str().unwrap(), "open");
 
-    // Issue #380: the terminal error for an all-skipped close must carry the
-    // real skip reason (dependency block + --force remediation) instead of
-    // the misleading "already closed or not found" hint — the issue is open
-    // and findable, it just has an open blocker.
     let cite_sha = common::cli::citing_sha(&workspace, &blocked_id);
     let close_human = run_br(
         &workspace,
@@ -1442,9 +1416,6 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
         );
         assert!(gate.status.success(), "gate failed: {}", gate.stderr);
     }
-    // The close sha must cite every bead it closes, and the batch names two
-    // ids: a sha citing only the blocked one aborts the whole batch at the sha
-    // check (exit 4) before the partial-close path runs at all.
     let cite_sha = common::cli::citing_sha_all(&workspace, &[&blocked_id, &independent_id]);
     let close = run_br(
         &workspace,
@@ -1458,16 +1429,6 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
         ],
         "close_partial_batch",
     );
-    // EXPECTATION INVERTED DELIBERATELY [fgdb-h6kr]. This previously asserted
-    // `close.status.success()`, which froze the defect: a batch that refused one
-    // id and closed another exited 0, so callers branching on `$?` — and callers
-    // following docs/agent/ERRORS.md, which says to parse stdout precisely when
-    // the exit code is 0 — read the untouched issue as closed. A partially
-    // applied batch is now CLOSE_INCOMPLETE (exit 3).
-    //
-    // What this test is actually about is unchanged and still asserted below:
-    // the --json payload still reports BOTH the closed and the skipped issue,
-    // with the blocker detail preserved. Only the exit-status expectation moved.
     assert!(
         !close.status.success(),
         "a partially applied batch must not exit 0: {}",
@@ -1480,10 +1441,6 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
         close.stderr
     );
 
-    // Now that a partial batch is a failure, it follows the same #336 contract
-    // as the all-skipped case above: stdout carries TWO JSON documents, the
-    // close payload followed by the structured CLOSE_INCOMPLETE envelope. Parse
-    // just the first, exactly as `e2e_close_json_skips_blocked_issue` does.
     let payload = extract_json_payload(&close.stdout);
     let close_json: Value = serde_json::Deserializer::from_str(&payload)
         .into_iter::<Value>()

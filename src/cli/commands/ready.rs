@@ -126,8 +126,6 @@ fn execute_inner(
         None => None,
     };
 
-    // `--epic <id>` is sugar for `--parent <id> --recursive` (they conflict at
-    // the clap layer, so at most one of these is set).
     let parent_spec = args.epic.as_deref().or(args.parent.as_deref());
     let resolved_parent = parent_spec
         .map(|parent| {
@@ -138,10 +136,6 @@ fn execute_inner(
         })
         .transpose()?;
 
-    // Resolve the configured "ready" status group (#354). Defaults to `[open]`
-    // when `.beads/policy.yaml` has no `workflow.status_groups.ready`, which is
-    // a zero-behavior-change for existing repos. Strict-mode validation rejects
-    // an out-of-vocabulary group before we ever query.
     let workflow = crate::close_policy::load_for_beads_dir(beads_dir)?.workflow;
     workflow.validate_ready_status_group()?;
     let ready_statuses = workflow.ready_status_group();
@@ -155,10 +149,8 @@ fn execute_inner(
         priorities: parse_priorities(&args.priority)?,
         include_deferred: args.include_deferred,
         ready_statuses,
-        // Fetch all candidates to allow post-filtering of external blockers
         limit: None,
         parent: resolved_parent,
-        // --epic implies descent through the whole subtree.
         recursive: args.recursive || args.epic.is_some(),
         parent_member_ids: None,
     };
@@ -171,11 +163,6 @@ fn execute_inner(
 
     info!("Fetching ready issues");
 
-    // Fetch the full ready set (no SQL LIMIT) so we always know the exact total
-    // before truncation — this lets us emit an accurate "showing N of M" note
-    // when `--limit` actually truncates, consistent with `br list` and the MCP
-    // ready surface (which prints "N total, showing top M"). See issue #91:
-    // results must never be *silently* truncated.
     let mut filters = filters;
     filters.limit = None;
 
@@ -196,8 +183,6 @@ fn execute_inner(
         }
     }
 
-    // Apply the user-visible limit in Rust (after external-blocker filtering),
-    // recording the true pre-truncation total so the text surface can report it.
     let total_before_truncation = ready_issues.len();
     let truncated = args.limit > 0 && ready_issues.len() > args.limit;
     if truncated {
@@ -209,7 +194,6 @@ fn execute_inner(
         trace!(id = %issue.id, priority = issue.priority.0, "Ready issue");
     }
 
-    // Output
     if matches!(early_ctx.mode(), OutputMode::Quiet) {
         return Ok(());
     }
@@ -274,7 +258,6 @@ fn execute_inner(
                 let table = table.build();
                 ctx.render(&table);
             } else {
-                // Match bd header format: 📋 Ready work (N issues with no blockers):
                 println!(
                     "📋 Ready work ({} issue{} with no blockers):\n",
                     ready_issues.len(),
@@ -286,9 +269,6 @@ fn execute_inner(
                 }
             }
 
-            // Surface truncation explicitly so the top-priority rows filling the
-            // limit never read as "queue drained" (#91, #356). Mirrors the
-            // `br list` note and the MCP ready surface's "N total, showing top M".
             if truncated && !quiet {
                 eprintln!(
                     "[note] Showing {} of {} ready issues. Use --limit 0 for all results.",
@@ -378,7 +358,6 @@ fn format_ready_line(
     max_width: Option<usize>,
     wrap: bool,
 ) -> String {
-    // Match bd format: {index}. [● P{n}] [{type}] {id}: {title}
     let priority_badge_plain = format!("[● {}]", crate::format::format_priority(&issue.priority));
     let type_badge_plain = format_type_badge(&issue.issue_type);
     let prefix_plain = format!(

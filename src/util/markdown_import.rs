@@ -122,7 +122,6 @@ impl Section {
 /// - The path is a symlink or not a regular file
 /// - The file cannot be read
 pub fn parse_markdown_file(path: &Path) -> Result<Vec<ParsedIssue>> {
-    // Validate file extension
     let extension = path
         .extension()
         .and_then(|e| e.to_str())
@@ -138,7 +137,6 @@ pub fn parse_markdown_file(path: &Path) -> Result<Vec<ParsedIssue>> {
         }
     }
 
-    // Reject path traversal segments to match classic bd behavior.
     if path
         .components()
         .any(|component| matches!(component, Component::ParentDir))
@@ -146,7 +144,6 @@ pub fn parse_markdown_file(path: &Path) -> Result<Vec<ParsedIssue>> {
         return Err(BeadsError::validation("file", "path must not contain '..'"));
     }
 
-    // Check file exists
     if !path.exists() {
         return Err(BeadsError::validation(
             "file",
@@ -213,15 +210,12 @@ pub fn parse_markdown_content(content: &str) -> Result<Vec<ParsedIssue>> {
     let mut captured_implicit_desc = false;
 
     for line in content.lines() {
-        // Check for H2 (new issue)
         if let Some(stripped) = line.strip_prefix("## ") {
-            // Save previous issue
             if let Some(mut issue) = current_issue.take() {
                 apply_section_to_issue(&mut issue, current_section, &section_lines);
                 issues.push(issue);
             }
 
-            // Start new issue
             let title = stripped.trim().to_string();
             current_issue = Some(ParsedIssue {
                 title,
@@ -233,13 +227,10 @@ pub fn parse_markdown_content(content: &str) -> Result<Vec<ParsedIssue>> {
             continue;
         }
 
-        // Check for H3 (section header)
         if let Some(stripped) = line.strip_prefix("### ") {
             if let Some(ref mut issue) = current_issue {
-                // Apply previous section
                 apply_section_to_issue(issue, current_section, &section_lines);
 
-                // Start new section
                 let header = stripped.trim();
                 current_section = Section::from_header(header);
                 section_lines.clear();
@@ -247,7 +238,6 @@ pub fn parse_markdown_content(content: &str) -> Result<Vec<ParsedIssue>> {
             continue;
         }
 
-        // Collect content for current section
         if current_issue.is_some() {
             if current_section == Section::BeforeH3 {
                 if !captured_implicit_desc && !line.trim().is_empty() {
@@ -260,7 +250,6 @@ pub fn parse_markdown_content(content: &str) -> Result<Vec<ParsedIssue>> {
         }
     }
 
-    // Don't forget the last issue
     if let Some(mut issue) = current_issue {
         apply_section_to_issue(&mut issue, current_section, &section_lines);
         issues.push(issue);
@@ -286,7 +275,6 @@ fn apply_section_to_issue(issue: &mut ParsedIssue, section: Section, lines: &[St
 
     match section {
         Section::BeforeH3 => {
-            // Implicit description (first non-empty line only)
             if issue.description.is_none() {
                 issue.description = Some(content);
             }
@@ -322,11 +310,9 @@ fn apply_section_to_issue(issue: &mut ParsedIssue, section: Section, lines: &[St
             issue.dependencies = split_dependency_content(&content);
         }
         Section::AgentContext => {
-            // Opaque text, same semantics as `br update --agent-context`.
             issue.agent_context = Some(content);
         }
         Section::Unknown => {
-            // Ignore unknown sections
         }
     }
 }
@@ -347,10 +333,6 @@ fn split_dependency_content(content: &str) -> Vec<String> {
             continue;
         }
         if is_bulleted {
-            // Treat the whole stripped line as a single dependency reference.
-            // This allows title-based refs like "- Build Database Schema".
-            // Note: `line` already has bullets and checkboxes stripped via
-            // `strip_markdown_list_prefix`, and emptiness was checked above.
             result.push(line.to_string());
         } else if line.contains(',') {
             result.extend(
@@ -448,14 +430,12 @@ fn is_marker_only_token(token: &str) -> bool {
 /// Returns the dependency type if valid, or None if invalid.
 #[must_use]
 pub fn validate_dependency_type(dep_type: &str) -> Option<&str> {
-    // Legacy aliases stay accepted; everything else must parse strictly.
     if dep_type.eq_ignore_ascii_case("blocked-by")
         || dep_type.eq_ignore_ascii_case("depends")
         || dep_type.eq_ignore_ascii_case("depends-on")
     {
         return Some(dep_type);
     }
-    // Check against standard types
     if DependencyType::from_str(dep_type).is_ok() {
         return Some(dep_type);
     }
@@ -478,8 +458,6 @@ pub fn parse_dependency(dep_str: &str) -> (String, String, bool) {
         if validate_dependency_type(type_part).is_some() {
             (type_part.to_string(), id_part.to_string(), true)
         } else {
-            // Type part is not a valid dependency type, so the colon is likely part of the title/ID.
-            // Treat the whole string as the ID with default 'blocks' type.
             ("blocks".to_string(), dep_str.trim().to_string(), true)
         }
     } else {
@@ -543,7 +521,6 @@ bug
 
     #[test]
     fn test_implicit_description_quirk() {
-        // Only first non-empty line before H3 is captured
         let content = r"## Issue Title
 First line becomes description
 This line is ignored
@@ -689,7 +666,6 @@ This is the actual description.
         assert_eq!(id, "bd-456");
         assert!(valid);
 
-        // Invalid type prefixes should now be treated as part of the ID (e.g. for title matches)
         let (t, id, valid) = parse_dependency("invalid:bd-789");
         assert_eq!(t, "blocks");
         assert_eq!(id, "invalid:bd-789");
@@ -829,7 +805,6 @@ task
 ";
         let issues = parse_markdown_content(content).unwrap();
         assert_eq!(issues.len(), 2);
-        // Bulleted line is preserved as a single dependency reference
         assert_eq!(issues[0].dependencies, vec!["Build Database Schema"]);
     }
 
@@ -840,7 +815,6 @@ task
 bd-123 bd-456
 ";
         let issues = parse_markdown_content(content).unwrap();
-        // Non-bulleted, space-separated: split on whitespace (existing behavior)
         assert_eq!(issues[0].dependencies, vec!["bd-123", "bd-456"]);
     }
 
@@ -883,7 +857,6 @@ Implicit description line
 Explicit description content
 ";
         let issues = parse_markdown_content(content).unwrap();
-        // Explicit ### Description section should be used
         assert_eq!(
             issues[0].description,
             Some("Explicit description content".to_string())
@@ -958,7 +931,6 @@ kept content
 ";
         let issues = parse_markdown_content(content).unwrap();
         assert_eq!(issues[0].agent_context.as_deref(), Some("kept content"));
-        // The unknown section did not leak into any recognized field.
         assert_eq!(issues[0].description, None);
         assert_eq!(issues[0].design, None);
     }

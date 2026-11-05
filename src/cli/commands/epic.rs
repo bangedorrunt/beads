@@ -249,10 +249,6 @@ fn close_eligible_epics_atomically(
         })
         .collect::<Vec<_>>();
 
-    // The shared storage chokepoint preflights required fields, transition
-    // gates, and final-state capacity for the entire batch before mutating any
-    // epic. It then records comments, status/close events, and dirty markers in
-    // that same transaction.
     storage.update_issues_atomically(&updates, actor)?;
     Ok(updates.into_iter().map(|(id, _)| id).collect())
 }
@@ -345,10 +341,6 @@ fn format_epic_title(title: &str, use_color: bool) -> String {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Rich Output Rendering
-// ─────────────────────────────────────────────────────────────
-
 /// Render the epic status list with rich formatting.
 fn render_epic_status_list_rich(epics: &[EpicStatus], ctx: &OutputContext) {
     let console = Console::default();
@@ -366,7 +358,6 @@ fn render_epic_status_list_rich(epics: &[EpicStatus], ctx: &OutputContext) {
         let closed = epic_status.closed_children;
         let percentage = completion_percentage(closed, total);
 
-        // Status icon
         if epic_status.eligible_for_close {
             content.append_styled("✓ ", theme.success.clone());
         } else if percentage > 0 {
@@ -375,7 +366,6 @@ fn render_epic_status_list_rich(epics: &[EpicStatus], ctx: &OutputContext) {
             content.append_styled("○ ", theme.dimmed.clone());
         }
 
-        // ID and title
         content.append_styled(
             sanitize_terminal_inline(&epic_status.epic.id).as_ref(),
             theme.issue_id.clone(),
@@ -387,12 +377,10 @@ fn render_epic_status_list_rich(epics: &[EpicStatus], ctx: &OutputContext) {
         );
         content.append("\n");
 
-        // Progress bar
         content.append("   ");
         render_progress_bar(&mut content, closed, total, percentage, theme);
         content.append("\n");
 
-        // Eligible notice
         if epic_status.eligible_for_close {
             content.append("   ");
             content.append_styled("Ready for closure", theme.success.clone());

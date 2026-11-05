@@ -5,10 +5,10 @@
 //!
 //! Task: beads-x7on
 
-#![allow(clippy::cast_precision_loss)] // Expected for percentage calculations
-#![allow(clippy::format_push_string)] // Clearer than write! for string building
-#![allow(clippy::too_many_lines)] // Report generators are naturally long
-#![allow(clippy::uninlined_format_args)] // Clear format strings
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::format_push_string)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::uninlined_format_args)]
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -17,10 +17,6 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-
-// ============================================================================
-// DATA STRUCTURES
-// ============================================================================
 
 /// Metrics for a single command execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,10 +139,6 @@ impl FullReport {
     }
 }
 
-// ============================================================================
-// JSONL PARSING (reuse types from harness/artifact_validator)
-// ============================================================================
-
 /// JSONL event entry (matches `harness::RunEvent`)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RunEvent {
@@ -187,10 +179,6 @@ struct Summary {
     #[serde(default)]
     pub timestamp: Option<String>,
 }
-
-// ============================================================================
-// ARTIFACT INDEXER
-// ============================================================================
 
 /// Indexer configuration
 #[derive(Debug, Clone)]
@@ -248,16 +236,14 @@ impl ArtifactIndexer {
 
         let mut suite_tests: HashMap<String, Vec<TestReport>> = HashMap::new();
 
-        // Walk the artifact directory to find summary.json files
         for entry in WalkDir::new(&self.config.artifact_root)
-            .min_depth(2) // suite/test level
+            .min_depth(2)
             .max_depth(3)
             .into_iter()
             .filter_map(Result::ok)
         {
             let path = entry.path();
 
-            // Look for summary.json to identify test directories
             if path.file_name() == Some("summary.json".as_ref()) {
                 let test_dir = path.parent().unwrap();
                 if let Ok(report) = self.index_test_dir(test_dir) {
@@ -273,16 +259,13 @@ impl ArtifactIndexer {
             }
         }
 
-        // Build suite reports
         let mut suites: Vec<SuiteReport> = suite_tests
             .into_iter()
             .map(|(name, tests)| SuiteReport::from_tests(name, tests))
             .collect();
 
-        // Sort suites by name
         suites.sort_by(|a, b| a.name.cmp(&b.name));
 
-        // Apply max_tests limit if set
         if self.config.max_tests > 0 {
             for suite in &mut suites {
                 if suite.tests.len() > self.config.max_tests {
@@ -291,7 +274,6 @@ impl ArtifactIndexer {
             }
         }
 
-        // Calculate totals
         let total_tests: usize = suites.iter().map(|s| s.tests.len()).sum();
         let total_passed: usize = suites.iter().map(|s| s.passed_count).sum();
         let total_failed: usize = suites.iter().map(|s| s.failed_count).sum();
@@ -310,15 +292,12 @@ impl ArtifactIndexer {
 
     /// Index a single test directory
     fn index_test_dir(&self, test_dir: &Path) -> Result<TestReport, IndexerError> {
-        // Parse summary.json
         let summary_path = test_dir.join("summary.json");
         let summary: Summary = self.read_json(&summary_path)?;
 
-        // Parse events.jsonl
         let events_path = test_dir.join("events.jsonl");
         let events = self.read_events(&events_path).unwrap_or_default();
 
-        // Extract command metrics
         let mut commands: Vec<CommandMetric> = Vec::new();
         let mut snapshots: Vec<SnapshotMetric> = Vec::new();
         let mut total_duration_ms: u128 = 0;
@@ -329,7 +308,6 @@ impl ArtifactIndexer {
                 total_duration_ms += event.duration_ms;
 
                 if self.config.include_commands {
-                    // If command failed, try to get failure reason from stderr
                     if !event.success
                         && failure_reason.is_none()
                         && let Some(ref stderr_path) = event.stderr_path
@@ -360,7 +338,6 @@ impl ArtifactIndexer {
                     });
                 }
             } else if event.event_type == "snapshot" && self.config.include_snapshots {
-                // Parse snapshot file to get file count and total size
                 if let Some(ref snapshot_path) = event.snapshot_path {
                     let full_path = if Path::new(snapshot_path).is_absolute() {
                         PathBuf::from(snapshot_path)
@@ -444,10 +421,6 @@ impl ArtifactIndexer {
     }
 }
 
-// ============================================================================
-// ERROR TYPES
-// ============================================================================
-
 /// Indexer errors
 #[derive(Debug)]
 pub enum IndexerError {
@@ -474,22 +447,16 @@ impl std::fmt::Display for IndexerError {
 
 impl std::error::Error for IndexerError {}
 
-// ============================================================================
-// REPORT GENERATORS
-// ============================================================================
-
 /// Generate a Markdown report from the full report
 pub fn generate_markdown_report(report: &FullReport) -> String {
     let mut md = String::new();
 
-    // Header
     md.push_str("# Test Artifact Report\n\n");
     md.push_str(&format!(
         "**Generated:** {}\n\n",
         report.generated_at[..19].replace('T', " ")
     ));
 
-    // Summary
     md.push_str("## Summary\n\n");
     md.push_str("| Metric | Value |\n|--------|-------|\n");
     md.push_str(&format!("| Total Tests | {} |\n", report.total_tests));
@@ -504,7 +471,6 @@ pub fn generate_markdown_report(report: &FullReport) -> String {
         report.total_duration_ms as f64 / 1000.0
     ));
 
-    // Suite breakdown
     md.push_str("## Suites\n\n");
     for suite in &report.suites {
         let status = if suite.failed_count == 0 {
@@ -521,7 +487,6 @@ pub fn generate_markdown_report(report: &FullReport) -> String {
             suite.total_duration_ms as f64 / 1000.0
         ));
 
-        // Test table for this suite
         md.push_str("| Test | Status | Duration | Commands |\n");
         md.push_str("|------|--------|----------|----------|\n");
 
@@ -538,7 +503,6 @@ pub fn generate_markdown_report(report: &FullReport) -> String {
         md.push('\n');
     }
 
-    // Failed tests detail
     let failed = report.failed_tests();
     if !failed.is_empty() {
         md.push_str("## Failed Tests Detail\n\n");
@@ -551,7 +515,6 @@ pub fn generate_markdown_report(report: &FullReport) -> String {
                 md.push_str("\n```\n\n");
             }
 
-            // Show failed commands
             let failed_cmds = test.failed_commands();
             if !failed_cmds.is_empty() {
                 md.push_str("**Failed commands:**\n\n");
@@ -576,7 +539,6 @@ pub fn generate_markdown_report(report: &FullReport) -> String {
         }
     }
 
-    // Slowest tests
     md.push_str("## Slowest Tests\n\n");
     md.push_str("| Test | Suite | Duration |\n");
     md.push_str("|------|-------|----------|\n");
@@ -686,13 +648,11 @@ pub fn generate_html_report(report: &FullReport) -> String {
 "#,
     );
 
-    // Header
     html.push_str(&format!(
         "<h1>Test Artifact Report</h1>\n<p>Generated: {}</p>\n",
         report.generated_at[..19].replace('T', " ")
     ));
 
-    // Summary cards
     html.push_str(r#"<div class="summary">"#);
     html.push_str(&format!(
         r#"<div class="stat-card">
@@ -725,7 +685,6 @@ pub fn generate_html_report(report: &FullReport) -> String {
     ));
     html.push_str("</div>\n");
 
-    // Suites
     html.push_str("<h2>Test Suites</h2>\n");
     for suite in &report.suites {
         let badge = if suite.failed_count == 0 {
@@ -765,7 +724,6 @@ pub fn generate_html_report(report: &FullReport) -> String {
         html.push_str("</table>\n");
     }
 
-    // Failed tests detail
     let failed = report.failed_tests();
     if !failed.is_empty() {
         html.push_str("<h2>Failed Tests Detail</h2>\n");
@@ -782,7 +740,6 @@ pub fn generate_html_report(report: &FullReport) -> String {
                 html.push_str("</pre>\n");
             }
 
-            // Failed commands
             let failed_cmds = test.failed_commands();
             if !failed_cmds.is_empty() {
                 html.push_str("<p><strong>Failed commands:</strong></p>\n<ul>\n");
@@ -812,7 +769,6 @@ pub fn generate_html_report(report: &FullReport) -> String {
         }
     }
 
-    // Slowest tests
     html.push_str("<h2>Slowest Tests</h2>\n");
     html.push_str("<table>\n<tr><th>Test</th><th>Suite</th><th>Duration</th></tr>\n");
     for test in report.slowest_tests(10) {
@@ -853,25 +809,18 @@ pub fn write_reports(
     Ok((md_path, html_path))
 }
 
-// ============================================================================
-// TESTS
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
     fn create_test_artifacts(dir: &Path) -> std::io::Result<()> {
-        // Create suite/test structure
         let test_dir = dir.join("test_suite").join("test_example");
         fs::create_dir_all(&test_dir)?;
 
-        // Create summary.json
         let summary = r#"{"suite":"test_suite","test":"test_example","passed":true,"run_count":3}"#;
         fs::write(test_dir.join("summary.json"), summary)?;
 
-        // Create events.jsonl
         let events = r#"{"timestamp":"2026-01-17T12:00:00Z","event_type":"command","label":"init","binary":"br","args":["init"],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":100,"stdout_len":50,"stderr_len":0}
 {"timestamp":"2026-01-17T12:00:01Z","event_type":"command","label":"create","binary":"br","args":["create","test"],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":200,"stdout_len":100,"stderr_len":0}"#;
         fs::write(test_dir.join("events.jsonl"), events)?;
@@ -940,16 +889,11 @@ mod tests {
         let indexer = ArtifactIndexer::with_config(config);
         let report = indexer.generate_report().unwrap();
 
-        // Should have no tests since the only test passes
         assert_eq!(report.total_tests, 0);
     }
 
     #[test]
     fn test_artifact_dir_not_found() {
-        // A fixed literal like "/nonexistent/path" is not guaranteed absent:
-        // earlier root-run tests actually created that directory on shared
-        // build workers, failing this assertion fleet-wide. Derive a path
-        // inside a fresh tempdir that provably does not exist.
         let tmp = tempfile::TempDir::new().unwrap();
         let missing = tmp.path().join("definitely-absent-artifact-root");
         let indexer = ArtifactIndexer::new(&missing);

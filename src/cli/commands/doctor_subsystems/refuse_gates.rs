@@ -20,7 +20,7 @@
 //!
 //! Both gates are pure-read.
 
-#![allow(dead_code)] // WP1 foundation; consumed by WP3-WP12.
+#![allow(dead_code)]
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -82,9 +82,6 @@ pub fn gate_schema_version_downgrade(db_path: &Path) -> GateOutcome {
     use crate::storage::schema::CURRENT_SCHEMA_VERSION;
 
     let Some(on_disk) = header_user_version(db_path) else {
-        // No DB or non-SQLite file — not a downgrade; leave detection
-        // to other gates. (A missing DB is exit 66 / not-initialized,
-        // not a refusal here.)
         return GateOutcome::Allow;
     };
     let binary = u32::try_from(CURRENT_SCHEMA_VERSION).unwrap_or(0);
@@ -260,7 +257,6 @@ fn scan_fingerprint_file(
         .unwrap_or_default()
         .to_string();
     if expected_sha.is_empty() {
-        // Symlink / dir fingerprints have no sha; skip.
         return Ok(());
     }
     if !is_regular_hashed_artifact(out, &target, path) {
@@ -299,7 +295,6 @@ fn scan_fingerprints(recovery_dir: &Path) -> std::io::Result<Vec<FingerprintMism
     };
     for entry in entries {
         let path = entry?.path();
-        // Recurse one level for nested recovery dirs.
         if path.is_dir() {
             out.extend(scan_fingerprints(&path)?);
             continue;
@@ -377,7 +372,6 @@ mod tests {
     fn schema_version_downgrade_allows_when_db_matches_or_is_older() {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("beads.db");
-        // Set user_version to 0 — guaranteed <= CURRENT_SCHEMA_VERSION.
         write_fake_sqlite_db(&db_path, 0);
         assert!(matches!(
             gate_schema_version_downgrade(&db_path),
@@ -415,8 +409,6 @@ mod tests {
         let recovery = beads_dir.join(".br_recovery");
         fs::create_dir_all(&recovery).unwrap();
 
-        // Drop a backup artifact + a fingerprint that disagrees with
-        // its actual content.
         let artifact = recovery.join("backup.bin");
         fs::write(&artifact, b"actual bytes").unwrap();
         let fingerprint = serde_json::json!({

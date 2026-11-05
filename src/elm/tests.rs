@@ -163,8 +163,6 @@ fn the_same_event_log_folds_twice_into_the_same_state_and_commands() {
         first_commands, second_commands,
         "the same log produced two command lists"
     );
-    // Guard the comparison itself: the log must actually have moved a
-    // status, or "same twice" is trivially true of an empty fold.
     assert_eq!(
         first_model.issues["beads_rust-a"].status,
         Status::InProgress
@@ -221,7 +219,6 @@ fn a_close_with_no_pass_row_is_refused_and_the_status_stays_open() {
         decision.violations[0].message
     );
 
-    // A FAIL row refuses too, and names itself.
     let (model, _) = update(&BeadsModel::default(), &close_requested("beads_rust-a"));
     let (model, _) = update(
         &model,
@@ -233,9 +230,7 @@ fn a_close_with_no_pass_row_is_refused_and_the_status_stays_open() {
         .expect("a decision was reached");
     assert_eq!(failed.violations[0].gate, "gate_command-verified");
 
-    // No command was emitted for either refusal: the fold proposed no write.
     assert!(commands.is_empty());
-    // And the request never moved a status.
     assert_eq!(model.issues["beads_rust-a"].status, Status::Open);
 }
 
@@ -258,7 +253,6 @@ fn a_legal_pass_row_authorizes_the_write_and_only_the_confirmation_moves_the_sta
     assert!(decision.is_legal());
     assert_eq!(decision.verdict, Some("command-verified".to_string()));
 
-    // Still open: a request plus a legal verdict is a proposal, not a write.
     assert_eq!(model.issues["beads_rust-a"].status, Status::Open);
 
     let (model, _) = update(

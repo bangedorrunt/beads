@@ -69,15 +69,12 @@ fn test_epic_does_not_block_task() {
     let task = create_issue("bd-task", "Task", IssueType::Task);
     storage.create_issue(&task, "user").unwrap();
 
-    // Task depends on Epic (parent-child)
     storage
         .add_dependency("bd-task", "bd-epic", "parent-child", "user")
         .unwrap();
 
-    // Rebuild cache
     storage.rebuild_blocked_cache(true).unwrap();
 
-    // Task should NOT be blocked just because Epic is Open
     assert!(
         !storage.is_blocked("bd-task").unwrap(),
         "Task should not be blocked by Open Epic"
@@ -97,26 +94,21 @@ fn test_epic_blocking_propagates_to_task() {
     let blocker = create_issue("bd-blocker", "Blocker", IssueType::Bug);
     storage.create_issue(&blocker, "user").unwrap();
 
-    // Task depends on Epic (parent-child)
     storage
         .add_dependency("bd-task", "bd-epic", "parent-child", "user")
         .unwrap();
 
-    // Epic depends on Blocker (blocks)
     storage
         .add_dependency("bd-epic", "bd-blocker", "blocks", "user")
         .unwrap();
 
-    // Rebuild cache
     storage.rebuild_blocked_cache(true).unwrap();
 
-    // Epic should be blocked
     assert!(
         storage.is_blocked("bd-epic").unwrap(),
         "Epic should be blocked by Blocker"
     );
 
-    // Task should be blocked (transitively)
     assert!(
         storage.is_blocked("bd-task").unwrap(),
         "Task should be blocked by blocked Epic"

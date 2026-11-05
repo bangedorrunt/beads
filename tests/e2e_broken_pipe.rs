@@ -32,8 +32,6 @@ fn run_br_with_closed_stdout(workspace: &BrWorkspace, args: &[&str]) -> (ExitSta
         .stdin(Stdio::null())
         .stdout(Stdio::from(writer))
         .stderr(Stdio::piped());
-    // Mirror the harness environment: hermetic HOME, no colour, no inherited
-    // br/beads configuration that could change the output mode under test.
     for (key, _) in std::env::vars_os() {
         let name = key.to_string_lossy();
         if name.starts_with("BD_")

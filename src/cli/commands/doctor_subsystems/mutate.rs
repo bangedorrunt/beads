@@ -63,7 +63,7 @@
 //! bypass the doctor's invariant checks. The upcoming WP3-WP12
 //! migration of existing `repair_*` functions is the only consumer.
 
-#![allow(dead_code)] // WP1 foundation; consumed by WP3-WP12.
+#![allow(dead_code)]
 #![allow(clippy::similar_names)]
 
 use std::fs::{self, OpenOptions};
@@ -428,7 +428,6 @@ fn canonicalize_existing_or_parent(path: &Path) -> std::io::Result<PathBuf> {
     if path.exists() {
         return path.canonicalize();
     }
-    // Walk up until we find an existing ancestor.
     let mut tail: Vec<&std::ffi::OsStr> = Vec::new();
     let mut cursor = path;
     loop {
@@ -447,7 +446,6 @@ fn canonicalize_existing_or_parent(path: &Path) -> std::io::Result<PathBuf> {
                 cursor = parent;
             }
             _ => {
-                // No existing ancestor; canonicalize CWD as a fallback.
                 let cwd = Path::new(".").canonicalize()?;
                 let mut canonical = cwd;
                 for segment in tail.iter().rev() {
@@ -462,8 +460,6 @@ fn canonicalize_existing_or_parent(path: &Path) -> std::io::Result<PathBuf> {
 fn ensure_in_scope(caps: &Capabilities, path: &Path) -> Result<(), BeadsError> {
     let canonical = canonicalize_existing_or_parent(path).map_err(BeadsError::Io)?;
     for scope in &caps.write_scopes {
-        // Tolerate scopes that haven't been created yet (e.g.,
-        // `.doctor/` on a fresh workspace).
         let canonical_scope =
             canonicalize_existing_or_parent(scope).unwrap_or_else(|_| scope.clone());
         if canonical.starts_with(&canonical_scope) {
@@ -549,21 +545,7 @@ fn fsync_dir(dir: &Path) -> std::io::Result<()> {
 /// - Out-of-scope paths (refused per safety envelope)
 /// - DB ops that fail the precondition gate or the SQL transaction
 pub fn mutate(ctx: &MutateContext, path: &Path, op: Op) -> Result<ActionResult, BeadsError> {
-    // (1) Per-path advisory lock — minimal in-process mutex via the
-    // actions_file lock; cross-process locking is provided by the
-    // existing `acquire_routed_workspace_write_lock` upstream of the
-    // doctor driver. We deliberately do NOT introduce a second OS-level
-    // lockfile here; the workspace lock is already held when --repair
-    // runs.
 
-    // (2) Read once and remember whether the file existed BEFORE we do
-    //     anything else. The chokepoint's whole reason to exist is
-    //     consistency between `before_hash`, `backup contents`, and the
-    //     pre-mutation live file; any subsequent step that re-reads the
-    //     live file opens a TOCTOU window. We compute `before_hash` from
-    //     the bytes we capture here, then write those exact bytes as
-    //     the verbatim backup so the audit log and the backup file
-    //     trivially agree.
     let before_bytes_or_missing = match fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -574,16 +556,11 @@ pub fn mutate(ctx: &MutateContext, path: &Path, op: Op) -> Result<ActionResult, 
         None => SHA256_EMPTY_PREFIXED.to_string(),
     };
 
-    // (3) Preconditions — write_scopes check.
     ensure_in_scope(&ctx.capabilities, path)?;
     if let Op::Rename { to } = &op {
         ensure_in_scope(&ctx.capabilities, to)?;
     }
 
-    // DB ops route through their dedicated handler. The chokepoint
-    // contract still applies — `path` must be in scope (it is the
-    // beads.db file), backups go to `<run-dir>/backups/`, and
-    // `actions.jsonl` records the op exactly once.
     if matches!(op, Op::DbExec { .. } | Op::DbMigrate { .. }) {
         return mutate_db(ctx, path, &op, &before_hash);
     }
@@ -593,22 +570,6 @@ pub fn mutate(ctx: &MutateContext, path: &Path, op: Op) -> Result<ActionResult, 
         _ => None,
     };
 
-    // (4) Verbatim backup — only meaningful if the file existed. Write
-    //     the exact bytes we hashed for `before_hash` so the audit log
-    //     and the on-disk backup are guaranteed consistent. The
-    //     belt-and-braces `cmp_strict` is preserved for the case where
-    //     a non-doctor writer touches the file *after* our read; if the
-    //     backup we just wrote no longer matches the live file we
-    //     refuse rather than commit to a stale before_hash.
-    //
-    //     We also capture the live file's mode here so an Op::AppendFile
-    //     can stamp the temp file with the same mode without performing
-    //     a third stat(2) inside execute_atomic — that third stat opened
-    //     a TOCTOU window between cmp_strict and execute_atomic where a
-    //     concurrent writer could swap the file (and its mode) under us.
-    // Absolute paths outside the repo root (e.g. the startup-cache file)
-    // must still land INSIDE backups/: strip the leading separator so
-    // PathBuf::join cannot replace the base with the absolute path.
     let rel = path
         .strip_prefix(&ctx.repo_root)
         .or_else(|_| path.strip_prefix("/"))
@@ -630,7 +591,6 @@ pub fn mutate(ctx: &MutateContext, path: &Path, op: Op) -> Result<ActionResult, 
         cmp_strict(path, &backup).map_err(BeadsError::Io)?;
     }
 
-    // (5) Plan + (6) Execute atomically.
     let started_at_ns = now_ns().saturating_sub(ctx.start_ns);
     if ctx.dry_run {
         eprintln!("[dry-run] would mutate {}: {}", path.display(), op_name);
@@ -641,29 +601,18 @@ pub fn mutate(ctx: &MutateContext, path: &Path, op: Op) -> Result<ActionResult, 
             error: None,
         });
     }
-    // Hand the captured `before_bytes` and `existing_mode` to
-    // `execute_atomic` so Op::AppendFile can compute the merged contents
-    // from the *hashed-and-backed-up* bytes rather than re-reading the
-    // live file — closing the TOCTOU window where a concurrent writer
-    // could change the live file between cmp_strict and the append's
-    // own read(). The bytes are exactly what we already wrote to the
-    // verbatim backup, so undo can still recover the original file.
     execute_atomic(path, op, before_bytes_or_missing.as_deref(), existing_mode)
         .map_err(BeadsError::Io)?;
 
-    // (7) after_hash.
     let after_bytes = read_or_empty(path).map_err(BeadsError::Io)?;
     let after_exists = path.exists();
     let after_hash = if after_exists {
         sha256_hex_prefixed(&after_bytes)
     } else {
-        // For Rename ops, the source is gone — record the empty hash
-        // so undo can detect "this path was emptied / moved".
         SHA256_EMPTY_PREFIXED.to_string()
     };
     let finished_at_ns = now_ns().saturating_sub(ctx.start_ns);
 
-    // (8) Record.
     let record = ActionRecord {
         path: path
             .strip_prefix(&ctx.repo_root)
@@ -723,12 +672,8 @@ fn mutate_db(
     op: &Op,
     before_hash: &str,
 ) -> Result<ActionResult, BeadsError> {
-    // Snapshot path under run-dir.
     let backups_db = ctx.run_dir.join("backups").join("db");
 
-    // Pre-write inventory. We capture this before any disk write so a
-    // crash mid-snapshot is recoverable from the JSONL log + the
-    // pre-existing DB file.
     let started_at_ns = now_ns().saturating_sub(ctx.start_ns);
 
     if ctx.dry_run {
@@ -774,13 +719,6 @@ fn mutate_db(
                 };
                 let mut snapshot_strs = Vec::with_capacity(artifacts.len());
                 let mut snapshot_hashes = Vec::with_capacity(artifacts.len());
-                // The body-level sha256 is computed by `snapshot_db_table`
-                // BEFORE the snapshot file is written and returned here in
-                // `artifact.sha256_prefixed`. Recording it in
-                // actions.jsonl is what gives `br doctor undo` a way to
-                // detect snapshot-file tampering between the forward
-                // DbExec and the replay — closing the round-2 follow-up
-                // gap on hash-binding the snapshot to the action.
                 for artifact in artifacts {
                     snapshot_strs.push(
                         artifact
@@ -910,26 +848,18 @@ fn run_db_exec(
 ) -> Result<Vec<DbSnapshotArtifact>, BeadsError> {
     use crate::storage::Connection;
 
-    // Pre-flight identifier validation so we fail fast before opening
-    // the DB connection. Mirrors the protection on the SELECT path.
     for table in affected_tables {
         validate_identifier(table)?;
     }
 
     let mut snapshot_artifacts: Vec<DbSnapshotArtifact> = Vec::with_capacity(affected_tables.len());
 
-    // Single connection for the entire snapshot+mutate transaction.
-    // Acquire BEGIN IMMEDIATE *before* the SELECTs so the writer lock
-    // is held for the snapshot read as well as the mutating SQL.
     let conn = Connection::open(db_path.to_string_lossy().into_owned())?;
     if let Err(e) = conn.execute("BEGIN IMMEDIATE") {
         let _ = conn.close();
         return Err(e.into());
     }
 
-    // Snapshot every affected table inside the transaction. Any error
-    // in this loop must ROLLBACK + scrub the partial snapshot files we
-    // already wrote — they have no actions.jsonl entry referencing them.
     for table in affected_tables {
         let artifact = match snapshot_db_table(&conn, backups_db, table, affected_predicate) {
             Ok(a) => a,
@@ -948,10 +878,6 @@ fn run_db_exec(
         snapshot_artifacts.push(artifact);
     }
 
-    // Run the mutating SQL on the same connection, still inside
-    // BEGIN IMMEDIATE. Any error rolls back AND scrubs the orphan
-    // snapshots — a snapshot with no corresponding actions.jsonl entry
-    // is dead weight that would only confuse forensic tooling.
     let exec_outcome = if args.is_empty() {
         conn.execute(sql).map(|_| ())
     } else {
@@ -1160,9 +1086,6 @@ fn sqlite_value_to_json(val: &crate::storage::SqliteValue) -> serde_json::Value 
             .map_or(serde_json::Value::Null, serde_json::Value::Number),
         SqliteValue::Text(s) => serde_json::Value::String(s.clone()),
         SqliteValue::Blob(b) => {
-            // Hex-encode rather than base64 so the snapshot has no
-            // additional dependency on a base64 crate. Restore is via
-            // hex-decode → SqliteValue::Blob.
             serde_json::json!({ "$blob_hex": hex_encode(b.as_ref()) })
         }
     }
@@ -1197,11 +1120,7 @@ fn run_db_migrate(
         )));
     }
 
-    // (1) Snapshot the DB file *before* we open any connection. Opening
-    //     a connection can dirty header counters even on a
     //     read-only PRAGMA query; snapshotting first keeps the
-    //     pre-migrate file byte-identical to the on-disk state callers
-    //     observed before invoking the chokepoint.
     let snapshot_path = backups_db.join("beads.db.pre-migrate");
     if let Some(parent) = snapshot_path.parent() {
         fs::create_dir_all(parent).map_err(BeadsError::Io)?;
@@ -1210,8 +1129,6 @@ fn run_db_migrate(
     copy_source_permissions(db_path, &snapshot_path).map_err(BeadsError::Io)?;
 
     // (2) Verify PRAGMA user_version matches `from`. If the precondition
-    //     gate fails we discard the snapshot and refuse — leaving no
-    //     backup behind keeps undo from trying to "restore" a no-op.
     let conn = Connection::open(db_path.to_string_lossy().into_owned())?;
     let row = conn.query_row("PRAGMA user_version")?;
     let current = row
@@ -1223,31 +1140,19 @@ fn run_db_migrate(
         .unwrap_or(0);
     let _ = conn.close();
     if current != from {
-        // Discard the now-orphan snapshot so it can't masquerade as a
-        // recoverable backup of a never-mutated DB.
         let _ = fs::remove_file(&snapshot_path);
         return Err(BeadsError::internal(format!(
             "doctor: db migrate refused — user_version mismatch (expected {from}, got {current})"
         )));
     }
 
-    // (3) Drive the actual DDL via the new public hook
-    //     `crate::storage::schema::run_migrations_atomic`, which stamps
     //     `PRAGMA user_version = to`. On any failure the chokepoint's
-    //     recovery path can restore from the pre-migrate snapshot we
-    //     wrote in step (1).
     let migrate_conn = Connection::open(db_path.to_string_lossy().into_owned())?;
     let migration_result = crate::storage::schema::run_migrations_atomic(&migrate_conn, from, to);
     let _ = migrate_conn.close();
     match migration_result {
         Ok(()) => Ok(None),
         Err(err) => {
-            // The atomic wrapper already attempted ROLLBACK. Best-effort
-            // restore from the pre-migrate snapshot so the live DB is
-            // in a known state for callers that don't immediately invoke
-            // `br doctor undo`. The chokepoint's actions.jsonl line is
-            // still written by the caller — recording the failed attempt
-            // is itself part of the audit contract.
             if let Err(restore_err) = fs::copy(&snapshot_path, db_path) {
                 return Err(BeadsError::internal(format!(
                     "doctor: db migrate failed ({err}); restore from snapshot also failed: {restore_err}"
@@ -1294,18 +1199,6 @@ fn execute_atomic(
         }
         Op::AppendFile { content } => {
             // Crash-safety: a raw `O_APPEND` write leaves a torn line
-            // on the file if we crash mid-write. The chokepoint
-            // contract is "atomic or not at all", so we materialize
-            // the new contents (existing + new) in a tmpfile, fsync,
-            // and rename(2). This costs an extra read but matches
-            // the WriteFile guarantee.
-            //
-            // TOCTOU-fix: use the in-memory bytes the chokepoint
-            // already hashed and backed up at step 2. Re-reading the
-            // live file here would let a concurrent writer's commit
-            // become invisible — we'd write `<backed-up-bytes>
-            // + content` over their fresh write, with no record in
-            // the verbatim backup that their bytes ever existed.
             let existing: &[u8] = existing_bytes.unwrap_or(&[]);
             let mut buf = Vec::with_capacity(existing.len().saturating_add(content.len()));
             buf.extend_from_slice(existing);
@@ -1313,10 +1206,6 @@ fn execute_atomic(
             let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
             tmp.write_all(&buf)?;
             tmp.as_file().sync_data()?;
-            // Preserve the file's mode captured at step 2. A fresh
-            // metadata() call here would re-open the same TOCTOU
-            // window; default to 0o644 if the file did not exist
-            // at backup time.
             let mode = existing_mode.unwrap_or(0o644);
             apply_mode(tmp.path(), mode)?;
             tmp.persist(path)
@@ -1328,11 +1217,6 @@ fn execute_atomic(
                 fs::create_dir_all(p)?;
             }
             fs::rename(path, &to)?;
-            // Fsync both the source and destination directories so
-            // the unlink-from-source and link-into-dest are both
-            // durable. POSIX rename atomicity guarantees the rename
-            // is observed atomically by other readers, but durability
-            // across power loss requires an explicit dirsync.
             fsync_dir(parent)?;
             if let Some(dest_parent) = to.parent()
                 && dest_parent != parent
@@ -1354,11 +1238,6 @@ fn execute_atomic(
                 std::process::id(),
                 now_ns()
             ));
-            // Best-effort scrub of stale tmp from a crashed run.
-            // We can't `is_ok() then remove_file` because that opens a
-            // TOCTOU window where another process could delete the
-            // symlink between our check and our remove. Just attempt
-            // the remove unconditionally and ignore NotFound.
             match fs::remove_file(&tmp) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -1369,7 +1248,6 @@ fn execute_atomic(
             fsync_dir(parent)?;
         }
         Op::DbExec { .. } | Op::DbMigrate { .. } => {
-            // Unreachable — caller path returns BeadsError before this.
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "doctor: db op reached execute_atomic; should be intercepted",
@@ -1424,9 +1302,6 @@ pub fn record_legacy_op<F>(
 where
     F: FnOnce() -> Result<(), BeadsError>,
 {
-    // (1) + (2) + (3): pre-state capture for every target. We collect
-    // before doing any disk write so a precondition failure on path N
-    // does not leave a partial backup tree behind for paths 0..N-1.
     let mut pre_state: Vec<(PathBuf, PathBuf, String, bool)> = Vec::with_capacity(paths.len());
     for path in paths {
         ensure_in_scope(&ctx.capabilities, path)?;
@@ -1460,16 +1335,11 @@ where
         return Ok(());
     }
 
-    // (4) Run the legacy work. If it errors, we still record the audit
-    //     lines so the verbatim backups are linked to a JSONL entry the
-    //     operator can find; otherwise the backup files would be
-    //     orphaned under the run-dir.
     let outcome = legacy();
     let legacy_ok = outcome.is_ok();
     let legacy_error = outcome.as_ref().err().map(ToString::to_string);
     let finished_at_ns = now_ns().saturating_sub(ctx.start_ns);
 
-    // (5) + (6): post-state hash + actions.jsonl line per path.
     for (path, _, before_hash, existed_before) in &pre_state {
         let after_bytes_or_missing = match fs::read(path) {
             Ok(b) => Some(b),
@@ -1499,14 +1369,6 @@ where
             error: legacy_error.clone(),
         };
         let mut line = serde_json::to_string(&record).map_err(BeadsError::Json)?;
-        // Tag whether the target file existed pre-mutation so `br
-        // doctor undo` (when extended) can tell the difference between
-        // "restore from verbatim backup" and "remove the post-creation
-        // file" — the legacy ops currently only mutate existing files,
-        // but recording the bit costs nothing and futureproofs the
-        // audit log. We append the extra field manually because
-        // ActionRecord is a stable wire contract shared with non-legacy
-        // ops.
         if !existed_before {
             line = line.trim_end_matches('}').to_string() + ",\"existed_before\":false}";
         }
@@ -1558,8 +1420,6 @@ mod tests {
     #[test]
     fn write_file_creates_backup_and_records_action() {
         let tmp = tempfile::tempdir().unwrap();
-        // Set up a `.beads/` dir with an existing tracked file so we
-        // exercise the backup path.
         let beads_dir = tmp.path().join(".beads");
         fs::create_dir_all(&beads_dir).unwrap();
         let target = beads_dir.join("foo.txt");
@@ -1582,15 +1442,12 @@ mod tests {
         assert!(result.after_hash.starts_with("sha256:"));
         assert_ne!(result.before_hash, result.after_hash);
 
-        // File contents updated.
         assert_eq!(fs::read(&target).unwrap(), b"updated");
 
-        // Backup contains the original bytes byte-for-byte.
         let backup = ctx.run_dir.join("backups/.beads/foo.txt");
         assert!(backup.exists(), "backup must exist: {}", backup.display());
         assert_eq!(fs::read(&backup).unwrap(), b"original");
 
-        // actions.jsonl has exactly one line of valid JSON.
         let f = std::fs::File::open(&actions_path).unwrap();
         let lines: Vec<String> = std::io::BufReader::new(f)
             .lines()
@@ -1625,14 +1482,10 @@ mod tests {
         .expect("dry-run mutate should succeed");
 
         assert!(result.ok);
-        // before_hash == after_hash in dry-run mode.
         assert_eq!(result.before_hash, result.after_hash);
-        // File unchanged.
         assert_eq!(fs::read(&target).unwrap(), b"keep me");
-        // No backup created.
         let backup = ctx.run_dir.join("backups/.beads/dry.txt");
         assert!(!backup.exists());
-        // No actions.jsonl line written.
         assert_eq!(fs::metadata(&actions_path).unwrap().len(), 0);
     }
 
@@ -1730,10 +1583,7 @@ mod tests {
             mutate(&ctx, &src, Op::Rename { to: dst.clone() }).expect("rename should succeed");
 
         assert!(result.ok);
-        // before_hash should be a real hash of "lock-bytes".
         assert_ne!(result.before_hash, SHA256_EMPTY_PREFIXED);
-        // after_hash should be the empty-file sentinel because src is
-        // gone.
         assert_eq!(result.after_hash, SHA256_EMPTY_PREFIXED);
 
         assert!(!src.exists(), "source must be moved");
@@ -1785,7 +1635,6 @@ mod tests {
 
         let (ctx, _) = make_ctx(tmp.path(), false);
 
-        // /tmp/foo is well outside `.beads/` and `.doctor/`.
         let outside = tempfile::tempdir().unwrap();
         let outside_target = outside.path().join("victim.txt");
         fs::write(&outside_target, b"untouched").unwrap();
@@ -1803,7 +1652,6 @@ mod tests {
             err.to_string().contains("outside write_scopes"),
             "error must mention scope refusal: {err}"
         );
-        // File untouched.
         assert_eq!(fs::read(&outside_target).unwrap(), b"untouched");
     }
 
@@ -1869,10 +1717,6 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // WP4 — DB ops (DbExec / DbMigrate)
-    // ========================================================================
-
     /// Set up a fresh `.beads/beads.db` with a single sample table for
     /// the DB-op tests. Returns the absolute path to the DB.
     fn setup_test_db(tmp: &Path) -> PathBuf {
@@ -1932,7 +1776,6 @@ mod tests {
         let db = setup_test_db(tmp.path());
         let (ctx, actions_path) = make_ctx(tmp.path(), false);
 
-        // Pre-state: empty table → snapshot must reflect that.
         let before_sha_path = sha256_file_hex_prefixed(&db).unwrap();
         assert!(before_sha_path.starts_with("sha256:"));
 
@@ -1953,7 +1796,6 @@ mod tests {
             "after_hash must differ from before_hash because the DB grew"
         );
 
-        // Snapshot file exists, captures empty pre-state.
         let snapshot_dir = ctx.run_dir.join("backups/db");
         let entries: Vec<_> = fs::read_dir(&snapshot_dir)
             .unwrap()
@@ -1973,7 +1815,6 @@ mod tests {
             ]
         );
 
-        // Post-state: row is in the DB.
         let conn = Connection::open(db.to_string_lossy().into_owned()).unwrap();
         let rows = conn
             .query("SELECT name, value FROM sample_widgets")
@@ -1981,7 +1822,6 @@ mod tests {
         assert_eq!(rows.len(), 1);
         let _ = conn.close();
 
-        // actions.jsonl carries one DbExec line.
         let log = fs::read_to_string(&actions_path).unwrap();
         let line = log.lines().next().expect("at least one action line");
         let v: serde_json::Value = serde_json::from_str(line).unwrap();
@@ -2000,7 +1840,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let db = setup_test_db(tmp.path());
 
-        // Seed an existing row so a duplicate INSERT trips UNIQUE.
         {
             let conn = Connection::open(db.to_string_lossy().into_owned()).unwrap();
             conn.execute("INSERT INTO sample_widgets(name, value) VALUES ('dup', 1)")
@@ -2022,21 +1861,15 @@ mod tests {
         )
         .expect_err("UNIQUE violation should propagate");
 
-        // Error mentions a database / constraint failure.
         let msg = err.to_string();
         assert!(
             msg.to_lowercase().contains("unique") || msg.to_lowercase().contains("constraint"),
             "expected unique/constraint failure; got {msg}"
         );
 
-        // No actions.jsonl line was written.
         let log_len = fs::metadata(&actions_path).map(|m| m.len()).unwrap_or(0);
         assert_eq!(log_len, 0, "actions.jsonl must remain empty on rollback");
 
-        // Behavioral check: the rolled-back transaction left the table
-        // exactly one row (the seed). We do not compare DB file bytes
-        // because an engine can touch header counters even on a rolled-back
-        // transaction; the row-level invariant is what matters.
         let conn = Connection::open(db.to_string_lossy().into_owned()).unwrap();
         let rows = conn.query("SELECT COUNT(*) FROM sample_widgets").unwrap();
         assert_eq!(
@@ -2049,11 +1882,6 @@ mod tests {
         );
         let _ = conn.close();
 
-        // Orphan snapshot scrub: the chokepoint snapshotted the table
-        // before the SQL fired, but the SQL rolled back. There must be
-        // NO snapshot files left under backups/db/ — otherwise the
-        // workspace carries a dangling artifact with no actions.jsonl
-        // entry referencing it.
         let snapshot_dir = ctx.run_dir.join("backups/db");
         if snapshot_dir.exists() {
             let leftover: Vec<_> = fs::read_dir(&snapshot_dir)
@@ -2073,7 +1901,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let db = setup_test_db(tmp.path());
 
-        // Stamp user_version = 5 directly.
         {
             let conn = Connection::open(db.to_string_lossy().into_owned()).unwrap();
             conn.execute("PRAGMA user_version = 5").unwrap();
@@ -2091,7 +1918,6 @@ mod tests {
         );
 
         // PRAGMA user_version unchanged: this is the behavioral
-        // invariant the precondition gate guarantees.
         let conn = Connection::open(db.to_string_lossy().into_owned()).unwrap();
         let row = conn.query_row("PRAGMA user_version").unwrap();
         let v = match row.get(0) {
@@ -2101,11 +1927,9 @@ mod tests {
         assert_eq!(v, 5, "user_version must not change after refusal");
         let _ = conn.close();
 
-        // No actions.jsonl line was written.
         let log_len = fs::metadata(&actions_path).map(|m| m.len()).unwrap_or(0);
         assert_eq!(log_len, 0);
 
-        // The orphan pre-migrate snapshot was scrubbed when we refused.
         let snap = ctx.run_dir.join("backups/db/beads.db.pre-migrate");
         assert!(
             !snap.exists(),
@@ -2121,13 +1945,9 @@ mod tests {
         fs::create_dir_all(&beads_dir).unwrap();
         let db = beads_dir.join("beads.db");
 
-        // Stand up a real beads DB via apply_schema, then stamp
-        // user_version back to a pre-current value so the chokepoint
-        // migration has a real upgrade to run.
         {
             let conn = Connection::open(db.to_string_lossy().into_owned()).unwrap();
             crate::storage::schema::apply_schema(&conn).expect("apply_schema on fresh test DB");
-            // Demote user_version so run_migrations_atomic has work to do.
             conn.execute("PRAGMA user_version = 7").unwrap();
             let _ = conn.close();
         }
@@ -2146,7 +1966,6 @@ mod tests {
         .expect("DbMigrate should run schema migrations end-to-end");
         assert!(result.ok);
 
-        // The pre-migrate snapshot is preserved verbatim for undo.
         let snap = ctx.run_dir.join("backups/db/beads.db.pre-migrate");
         assert!(
             snap.exists(),
@@ -2177,7 +1996,6 @@ mod tests {
                 v, target,
                 "post-migrate user_version should be CURRENT_SCHEMA_VERSION ({target})"
             );
-            // v9 unconditionally adds close_metadata.
             let rows = conn
                 .query(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='close_metadata'",
@@ -2191,9 +2009,6 @@ mod tests {
             let _ = conn.close();
         }
 
-        // actions.jsonl records the op and the version transition; the
-        // `migration_logic_not_yet_routed` warning is GONE now that
-        // beads-folg has wired schema.rs through the chokepoint.
         let log = fs::read_to_string(&actions_path).unwrap();
         let line = log.lines().next().expect("expected one action line");
         let v: serde_json::Value = serde_json::from_str(line).unwrap();
@@ -2252,14 +2067,10 @@ mod tests {
                     Op::WriteFile { content: updated.clone(), mode: None },
                 ).unwrap();
 
-                // Forward mutation applied.
                 prop_assert_eq!(fs::read(&target).unwrap(), updated.clone());
-                // before_hash is the SHA-256 of the ORIGINAL bytes.
                 prop_assert_eq!(&result.before_hash, &sha256_hex_prefixed(&original));
-                // Verbatim backup byte-equals the original.
                 let backup = ctx.run_dir.join("backups/.beads/rt.bin");
                 prop_assert_eq!(fs::read(&backup).unwrap(), original.clone());
-                // Logical undo (restore backup bytes) → byte-identical original.
                 let restored = fs::read(&backup).unwrap();
                 fs::write(&target, &restored).unwrap();
                 prop_assert_eq!(fs::read(&target).unwrap(), original);
@@ -2286,14 +2097,11 @@ mod tests {
                     Op::AppendFile { content: suffix.clone() },
                 ).unwrap();
 
-                // Forward: target is original ++ suffix.
                 let mut expected = original.clone();
                 expected.extend_from_slice(&suffix);
                 prop_assert_eq!(fs::read(&target).unwrap(), expected);
-                // Backup byte-equals the pre-append original.
                 let backup = ctx.run_dir.join("backups/.beads/append-rt.bin");
                 prop_assert_eq!(fs::read(&backup).unwrap(), original.clone());
-                // Logical undo restores the original.
                 let restored = fs::read(&backup).unwrap();
                 fs::write(&target, &restored).unwrap();
                 prop_assert_eq!(fs::read(&target).unwrap(), original);
@@ -2322,21 +2130,17 @@ mod tests {
                 let (ctx, _ap) = make_ctx(tmp.path(), false);
                 mutate(&ctx, &target, Op::Chmod { mode: m2 }).unwrap();
 
-                // Content is unchanged by a chmod.
                 prop_assert_eq!(fs::read(&target).unwrap(), content.clone());
-                // Live mode is now m2.
                 prop_assert_eq!(
                     fs::metadata(&target).unwrap().permissions().mode() & 0o777,
                     m2 & 0o777
                 );
-                // Backup preserved BOTH the original bytes and the original mode.
                 let backup = ctx.run_dir.join("backups/.beads/chmod-rt.bin");
                 prop_assert_eq!(fs::read(&backup).unwrap(), content);
                 prop_assert_eq!(
                     fs::metadata(&backup).unwrap().permissions().mode() & 0o777,
                     m1 & 0o777
                 );
-                // Logical undo (restore the backup's mode) → mode back to m1.
                 let backup_mode = fs::metadata(&backup).unwrap().permissions().mode() & 0o777;
                 fs::set_permissions(&target, fs::Permissions::from_mode(backup_mode)).unwrap();
                 prop_assert_eq!(
@@ -2413,7 +2217,6 @@ mod tests {
                 let ctx2 = ctx_with_run(tmp.path(), "run-2");
                 let r2 = mutate(&ctx2, &target, Op::WriteFile { content: target_content.clone(), mode: None }).unwrap();
 
-                // Second application converged: no content change.
                 prop_assert_eq!(&r2.before_hash, &r2.after_hash);
                 prop_assert_eq!(fs::read(&target).unwrap(), target_content);
             }
@@ -2461,7 +2264,6 @@ mod tests {
                 let ctx2 = ctx_with_run(tmp.path(), "run-2");
                 mutate(&ctx2, &target, Op::AppendFile { content: suffix.clone() }).unwrap();
 
-                // original ++ suffix ++ suffix — the append was NOT deduped.
                 let mut expected = original.clone();
                 expected.extend_from_slice(&suffix);
                 expected.extend_from_slice(&suffix);

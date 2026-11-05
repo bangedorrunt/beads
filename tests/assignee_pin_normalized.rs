@@ -93,7 +93,6 @@ fn assignee_pin_normalized_unknown_herdr_name_refused_with_fix() {
         "a refused assignee must not land"
     );
 
-    // The registry is optional: without one, the same input passes through.
     let plain = BrWorkspace::new();
     let init = run_br(&plain, ["init"], "init_plain");
     assert!(init.status.success(), "init failed: {}", init.stderr);
@@ -119,7 +118,6 @@ fn assignee_pin_normalized_pin_stored_verbatim() {
     let workspace = init_workspace_with_registry();
     let id = seed_issue(&workspace, "Verbatim target", "create_verbatim_target");
 
-    // A registered pin stores exactly as passed.
     let update = run_br(
         &workspace,
         ["update", &id, "--assignee", "CalmLantern"],
@@ -131,8 +129,6 @@ fn assignee_pin_normalized_pin_stored_verbatim() {
         Some("CalmLantern")
     );
 
-    // A free string that is not herdr-shaped (a human name) stores verbatim
-    // too: the strict dialect exists for herdr pane names, not people.
     let update = run_br(
         &workspace,
         ["update", &id, "--assignee", "alice"],
@@ -144,8 +140,6 @@ fn assignee_pin_normalized_pin_stored_verbatim() {
         Some("alice")
     );
 
-    // `--assignee` wins over `--claim`'s actor default, so the claim recipe
-    // stores the pin rather than the pane name.
     let claimed = seed_issue(&workspace, "Claim target", "create_claim_target");
     let update = run_br(
         &workspace,
@@ -195,7 +189,6 @@ fn assignee_pin_normalized_claim_without_a_named_claimant_is_refused() {
         "a refused claim must not store an assignee"
     );
 
-    // The named-claimant recipe still claims, and stores the named identity.
     let claim = run_br(
         &workspace,
         ["--actor", "AmberFox", "update", &id, "--claim"],
@@ -217,8 +210,6 @@ fn assignee_pin_normalized_reclaim_stays_idempotent() {
     let workspace = init_workspace_with_registry();
     let id = seed_issue(&workspace, "Reclaim target", "create_reclaim_target");
 
-    // First claim: the actor is a registered herdr pane name, so the fold
-    // stores the pin.
     let claim_args = [
         "update",
         &id,
@@ -240,10 +231,6 @@ fn assignee_pin_normalized_reclaim_stays_idempotent() {
         Some("AmberFox")
     );
 
-    // The same agent re-claiming must be an idempotent no-op: the guard's
-    // `current == claim_actor` branch compares the stored assignee against
-    // `claim_actor`, so `claim_actor` must speak the stored dialect (the pin),
-    // not the raw pane name.
     let second = run_br(&workspace, claim_args, "claim_second");
     assert!(
         second.status.success(),
@@ -256,7 +243,6 @@ fn assignee_pin_normalized_reclaim_stays_idempotent() {
         Some("AmberFox")
     );
 
-    // The explicit-pin form of the recipe must re-run the same way.
     let pin_id = seed_issue(&workspace, "Pin claim target", "create_pin_claim_target");
     let pin_claim_args = [
         "update",
@@ -311,7 +297,6 @@ fn assignee_pin_normalized_show_describes_resolution() {
         shown.stdout
     );
 
-    // A stored free string has no resolution and stays plain.
     let update = run_br(
         &workspace,
         ["update", &id, "--assignee", "alice"],

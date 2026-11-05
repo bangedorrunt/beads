@@ -1,17 +1,3 @@
-// Storage and sync performance benchmarks.
-//
-// Run with: cargo bench --bench storage_perf
-//
-// Performance Targets:
-// | Operation           | Target    | Description                      |
-// |---------------------|-----------|----------------------------------|
-// | Create              | < 1ms     | Single issue creation            |
-// | List (1k)           | < 10ms    | List 1000 issues                 |
-// | List (10k)          | < 100ms   | List 10000 issues                |
-// | Ready (1k/2k)       | < 5ms     | Ready query: 1k issues, 2k deps  |
-// | Ready (10k/20k)     | < 50ms    | Ready query: 10k issues, 20k deps|
-// | Export (10k)        | < 500ms   | Export 10k issues to JSONL       |
-// | Import (10k)        | < 1s      | Import 10k issues from JSONL     |
 
 #![allow(
     clippy::significant_drop_tightening,
@@ -161,7 +147,6 @@ fn setup_db_with_deps(issue_count: usize, dep_count: usize) -> (TempDir, SqliteS
     let db_path = dir.path().join("bench.db");
     let mut storage = SqliteStorage::open(&db_path).expect("Failed to open db");
 
-    // Create issues
     for i in 0..issue_count {
         let issue = create_test_issue(i);
         storage
@@ -169,10 +154,6 @@ fn setup_db_with_deps(issue_count: usize, dep_count: usize) -> (TempDir, SqliteS
             .expect("Failed to create issue");
     }
 
-    // Create unique acyclic dependencies. Higher-index issues depend on
-    // lower-index issues, so this can scale to deep DAGs without cycles.
-    // Load them through the import helper so setup does not dominate
-    // `--quick` runs with per-edge cycle detection.
     let mut added = 0usize;
     'deps: for from_idx in 1..issue_count {
         let from_id = format!("bench-{from_idx:06}");
@@ -251,10 +232,6 @@ fn configured_sizes(defaults: &[usize], env_var: &str) -> Vec<usize> {
     }
 }
 
-// =============================================================================
-// Storage Operation Benchmarks
-// =============================================================================
-
 /// Benchmark single issue creation.
 fn bench_create_single(c: &mut Criterion) {
     init_bench_logging();
@@ -316,7 +293,6 @@ fn bench_create_batch(c: &mut Criterion) {
                         let issue = create_test_issue(i);
                         storage.create_issue(&issue, "benchmark").unwrap();
                     }
-                    // Keep dir alive
                     drop(dir);
                 },
             );
@@ -339,7 +315,6 @@ fn bench_update_issue(c: &mut Criterion) {
     let mut group = c.benchmark_group(group_name);
     configure_group(&mut group);
 
-    // Pre-populate database with issues
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("bench.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
@@ -433,7 +408,6 @@ fn bench_delete_issue(c: &mut Criterion) {
         let db_path = dir.path().join("bench.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
 
-        // Create a large pool of issues to delete
         for i in 0..10000 {
             let issue = create_test_issue(i);
             storage.create_issue(&issue, "benchmark").unwrap();
@@ -453,10 +427,6 @@ fn bench_delete_issue(c: &mut Criterion) {
     group.finish();
     log_group_end(group_name);
 }
-
-// =============================================================================
-// Query Operation Benchmarks
-// =============================================================================
 
 /// Benchmark listing issues.
 fn bench_list_issues(c: &mut Criterion) {
@@ -612,10 +582,6 @@ fn bench_blocked_query(c: &mut Criterion) {
     log_group_end(group_name);
 }
 
-// =============================================================================
-// Sync Operation Benchmarks
-// =============================================================================
-
 /// Benchmark JSONL export.
 fn bench_export(c: &mut Criterion) {
     init_bench_logging();
@@ -659,7 +625,6 @@ fn bench_import(c: &mut Criterion) {
     configure_group(&mut group);
 
     for size in configured_sizes(&[100, 500, 1000, 2000, 5000, 10000], "BENCH_SYNC_SIZES") {
-        // Create source data
         let (_src_dir, src_storage) = setup_db_with_issues(size);
         let mut buffer = Cursor::new(Vec::new());
         beads::sync::export_to_writer(&src_storage, &mut buffer).unwrap();
@@ -671,7 +636,6 @@ fn bench_import(c: &mut Criterion) {
             let bench_start = log_bench_start(&bench_name);
             b.iter_with_setup(
                 || {
-                    // Create temp file with JSONL data
                     let dir = TempDir::new().unwrap();
                     let jsonl_path = dir.path().join("issues.jsonl");
                     std::fs::write(&jsonl_path, data).unwrap();
@@ -780,10 +744,6 @@ fn bench_dirty_tracking_query(c: &mut Criterion) {
     drop(dir);
 }
 
-// =============================================================================
-// Dependency Operation Benchmarks
-// =============================================================================
-
 /// Benchmark adding dependencies.
 fn bench_add_dependency(c: &mut Criterion) {
     init_bench_logging();
@@ -802,7 +762,6 @@ fn bench_add_dependency(c: &mut Criterion) {
         let db_path = dir.path().join("bench.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
 
-        // Create issues first
         for i in 0..100 {
             let issue = create_test_issue(i);
             storage.create_issue(&issue, "benchmark").unwrap();
@@ -810,12 +769,11 @@ fn bench_add_dependency(c: &mut Criterion) {
 
         let mut counter = 0usize;
         b.iter(|| {
-            let from_idx = (counter * 2 + 1) % 50 + 50; // 50-99
-            let to_idx = counter % 50; // 0-49
+            let from_idx = (counter * 2 + 1) % 50 + 50;
+            let to_idx = counter % 50;
             let from_id = format!("bench-{from_idx:06}");
             let to_id = format!("bench-{to_idx:06}");
 
-            // Ignore duplicate errors
             let _ = storage.add_dependency(
                 black_box(&from_id),
                 black_box(&to_id),
@@ -842,18 +800,15 @@ fn bench_cycle_detection(c: &mut Criterion) {
     let mut group = c.benchmark_group(group_name);
     configure_group(&mut group);
 
-    // Create a database with complex dependency graph
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("bench.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
 
-    // Create a chain of issues: 0 <- 1 <- 2 <- 3 <- ... <- 99
     for i in 0..100 {
         let issue = create_test_issue(i);
         storage.create_issue(&issue, "benchmark").unwrap();
     }
 
-    // Create a long dependency chain
     for i in 1..100 {
         let from_id = format!("bench-{i:06}");
         let to_id = format!("bench-{:06}", i - 1);
@@ -866,7 +821,6 @@ fn bench_cycle_detection(c: &mut Criterion) {
         let bench_name = "storage/cycle_detection/would_create_cycle_true";
         let bench_start = log_bench_start(bench_name);
         b.iter(|| {
-            // This would create a cycle: 0 -> 99 when 99 -> ... -> 0 exists
             let result = storage.would_create_cycle(
                 black_box("bench-000000"),
                 black_box("bench-000099"),
@@ -881,7 +835,6 @@ fn bench_cycle_detection(c: &mut Criterion) {
         let bench_name = "storage/cycle_detection/would_create_cycle_false";
         let bench_start = log_bench_start(bench_name);
         b.iter(|| {
-            // This wouldn't create a cycle: checking a non-existent edge
             let result = storage.would_create_cycle(
                 black_box("bench-000099"),
                 black_box("bench-000000"),
@@ -896,10 +849,6 @@ fn bench_cycle_detection(c: &mut Criterion) {
     log_group_end(group_name);
     drop(dir);
 }
-
-// =============================================================================
-// ID Operation Benchmarks
-// =============================================================================
 
 /// Benchmark ID generation.
 fn bench_generate_id(c: &mut Criterion) {
@@ -934,7 +883,6 @@ fn bench_generate_id(c: &mut Criterion) {
         log_bench_end(bench_name, bench_start);
     });
 
-    // Benchmark with collision checking
     group.bench_function("with_collision_check", |b| {
         let bench_name = "id/generate/with_collision_check";
         let bench_start = log_bench_start(bench_name);
@@ -1047,7 +995,6 @@ fn bench_content_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group(group_name);
     configure_group(&mut group);
 
-    // Single issue hash
     group.bench_function("single", |b| {
         let bench_name = "id/content_hash/single";
         let bench_start = log_bench_start(bench_name);
@@ -1059,7 +1006,6 @@ fn bench_content_hash(c: &mut Criterion) {
         log_bench_end(bench_name, bench_start);
     });
 
-    // Batch hashing
     for size in [10, 100, 500] {
         let issues: Vec<_> = (0..size).map(create_test_issue).collect();
         group.throughput(Throughput::Elements(size as u64));
@@ -1077,10 +1023,6 @@ fn bench_content_hash(c: &mut Criterion) {
     group.finish();
     log_group_end(group_name);
 }
-
-// =============================================================================
-// Search Operation Benchmarks
-// =============================================================================
 
 /// Benchmark search operations.
 fn bench_search(c: &mut Criterion) {
@@ -1133,10 +1075,6 @@ fn bench_search(c: &mut Criterion) {
     group.finish();
     log_group_end(group_name);
 }
-
-// =============================================================================
-// Criterion Groups
-// =============================================================================
 
 criterion_group!(
     storage_benches,

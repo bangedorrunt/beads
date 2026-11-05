@@ -329,11 +329,6 @@ fn list_filters_respect_title_priority_and_closed() {
     assert_eq!(issues.len(), 1);
 }
 
-// ============================================================================
-// List Filters: Comprehensive Test Suite
-// Tests for beads-6ug: Storage unit tests: List filters and query combinations
-// ============================================================================
-
 #[test]
 fn list_filters_status_single() {
     let mut storage = test_db();
@@ -356,7 +351,6 @@ fn list_filters_status_single() {
     storage.create_issue(&closed, "tester").unwrap();
     storage.create_issue(&deferred, "tester").unwrap();
 
-    // Filter for open only
     let filters = ListFilters {
         statuses: Some(vec![Status::Open]),
         ..Default::default()
@@ -369,7 +363,6 @@ fn list_filters_status_single() {
     assert!(!ids.contains(&deferred.id));
     assert_eq!(issues.len(), 1);
 
-    // Filter for in_progress only
     let filters = ListFilters {
         statuses: Some(vec![Status::InProgress]),
         ..Default::default()
@@ -401,7 +394,6 @@ fn list_filters_status_multiple() {
     storage.create_issue(&blocked, "tester").unwrap();
     storage.create_issue(&closed, "tester").unwrap();
 
-    // Filter for multiple statuses
     let filters = ListFilters {
         statuses: Some(vec![Status::Open, Status::InProgress, Status::Blocked]),
         ..Default::default()
@@ -441,7 +433,6 @@ fn list_filters_priority_single() {
     storage.create_issue(&p3, "tester").unwrap();
     storage.create_issue(&p4, "tester").unwrap();
 
-    // Filter for P0 (critical) only
     let filters = ListFilters {
         priorities: Some(vec![Priority::CRITICAL]),
         ..Default::default()
@@ -450,7 +441,6 @@ fn list_filters_priority_single() {
     assert_eq!(issues.len(), 1);
     assert!(issue_ids(&issues).contains(&p0.id));
 
-    // Filter for P4 (backlog) only
     let filters = ListFilters {
         priorities: Some(vec![Priority::BACKLOG]),
         ..Default::default()
@@ -486,7 +476,6 @@ fn list_filters_priority_range() {
     storage.create_issue(&p3, "tester").unwrap();
     storage.create_issue(&p4, "tester").unwrap();
 
-    // Filter for P0-P1 (critical and high)
     let filters = ListFilters {
         priorities: Some(vec![Priority::CRITICAL, Priority::HIGH]),
         ..Default::default()
@@ -498,7 +487,6 @@ fn list_filters_priority_range() {
     assert!(ids.contains(&p1.id));
     assert!(!ids.contains(&p2.id));
 
-    // Filter for P2-P4 (medium, low, backlog)
     let filters = ListFilters {
         priorities: Some(vec![Priority::MEDIUM, Priority::LOW, Priority::BACKLOG]),
         ..Default::default()
@@ -529,7 +517,6 @@ fn list_filters_type_single() {
     storage.create_issue(&task, "tester").unwrap();
     storage.create_issue(&epic, "tester").unwrap();
 
-    // Filter for bugs only
     let filters = ListFilters {
         types: Some(vec![IssueType::Bug]),
         ..Default::default()
@@ -538,7 +525,6 @@ fn list_filters_type_single() {
     assert_eq!(issues.len(), 1);
     assert!(issue_ids(&issues).contains(&bug.id));
 
-    // Filter for features only
     let filters = ListFilters {
         types: Some(vec![IssueType::Feature]),
         ..Default::default()
@@ -570,7 +556,6 @@ fn list_filters_type_multiple() {
     storage.create_issue(&task, "tester").unwrap();
     storage.create_issue(&chore, "tester").unwrap();
 
-    // Filter for bugs and features
     let filters = ListFilters {
         types: Some(vec![IssueType::Bug, IssueType::Feature]),
         ..Default::default()
@@ -600,7 +585,6 @@ fn list_filters_assignee() {
     storage.create_issue(&bob_issue, "tester").unwrap();
     storage.create_issue(&unassigned, "tester").unwrap();
 
-    // Filter for alice's issues
     let filters = ListFilters {
         assignee: Some("alice".to_string()),
         ..Default::default()
@@ -609,7 +593,6 @@ fn list_filters_assignee() {
     assert_eq!(issues.len(), 1);
     assert!(issue_ids(&issues).contains(&alice_issue.id));
 
-    // Filter for bob's issues
     let filters = ListFilters {
         assignee: Some("bob".to_string()),
         ..Default::default()
@@ -633,7 +616,6 @@ fn list_filters_unassigned() {
     storage.create_issue(&unassigned1, "tester").unwrap();
     storage.create_issue(&unassigned2, "tester").unwrap();
 
-    // Filter for unassigned issues
     let filters = ListFilters {
         unassigned: true,
         ..Default::default()
@@ -663,7 +645,6 @@ fn list_filters_include_closed() {
     storage.create_issue(&closed, "tester").unwrap();
     storage.create_issue(&tombstone, "tester").unwrap();
 
-    // Default: exclude closed
     let filters = ListFilters::default();
     let issues = storage.list_issues(&filters).unwrap();
     let ids = issue_ids(&issues);
@@ -671,14 +652,6 @@ fn list_filters_include_closed() {
     assert!(!ids.contains(&closed.id));
     assert!(!ids.contains(&tombstone.id));
 
-    // Include closed (but not tombstones).  Tombstones represent deleted
-    // issues and `list_issues` intentionally keeps them out of listings
-    // even when `include_closed = true` — callers have to opt in
-    // explicitly by passing a `statuses` filter that includes
-    // `Tombstone`.  That exclusion is enforced in the dynamic SQL
-    // (`AND status != 'tombstone'`) when no explicit statuses filter is
-    // present, so a prior test expectation that `include_closed` alone
-    // would surface tombstones was incorrect.
     let filters = ListFilters {
         include_closed: true,
         ..Default::default()
@@ -692,7 +665,6 @@ fn list_filters_include_closed() {
         "tombstones should stay hidden unless explicitly requested via a statuses filter"
     );
 
-    // Explicit request for tombstones returns them.
     let filters = ListFilters {
         include_closed: true,
         statuses: Some(vec![Status::Tombstone]),
@@ -718,14 +690,12 @@ fn list_filters_include_templates() {
     storage.create_issue(&regular, "tester").unwrap();
     storage.create_issue(&template, "tester").unwrap();
 
-    // Default: exclude templates
     let filters = ListFilters::default();
     let issues = storage.list_issues(&filters).unwrap();
     let ids = issue_ids(&issues);
     assert!(ids.contains(&regular.id));
     assert!(!ids.contains(&template.id));
 
-    // Include templates
     let filters = ListFilters {
         include_templates: true,
         ..Default::default()
@@ -748,7 +718,6 @@ fn list_filters_title_contains() {
     storage.create_issue(&beta, "tester").unwrap();
     storage.create_issue(&alpha_beta, "tester").unwrap();
 
-    // Search for "Alpha"
     let filters = ListFilters {
         title_contains: Some("Alpha".to_string()),
         ..Default::default()
@@ -760,7 +729,6 @@ fn list_filters_title_contains() {
     assert!(ids.contains(&alpha_beta.id));
     assert!(!ids.contains(&beta.id));
 
-    // Search for "Beta"
     let filters = ListFilters {
         title_contains: Some("Beta".to_string()),
         ..Default::default()
@@ -778,7 +746,6 @@ fn list_filters_limit() {
         storage.create_issue(&issue, "tester").unwrap();
     }
 
-    // Limit to 3
     let filters = ListFilters {
         limit: Some(3),
         ..Default::default()
@@ -786,7 +753,6 @@ fn list_filters_limit() {
     let issues = storage.list_issues(&filters).unwrap();
     assert_eq!(issues.len(), 3);
 
-    // Limit to 5
     let filters = ListFilters {
         limit: Some(5),
         ..Default::default()
@@ -794,7 +760,6 @@ fn list_filters_limit() {
     let issues = storage.list_issues(&filters).unwrap();
     assert_eq!(issues.len(), 5);
 
-    // Limit 0 (should return all)
     let filters = ListFilters {
         limit: Some(0),
         ..Default::default()
@@ -802,15 +767,10 @@ fn list_filters_limit() {
     let issues = storage.list_issues(&filters).unwrap();
     assert_eq!(issues.len(), 10);
 
-    // No limit
     let filters = ListFilters::default();
     let issues = storage.list_issues(&filters).unwrap();
     assert_eq!(issues.len(), 10);
 }
-
-// ============================================================================
-// Combined Filter Tests (15+ combinations as per beads-6ug requirements)
-// ============================================================================
 
 #[test]
 fn list_filters_combined_status_and_priority() {
@@ -833,7 +793,6 @@ fn list_filters_combined_status_and_priority() {
     storage.create_issue(&open_low, "tester").unwrap();
     storage.create_issue(&closed_high, "tester").unwrap();
 
-    // Open AND high priority
     let filters = ListFilters {
         statuses: Some(vec![Status::Open]),
         priorities: Some(vec![Priority::HIGH]),
@@ -865,7 +824,6 @@ fn list_filters_combined_type_and_assignee() {
     storage.create_issue(&alice_feature, "tester").unwrap();
     storage.create_issue(&bob_bug, "tester").unwrap();
 
-    // Bugs assigned to alice
     let filters = ListFilters {
         types: Some(vec![IssueType::Bug]),
         assignee: Some("alice".to_string()),
@@ -906,7 +864,6 @@ fn list_filters_combined_status_type_priority() {
     storage.create_issue(&wrong_type, "tester").unwrap();
     storage.create_issue(&wrong_priority, "tester").unwrap();
 
-    // in_progress AND bug AND critical
     let filters = ListFilters {
         statuses: Some(vec![Status::InProgress]),
         types: Some(vec![IssueType::Bug]),
@@ -936,7 +893,6 @@ fn list_filters_combined_title_and_type() {
     storage.create_issue(&api_feature, "tester").unwrap();
     storage.create_issue(&ui_bug, "tester").unwrap();
 
-    // Title contains "API" AND type is bug
     let filters = ListFilters {
         title_contains: Some("API".to_string()),
         types: Some(vec![IssueType::Bug]),
@@ -966,7 +922,6 @@ fn list_filters_combined_unassigned_and_priority() {
     storage.create_issue(&unassigned_low, "tester").unwrap();
     storage.create_issue(&assigned_high, "tester").unwrap();
 
-    // Unassigned AND high priority
     let filters = ListFilters {
         unassigned: true,
         priorities: Some(vec![Priority::HIGH]),
@@ -1008,7 +963,6 @@ fn list_filters_combined_multiple_statuses_and_types() {
     storage.create_issue(&closed_bug, "tester").unwrap();
     storage.create_issue(&open_task, "tester").unwrap();
 
-    // (open OR in_progress) AND (bug OR feature)
     let filters = ListFilters {
         statuses: Some(vec![Status::Open, Status::InProgress]),
         types: Some(vec![IssueType::Bug, IssueType::Feature]),
@@ -1040,7 +994,6 @@ fn list_filters_combined_all_priority_levels() {
         storage.create_issue(issue, "tester").unwrap();
     }
 
-    // Filter for all priority levels explicitly
     let filters = ListFilters {
         priorities: Some(vec![
             Priority::CRITICAL,
@@ -1067,7 +1020,6 @@ fn list_filters_combined_with_limit() {
         storage.create_issue(&issue, "tester").unwrap();
     }
 
-    // Add some non-matching issues
     for i in 0..5 {
         let issue = fixtures::IssueBuilder::new(&format!("Feature {i}"))
             .with_type(IssueType::Feature)
@@ -1076,7 +1028,6 @@ fn list_filters_combined_with_limit() {
         storage.create_issue(&issue, "tester").unwrap();
     }
 
-    // Filter for bugs with high priority, limit to 5
     let filters = ListFilters {
         types: Some(vec![IssueType::Bug]),
         priorities: Some(vec![Priority::HIGH]),
@@ -1086,7 +1037,6 @@ fn list_filters_combined_with_limit() {
     let issues = storage.list_issues(&filters).unwrap();
     assert_eq!(issues.len(), 5);
 
-    // Verify they're all bugs with high priority
     for issue in &issues {
         assert_eq!(issue.issue_type, IssueType::Bug);
         assert_eq!(issue.priority, Priority::HIGH);
@@ -1111,7 +1061,6 @@ fn list_filters_combined_include_closed_with_status_filter() {
     storage.create_issue(&closed, "tester").unwrap();
     storage.create_issue(&in_progress, "tester").unwrap();
 
-    // Status filter for closed with include_closed=true
     let filters = ListFilters {
         statuses: Some(vec![Status::Closed]),
         include_closed: true,
@@ -1126,7 +1075,6 @@ fn list_filters_combined_include_closed_with_status_filter() {
 fn list_filters_combined_five_filters() {
     let mut storage = test_db();
 
-    // Create the target issue that matches all filters
     let target = fixtures::IssueBuilder::new("API bug fix")
         .with_status(Status::InProgress)
         .with_type(IssueType::Bug)
@@ -1134,7 +1082,6 @@ fn list_filters_combined_five_filters() {
         .with_assignee("alice")
         .build();
 
-    // Create non-matching issues (each misses one filter)
     let wrong_title = fixtures::IssueBuilder::new("UI bug fix")
         .with_status(Status::InProgress)
         .with_type(IssueType::Bug)
@@ -1173,7 +1120,6 @@ fn list_filters_combined_five_filters() {
     storage.create_issue(&wrong_priority, "tester").unwrap();
     storage.create_issue(&wrong_assignee, "tester").unwrap();
 
-    // All five filters
     let filters = ListFilters {
         title_contains: Some("API".to_string()),
         statuses: Some(vec![Status::InProgress]),
@@ -1197,7 +1143,6 @@ fn list_filters_empty_result() {
         .build();
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Filter that matches nothing
     let filters = ListFilters {
         statuses: Some(vec![Status::Blocked]),
         types: Some(vec![IssueType::Epic]),
@@ -1225,21 +1170,15 @@ fn list_filters_no_filters_returns_all_open() {
     storage.create_issue(&open2, "tester").unwrap();
     storage.create_issue(&closed, "tester").unwrap();
 
-    // Default filters (no filters)
     let filters = ListFilters::default();
     let issues = storage.list_issues(&filters).unwrap();
     let ids = issue_ids(&issues);
 
-    // Should return non-closed issues (open, in_progress)
     assert_eq!(issues.len(), 2);
     assert!(ids.contains(&open1.id));
     assert!(ids.contains(&open2.id));
     assert!(!ids.contains(&closed.id));
 }
-
-// ============================================================================
-// Dependency/Dependent Count Accuracy Tests
-// ============================================================================
 
 #[test]
 fn list_issues_with_counts_accurate_dependencies() {
@@ -1255,27 +1194,24 @@ fn list_issues_with_counts_accurate_dependencies() {
     storage.create_issue(&child2, "tester").unwrap();
     storage.create_issue(&grandchild, "tester").unwrap();
 
-    // parent blocks child1 and child2
     storage
         .add_dependency(&child1.id, &parent.id, "blocks", "tester")
         .unwrap();
     storage
         .add_dependency(&child2.id, &parent.id, "blocks", "tester")
         .unwrap();
-    // child1 blocks grandchild
     storage
         .add_dependency(&grandchild.id, &child1.id, "blocks", "tester")
         .unwrap();
 
-    // Verify dependency counts via count helpers
-    assert_eq!(storage.count_dependents(&parent.id).unwrap(), 2); // child1, child2 depend on parent
-    assert_eq!(storage.count_dependencies(&parent.id).unwrap(), 0); // parent has no dependencies
+    assert_eq!(storage.count_dependents(&parent.id).unwrap(), 2);
+    assert_eq!(storage.count_dependencies(&parent.id).unwrap(), 0);
 
-    assert_eq!(storage.count_dependents(&child1.id).unwrap(), 1); // grandchild depends on child1
-    assert_eq!(storage.count_dependencies(&child1.id).unwrap(), 1); // child1 depends on parent
+    assert_eq!(storage.count_dependents(&child1.id).unwrap(), 1);
+    assert_eq!(storage.count_dependencies(&child1.id).unwrap(), 1);
 
-    assert_eq!(storage.count_dependents(&grandchild.id).unwrap(), 0); // nothing depends on grandchild
-    assert_eq!(storage.count_dependencies(&grandchild.id).unwrap(), 1); // grandchild depends on child1
+    assert_eq!(storage.count_dependents(&grandchild.id).unwrap(), 0);
+    assert_eq!(storage.count_dependencies(&grandchild.id).unwrap(), 1);
 }
 
 #[test]

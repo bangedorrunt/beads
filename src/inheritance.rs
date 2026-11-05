@@ -86,11 +86,6 @@ pub fn is_enabled_from_inputs(env_val: Option<&str>, config_yaml_path: &Path) ->
     let Ok(contents) = std::fs::read_to_string(config_yaml_path) else {
         return false;
     };
-    // Cheap-and-correct check: parse as generic YAML and look up the
-    // `inherited_context.enabled` path. Avoids strong-typing the
-    // config struct because the project's main config.yaml schema is
-    // open-shaped and the inherited_context section may not exist on
-    // older projects.
     let Ok(value): std::result::Result<serde_yml::Value, _> = serde_yml::from_str(&contents) else {
         return false;
     };
@@ -126,8 +121,6 @@ pub fn collect_inherited_blocks(
     let mut visited: HashSet<String> = HashSet::new();
     visited.insert(child_id.to_string());
 
-    // Parent was tombstoned/deleted/missing — treat as if the child has
-    // no parent, per spec ("silently skipped").
     let Some(immediate_parent) = load_active_issue(storage, &immediate_parent_id)? else {
         return Ok(Vec::new());
     };
@@ -139,8 +132,6 @@ pub fn collect_inherited_blocks(
     let mut emitted_ids: HashSet<String> = HashSet::new();
 
     if let Some(root_issue) = root.as_ref() {
-        // Emit root first so the closer ancestor (parent) sits adjacent
-        // to the child output, matching the spec's text-mode layout.
         if !emitted_ids.contains(&root_issue.id)
             && root_issue.id != immediate_parent.id
             && let Some(block) = block_from_ancestor(root_issue, root_role(root_issue))
@@ -150,13 +141,6 @@ pub fn collect_inherited_blocks(
         }
     }
 
-    // Choose the most informative role for the immediate parent. When
-    // the parent is also the root (single-block emission), upgrade the
-    // label to "epic" if the parent is an epic — that's the case where
-    // labeling it as merely "parent" hides the strategic context the
-    // emission feature is supposed to surface. In the multi-block case
-    // the root block already carries the "epic" label so the parent
-    // block correctly stays "parent".
     let parent_is_also_root = root.as_ref().is_some_and(|r| r.id == immediate_parent.id);
     let parent_role =
         if parent_is_also_root && matches!(immediate_parent.issue_type, IssueType::Epic) {
@@ -198,13 +182,6 @@ fn block_from_ancestor(issue: &Issue, role: &str) -> Option<InheritedBlock> {
 }
 
 fn find_immediate_parent_id(storage: &SqliteStorage, child_id: &str) -> Result<Option<String>> {
-    // Beads uses dependency rows to encode parent relationships. The
-    // canonical dependency type used by the bd ecosystem is
-    // `ParentChild` with the child as the dependent and the parent as
-    // the depends_on target. We use `get_dependencies_full` instead of
-    // touching the connection directly because the storage layer's
-    // RefCell-backed prepared-statement cache is private to the
-    // SqliteStorage abstraction.
     let deps = storage.get_dependencies_full(child_id)?;
     Ok(deps
         .into_iter()
@@ -218,9 +195,6 @@ fn walk_to_root(
     visited: &mut HashSet<String>,
 ) -> Result<Option<Issue>> {
     let mut current = start.clone();
-    // Track the most-recent epic we've seen, so we can prefer
-    // `epic`-type ancestors over the chain's terminal when both are
-    // available.
     let mut latest_epic: Option<Issue> = if matches!(current.issue_type, IssueType::Epic) {
         Some(current.clone())
     } else {
@@ -228,7 +202,6 @@ fn walk_to_root(
     };
 
     loop {
-        // current is the terminal ancestor if it has no parent.
         let Some(parent_id) = find_immediate_parent_id(storage, &current.id)? else {
             break;
         };
@@ -239,8 +212,6 @@ fn walk_to_root(
             );
             break;
         }
-        // Tombstoned / missing — terminate the walk; whatever was most
-        // recently loaded is the best root candidate we have.
         let Some(parent) = load_active_issue(storage, &parent_id)? else {
             break;
         };
@@ -250,16 +221,12 @@ fn walk_to_root(
         current = parent;
     }
 
-    // Prefer the topmost epic (if any) over the chain's terminal
-    // ancestor. Per spec: "if no ancestor has type epic, br uses the
-    // chain's terminal ancestor".
     Ok(latest_epic.or(Some(current)))
 }
 
 fn load_active_issue(storage: &SqliteStorage, id: &str) -> Result<Option<Issue>> {
     let issue = storage.get_issue(id)?;
     let Some(issue) = issue else { return Ok(None) };
-    // Skip tombstoned/deleted ancestors silently.
     if matches!(issue.status, crate::model::Status::Tombstone) || issue.deleted_at.is_some() {
         return Ok(None);
     }
@@ -287,8 +254,6 @@ pub fn render_text(blocks: &[InheritedBlock]) -> String {
             "--- Inherited context (from {role}: {title:?}) ---\n",
             title = block.source_title
         ));
-        // Try to pretty-print JSON content; fall back to raw on parse
-        // failure (the data is opaque TEXT so we can't assume validity).
         let pretty = serde_json::from_str::<serde_json::Value>(&block.content)
             .ok()
             .and_then(|v| serde_json::to_string_pretty(&v).ok())
@@ -370,7 +335,6 @@ mod tests {
         assert!(!is_enabled_from_inputs(Some("FALSE"), missing_config));
         assert!(!is_enabled_from_inputs(Some("no"), missing_config));
         assert!(!is_enabled_from_inputs(Some(""), missing_config));
-        // Missing env var + missing config => disabled (the safe default).
         assert!(!is_enabled_from_inputs(None, missing_config));
     }
 
@@ -378,7 +342,6 @@ mod tests {
     fn is_enabled_reads_config_yaml_when_env_var_unset() {
         let dir = tempfile::tempdir().expect("tempdir");
         let cfg = dir.path().join("config.yaml");
-        // Missing file => disabled.
         assert!(!is_enabled_from_inputs(None, &cfg));
 
         std::fs::write(&cfg, "inherited_context:\n  enabled: true\n")
@@ -389,12 +352,9 @@ mod tests {
             .expect("write disabled config");
         assert!(!is_enabled_from_inputs(None, &cfg));
 
-        // No inherited_context section at all => disabled (back-compat
-        // for projects that haven't opted in).
         std::fs::write(&cfg, "issue_prefix: bd\n").expect("write plain config");
         assert!(!is_enabled_from_inputs(None, &cfg));
 
-        // Malformed YAML => disabled (don't fail the show on bad config).
         std::fs::write(&cfg, "this: is: not: yaml: [").expect("write malformed");
         assert!(!is_enabled_from_inputs(None, &cfg));
     }

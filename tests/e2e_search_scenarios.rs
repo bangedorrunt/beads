@@ -35,7 +35,6 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
 
     let mut ids = Vec::new();
 
-    // Issue 1: Authentication related bug
     let issue1 = run_br(
         &workspace,
         [
@@ -57,7 +56,6 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id1);
 
-    // Issue 2: Authentication feature
     let issue2 = run_br(
         &workspace,
         [
@@ -79,7 +77,6 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id2);
 
-    // Issue 3: Database related task
     let issue3 = run_br(
         &workspace,
         [
@@ -95,7 +92,6 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     assert!(issue3.status.success());
     ids.push(parse_created_id(&issue3.stdout));
 
-    // Issue 4: UI/Frontend feature
     let issue4 = run_br(
         &workspace,
         [
@@ -111,7 +107,6 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     assert!(issue4.status.success());
     ids.push(parse_created_id(&issue4.stdout));
 
-    // Issue 5: API bug
     let issue5 = run_br(
         &workspace,
         [
@@ -135,7 +130,6 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     );
     ids.push(id5);
 
-    // Issue 6: Closed issue
     let issue6 = run_br(
         &workspace,
         [
@@ -153,7 +147,6 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     run_br(&workspace, ["close", &id6], "close_issue");
     ids.push(id6);
 
-    // Issue 7: Issue with numbers in title
     let issue7 = run_br(
         &workspace,
         [
@@ -172,10 +165,6 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     (workspace, ids)
 }
 
-// =============================================================================
-// BASIC SEARCH TESTS
-// =============================================================================
-
 #[test]
 fn search_basic_single_word() {
     let (workspace, _ids) = setup_search_workspace();
@@ -191,7 +180,6 @@ fn search_basic_single_word() {
     let json: Value = serde_json::from_str(&payload).expect("parse json");
     let issues = json["issues"].as_array().expect("issues array");
 
-    // Should find issues with "authentication" in title or description
     assert!(
         issues.len() >= 2,
         "Expected at least 2 authentication-related issues"
@@ -211,7 +199,6 @@ fn search_basic_single_word() {
 fn search_case_insensitive() {
     let (workspace, _ids) = setup_search_workspace();
 
-    // Search with different case
     let search_upper = run_br(&workspace, ["search", "DATABASE", "--json"], "search_upper");
     assert!(search_upper.status.success());
 
@@ -224,7 +211,6 @@ fn search_case_insensitive() {
     let upper_json: Value = serde_json::from_str(&upper_payload).expect("parse upper");
     let lower_json: Value = serde_json::from_str(&lower_payload).expect("parse lower");
 
-    // Both should find the same results (case-insensitive)
     assert_eq!(
         upper_json["issues"].as_array().expect("issues array").len(),
         lower_json["issues"].as_array().expect("issues array").len(),
@@ -236,7 +222,6 @@ fn search_case_insensitive() {
 fn search_multiple_words() {
     let (workspace, _ids) = setup_search_workspace();
 
-    // Search for "Authentication" which appears in multiple issues
     let search = run_br(
         &workspace,
         ["search", "Authentication", "--json"],
@@ -247,7 +232,6 @@ fn search_multiple_words() {
     let payload = extract_json_payload(&search.stdout);
     let json: Value = serde_json::from_str(&payload).expect("parse json");
 
-    // Should find issues containing "Authentication"
     assert!(
         json["issues"].as_array().expect("issues array").len() >= 2,
         "Should find at least 2 issues with 'Authentication'"
@@ -258,7 +242,6 @@ fn search_multiple_words() {
 fn search_partial_word() {
     let (workspace, _ids) = setup_search_workspace();
 
-    // Search for partial word "auth" should match "authentication"
     let search = run_br(&workspace, ["search", "auth", "--json"], "search_partial");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
@@ -271,15 +254,10 @@ fn search_partial_word() {
     );
 }
 
-// =============================================================================
-// SEARCH WITH FILTERS
-// =============================================================================
-
 #[test]
 fn search_with_status_filter() {
     let (workspace, _ids) = setup_search_workspace();
 
-    // Search only open issues
     let search = run_br(
         &workspace,
         ["search", "bug", "--status", "open", "--json"],
@@ -379,7 +357,6 @@ fn search_with_label_filter() {
 fn search_include_closed() {
     let (workspace, _ids) = setup_search_workspace();
 
-    // Without --include-closed, shouldn't find closed issues
     let search_no_closed = run_br(
         &workspace,
         ["search", "login", "--json"],
@@ -390,7 +367,6 @@ fn search_include_closed() {
     let payload_no_closed = extract_json_payload(&search_no_closed.stdout);
     let json_no_closed: Value = serde_json::from_str(&payload_no_closed).expect("parse");
 
-    // With --all to include closed issues
     let search_with_closed = run_br(
         &workspace,
         ["search", "login", "--all", "--json"],
@@ -405,7 +381,6 @@ fn search_include_closed() {
     let payload_with_closed = extract_json_payload(&search_with_closed.stdout);
     let json_with_closed: Value = serde_json::from_str(&payload_with_closed).expect("parse");
 
-    // Should find more results with --include-closed
     assert!(
         json_with_closed["issues"]
             .as_array()
@@ -419,10 +394,6 @@ fn search_include_closed() {
     );
 }
 
-// =============================================================================
-// SEARCH OUTPUT FORMATS
-// =============================================================================
-
 #[test]
 fn search_text_output() {
     let (workspace, _ids) = setup_search_workspace();
@@ -430,7 +401,6 @@ fn search_text_output() {
     let search = run_br(&workspace, ["search", "authentication"], "search_text");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
-    // Text output should contain issue information
     assert!(
         search.stdout.contains("Authentication bug in login flow")
             && search.stdout.contains("Add two-factor authentication"),
@@ -461,10 +431,6 @@ fn search_json_output_structure() {
     }
 }
 
-// =============================================================================
-// EDGE CASES
-// =============================================================================
-
 #[test]
 fn search_no_results() {
     let (workspace, _ids) = setup_search_workspace();
@@ -493,15 +459,12 @@ fn search_no_results() {
 fn search_empty_query() {
     let (workspace, _ids) = setup_search_workspace();
 
-    // Empty query might be rejected or return all issues
     let search = run_br(&workspace, ["search", "", "--json"], "search_empty");
 
-    // Either succeeds with all results or fails with error
     if search.status.success() {
         let payload = extract_json_payload(&search.stdout);
         let _json: Value = serde_json::from_str(&payload).expect("parse json");
     }
-    // If it fails, that's also acceptable behavior
 }
 
 #[test]
@@ -511,7 +474,6 @@ fn search_special_characters() {
     let init = run_br(&workspace, ["init"], "init_special");
     assert!(init.status.success());
 
-    // Create issue with special characters
     let create = run_br(
         &workspace,
         [
@@ -524,7 +486,6 @@ fn search_special_characters() {
     );
     assert!(create.status.success());
 
-    // Search for special characters
     let search = run_br(&workspace, ["search", "C++", "--json"], "search_cpp");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
@@ -563,15 +524,10 @@ fn search_before_init_fails() {
     assert!(!search.status.success(), "search should fail before init");
 }
 
-// =============================================================================
-// SEARCH IN DESCRIPTION
-// =============================================================================
-
 #[test]
 fn search_finds_content_in_description() {
     let (workspace, _ids) = setup_search_workspace();
 
-    // Search for term only in descriptions
     let search = run_br(&workspace, ["search", "TOTP", "--json"], "search_desc");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
@@ -595,7 +551,6 @@ fn search_finds_content_in_description() {
 fn search_finds_content_in_title_only() {
     let (workspace, _ids) = setup_search_workspace();
 
-    // "Dashboard" appears only in title
     let search = run_br(
         &workspace,
         ["search", "Dashboard", "--json"],
@@ -610,10 +565,6 @@ fn search_finds_content_in_title_only() {
     assert_eq!(json.len(), 1, "Should find issue with Dashboard in title");
     assert!(json[0]["title"].as_str().unwrap().contains("Dashboard"));
 }
-
-// =============================================================================
-// COMBINED SEARCH AND FILTER TESTS
-// =============================================================================
 
 #[test]
 fn search_combined_multiple_filters() {

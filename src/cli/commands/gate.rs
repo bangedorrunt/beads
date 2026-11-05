@@ -169,8 +169,6 @@ fn unbound_close_verdict_warning(
     if to_status != "closed" {
         return None;
     }
-    // A gate row we cannot even name is reported by the legality preview; a
-    // FAIL row authorizes nothing.
     crate::verify::VerdictKind::from_gate_name(gate)?;
     let note = note.unwrap_or("");
     if note.contains(REVISION_BINDING_TOKEN) || proved_note_binding(note).is_some() {
@@ -232,9 +230,6 @@ pub(crate) fn record_verdict(
         ));
     }
 
-    // Gate results are local auxiliary metadata; take the workspace write lock
-    // so a concurrent flush/import doesn't race the write, mirroring the other
-    // mutating commands.
     let _lock = acquire_routed_workspace_write_lock(beads_dir, false, cli.lock_timeout)?;
     let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
@@ -283,9 +278,6 @@ pub(crate) fn record_verdict(
         &actor,
     )?;
 
-    // Legality preview: the close-time check derives legal names from the bead,
-    // so warn now when this name will not authorize the close. Warning only:
-    // external systems legitimately report gates proactively.
     if let Some(warning) = illegal_verdict_warning(
         gate,
         issue.priority.0,
@@ -293,9 +285,6 @@ pub(crate) fn record_verdict(
     ) {
         eprintln!("{warning}");
     }
-    // Second preview of the same shape: will this row actually BIND the close
-    // it authorizes? Checked here because here is the last moment the row can
-    // still be corrected.
     if passed && let Some(warning) = unbound_close_verdict_warning(gate, &to_status, note) {
         eprintln!("{warning}");
     }
@@ -322,11 +311,6 @@ fn publish_gate_sidecar(
     beads_dir: &Path,
     cli: &config::CliOverrides,
 ) -> Result<()> {
-    // Gate proofs are durable ledger state, not ordinary issue-dirty state.
-    // Publish the sidecar while the workspace/database authority is still
-    // held, so a subsequent close or doctor invocation sees the same proof
-    // that this command just recorded. The sidecar has its own stable
-    // authority because it is atomically replaced independently of issues.jsonl.
     let gates_path = beads_dir.join("gates.jsonl");
     let gates_authority =
         crate::sync::blocking_jsonl_family_write_lock_with_timeout(&gates_path, cli.lock_timeout)?;
@@ -356,11 +340,6 @@ fn resolve_gate_target(
     labels: &[String],
     priority: i32,
 ) -> Result<String> {
-    // ADR-0001 §5.3 (rpay): under `require_legal_close`, the legal-close
-    // table — not a static YAML name list — decides which verdict gates are
-    // meaningful. Any kebab-case verdict-kind gate is recordable for a
-    // transition whose rule carries `require_legal_close`; `legal_close`
-    // rejects illegal kinds at close time.
     let legal_close_transition = |to: &str| {
         close_policy::transition_requires_legal_close(workflow, from_status, to)
             && crate::verify::VerdictKind::from_gate_name(gate).is_some()
@@ -438,11 +417,6 @@ fn execute_list(
     let history = storage_ctx.storage.get_gate_result_history(&issue_id)?;
     let legacy_results = storage_ctx.storage.get_legacy_gate_results(&issue_id)?;
 
-    // Compute required-gate status for each guarded transition out of the
-    // current status, using the effective §5.3 workflow (the fail-closed
-    // default applies when policy.yaml is absent or unconfigured — same
-    // resolution as the record path and close). Absent status leaves this
-    // empty.
     let workflow = close_policy::resolve_effective_workflow(beads_dir)?;
     let labels = storage_ctx.storage.get_labels(&issue_id)?;
     let priority = issue.as_ref().map_or(0, |i| i.priority.0);
@@ -509,8 +483,6 @@ fn compute_gated_transitions(
     }
 
     let mut out = Vec::new();
-    // Iterate the configured rules; only surface those whose `from` matches the
-    // issue's current status (the transitions the issue could attempt next).
     for key in workflow.gates.keys() {
         let Some((rule_from, rule_to)) = key.split_once("->") else {
             continue;
@@ -808,8 +780,6 @@ mod tests {
         gates.insert(
             "in_review -> closed".to_string(),
             GateRule {
-                // Legal-close lane (ys8b) added this flag; the legacy
-                // fixture exercises the non-legal path.
                 require_legal_close: false,
                 require_all: vec![
                     GateSpec::Named("ci_green".to_string()),
@@ -828,7 +798,6 @@ mod tests {
             ..Default::default()
         };
 
-        // No results yet: ci_green + min_reviewers required, security not (no label).
         let no_results = BTreeMap::new();
         let transitions =
             compute_gated_transitions(&workflow, "bd-1", Some("in_review"), &[], 2, &no_results);
@@ -841,7 +810,6 @@ mod tests {
         assert!(gate_ids.contains(&"min_reviewers"));
         assert!(!gate_ids.contains(&"security_sign_off"));
 
-        // With ci pass + one reviewer pass, both satisfied.
         let results = vec![
             GateResult {
                 gate: "ci_green".to_string(),
@@ -898,7 +866,6 @@ mod tests {
             illegal_verdict_warning("unit-test-verified", 2, runnable).is_some(),
             "the cheap band admits command-verified only"
         );
-        // Empty VERIFY (a triage bead) stays in the non-runnable band.
         assert!(illegal_verdict_warning("command-verified", 2, "").is_some());
         assert!(illegal_verdict_warning("triage-verified", 2, "").is_none());
     }
@@ -913,7 +880,6 @@ mod tests {
 
     #[test]
     fn illegal_verdict_warning_accepts_legal_and_unknown_names() {
-        // Empty VERIFY: the non-runnable band (nothing could have been run).
         assert!(illegal_verdict_warning("unit-test-verified", 1, "").is_none());
         assert!(illegal_verdict_warning("live-verified", 1, "").is_none());
         assert!(illegal_verdict_warning("worker-receipt", 2, "").is_none());
@@ -938,7 +904,6 @@ mod tests {
             w.contains("cannot be repaired after the close"),
             "the warning must say WHY it matters now: {w}"
         );
-        // A row carrying the token binds, in any position or length.
         assert!(
             unbound_close_verdict_warning(
                 "live-verified",
@@ -949,7 +914,6 @@ mod tests {
             )
             .is_none()
         );
-        // Nothing to bind: a non-close transition, a FAIL row, an unknown gate.
         assert!(unbound_close_verdict_warning("live-verified", "in_progress", None).is_none());
         assert!(unbound_close_verdict_warning("ci_green", "closed", None).is_none());
         assert!(unbound_close_verdict_warning("live-verified", "closed", None).is_some());
@@ -957,7 +921,6 @@ mod tests {
             unbound_close_verdict_warning("live-verified", "closed", Some("   ")).is_some(),
             "a blank note binds nothing"
         );
-        // Phase 5: a leading task/verdict pair binds. Prose and a glued comma do not.
         assert!(
             unbound_close_verdict_warning(
                 "live-verified",
@@ -998,8 +961,6 @@ mod tests {
             ctx.storage.create_issue(&issue, "tester").unwrap();
         }
 
-        // command-verified is illegal at P1: the row is still recorded, the
-        // warning goes to stderr and must not fail the report.
         let report = GateReportArgs {
             id: "bd-9".to_string(),
             gate: "command-verified".to_string(),

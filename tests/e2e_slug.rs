@@ -16,7 +16,6 @@ fn extract_id_from_create_stdout(stdout: &str) -> Option<String> {
     for line in stdout.lines() {
         let line = line.trim().trim_start_matches("✓ ");
         if let Some(rest) = line.strip_prefix("Created ") {
-            // "Created bd-foo-bar-abc1234: <title>"
             if let Some((id, _)) = rest.split_once(':') {
                 return Some(id.trim().to_string());
             }
@@ -37,7 +36,6 @@ fn e2e_create_with_slug_then_show_renders_slug_in_id() {
 
     eprintln!("[l6xl TEST] e2e_create_with_slug_then_show_renders_slug_in_id");
 
-    // Create with slug
     let create = run_br(
         &workspace,
         [
@@ -66,7 +64,6 @@ fn e2e_create_with_slug_then_show_renders_slug_in_id() {
         "expected slug embedded in ID; got {id}"
     );
 
-    // Round-trip: show --json must return the same ID
     let show = run_br(&workspace, ["show", &id, "--json"], "show_slug");
     assert!(
         show.status.success(),
@@ -74,7 +71,6 @@ fn e2e_create_with_slug_then_show_renders_slug_in_id() {
         show.stderr
     );
 
-    // Parse the JSON output and confirm id matches
     let json: serde_json::Value =
         serde_json::from_str(show.stdout.trim()).expect("show output must be valid JSON");
     let returned_id = if let Some(arr) = json.as_array() {
@@ -106,7 +102,6 @@ fn e2e_orphans_handles_slugged_ids_in_commit_messages() {
 
     eprintln!("[l6xl TEST] e2e_orphans_handles_slugged_ids_in_commit_messages");
 
-    // Create a slugged issue
     let create = run_br(
         &workspace,
         [
@@ -124,7 +119,6 @@ fn e2e_orphans_handles_slugged_ids_in_commit_messages() {
         .unwrap_or_else(|| panic!("could not extract ID: {:?}", create.stdout));
     eprintln!("  slugged ID: {slugged_id}");
 
-    // Initialize a git repo in the workspace and create a commit referencing the slug
     let _ = Command::new("git")
         .args(["init"])
         .current_dir(&workspace.root)
@@ -138,7 +132,6 @@ fn e2e_orphans_handles_slugged_ids_in_commit_messages() {
         .current_dir(&workspace.root)
         .output();
 
-    // Touch a file to have something to commit
     std::fs::write(workspace.root.join("CHANGELOG.md"), "initial\n").expect("write changelog");
     let _ = Command::new("git")
         .args(["add", "."])
@@ -156,7 +149,6 @@ fn e2e_orphans_handles_slugged_ids_in_commit_messages() {
         String::from_utf8_lossy(&commit.stderr)
     );
 
-    // Run orphans --json and verify it finds the slugged ID
     let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_check");
     assert!(
         orphans.status.success(),
@@ -165,7 +157,6 @@ fn e2e_orphans_handles_slugged_ids_in_commit_messages() {
     );
     eprintln!("  orphans output:\n{}", orphans.stdout);
 
-    // The slugged ID is open + referenced in a commit → must appear as orphan
     assert!(
         orphans.stdout.contains(&slugged_id),
         "orphans output must include slugged ID {slugged_id}; got: {}",

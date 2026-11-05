@@ -32,12 +32,10 @@ enum RelativeTimeError {
 pub fn parse_flexible_timestamp(s: &str, field_name: &str) -> Result<DateTime<Utc>> {
     let s = s.trim();
 
-    // Try RFC3339 first
     if let Some(dt) = parse_rfc3339_timestamp(s) {
         return Ok(dt);
     }
 
-    // Try simple date (YYYY-MM-DD) - default to 9:00 AM local time
     if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
         let time = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
         let naive_dt = date.and_time(time);
@@ -61,7 +59,6 @@ pub fn parse_flexible_timestamp(s: &str, field_name: &str) -> Result<DateTime<Ut
         }
     }
 
-    // Try keywords
     let now = Local::now();
     match s.to_lowercase().as_str() {
         "today" => {
@@ -109,7 +106,6 @@ pub fn parse_relative_time(s: &str) -> Option<DateTime<Utc>> {
         return Some(dt);
     }
 
-    // Try keywords
     let now = Local::now();
     match s.to_lowercase().as_str() {
         "today" => {
@@ -293,7 +289,6 @@ fn local_to_utc(naive_dt: &chrono::NaiveDateTime, field_name: &str) -> Result<Da
     match Local.from_local_datetime(naive_dt) {
         LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => Ok(dt.with_timezone(&Utc)),
         LocalResult::None => {
-            // Time doesn't exist (DST gap), push forward by 1 hour
             let shifted = *naive_dt + Duration::hours(1);
             match Local.from_local_datetime(&shifted) {
                 LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => {
@@ -365,14 +360,10 @@ mod tests {
     #[test]
     fn test_parse_flexible_simple_date() {
         let result = parse_flexible_timestamp("2025-06-20", "test").unwrap();
-        // Contract: bare dates mean 09:00 LOCAL on the given calendar date.
-        // Asserting UTC day fields breaks on hosts where local 09:00 maps to
-        // the previous UTC day (UTC+10 or later, e.g. Australia/Melbourne).
         let local = result.with_timezone(&Local);
         assert_eq!(local.year(), 2025);
         assert_eq!(local.month(), 6);
         assert_eq!(local.day(), 20);
-        // 09:00 local; 10 when a DST gap swallowed the nominal time.
         let tod = local.time();
         assert!(
             tod.hour() == 9 || tod.hour() == 10,

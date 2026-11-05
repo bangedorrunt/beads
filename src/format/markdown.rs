@@ -67,13 +67,11 @@ fn strip_markdown(content: &str) -> String {
     for line in content.lines() {
         let trimmed = line.trim();
 
-        // Handle fenced code blocks
         if trimmed.starts_with("```") {
             in_code_block = !in_code_block;
             continue;
         }
 
-        // Inside code block, preserve as-is (indented)
         if in_code_block {
             result.push_str("    ");
             result.push_str(line);
@@ -81,19 +79,16 @@ fn strip_markdown(content: &str) -> String {
             continue;
         }
 
-        // Check for horizontal rules first
         if is_horizontal_rule(trimmed) {
             result.push_str("---\n");
             continue;
         }
 
-        // Process the line to strip markdown
         let processed = strip_line_markdown(line);
         result.push_str(&processed);
         result.push('\n');
     }
 
-    // Remove trailing newline
     result.trim_end().to_string()
 }
 
@@ -114,14 +109,12 @@ fn strip_line_markdown(line: &str) -> String {
     while i < chars.len() {
         let c = chars[i];
 
-        // Handle inline code
         if c == '`' {
             in_inline_code = !in_inline_code;
             i += 1;
             continue;
         }
 
-        // Skip markdown formatting characters (only outside inline code)
         if !in_inline_code && let Some(skip) = try_skip_formatting(&chars, i, &mut processed) {
             i = skip;
             continue;
@@ -139,13 +132,10 @@ fn strip_line_markdown(line: &str) -> String {
 fn try_skip_formatting(chars: &[char], i: usize, processed: &mut String) -> Option<usize> {
     let c = chars[i];
 
-    // Bold/italic markers
     if c == '*' || c == '_' {
-        // Check for double markers (always strip)
         let is_double = i + 1 < chars.len() && chars[i + 1] == c;
 
         if !is_double {
-            // Don't strip single underscore if it's intra-word (e.g., snake_case)
             if c == '_' && i > 0 && i + 1 < chars.len() {
                 let prev = chars[i - 1];
                 let next = chars[i + 1];
@@ -154,8 +144,6 @@ fn try_skip_formatting(chars: &[char], i: usize, processed: &mut String) -> Opti
                 }
             }
 
-            // Don't strip single asterisk if surrounded by spaces (e.g., math or bullet)
-            // or if it opens emphasis but has no matching closing asterisk (e.g., "pointer *p")
             if c == '*' {
                 let prev_space = i == 0 || chars[i - 1].is_whitespace();
                 let next_space = i + 1 >= chars.len() || chars[i + 1].is_whitespace();
@@ -163,7 +151,6 @@ fn try_skip_formatting(chars: &[char], i: usize, processed: &mut String) -> Opti
                     return None;
                 }
                 if prev_space && !next_space {
-                    // Look for a right-flanking closing * (preceded by non-space)
                     let has_closing = chars[i + 1..].iter().enumerate().any(|(k, &ch)| {
                         ch == '*' && k > 0 && !chars[i + 1 + k - 1].is_whitespace()
                     });
@@ -175,39 +162,33 @@ fn try_skip_formatting(chars: &[char], i: usize, processed: &mut String) -> Opti
         }
 
         let mut j = i;
-        // Skip all identical contiguous markers
         while j < chars.len() && chars[j] == c {
             j += 1;
         }
         return Some(j);
     }
 
-    // Strikethrough
     if c == '~' && i + 1 < chars.len() && chars[i + 1] == '~' {
         return Some(i + 2);
     }
 
-    // Headers at start of line
     if processed.is_empty() && c == '#' {
         let mut j = i;
         while j < chars.len() && chars[j] == '#' {
             j += 1;
         }
-        // Skip space after header markers
         if j < chars.len() && chars[j] == ' ' {
             j += 1;
         }
         return Some(j);
     }
 
-    // Links: [text](url) -> text
     if c == '['
         && let Some(new_i) = try_extract_link(chars, i, processed)
     {
         return Some(new_i);
     }
 
-    // Image: ![alt](url) -> [Image: alt]
     if c == '!'
         && i + 1 < chars.len()
         && chars[i + 1] == '['
@@ -216,14 +197,12 @@ fn try_skip_formatting(chars: &[char], i: usize, processed: &mut String) -> Opti
         return Some(new_i);
     }
 
-    // Blockquote marker at start
     if processed.is_empty() && c == '>' {
         let mut j = i + 1;
-        // Skip space after >
         if j < chars.len() && chars[j] == ' ' {
             j += 1;
         }
-        processed.push_str("  "); // Indent blockquotes
+        processed.push_str("  ");
         return Some(j);
     }
 
@@ -235,11 +214,9 @@ fn try_extract_link(chars: &[char], i: usize, processed: &mut String) -> Option<
     let start = i + 1;
     let bracket_end = find_matching_bracket(chars, start)?;
 
-    // Extract link text
     let text: String = chars[start..bracket_end].iter().collect();
     processed.push_str(&text);
 
-    // Skip past ](url)
     let mut j = bracket_end + 1;
     if j < chars.len() && chars[j] == '(' {
         j = skip_parentheses(chars, j);
@@ -249,7 +226,7 @@ fn try_extract_link(chars: &[char], i: usize, processed: &mut String) -> Option<
 
 /// Try to extract image alt text from ![alt](url) format.
 fn try_extract_image(chars: &[char], i: usize, processed: &mut String) -> Option<usize> {
-    let start = i + 2; // Skip ![
+    let start = i + 2;
     let bracket_end = find_closing_bracket(chars, start)?;
 
     let alt: String = chars[start..bracket_end].iter().collect();
@@ -259,7 +236,6 @@ fn try_extract_image(chars: &[char], i: usize, processed: &mut String) -> Option
         processed.push(']');
     }
 
-    // Skip past ](url)
     let mut j = bracket_end + 1;
     if j < chars.len() && chars[j] == '(' {
         j = skip_parentheses(chars, j);
@@ -316,7 +292,6 @@ fn render_rich_markdown(content: &str, width: usize) -> String {
 
     let segments = md.render(width);
 
-    // Render segments to a string with ANSI codes
     let mut result = String::new();
     for segment in segments {
         if let Some(style) = &segment.style {
@@ -334,25 +309,24 @@ fn render_rich_markdown(content: &str, width: usize) -> String {
 /// Useful for deciding whether to apply markdown rendering.
 #[must_use]
 pub fn contains_markdown(content: &str) -> bool {
-    // Check for common markdown patterns
     let patterns = [
-        "**",  // Bold
-        "__",  // Bold (alternate)
-        "*",   // Italic (single)
-        "_",   // Italic (alternate, single)
-        "~~",  // Strikethrough
-        "`",   // Code
-        "```", // Code block
-        "[",   // Link start
-        "](",  // Link middle
-        "# ",  // Header
-        "##",  // Header
-        "> ",  // Blockquote
-        "- ",  // Unordered list
-        "* ",  // Unordered list (alternate)
-        "1.",  // Ordered list
-        "---", // Horizontal rule
-        "***", // Horizontal rule (alternate)
+        "**",
+        "__",
+        "*",
+        "_",
+        "~~",
+        "`",
+        "```",
+        "[",
+        "](",
+        "# ",
+        "##",
+        "> ",
+        "- ",
+        "* ",
+        "1.",
+        "---",
+        "***",
     ];
 
     patterns.iter().any(|pattern| content.contains(pattern))
@@ -486,7 +460,6 @@ mod tests {
     fn test_strip_markdown_blockquotes() {
         let result = strip_markdown("> quoted text");
         assert!(result.contains("quoted text"));
-        // Blockquotes are indented
         assert!(result.starts_with("  "));
     }
 

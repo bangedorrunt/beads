@@ -15,7 +15,6 @@ fn show_issue(workspace: &BrWorkspace, id: &str) -> Value {
         "show_issue",
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
-    // `br show <single-id> --json` emits a bare object.
     let issue: Value =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show JSON");
     issue
@@ -81,7 +80,6 @@ fn e2e_create_with_acceptance_criteria_and_agent_context() {
     let context_json: Value = serde_json::from_str(context_out).expect("context is JSON");
     assert_eq!(context_json["workflow"].as_str(), Some("tdd"));
 
-    // SQLite row via show.
     let shown = show_issue(&workspace, &id);
     assert_eq!(
         shown["acceptance_criteria"].as_str(),
@@ -91,7 +89,6 @@ fn e2e_create_with_acceptance_criteria_and_agent_context() {
         serde_json::from_str(shown["agent_context"].as_str().expect("context")).expect("JSON");
     assert_eq!(shown_context["reviewer"].as_str(), Some("agent"));
 
-    // First flushed JSONL record (auto-flush ran on create).
     let record = jsonl_record_for(&workspace, &id);
     assert_eq!(
         record["acceptance_criteria"].as_str(),
@@ -217,8 +214,6 @@ fn e2e_create_agent_context_file_forms() {
     assert_eq!(ctx_yaml["workflow"].as_str(), Some("yaml-file"));
     assert_eq!(ctx_yaml["steps"][1].as_str(), Some("b"));
 
-    // Update with the same YAML file must produce the identical normalized
-    // context (parser parity between create and update).
     let update = run_br(
         &workspace,
         [

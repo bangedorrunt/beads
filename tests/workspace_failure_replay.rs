@@ -59,12 +59,6 @@ fn prepare_current_db_jsonl_disagreement(fixture: &FixtureWorkspace) {
         .find(|line| !line.trim().is_empty())
         .expect("drift fixture should contain a seed record");
 
-    // The checked-in fixture predates the reviewed migration floor (schema
-    // 4), so current startup correctly refuses to mutate it. Preserve that
-    // historical family in the ephemeral copy, build a current database from
-    // the seed record through the public import surface, then restore the full
-    // two-record JSONL. The resulting current-schema workspace still carries
-    // the exact DB/JSONL disagreement this fixture exists to exercise.
     preserve_legacy_database_family(fixture, &current_database_path(fixture));
 
     let full_backup = fixture.beads_dir.join("issues.fixture-full.jsonl");
@@ -76,18 +70,10 @@ fn prepare_current_db_jsonl_disagreement(fixture: &FixtureWorkspace) {
     let seed_backup = fixture.beads_dir.join("issues.fixture-seed.jsonl");
     fs::rename(&jsonl_path, seed_backup).expect("preserve seed-only fixture JSONL");
     fs::rename(full_backup, &jsonl_path).expect("restore full drift fixture JSONL");
-    // `sync --status` distinguishes this one-sided disagreement using the
-    // export timestamp as well as the content witness. Rewrite the exact
-    // preserved bytes after the current database is created so the fixture
-    // truthfully presents JSONL as the newer side.
     fs::write(jsonl_path, full_jsonl).expect("refresh full drift fixture timestamp");
 }
 
 fn prepare_current_duplicate_config_rows(fixture: &FixtureWorkspace) {
-    // The checked-in database is intentionally historical (schema 4), but
-    // the recovery surface under test is duplicate config rows, not an
-    // unsupported schema jump. Rebuild from the fixture's public JSONL, then
-    // inject exactly that higher-level invariant violation into schema 17.
     preserve_legacy_database_family(fixture, &current_database_path(fixture));
     import_current_database(fixture, "duplicate_config_rows_current_schema_import");
 
@@ -121,11 +107,6 @@ fn prepare_current_journal_sidecar_leftover(fixture: &FixtureWorkspace) {
     mark_database_needs_flush(&db_path);
     preserve_generated_artifact(fixture, &journal_path);
 
-    // SQLite's PERSIST commit marker is the first journal byte. A zero byte
-    // makes the retained journal definitively non-hot, so FrankenSQLite can
-    // open the healthy database without mistaking arbitrary garbage for a
-    // crash-recovery authority. Doctor still sees the retained sidecar and
-    // reports the external-interference anomaly this fixture owns.
     journal[0] = 0;
     fs::write(journal_path, journal).expect("write non-hot rollback journal fixture");
 }
@@ -563,15 +544,8 @@ fn assert_doctor_reliability_audit(fixture: &FixtureWorkspace, context: &str, js
             assert!(
                 has_code("sidecar_mismatch")
                     || has_code("database_corrupt")
-                    // Real SQLite semantics: a leftover WAL-only family is
-                    // benign (auto-recovered on the next open) and doctor
-                    // reports it informationally rather than as a fault.
                     || sidecar_message.contains("recovered automatically on the next open")
                     || sidecar_message.contains("normal live-engine family")
-                    // A stale orphan -shm is removed automatically the next
-                    // time the engine opens the database fresh, so doctor
-                    // may legitimately report an already-clean family; the
-                    // write probe proves the store itself is healthy.
                     || (sidecars["status"] == "ok"
                         && sidecar_message.is_empty()
                         && doctor_check(json, "db.write_probe")["status"] == "ok"),
@@ -608,10 +582,6 @@ fn assert_doctor_reliability_audit(fixture: &FixtureWorkspace, context: &str, js
             assert!(
                 has_code("database_not_sqlite")
                     || has_code("database_corrupt")
-                    // Real SQLite posture for an interrupted-rebuild leftover
-                    // (old-schema db + debris): the engine refuses to inspect
-                    // pending merge state and doctor degrades on the drift
-                    // instead of reporting page corruption.
                     || has_code("db_newer"),
                 "{context} should surface malformed database diagnostics: {json}"
             );
@@ -681,8 +651,6 @@ fn assert_surface_outcome(
         WorkspaceFailureCommandOutcome::StatusMergeInspectionDegraded
             if surface != "sync --status" =>
         {
-            // Non-status surfaces over an uninspectable database degrade the
-            // same way: warn, proceed without auto-sync, exit nonzero.
             assert!(
                 !run.status.success(),
                 "{context} should exit nonzero on uninspectable pending-merge state: {}",
@@ -1009,8 +977,6 @@ fn assert_core_write_success(
         comment.stderr
     );
 
-    // Fail-closed ceremony: close requires a prior legal PASS gate row and a
-    // commit-sha citing the bead id.
     let gate = run_br(
         &fixture.workspace,
         [
@@ -1198,10 +1164,6 @@ fn workspace_failure_replay_core_read_surfaces_match_expected_posture() {
                 assert_core_read_failure(&where_workspace, &where_json, failure);
             }
             WorkspaceFailureCommandOutcome::StatusMergeInspectionDegraded => {
-                // Read-only surfaces over an uninspectable schema degrade:
-                // the where/info replay reports the same warning posture.
-                // `where` still exits 0 (it prints resolved routes) while
-                // warning on stderr; other read surfaces exit nonzero.
                 let warned = where_run.stdout.contains("sync_merge_pending_unknown")
                     || where_run.stderr.contains("sync_merge_pending_unknown");
                 assert!(

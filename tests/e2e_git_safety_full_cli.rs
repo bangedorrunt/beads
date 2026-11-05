@@ -76,7 +76,7 @@ fn filter_transient_git_files(hashes: &BTreeMap<String, String>) -> BTreeMap<Str
                 && !k.contains("index")
                 && !k.contains("FETCH_HEAD")
                 && !k.contains("ORIG_HEAD")
-                && !k.contains("logs/") // reflog can be written during reads in some git versions
+                && !k.contains("logs/")
         })
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect()
@@ -127,7 +127,6 @@ fn init_git_repo(workspace: &BrWorkspace) {
         .current_dir(&workspace.root)
         .output();
 
-    // Create source files
     let src_dir = workspace.root.join("src");
     fs::create_dir_all(&src_dir).expect("create src dir");
     fs::write(
@@ -142,7 +141,6 @@ fn init_git_repo(workspace: &BrWorkspace) {
     .expect("write Cargo.toml");
     fs::write(workspace.root.join("README.md"), "# Test Project\n").expect("write README");
 
-    // Initial commit
     let _ = Command::new("git")
         .args(["add", "."])
         .current_dir(&workspace.root)
@@ -197,13 +195,11 @@ fn verify_git_unchanged(
 ) -> GitSafetyCheck {
     let mut check = GitSafetyCheck::new(command);
 
-    // Check HEAD didn't change
     if head_before != head_after {
         check.head_changed = true;
         check.add_violation(&format!("HEAD changed: {head_before:?} -> {head_after:?}"));
     }
 
-    // Check commit count didn't change
     if count_before != count_after {
         check.commit_count_changed = true;
         check.add_violation(&format!(
@@ -211,18 +207,15 @@ fn verify_git_unchanged(
         ));
     }
 
-    // Filter transient files
     let before_filtered = filter_transient_git_files(before);
     let after_filtered = filter_transient_git_files(after);
 
-    // Check for new files
     for path in after_filtered.keys() {
         if !before_filtered.contains_key(path) {
             check.add_violation(&format!("New file in .git/: {path}"));
         }
     }
 
-    // Check for modified files
     for (path, hash_before) in &before_filtered {
         if let Some(hash_after) = after_filtered.get(path)
             && hash_before != hash_after
@@ -231,7 +224,6 @@ fn verify_git_unchanged(
         }
     }
 
-    // Check for deleted files
     for path in before_filtered.keys() {
         if !after_filtered.contains_key(path) {
             check.add_violation(&format!("Deleted file from .git/: {path}"));
@@ -268,7 +260,6 @@ macro_rules! check_git_safety {
             result.stderr
         );
 
-        // Update for next check
         (after, head_after, count_after, result)
     }};
 }
@@ -278,10 +269,8 @@ macro_rules! check_git_safety {
 fn regression_full_cli_does_not_touch_git() {
     let workspace = BrWorkspace::new();
 
-    // Initialize git repo
     init_git_repo(&workspace);
 
-    // Take baseline snapshot
     let baseline_git = snapshot_git_dir(&workspace.root);
     let baseline_head = get_head_commit(&workspace.root);
     let baseline_count = get_commit_count(&workspace.root);
@@ -293,12 +282,8 @@ fn regression_full_cli_does_not_touch_git() {
         baseline_count
     );
 
-    // ========================================================================
-    // PHASE 1: Initialization & workspace commands
-    // ========================================================================
     eprintln!("\n[PHASE 1] Testing initialization & workspace commands...");
 
-    // init
     let (git_snap, head, count, init_result) = check_git_safety!(
         &workspace,
         baseline_git,
@@ -309,11 +294,9 @@ fn regression_full_cli_does_not_touch_git() {
     );
     assert!(init_result.status.success(), "init failed");
 
-    // version (read-only)
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["version"], "version");
 
-    // version --json
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -323,24 +306,17 @@ fn regression_full_cli_does_not_touch_git() {
         "version_json"
     );
 
-    // where (read-only)
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["where"], "where");
 
-    // info (read-only)
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["info"], "info");
 
-    // doctor (read-only diagnostics)
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["doctor"], "doctor");
 
-    // ========================================================================
-    // PHASE 2: Issue CRUD operations
-    // ========================================================================
     eprintln!("\n[PHASE 2] Testing issue CRUD operations...");
 
-    // create (with --no-auto-flush to isolate the command)
     let (git_snap, head, count, create1) = check_git_safety!(
         &workspace,
         git_snap,
@@ -368,7 +344,6 @@ fn regression_full_cli_does_not_touch_git() {
         .trim()
         .to_string();
 
-    // create with description
     let (git_snap, head, count, create2) = check_git_safety!(
         &workspace,
         git_snap,
@@ -395,7 +370,6 @@ fn regression_full_cli_does_not_touch_git() {
         .trim()
         .to_string();
 
-    // q (quick capture)
     let (git_snap, head, count, q_result) = check_git_safety!(
         &workspace,
         git_snap,
@@ -406,11 +380,9 @@ fn regression_full_cli_does_not_touch_git() {
     );
     let id3 = q_result.stdout.trim().to_string();
 
-    // list
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["list"], "list");
 
-    // list --json
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -420,11 +392,9 @@ fn regression_full_cli_does_not_touch_git() {
         "list_json"
     );
 
-    // show
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["show", &id1], "show");
 
-    // show --json
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -434,7 +404,6 @@ fn regression_full_cli_does_not_touch_git() {
         "show_json"
     );
 
-    // update
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -444,7 +413,6 @@ fn regression_full_cli_does_not_touch_git() {
         "update"
     );
 
-    // update status
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -454,16 +422,11 @@ fn regression_full_cli_does_not_touch_git() {
         "update_status"
     );
 
-    // ========================================================================
-    // PHASE 3: Queries and filters
-    // ========================================================================
     eprintln!("\n[PHASE 3] Testing queries and filters...");
 
-    // ready
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["ready"], "ready");
 
-    // ready --json
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -473,11 +436,9 @@ fn regression_full_cli_does_not_touch_git() {
         "ready_json"
     );
 
-    // blocked
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["blocked"], "blocked");
 
-    // search
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -487,11 +448,9 @@ fn regression_full_cli_does_not_touch_git() {
         "search"
     );
 
-    // count
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["count"], "count");
 
-    // count --by status
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -501,20 +460,14 @@ fn regression_full_cli_does_not_touch_git() {
         "count_by_status"
     );
 
-    // stats
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["stats"], "stats");
 
-    // stale
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["stale"], "stale");
 
-    // ========================================================================
-    // PHASE 4: Dependencies
-    // ========================================================================
     eprintln!("\n[PHASE 4] Testing dependency management...");
 
-    // dep add
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -524,7 +477,6 @@ fn regression_full_cli_does_not_touch_git() {
         "dep_add"
     );
 
-    // dep list
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -534,7 +486,6 @@ fn regression_full_cli_does_not_touch_git() {
         "dep_list"
     );
 
-    // dep tree
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -544,7 +495,6 @@ fn regression_full_cli_does_not_touch_git() {
         "dep_tree"
     );
 
-    // dep cycles
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -554,7 +504,6 @@ fn regression_full_cli_does_not_touch_git() {
         "dep_cycles"
     );
 
-    // dep remove
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -564,7 +513,6 @@ fn regression_full_cli_does_not_touch_git() {
         "dep_remove"
     );
 
-    // dep relate (soft relation)
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -574,7 +522,6 @@ fn regression_full_cli_does_not_touch_git() {
         "dep_relate"
     );
 
-    // dep unrelate
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -584,12 +531,8 @@ fn regression_full_cli_does_not_touch_git() {
         "dep_unrelate"
     );
 
-    // ========================================================================
-    // PHASE 5: Labels
-    // ========================================================================
     eprintln!("\n[PHASE 5] Testing label management...");
 
-    // label add
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -599,7 +542,6 @@ fn regression_full_cli_does_not_touch_git() {
         "label_add"
     );
 
-    // label list
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -609,7 +551,6 @@ fn regression_full_cli_does_not_touch_git() {
         "label_list"
     );
 
-    // label remove
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -619,12 +560,8 @@ fn regression_full_cli_does_not_touch_git() {
         "label_remove"
     );
 
-    // ========================================================================
-    // PHASE 6: Comments
-    // ========================================================================
     eprintln!("\n[PHASE 6] Testing comments...");
 
-    // comments add with --message flag
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -643,7 +580,6 @@ fn regression_full_cli_does_not_touch_git() {
         "comments_add"
     );
 
-    // comments list
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -653,12 +589,8 @@ fn regression_full_cli_does_not_touch_git() {
         "comments_list"
     );
 
-    // ========================================================================
-    // PHASE 7: Defer/Undefer
-    // ========================================================================
     eprintln!("\n[PHASE 7] Testing defer/undefer...");
 
-    // defer
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -668,7 +600,6 @@ fn regression_full_cli_does_not_touch_git() {
         "defer"
     );
 
-    // undefer
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -678,12 +609,8 @@ fn regression_full_cli_does_not_touch_git() {
         "undefer"
     );
 
-    // ========================================================================
-    // PHASE 8: Config
-    // ========================================================================
     eprintln!("\n[PHASE 8] Testing config...");
 
-    // config list
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -693,7 +620,6 @@ fn regression_full_cli_does_not_touch_git() {
         "config_list"
     );
 
-    // config get
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -703,16 +629,11 @@ fn regression_full_cli_does_not_touch_git() {
         "config_get"
     );
 
-    // ========================================================================
-    // PHASE 9: Graph
-    // ========================================================================
     eprintln!("\n[PHASE 9] Testing graph...");
 
-    // graph
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["graph"], "graph");
 
-    // graph --json
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -722,12 +643,8 @@ fn regression_full_cli_does_not_touch_git() {
         "graph_json"
     );
 
-    // ========================================================================
-    // PHASE 10: Saved queries
-    // ========================================================================
     eprintln!("\n[PHASE 10] Testing saved queries...");
 
-    // query add
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -737,7 +654,6 @@ fn regression_full_cli_does_not_touch_git() {
         "query_add"
     );
 
-    // query list
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -747,7 +663,6 @@ fn regression_full_cli_does_not_touch_git() {
         "query_list"
     );
 
-    // query run
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -757,7 +672,6 @@ fn regression_full_cli_does_not_touch_git() {
         "query_run"
     );
 
-    // query delete
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -767,12 +681,8 @@ fn regression_full_cli_does_not_touch_git() {
         "query_delete"
     );
 
-    // ========================================================================
-    // PHASE 11: History
-    // ========================================================================
     eprintln!("\n[PHASE 11] Testing history...");
 
-    // history list
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -782,12 +692,8 @@ fn regression_full_cli_does_not_touch_git() {
         "history_list"
     );
 
-    // ========================================================================
-    // PHASE 12: Audit
-    // ========================================================================
     eprintln!("\n[PHASE 12] Testing audit...");
 
-    // audit (append interaction)
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -797,25 +703,16 @@ fn regression_full_cli_does_not_touch_git() {
         "audit"
     );
 
-    // ========================================================================
-    // PHASE 13: Lint & Orphans
-    // ========================================================================
     eprintln!("\n[PHASE 13] Testing lint and orphans...");
 
-    // lint
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["lint"], "lint");
 
-    // orphans
     let (git_snap, head, count, _) =
         check_git_safety!(&workspace, git_snap, head, count, ["orphans"], "orphans");
 
-    // ========================================================================
-    // PHASE 14: Epic commands
-    // ========================================================================
     eprintln!("\n[PHASE 14] Testing epic commands...");
 
-    // Create an epic
     let (git_snap, head, count, epic_result) = check_git_safety!(
         &workspace,
         git_snap,
@@ -840,7 +737,6 @@ fn regression_full_cli_does_not_touch_git() {
         .trim()
         .to_string();
 
-    // Make id1 a child of epic
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -858,7 +754,6 @@ fn regression_full_cli_does_not_touch_git() {
         "dep_add_parent"
     );
 
-    // epic status
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -868,12 +763,8 @@ fn regression_full_cli_does_not_touch_git() {
         "epic_status"
     );
 
-    // ========================================================================
-    // PHASE 15: Changelog
-    // ========================================================================
     eprintln!("\n[PHASE 15] Testing changelog...");
 
-    // Close an issue first
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -883,7 +774,6 @@ fn regression_full_cli_does_not_touch_git() {
         "close_for_changelog"
     );
 
-    // changelog
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -893,7 +783,6 @@ fn regression_full_cli_does_not_touch_git() {
         "changelog"
     );
 
-    // changelog --json
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -903,12 +792,9 @@ fn regression_full_cli_does_not_touch_git() {
         "changelog_json"
     );
 
-    // ========================================================================
     // PHASE 16: Sync operations (brief, detailed tests in e2e_sync_git_safety)
-    // ========================================================================
     eprintln!("\n[PHASE 16] Testing sync operations...");
 
-    // sync --flush-only
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -918,7 +804,6 @@ fn regression_full_cli_does_not_touch_git() {
         "sync_flush"
     );
 
-    // sync --status
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -928,7 +813,6 @@ fn regression_full_cli_does_not_touch_git() {
         "sync_status"
     );
 
-    // sync --import-only --force
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -938,12 +822,8 @@ fn regression_full_cli_does_not_touch_git() {
         "sync_import"
     );
 
-    // ========================================================================
-    // PHASE 17: Close/Reopen/Delete
-    // ========================================================================
     eprintln!("\n[PHASE 17] Testing close/reopen/delete...");
 
-    // close
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -953,7 +833,6 @@ fn regression_full_cli_does_not_touch_git() {
         "close"
     );
 
-    // reopen
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -963,7 +842,6 @@ fn regression_full_cli_does_not_touch_git() {
         "reopen"
     );
 
-    // delete (creates tombstone)
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -973,12 +851,8 @@ fn regression_full_cli_does_not_touch_git() {
         "delete"
     );
 
-    // ========================================================================
-    // PHASE 18: Completions (special case - generates to stdout)
-    // ========================================================================
     eprintln!("\n[PHASE 18] Testing completions...");
 
-    // completions bash
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -988,7 +862,6 @@ fn regression_full_cli_does_not_touch_git() {
         "completions_bash"
     );
 
-    // completions zsh
     let (git_snap, head, count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -998,7 +871,6 @@ fn regression_full_cli_does_not_touch_git() {
         "completions_zsh"
     );
 
-    // completions fish
     let (_git_snap, _head, _count, _) = check_git_safety!(
         &workspace,
         git_snap,
@@ -1008,9 +880,6 @@ fn regression_full_cli_does_not_touch_git() {
         "completions_fish"
     );
 
-    // ========================================================================
-    // Final verification
-    // ========================================================================
     eprintln!("\n[FINAL] Verifying baseline comparison...");
 
     let final_head = get_head_commit(&workspace.root);
@@ -1040,20 +909,16 @@ fn regression_auto_flush_does_not_touch_git() {
     let workspace = BrWorkspace::new();
     init_git_repo(&workspace);
 
-    // Initialize beads
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    // Take baseline
     let baseline_git = snapshot_git_dir(&workspace.root);
     let baseline_head = get_head_commit(&workspace.root);
     let baseline_count = get_commit_count(&workspace.root);
 
-    // Create WITHOUT --no-auto-flush (should auto-flush)
     let create = run_br(&workspace, ["create", "Auto-flush test"], "create_auto");
     assert!(create.status.success());
 
-    // Verify .git unchanged
     let after_git = snapshot_git_dir(&workspace.root);
     let after_head = get_head_commit(&workspace.root);
     let after_count = get_commit_count(&workspace.root);
@@ -1083,7 +948,6 @@ fn regression_auto_import_does_not_touch_git() {
     let workspace = BrWorkspace::new();
     init_git_repo(&workspace);
 
-    // Initialize and create issues
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
@@ -1093,10 +957,8 @@ fn regression_auto_import_does_not_touch_git() {
         "create1",
     );
 
-    // Manually flush
     let _ = run_br(&workspace, ["sync", "--flush-only"], "flush");
 
-    // Touch the JSONL to make it newer
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     if jsonl_path.exists() {
         let content = fs::read_to_string(&jsonl_path).expect("read");
@@ -1104,16 +966,13 @@ fn regression_auto_import_does_not_touch_git() {
         fs::write(&jsonl_path, content).expect("write");
     }
 
-    // Take baseline
     let baseline_git = snapshot_git_dir(&workspace.root);
     let baseline_head = get_head_commit(&workspace.root);
     let baseline_count = get_commit_count(&workspace.root);
 
-    // Run list (should trigger auto-import)
     let list = run_br(&workspace, ["list"], "list_auto_import");
     assert!(list.status.success());
 
-    // Verify .git unchanged
     let after_git = snapshot_git_dir(&workspace.root);
     let after_head = get_head_commit(&workspace.root);
     let after_count = get_commit_count(&workspace.root);

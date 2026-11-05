@@ -468,8 +468,6 @@ impl DatabaseFamilyWriteLock {
     /// would hide the missing-database recovery branch from startup. The caller
     /// creates/rebuilds under the stable sidecar, then calls
     /// [`Self::rebind_database_inode_after_authorized_replace`].
-    // The inode-authority mutex must span the missing-database filesystem
-    // check below so the observed state cannot race a concurrent bind.
     #[allow(clippy::significant_drop_tightening)]
     pub fn bind_database_inode_for_mutation(&self) -> Result<bool> {
         self.verify_common_authority()?;
@@ -623,9 +621,6 @@ impl DatabaseFamilyWriteLock {
                     )));
                 }
             };
-            // The candidate becomes the live database inode on rename, so it
-            // must carry the SQLite-compatible range lock, never a whole-file
-            // lock (GitHub #412).
             match try_lock_exclusive(&candidate_file, ExclusiveLockMechanism::DatabaseInode) {
                 Ok(()) => {}
                 Err(TryLockError::WouldBlock) => {
@@ -1022,12 +1017,6 @@ fn reject_unsafe_database_routing_leaf(database_path: &Path) -> Result<PathBuf> 
 
 pub(crate) fn reject_symlinked_database_route_components(database_path: &Path) -> Result<()> {
     let absolute = absolute_database_routing_path(database_path)?;
-    // Judge the FULLY RESOLVED route, not raw link-target text: workspaces
-    // legitimately live under symlinked system prefixes (macOS
-    // /var -> /private/var under $TMPDIR), and every authority/lock path
-    // derives from the same canonicalization, so requiring each component of
-    // the RESOLVED parent to be a real directory keeps the fail-closed
-    // intent without rejecting those workspaces.
     let Some(parent) = absolute.parent() else {
         return Ok(());
     };
@@ -1174,10 +1163,6 @@ pub fn blocking_database_family_write_lock_with_timeout(
         total_timeout_ms.saturating_sub(elapsed_ms)
     };
     let routed_database_path = reject_unsafe_database_routing_leaf(database_path)?;
-    // Record the workspace lock path through the CANONICAL beads dir so
-    // retained-authority identity checks compare equal regardless of which
-    // route form (raw $TMPDIR prefix vs resolved) the caller used to acquire
-    // the lock — both name the same physical file.
     let canonical_beads_dir =
         fs::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
     let workspace_lock_path = canonical_beads_dir.join(".write.lock");
@@ -1359,7 +1344,6 @@ fn open_and_lock_regular_file(
     #[cfg(not(unix))]
     let _ = opened_metadata;
 
-    // Fast path: non-blocking try for the common uncontended case.
     match try_lock_exclusive(&file, mechanism) {
         Ok(()) => {
             verify_locked_file_identity(&file, lock_path, role, redact_path)?;
@@ -1570,9 +1554,6 @@ impl ConditionalNamespaceChange {
     }
 }
 
-// Test-only seam simulating filesystems that reject the renameat2 flag
-// extension with `EINVAL` (Linux 9p, WSL2 DrvFS); all primitive namespace
-// operations still run against the real filesystem.
 #[cfg(all(
     test,
     any(target_os = "linux", target_os = "android", target_vendor = "apple")
@@ -1629,9 +1610,6 @@ fn perform_conditional_namespace_change(
 
     #[cfg(test)]
     let flagged_attempt = if SIMULATE_RENAME_FLAGS_EINVAL.with(std::cell::Cell::get) {
-        // Skip the real flagged syscall entirely: a simulated EINVAL must
-        // leave the filesystem untouched so the fallback starts from the
-        // same pre-call layout a genuinely flag-hostile filesystem has.
         Err(rustix::io::Errno::INVAL)
     } else {
         renameat_with(
@@ -1655,12 +1633,6 @@ fn perform_conditional_namespace_change(
     match flagged_attempt {
         Ok(()) => Ok(change),
         Err(rustix::io::Errno::INVAL) => {
-            // Filesystems such as Linux 9p and WSL2 DrvFS reject the entire
-            // renameat2 flag extension with EINVAL (GH #419). Degrade to
-            // witnessed primitive namespace operations under the held JSONL
-            // family authority; the caller's post-change witness battery
-            // re-verifies both resulting names before the publication is
-            // acknowledged, and any downgrade is recorded in the receipt.
             match expected_previous_state {
                 JsonlSourceStateWitness::Missing => {
                     emulate_no_replace_publication_with_link(staged_name, output_name)?;
@@ -1727,9 +1699,6 @@ fn emulate_no_replace_publication_with_link(
         };
     }
 
-    // The published inode already lives at the destination name; a residual
-    // `.jsonl.tmp` duplicate inside the pinned parent stays within the sync
-    // path allowlist and is harmless, so unlinking is best-effort.
     let _ = rustix::fs::unlinkat(
         staged_name.parent().as_file(),
         staged_name.leaf(),
@@ -1765,9 +1734,6 @@ fn emulate_exchange_publication_with_witnessed_renames(
         .map_err(std::io::Error::from)
     };
 
-    // Derived from the staged leaf so the hold name stays inside the pinned
-    // parent and inside the `.jsonl.tmp` allowlist; uniqueness follows from
-    // the staged temp name being unique per export attempt.
     let staged_leaf_prefix = staged_name
         .leaf()
         .to_str()
@@ -1789,8 +1755,6 @@ fn emulate_exchange_publication_with_witnessed_renames(
     }
 
     if let Err(error) = plain_rename(&hold_name, output_name) {
-        // Best-effort restoration toward the pre-call layout; the caller's
-        // witness battery fail-closes on any residual mismatch anyway.
         let _ = plain_rename(staged_name, output_name);
         let _ = plain_rename(&hold_name, staged_name);
         return Err(BeadsError::Io(error));
@@ -1922,10 +1886,6 @@ where
     Hook: FnMut(ConditionalPublicationHookPhase) -> Result<()>,
     SyncParent: FnMut(&JsonlFamilyWriteLock) -> std::io::Result<()>,
 {
-    // This path may become a recovery name after the namespace operation.
-    // Path-based Drop cleanup cannot safely distinguish the retained parent
-    // from an attacker-substituted route, so conditional publication owns all
-    // subsequent cleanup decisions explicitly.
     temp_guard.persist();
     jsonl_authority.verify_jsonl_authority()?;
     let output_name = jsonl_authority.pinned_name_for_target(output_path)?;
@@ -2201,9 +2161,6 @@ where
             continue;
         };
 
-        // The file was created through the retained directory handle. A route
-        // substitution can therefore never redirect creation, but it still
-        // invalidates ordinary success and must be surfaced immediately.
         jsonl_authority.verify_jsonl_authority()?;
         return Ok((temp_path, pinned_temp, temp_file));
     }
@@ -4548,9 +4505,6 @@ fn additive_scalar_update_witness(
         object.remove("labels");
         object.remove("dependencies");
         object.remove("comments");
-        // Revision is a local monotonic mutation token, not source scalar
-        // content. It is assigned by the target transaction and must not
-        // appear as a scalar drift in an additive reconciliation witness.
         object.remove("revision");
     }
     let before = before.as_object().ok_or_else(|| {
@@ -4858,8 +4812,6 @@ fn additive_explicit_scalar_resolution_conflict(
         "source_repo",
         "source_repo_path",
         "agent_context",
-        // Schema v18 (ADR-0001 §5.2) + ADR-0005: typed work-ledger fields
-        // resolvable under an explicit source resolution.
         "verify",
         "principles",
         "wave",
@@ -5044,7 +4996,6 @@ fn parse_strict_additive_issue(trimmed: &str, line_num: usize) -> Result<Issue> 
         "source_repo",
         "source_repo_path",
         "agent_context",
-        // Schema v18 (ADR-0001 §5.2): typed work-ledger fields.
         "verify",
         "principles",
         "wave",
@@ -7324,8 +7275,6 @@ fn plan_additive_reconcile_in_snapshot(
         METADATA_JSONL_SIZE.to_string(),
         source.witness.size.to_string(),
     );
-    // The merge re-records the JSONL witness from the source, which carries no
-    // change-time: the identity witness is written empty.
     expected_metadata.insert(METADATA_JSONL_FILE_WITNESS.to_string(), String::new());
     expected_metadata.insert(
         "needs_flush".to_string(),
@@ -8420,9 +8369,6 @@ pub(crate) fn apply_additive_reconcile(
     result
 }
 
-// ============================================================================
-// PREFLIGHT CHECKS (beads-0v1.2.7)
-// ============================================================================
 /// Status of a preflight check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreflightCheckStatus {
@@ -8513,7 +8459,6 @@ impl PreflightResult {
     }
 
     fn add(&mut self, check: PreflightCheck) {
-        // Update overall status (Fail > Warn > Pass)
         match check.status {
             PreflightCheckStatus::Fail => self.overall_status = PreflightCheckStatus::Fail,
             PreflightCheckStatus::Warn if self.overall_status != PreflightCheckStatus::Fail => {
@@ -8699,7 +8644,6 @@ pub fn preflight_export(
         "Running export preflight checks"
     );
 
-    // Check 1: Beads directory exists
     if let Some(ref beads_dir) = config.beads_dir {
         if beads_dir.is_dir() {
             result.add(PreflightCheck::pass(
@@ -8719,9 +8663,7 @@ pub fn preflight_export(
         }
     }
 
-    // Check 2: Output path validation (PC-1, PC-2, PC-3, NGI-3)
     if let Some(ref beads_dir) = config.beads_dir {
-        // Determine if the path is external (outside .beads/)
         let canonical_beads =
             crate::sync::path::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.clone());
         let is_external =
@@ -8763,7 +8705,6 @@ pub fn preflight_export(
         }
     }
 
-    // Check 3: Database is accessible
     match storage.count_issues() {
         Ok(count) => {
             result.add(PreflightCheck::pass(
@@ -8927,8 +8868,6 @@ pub fn preflight_import(
     ))
 }
 
-// Preflight itself is infallible; the `Result` signature is the crate-wide
-// contract relied on by callers outside this module (e.g. `config::mod`).
 #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 pub(crate) fn preflight_import_snapshot(
     source: &JsonlSourceSnapshot,
@@ -8958,7 +8897,6 @@ fn preflight_import_impl(
         "Running import preflight checks"
     );
 
-    // Check 1: Beads directory exists
     if let Some(ref beads_dir) = config.beads_dir {
         if beads_dir.is_dir() {
             result.add(PreflightCheck::pass(
@@ -8978,9 +8916,7 @@ fn preflight_import_impl(
         }
     }
 
-    // Check 2: Input path validation (PC-1, PC-2, PC-3, NGI-3)
     if let Some(ref beads_dir) = config.beads_dir {
-        // Determine if the path is external (outside .beads/)
         let canonical_beads =
             crate::sync::path::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.clone());
         let is_external =
@@ -9022,8 +8958,6 @@ fn preflight_import_impl(
         }
     }
 
-    // Check 3: Input file exists and is readable. A supplied snapshot is the
-    // authoritative proof: do not reopen the mutable path.
     if let Some(source) = source {
         result.add(PreflightCheck::pass(
             "file_readable",
@@ -9067,11 +9001,9 @@ fn preflight_import_impl(
             "Verify the path is correct or run export first.",
         ));
         tracing::debug!(path = %input_path.display(), "File readable check: FAIL (not found)");
-        // Return early since we can't do further checks without the file
         return result;
     }
 
-    // Check 4: No merge conflict markers
     let marker_scan = if let Some(source) = source {
         scan_conflict_markers_snapshot(source)
     } else {
@@ -9129,7 +9061,6 @@ fn preflight_import_impl(
         }
     }
 
-    // Check 5: Per-line issue-record validation
     let issue_validation = if let Some(source) = source {
         validate_jsonl_snapshot_issue_records(source)
     } else {
@@ -9177,7 +9108,6 @@ fn preflight_import_impl(
         }
     }
 
-    // Check 6: Prefix mismatch guard
     if !config.skip_prefix_validation
         && let Some(prefix) = expected_prefix
     {
@@ -9198,7 +9128,6 @@ fn preflight_import_impl(
                         continue;
                     }
                     if let Ok(partial) = serde_json::from_str::<PartialId>(trimmed) {
-                        // Skip tombstones — they may retain a foreign prefix legitimately
                         #[derive(Deserialize)]
                         struct StatusProbe {
                             status: Option<String>,
@@ -10098,7 +10027,6 @@ fn export_to_jsonl_with_policy_expected_authority(
     }
     let export_as_of = config.export_as_of.unwrap_or_else(Utc::now);
 
-    // Path validation (PC-1, PC-2, PC-3, NGI-3)
     if let Some(ref beads_dir) = config.beads_dir {
         validate_sync_path_with_external(output_path, beads_dir, config.allow_external_jsonl)?;
         tracing::debug!(
@@ -10170,9 +10098,6 @@ fn export_to_jsonl_with_policy_expected_authority(
     );
 
     if let (Some(beads_dir), Some(previous_source)) = (config.beads_dir.as_ref(), previous_source) {
-        // Perform backup before overwriting (if enabled and we have a beads_dir).
-        // We backup any JSONL file that has been validated as safe for sync,
-        // even if it's outside the .beads/ directory (e.g., in repo root).
         let output_abs = if output_path.is_absolute() {
             output_path.to_path_buf()
         } else if let Ok(cwd) = std::env::current_dir() {
@@ -10192,7 +10117,6 @@ fn export_to_jsonl_with_policy_expected_authority(
     // Get sorted export IDs up front for safety checks and bounded batch hydration.
     let export_ids = export_issue_ids(storage)?;
 
-    // Fetch dirty metadata for safe clearing later
     let dirty_metadata = storage.get_dirty_issue_metadata()?;
     let intentionally_excluded_marked_at =
         intentionally_excluded_dirty_metadata(storage, &dirty_metadata)?;
@@ -10202,12 +10126,8 @@ fn export_to_jsonl_with_policy_expected_authority(
         && let Some(previous_source) = previous_source
     {
         let (jsonl_count, jsonl_ids) = analyze_jsonl_snapshot(previous_source)?;
-        // IDs the operator intentionally hard-deleted (purged) are expected
-        // to disappear from the JSONL on the next export; they are not data
-        // loss (#405).
         let purged_ids = storage.get_purged_ids_pending_export()?;
 
-        // Check 1: prevent exporting empty database over non-empty JSONL
         if export_ids.is_empty()
             && jsonl_count > 0
             && jsonl_ids.iter().any(|id| !purged_ids.contains(id))
@@ -10220,7 +10140,6 @@ fn export_to_jsonl_with_policy_expected_authority(
             )));
         }
 
-        // Check 2: prevent exporting stale database that would lose issues
         if !jsonl_ids.is_empty() {
             let db_ids: HashSet<String> = export_ids.iter().cloned().collect();
             let missing: Vec<_> = jsonl_ids
@@ -10267,16 +10186,14 @@ fn export_to_jsonl_with_policy_expected_authority(
         config.show_progress,
     );
 
-    // Write to temp file for atomic rename
     let (temp_path, pinned_temp, temp_file) =
         create_full_export_temp_file_under_authority(output_path, config, jsonl_authority)?;
     let temp_guard = TempFileGuard::new_retained(temp_path.clone());
     let mut writer = BufWriter::new(temp_file);
 
-    // Write JSONL and compute hash
     let mut hasher = Sha256::new();
     let mut exported_ids = Vec::with_capacity(export_ids.len());
-    let mut skipped_tombstone_ids = Vec::new(); // Usually small
+    let mut skipped_tombstone_ids = Vec::new();
     let mut issue_hashes = Vec::with_capacity(export_ids.len());
     let mut buffer = Vec::with_capacity(1024);
     let max_parallelism = effective_export_parallelism(config);
@@ -10303,7 +10220,6 @@ fn export_to_jsonl_with_policy_expected_authority(
             )?;
         } else {
             for issue in &issues {
-                // Skip expired tombstones
                 if issue.is_expired_tombstone_at(config.retention_days, export_as_of) {
                     skipped_tombstone_ids.push(issue.id.clone());
                     progress.inc(1);
@@ -10359,7 +10275,6 @@ fn export_to_jsonl_with_policy_expected_authority(
                 )?;
             } else {
                 for issue in &issues {
-                    // Skip expired tombstones
                     if issue.is_expired_tombstone_at(config.retention_days, export_as_of) {
                         skipped_tombstone_ids.push(issue.id.clone());
                         progress.inc(1);
@@ -10397,17 +10312,14 @@ fn export_to_jsonl_with_policy_expected_authority(
 
     progress.finish_with_message("Export complete");
 
-    // Flush and sync
     writer.flush()?;
     writer
         .into_inner()
         .map_err(|e| BeadsError::Io(e.into_error()))?
         .sync_all()?;
 
-    // Compute final hash
     let content_hash = hex_encode(&hasher.finalize());
 
-    // Verify staged export integrity before replacing the live JSONL.
     let staged_source = pinned_temp.capture()?;
     verify_exported_jsonl_snapshot_integrity(&staged_source, &exported_ids)?;
     if staged_source.content_sha256() != content_hash {
@@ -10795,17 +10707,6 @@ fn compute_jsonl_newer_impl(storage: &SqliteStorage, jsonl_path: &Path) -> Resul
     let stored_size = storage.get_metadata(METADATA_JSONL_SIZE)?;
     let stored_hash = storage.get_metadata(METADATA_JSONL_CONTENT_HASH)?;
     let stored_identity = storage.get_metadata(METADATA_JSONL_FILE_WITNESS)?;
-    // Mtime and size are mutable filesystem metadata, not a content identity:
-    // external tooling can rewrite a file with the same length and restore its
-    // prior mtime. The canonical content hash is the authority on the file's
-    // content, but computing it costs a full read plus SHA-256 on EVERY
-    // command, read-only ones included.
-    //
-    // The file's IDENTITY witness (the kernel's change-time, which no user can
-    // forge) settles the common case: a file whose witness still matches was
-    // not touched since the database recorded it, so its content is
-    // byte-identical and the hash cannot differ. The hash is computed
-    // whenever the witness moved.
     let identity_unchanged = match (
         stored_identity.as_deref(),
         observed.identity_witness.as_deref(),
@@ -10928,9 +10829,6 @@ fn record_observed_jsonl_witness_in_tx(
 ) -> Result<()> {
     storage.set_metadata_in_tx(METADATA_JSONL_MTIME, &observed.mtime_witness)?;
     storage.set_metadata_in_tx(METADATA_JSONL_SIZE, &observed.size.to_string())?;
-    // An absent identity witness is stored as an empty value: the metadata
-    // read filters empty values out, so a stale witness cannot outlive the
-    // observation it came from.
     storage.set_metadata_in_tx(
         METADATA_JSONL_FILE_WITNESS,
         observed.identity_witness.as_deref().unwrap_or(""),
@@ -11016,14 +10914,6 @@ pub fn auto_import_if_stale(
         return Ok(AutoImportResult::default());
     }
 
-    // When both JSONL and DB have changed, skip the auto-import with a
-    // warning instead of failing the command.  This prevents spurious
-    // SyncConflict errors when ≥3 concurrent `br` processes race: one
-    // process flushes JSONL while another has pending local writes,
-    // causing both `jsonl_newer` and `db_newer` to be true.
-    //
-    // Explicit `br sync --merge` still detects this as a hard conflict so the
-    // user can reconcile manually.
     if staleness.db_newer && !allow_stale {
         tracing::warn!(
             dirty_count = staleness.dirty_count,
@@ -11036,8 +10926,6 @@ pub fn auto_import_if_stale(
     }
 
     let import_config = ImportConfig {
-        // The configured prefix is the default for new IDs, not a project-wide
-        // invariant. Auto-import should preserve mixed-prefix workspaces.
         skip_prefix_validation: true,
         beads_dir: Some(beads_dir.to_path_buf()),
         allow_external_jsonl,
@@ -11115,7 +11003,6 @@ pub(crate) fn finalize_export_under_authority(
             });
         }
 
-        // Clear dirty flags for exported issues (safe version with timestamp validation)
         if !result.exported_marked_at.is_empty() {
             storage.clear_dirty_issues_in_tx(&result.exported_marked_at)?;
         }
@@ -11134,9 +11021,6 @@ pub(crate) fn finalize_export_under_authority(
             });
         }
 
-        // Reconcile the table to the exact published mapping. Unchanged rows
-        // retain their original exported_at timestamp; stale, excluded, and
-        // expired rows are removed, and only changed/new rows are rewritten.
         let current_export_hashes = additive_export_hashes(storage)?;
         let stale_ids = current_export_hashes
             .keys()
@@ -11164,15 +11048,11 @@ pub(crate) fn finalize_export_under_authority(
             });
         }
 
-        // Update metadata
         storage.set_metadata_in_tx(METADATA_JSONL_CONTENT_HASH, &result.content_hash)?;
         storage.set_metadata_in_tx(METADATA_LAST_EXPORT_TIME, &Utc::now().to_rfc3339())?;
         record_observed_jsonl_witness_in_tx(storage, &observed_jsonl)?;
 
-        // Keep the row stable and clear the flag in place so ordinary export
-        // cycles avoid delete+insert churn on the metadata B-tree.
         storage.set_metadata_in_tx("needs_flush", "false")?;
-        // The published snapshot no longer contains purged issues (#405).
         storage.clear_purged_ids_pending_export_in_tx()?;
 
         Ok(())
@@ -11451,7 +11331,6 @@ fn finalize_incremental_auto_flush(
             record_observed_jsonl_witness_in_tx(storage, observed_jsonl)?;
         }
         storage.set_metadata_in_tx("needs_flush", "false")?;
-        // The published snapshot no longer contains purged issues (#405).
         storage.clear_purged_ids_pending_export_in_tx()?;
         Ok(())
     })?;
@@ -11617,12 +11496,6 @@ fn try_write_existing_jsonl_replacements_atomically(
     let scan = scan_existing_jsonl_replacements(output_path, replacement_lines)?;
 
     if !scan.all_replacements_seen {
-        // GitHub #404: a replacement id the file does not already contain is a
-        // newly created issue. Substituting matched rows in place can only put
-        // it at the tail, which leaves the JSONL non-canonically ordered until
-        // the next `br sync --force`. Decline so the caller takes the sorted
-        // full-rewrite path; updates (every id already present) keep the cheap
-        // in-place write.
         return Ok(ExistingJsonlReplacementWrite::Declined);
     }
 
@@ -11887,8 +11760,6 @@ pub fn export_gates_to_jsonl(
         lines.insert(key, line);
     }
 
-    // Same temp+rename publication as the issues export, minus the
-    // issue-shaped per-line integrity probe (gate rows are their own schema).
     let mut temp_output = prepare_jsonl_temp_output(path, config)?;
     let mut hasher = Sha256::new();
     for line in lines.values() {
@@ -12026,10 +11897,6 @@ pub fn restore_gate_verdicts(
                 "Gate verdict sidecar imported"
             );
             if summary.refused > 0 {
-                // A refused row means the sidecar names an issue the issues
-                // export does not have. That disagreement is the operator's
-                // problem to see, not a line to bury: the row is not in the
-                // database, so any close backed by it is unprovable.
                 tracing::warn!(
                     path = %gates_path.display(),
                     refused = summary.refused,
@@ -12188,10 +12055,6 @@ fn try_existing_line_auto_flush(
     )?;
 
     match result {
-        // GitHub #404: the in-place writer refused because the flush carries a
-        // brand-new id. Fall through to `read_jsonl_lines_by_id` +
-        // `write_jsonl_lines_atomically`, symmetric with the removals decline
-        // above, so the file lands id-sorted.
         ExistingJsonlReplacementWrite::Declined => Ok(None),
         ExistingJsonlReplacementWrite::Unchanged { .. } => {
             jsonl_authority.verify_jsonl_authority()?;
@@ -12267,10 +12130,6 @@ fn try_incremental_auto_flush(
         return Ok(None);
     }
 
-    // Reuse a retained session authority when present: re-acquiring the same
-    // flock sidecar on a fresh descriptor from the same process would block on
-    // itself. The retained authority still has its ownership verified before
-    // any incremental reconciliation touches the JSONL.
     let owned_jsonl_authority = if provided_jsonl_authority.is_none() {
         Some(blocking_jsonl_family_write_lock_with_timeout(
             jsonl_path, None,
@@ -12452,11 +12311,6 @@ fn auto_flush_internal(
     expected_previous_source: Option<ExpectedJsonlSourceRef<'_>>,
     provided_jsonl_authority: Option<&JsonlFamilyWriteLock>,
 ) -> Result<AutoFlushResult> {
-    // This guard is intentionally independent of CLI/MCP startup policy and
-    // precedes the dirty/no-op probe. A clean database with a durable pending
-    // saga is still not safe for an unrelated automatic exporter: even a
-    // nominal no-op may refresh metadata or become dirty after a caller's
-    // stale preflight.
     let pending = storage.inspect_pending_sync_merge()?;
     if !pending.permits_automatic_mutation() {
         return Err(BeadsError::SyncConflict {
@@ -12467,7 +12321,6 @@ fn auto_flush_internal(
         });
     }
 
-    // Check for dirty issues or forced flush first
     let jsonl_exists = jsonl_path.exists();
     let (dirty_count, needs_flush, db_newer) = pending_export_state(storage, jsonl_exists)?;
 
@@ -12478,14 +12331,6 @@ fn auto_flush_internal(
 
     validate_sync_path_with_external(jsonl_path, beads_dir, allow_external_jsonl)?;
 
-    // Refuse to auto-flush over a JSONL that still holds unresolved
-    // merge-conflict markers. The downstream export path would otherwise
-    // silently overwrite the `<<<<<<<` / `=======` / `>>>>>>>` regions
-    // (along with the remote side of the merge the operator hadn't yet
-    // looked at) every time a mutating CLI command returns. Explicit
-    // `br sync --flush-only` already has a `--force` escape hatch for this
-    // case; auto-flush has no such surface, so the only safe default is to
-    // stop, log clearly, and let the next explicit sync surface the error.
     if jsonl_exists {
         let conflict_markers = scan_conflict_markers(jsonl_path)?;
         if !conflict_markers.is_empty() {
@@ -12527,14 +12372,6 @@ fn auto_flush_internal(
         }
     }
 
-    // Configure export with defaults, including beads_dir for path validation.
-    // `needs_flush` is deliberately NOT passed as `force` (#405): doing so
-    // disabled the exporter's data-loss guards, and the import path also arms
-    // `needs_flush` when a local record wins over JSONL — a state in which a
-    // forced auto-flush can destroy merged issues the DB never imported. The
-    // purge_issue flow that used to need force is handled by the
-    // purged-pending-export marker, which the guard subtracts from its loss
-    // computation.
     let export_config = ExportConfig {
         force: false,
         beads_dir: Some(beads_dir.to_path_buf()),
@@ -12542,9 +12379,6 @@ fn auto_flush_internal(
         ..Default::default()
     };
 
-    // Perform export. A retained authority reuses the session's captured
-    // source snapshot (verified current under the held lock); otherwise the
-    // export captures and locks its own.
     let expected_missing_jsonl = (!jsonl_exists).then_some(None);
     let (export_result, _report) = match provided_jsonl_authority {
         Some(authority) => export_to_jsonl_with_policy_expected_under_authority(
@@ -12565,8 +12399,6 @@ fn auto_flush_internal(
         )?,
     };
 
-    // Finalize export (clear dirty flags, update metadata) under the same
-    // authority that performed the export.
     match provided_jsonl_authority {
         Some(authority) => finalize_export_under_authority(
             storage,
@@ -12654,8 +12486,6 @@ fn read_issues_from_jsonl_reader(
     Ok(issues)
 }
 
-// ===== 4-Phase Collision Detection =====
-
 /// Match type from collision detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchType {
@@ -12702,7 +12532,6 @@ fn detect_collision(
     meta_by_id: &std::collections::HashMap<String, crate::storage::sqlite::IssueMetadata>,
     computed_hash: &str,
 ) -> CollisionResult {
-    // Phase 1: External reference match
     if let Some(ref external_ref) = incoming.external_ref
         && let Some(existing_id) = id_by_ext_ref.get(external_ref)
     {
@@ -12713,7 +12542,6 @@ fn detect_collision(
         };
     }
 
-    // Phase 2: ID match
     if meta_by_id.contains_key(&incoming.id) {
         return CollisionResult::Match {
             existing_id: incoming.id.clone(),
@@ -12722,7 +12550,6 @@ fn detect_collision(
         };
     }
 
-    // Phase 3: Content hash match
     if let Some(existing_id) = id_by_hash.get(computed_hash) {
         return CollisionResult::Match {
             existing_id: existing_id.clone(),
@@ -12731,7 +12558,6 @@ fn detect_collision(
         };
     }
 
-    // Phase 4: No match
     CollisionResult::NewIssue
 }
 
@@ -12752,21 +12578,18 @@ fn determine_action(
                         id: existing_id.clone(),
                     })?;
 
-            // Check for tombstone protection (even force doesn't override this)
             if existing_meta.status == crate::model::Status::Tombstone {
                 return Ok(CollisionAction::Skip {
                     reason: format!("Tombstone protection: {existing_id}"),
                 });
             }
 
-            // If force_upsert is enabled, always update (skip timestamp comparison)
             if force_upsert {
                 return Ok(CollisionAction::Update {
                     existing_id: existing_id.clone(),
                 });
             }
 
-            // Last-write-wins: compare updated_at
             match incoming.updated_at.cmp(&existing_meta.updated_at) {
                 std::cmp::Ordering::Greater => Ok(CollisionAction::Update {
                     existing_id: existing_id.clone(),
@@ -12790,28 +12613,18 @@ fn determine_action(
 fn normalize_issue(issue: &mut Issue) {
     use crate::util::content_hash;
 
-    // Deduplicate labels
     if !issue.labels.is_empty() {
         issue.labels.sort();
         issue.labels.dedup();
     }
 
-    // Dependency types parse strictly at import (bd-bqyb) — no Custom
-    // normalization pass remains.
-
-    // Deduplicate dependencies by the database key (issue_id, depends_on_id),
-    // keeping only the most recent entry by created_at. This handles duplicate
-    // parent-child entries from reparenting or migration artifacts (see issue #159).
     if issue.dependencies.len() > 1 {
         use std::collections::HashMap;
-        // The storage schema has one row per pair, so type-distinct duplicates
-        // cannot be preserved without a schema migration.
         let mut best: HashMap<(String, String), usize> = HashMap::new();
         for (i, dep) in issue.dependencies.iter().enumerate() {
             let key = (dep.issue_id.clone(), dep.depends_on_id.clone());
             match best.get(&key) {
                 Some(&prev_idx) if issue.dependencies[prev_idx].created_at >= dep.created_at => {
-                    // existing entry is newer or equal, skip
                 }
                 _ => {
                     best.insert(key, i);
@@ -12828,44 +12641,30 @@ fn normalize_issue(issue: &mut Issue) {
         }
     }
 
-    // Legacy terminal aliases are normalized pre-parse
-    // (normalize_import_status_aliases) — strictly-typed statuses need no
-    // post-parse repair here.
-
-    // Wisp detection: if ID contains "-wisp-", mark as ephemeral
     if issue.id.contains("-wisp-") {
         issue.ephemeral = true;
     }
 
-    // Repair closed_at invariant: if status is terminal (closed/tombstone), ensure closed_at is set
     if issue.status.is_terminal() && issue.closed_at.is_none() {
         issue.closed_at = Some(issue.updated_at);
     }
 
-    // If status is not terminal, clear closed_at
     if !issue.status.is_terminal() {
         issue.closed_at = None;
     }
 
-    // Normalize external_ref: empty string should be None to prevent UNIQUE constraint violations
     if let Some(ext_ref) = &issue.external_ref {
         if ext_ref.trim().is_empty() {
             issue.external_ref = None;
         } else {
-            // Re-assign trimmed version just in case
             issue.external_ref = Some(ext_ref.trim().to_string());
         }
     }
 
-    // Repair timestamps invariant: updated_at cannot be before created_at.
-    // In distributed systems, clocks can be out of sync; we enforce the invariant
-    // locally to keep the database consistent.
     if issue.updated_at < issue.created_at {
         issue.updated_at = issue.created_at;
     }
 
-    // Recompute after all import repairs so the stored row hash matches the
-    // canonical issue state used by collision detection and export hashes.
     issue.content_hash = Some(content_hash(issue));
 }
 
@@ -13124,8 +12923,6 @@ fn load_import_metadata_maps(storage: &SqliteStorage) -> Result<ImportMetadataMa
         if metadata.status != crate::model::Status::Tombstone
             && let Some(hash) = metadata.content_hash.as_ref()
         {
-            // Preserve the first matching issue to mirror the old query_row
-            // collision path when multiple issues share the same content hash.
             id_by_hash
                 .entry(hash.clone())
                 .or_insert_with(|| issue_id.clone());
@@ -13340,11 +13137,6 @@ fn stream_import_actions_in_tx(
 
     progress.set_position(0);
     storage.clear_all_export_hashes_in_tx()?;
-    // Comment IDs are globally unique. Release every comment row owned by an
-    // issue this transaction will replace before replaying any individual
-    // issue, so authoritative IDs can move between those issues without the
-    // result depending on JSONL line order. The enclosing transaction restores
-    // all rows if a later action or semantic verification fails.
     storage.delete_comments_for_import_issue_ids_in_tx(comment_owner_ids_to_replace)?;
 
     for_each_jsonl_import_issue(source, |line_num, mut issue| {
@@ -13378,10 +13170,6 @@ fn stream_import_actions_in_tx(
 
         apply_collision_renames(&mut issue, collision_renames);
 
-        // beads_rust-svtxe: refuse inline deps that cannot resolve instead
-        // of persisting them and silently deleting them in post-import
-        // orphan cleanup (which made the counted-vs-persisted postcondition
-        // fail with an opaque row-count mismatch).
         for dep in &issue.dependencies {
             if dep.depends_on_id.starts_with("external:")
                 || resolvable_dep_targets.contains(&dep.depends_on_id)
@@ -13482,7 +13270,6 @@ pub fn import_from_jsonl(
     config: &ImportConfig,
     expected_prefix: Option<&str>,
 ) -> Result<ImportResult> {
-    // Step 0: Path validation (PC-1, PC-2, PC-3, NGI-3) - BEFORE any file operations
     if let Some(ref beads_dir) = config.beads_dir {
         validate_sync_path_with_external(input_path, beads_dir, config.allow_external_jsonl)?;
         tracing::debug!(
@@ -13521,8 +13308,6 @@ pub(crate) fn import_from_jsonl_snapshot_into_fresh_replacement(
     import_from_jsonl_snapshot_impl(storage, source, config, expected_prefix, Some(witness))
 }
 
-// Taking ownership is deliberate: callers must relinquish the linear witness,
-// while the transaction closure may need to borrow it across internal BUSY retries.
 #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
 fn import_from_jsonl_snapshot_impl(
     storage: &mut SqliteStorage,
@@ -13531,10 +13316,6 @@ fn import_from_jsonl_snapshot_impl(
     expected_prefix: Option<&str>,
     fresh_witness: Option<FreshDatabaseReplacementWitness>,
 ) -> Result<ImportResult> {
-    // Reject a displaced fresh replacement before any metadata or collision
-    // query touches the now-unlinked SQLite connection.  The transaction
-    // rechecks the witness below so a later inode swap still fails closed
-    // before the insert-only relation path is enabled.
     if let Some(witness) = fresh_witness.as_ref() {
         storage.verify_fresh_database_replacement_witness(witness)?;
     }
@@ -13547,27 +13328,22 @@ fn import_from_jsonl_snapshot_impl(
         )?;
     }
 
-    // Step 1: Conflict marker scan
     ensure_no_conflict_markers_snapshot(source)?;
 
-    // Step 2: Parse, Normalize, Validate, and collect minimal rename state.
     let spinner = create_spinner("Parsing and validating issues", config.show_progress);
     let validation_plan = collect_import_validation_plan(source, config, expected_prefix)?;
     spinner.finish_with_message("Parsed and validated issues");
 
     let mut result = ImportResult::default();
 
-    // Step 5: Handle renames if requested
     let prefix_renames = if config.rename_on_import {
         build_prefix_renames(storage, &validation_plan, expected_prefix)?
     } else {
         HashMap::new()
     };
 
-    // Preload metadata for O(1) collision detection while streaming the input.
     let metadata = load_import_metadata_maps(storage)?;
 
-    // Phase 1: Scan and Resolve IDs
     let collision_plan = scan_import_collision_renames(
         source,
         config,
@@ -13580,15 +13356,6 @@ fn import_from_jsonl_snapshot_impl(
     let jsonl_hash = compute_jsonl_snapshot_content_hash(source)?;
     let observed_jsonl = observed_jsonl_snapshot_witness(source);
 
-    // Phase 2: Execute Actions
-
-    // Effective issue ids after prefix + collision renames: a dependency
-    // target is valid iff it is `external:*`, already exists in the
-    // database, or resolves to one of these ids. Validating here (instead
-    // of letting post-import orphan cleanup silently delete such rows)
-    // keeps the counted-vs-persisted contract honest and turns a confusing
-    // post-recovery count mismatch into a precise diagnostic
-    // (beads_rust-svtxe).
     let resolvable_dep_targets: HashSet<String> = metadata
         .meta_by_id
         .keys()
@@ -13602,10 +13369,6 @@ fn import_from_jsonl_snapshot_impl(
                 .unwrap_or_else(|| id.clone())
         }))
         .collect();
-    //
-    // Disable FK constraints during bulk import so that issues can reference
-    // other issues (in dependencies/comments) that haven't been inserted yet.
-    // FK integrity is restored and validated after all data is loaded.
     storage
         .execute_raw("PRAGMA foreign_keys = OFF")
         .map_err(|source| BeadsError::WithContext {
@@ -13675,9 +13438,6 @@ pub(crate) fn id_matches_expected_prefix(id: &str, expected_prefix: &str) -> boo
     }
 
     parse_id(id).is_ok_and(|parsed| {
-        // Slugged root IDs are shaped as `<prefix>-<slug>-<hash>`.
-        // `parse_id` treats the slug as part of the hyphenated prefix, so
-        // prefix guardrails must accept this generated prefix family.
         parsed.prefix == normalized_prefix
             || parsed
                 .prefix
@@ -13710,8 +13470,6 @@ fn process_import_action(
             record_imported_relation_counts(result, issue);
         }
         CollisionAction::Update { existing_id } => {
-            // When updating by external_ref or content_hash, the incoming issue may have
-            // a different ID than the existing one. We need to update using the existing ID.
             if existing_id == &issue.id {
                 storage.upsert_issue_for_import_in_tx(issue)?;
                 sync_issue_relations(storage, issue)?;
@@ -13814,13 +13572,10 @@ fn record_imported_relation_counts(result: &mut ImportResult, issue: &Issue) {
 
 /// Sync labels, dependencies, and comments for an imported issue.
 fn sync_issue_relations(storage: &SqliteStorage, issue: &Issue) -> Result<()> {
-    // Sync labels
     storage.sync_labels_for_import_in_tx(&issue.id, &issue.labels)?;
 
-    // Sync dependencies
     storage.sync_dependencies_for_import_in_tx(&issue.id, &issue.dependencies)?;
 
-    // Sync comments
     storage.sync_comments_for_import_in_tx(&issue.id, &issue.comments)?;
 
     Ok(())
@@ -13842,8 +13597,6 @@ fn compute_jsonl_hash_from_reader(mut reader: impl BufRead) -> Result<String> {
             break;
         }
 
-        // Efficiently skip empty or whitespace-only lines without UTF-8 validation.
-        // trim_ascii() is a fast byte-based trim.
         let trimmed = line_buf.trim_ascii();
         if !trimmed.is_empty() {
             hasher.update(trimmed);
@@ -13854,8 +13607,6 @@ fn compute_jsonl_hash_from_reader(mut reader: impl BufRead) -> Result<String> {
     Ok(hex_encode(&hasher.finalize()))
 }
 
-// Infallible today, but callers outside this module (`cli::commands::sync`)
-// consume the fallible signature; keep `Result` to avoid a cross-file change.
 #[allow(clippy::unnecessary_wraps)]
 pub(crate) fn compute_jsonl_snapshot_content_hash(source: &JsonlSourceSnapshot) -> Result<String> {
     Ok(source.content_sha256().to_string())
@@ -13872,9 +13623,6 @@ pub fn compute_jsonl_hash(path: &Path) -> Result<String> {
     compute_jsonl_hash_from_reader(std::io::BufReader::new(file))
 }
 
-// ============================================================================
-// Additive Reconciliation (beads-3r45)
-// ============================================================================
 /// Schema marker for `br sync --reconcile` receipts.
 pub const SYNC_RECONCILE_SCHEMA_VERSION: &str = "br.sync.reconcile.v1";
 
@@ -14134,18 +13882,12 @@ pub fn plan_sync_reconcile(
     }
     ensure_no_conflict_markers(input_path)?;
 
-    // Reconcile never renames prefixes or ids; run the structural validation
-    // pass (duplicate-id detection, parseability) with prefix checks off.
     let mut validation_config = config.clone();
     validation_config.skip_prefix_validation = true;
     validation_config.rename_on_import = false;
-    // One immutable capture serves validation and classification so a
-    // concurrent JSONL writer cannot split what the planner observes.
     let source = capture_jsonl_source_snapshot(input_path)?;
     collect_import_validation_plan(&source, &validation_config, None)?;
 
-    // Bind the source witness before classification so a concurrent JSONL
-    // writer is detected by the re-stat below.
     let observed = observed_jsonl_witness(input_path)?;
     let jsonl_content_hash = compute_jsonl_hash(input_path)?;
 
@@ -14196,7 +13938,6 @@ pub fn plan_sync_reconcile(
     let db_issue_count = storage.count_all_issues()?;
     let (events_count, events_max_id) = storage.events_table_witness()?;
 
-    // Re-stat: reject the plan if the JSONL changed underneath the scan.
     let final_observed = observed_jsonl_witness(input_path)?;
     if final_observed.mtime_witness != observed.mtime_witness
         || final_observed.size != observed.size
@@ -14258,10 +13999,6 @@ pub fn apply_sync_reconcile(
 
     verify_reconcile_jsonl_witness(input_path, plan)?;
 
-    // Build the cross-reference rename map from the verified plan: rows whose
-    // collision target differs from their written id (external_ref or
-    // content-hash matches) must have their relation references rewritten the
-    // same way `--import-only` does.
     let collision_renames: HashMap<String, String> = plan
         .actions
         .iter()
@@ -14269,8 +14006,6 @@ pub fn apply_sync_reconcile(
         .map(|a| (a.incoming_id.clone(), a.target_id.clone()))
         .collect();
 
-    // Imported rows may reference issues that appear later in the stream, so
-    // FK enforcement is deferred exactly like the import path.
     storage
         .execute_raw("PRAGMA foreign_keys = OFF")
         .map_err(|source| BeadsError::WithContext {
@@ -14345,7 +14080,6 @@ fn run_reconcile_apply_tx(
     plan: &ReconcilePlan,
     collision_renames: &HashMap<String, String>,
 ) -> Result<ReconcileApplyOutcome> {
-    // DB witness: the events table must be exactly as planned.
     let (events_before, events_max_before) = storage.events_table_witness()?;
     if events_before != plan.witness.events_count || events_max_before != plan.witness.events_max_id
     {
@@ -14354,8 +14088,6 @@ fn run_reconcile_apply_tx(
         ));
     }
 
-    // Fresh in-transaction metadata: classification must be re-derived from
-    // live state, then compared row-by-row against the plan.
     let metadata = load_import_metadata_maps(storage)?;
 
     let mut outcome = ReconcileApplyOutcome::default();
@@ -14461,8 +14193,6 @@ fn run_reconcile_apply_tx(
         outcome.child_counter_entries = storage.rebuild_child_counters_in_tx()?;
     }
 
-    // Repair the import metadata inside the same transaction so the
-    // false-equal stored hash cannot survive a successful apply.
     let observed = observed_jsonl_witness(input_path)?;
     if observed.mtime_witness != plan.witness.jsonl_mtime_witness
         || observed.size != plan.witness.jsonl_size
@@ -14490,7 +14220,6 @@ fn run_reconcile_apply_tx(
         outcome.needs_flush_set = true;
     }
 
-    // Hard guarantee: reconcile never creates, mutates, or deletes events.
     let (events_after, events_max_after) = storage.events_table_witness()?;
     if events_after != events_before || events_max_after != events_max_before {
         return Err(reconcile_config_error(
@@ -14502,9 +14231,6 @@ fn run_reconcile_apply_tx(
     Ok(outcome)
 }
 
-// ============================================================================
-// 3-Way Merge Types and Functions
-// ============================================================================
 /// Types of conflicts that can occur during 3-way merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictType {
@@ -14640,23 +14366,16 @@ pub fn merge_issue(
     strategy: ConflictResolution,
 ) -> MergeResult {
     match (base, left, right) {
-        // Case 1: Only in base (deleted in both local and external) -> no action
         (Some(_), None, None) => MergeResult::Delete,
 
-        // Case 2: Only in left (new local) -> keep
         (None, Some(l), None) => MergeResult::Keep(l.clone()),
 
-        // Case 3: Only in right (new external) -> keep
         (None, None, Some(r)) => MergeResult::Keep(r.clone()),
 
-        // Case 4: In base and left only (deleted in right/external)
         (Some(b), Some(l), None) => {
-            // Was it modified locally after base?
             if l.sync_equals(b) {
-                // Local unchanged since base, external deleted -> delete
                 MergeResult::Delete
             } else {
-                // Local modified but external deleted - conflict
                 match strategy {
                     ConflictResolution::PreferLocal => MergeResult::KeepWithNote(
                         l.clone(),
@@ -14664,7 +14383,6 @@ pub fn merge_issue(
                     ),
                     ConflictResolution::PreferExternal => MergeResult::Delete,
                     ConflictResolution::PreferNewer => {
-                        // Keep local since it was modified more recently than base
                         MergeResult::KeepWithNote(
                             l.clone(),
                             "Local modified after base, external deleted - kept local".to_string(),
@@ -14677,14 +14395,10 @@ pub fn merge_issue(
             }
         }
 
-        // Case 5: In base and right only (deleted locally)
         (Some(b), None, Some(r)) => {
-            // Was it modified externally after base?
             if r.sync_equals(b) {
-                // External unchanged since base, local deleted -> delete
                 MergeResult::Delete
             } else {
-                // External modified but local deleted - conflict
                 match strategy {
                     ConflictResolution::PreferLocal => MergeResult::Delete,
                     ConflictResolution::PreferExternal => MergeResult::KeepWithNote(
@@ -14692,7 +14406,6 @@ pub fn merge_issue(
                         "External modified, local deleted - kept external".to_string(),
                     ),
                     ConflictResolution::PreferNewer => {
-                        // Keep external since it was modified more recently than base
                         MergeResult::KeepWithNote(
                             r.clone(),
                             "External modified after base, local deleted - kept external"
@@ -14706,7 +14419,6 @@ pub fn merge_issue(
             }
         }
 
-        // Case 6: In all three (potentially modified in one or both)
         (Some(b), Some(l), Some(r)) => {
             if l.sync_equals(r) {
                 return MergeResult::Keep(l.clone());
@@ -14716,11 +14428,8 @@ pub fn merge_issue(
             let right_changed = !r.sync_equals(b);
 
             match (left_changed, right_changed) {
-                // Neither changed OR only left changed - keep left
                 (false | true, false) => MergeResult::Keep(l.clone()),
-                // Only right changed - keep right
                 (false, true) => MergeResult::Keep(r.clone()),
-                // Both changed - use strategy
                 (true, true) => match strategy {
                     ConflictResolution::PreferLocal => MergeResult::KeepWithNote(
                         l.clone(),
@@ -14748,13 +14457,10 @@ pub fn merge_issue(
             }
         }
 
-        // Case 7: In left and right but not base (convergent creation)
         (None, Some(l), Some(r)) => {
-            // Same content? Keep one (use left by convention)
             if l.sync_equals(r) {
                 MergeResult::Keep(l.clone())
             } else {
-                // Different content - both created independently
                 match strategy {
                     ConflictResolution::PreferLocal => MergeResult::KeepWithNote(
                         l.clone(),
@@ -14784,7 +14490,6 @@ pub fn merge_issue(
             }
         }
 
-        // Case 8: Not in any (impossible in practice, but handle gracefully)
         (None, None, None) => MergeResult::NoAction,
     }
 }
@@ -14816,7 +14521,6 @@ pub fn three_way_merge(
         let left = context.left.get(&id);
         let right = context.right.get(&id);
 
-        // Check tombstone protection: if issue is tombstoned and trying to resurrect
         if tombstones.contains(&id) {
             let local_tombstone =
                 left.is_some_and(|issue| issue.status == crate::model::Status::Tombstone);
@@ -14824,8 +14528,6 @@ pub fn three_way_merge(
                 right.is_some_and(|issue| issue.status != crate::model::Status::Tombstone);
 
             if local_tombstone && external_non_tombstone {
-                // Import paths never allow JSONL to resurrect a local tombstone.
-                // Merge winner flags must preserve that invariant too.
                 if let Some(issue) = left {
                     report.kept.push(issue.clone());
                 }
@@ -14834,7 +14536,6 @@ pub fn three_way_merge(
             }
 
             if left.is_none() && external_non_tombstone {
-                // Trying to resurrect from external - skip.
                 report.tombstone_protected.push(id.clone());
                 continue;
             }
@@ -16021,7 +15722,6 @@ mod tests {
                 .expect("family authority"),
         );
 
-        // Read-only startup-gate flow (the first command #412 reported broken).
         let inspection =
             SqliteStorage::inspect_pending_sync_merge_under_authority(&db_path, &authority).expect(
                 "pending sync-merge inspection must not mistake the held authority for \
@@ -16035,8 +15735,6 @@ mod tests {
             "fresh database must have no pending sync merge"
         );
 
-        // Writable engine open under the same held authority (the normal
-        // mutating-command flow after the gate passes).
         let mut storage =
             SqliteStorage::open(&db_path).expect("writable engine open under family authority");
         storage.attach_write_authority(Arc::clone(&authority));
@@ -17004,12 +16702,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn database_family_authority_resolves_symlinked_parent_route_to_physical_location() {
-        // Route-policy note (ADR-0002 R1 repair): symlinked ANCESTORS are
-        // judged by their fully-resolved location — workspaces legitimately
-        // sit under system prefixes like macOS /var -> /private/var. The
-        // fail-closed boundary is the LEAF: it must be a regular file, and
-        // every derived authority artifact must land beside the PHYSICAL
-        // database, never through the lexical route.
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
         let outside_dir = temp.path().join("outside");
@@ -17027,7 +16719,6 @@ mod tests {
         )
         .expect("a symlinked parent route resolves to the physical database");
         drop(lock);
-        // Authority artifacts live beside the physical database.
         let authority_artifacts = fs::read_dir(&outside_dir)
             .unwrap()
             .filter_map(std::result::Result::ok)
@@ -17062,8 +16753,6 @@ mod tests {
         )
         .expect("a missing leaf behind a symlink route still resolves for locking");
         drop(lock);
-        // Nothing may materialize through the lexical route; any artifacts
-        // belong beside the physical location only.
         assert!(
             !routed_parent.join("not-yet-created.db").exists(),
             "lexical route must stay untouched"
@@ -18145,7 +17834,6 @@ mod tests {
         let expected_previous_state = capture_jsonl_source_snapshot(&output_path)
             .unwrap()
             .state_witness();
-        // The prior generation disappears after its witness was captured.
         fs::remove_file(&output_path).unwrap();
         let authority = blocking_jsonl_family_write_lock_with_timeout(&output_path, None).unwrap();
         let output_name = authority.pinned_name_for_target(&output_path).unwrap();
@@ -19103,7 +18791,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let output_path = temp_dir.path().join("issues.jsonl");
 
-        // Create test issues
         let issue1 = make_test_issue("bd-001", "First issue");
         let issue2 = make_test_issue("bd-002", "Second issue");
 
@@ -19117,7 +18804,6 @@ mod tests {
         assert!(result.exported_ids.contains(&"bd-001".to_string()));
         assert!(result.exported_ids.contains(&"bd-002".to_string()));
 
-        // Verify content
         let read_back = read_issues_from_jsonl(&output_path).unwrap();
         assert_eq!(read_back.len(), 2);
         assert_eq!(read_back[0].id, "bd-001");
@@ -19130,12 +18816,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let output_path = temp_dir.path().join("issues.jsonl");
 
-        // Create existing JSONL with issues
         let issue = make_test_issue("bd-existing", "Existing issue");
         let json = serde_json::to_string(&issue).unwrap();
         fs::write(&output_path, format!("{json}\n")).unwrap();
 
-        // Try to export empty database (should fail)
         let config = ExportConfig {
             force: false,
             ..Default::default()
@@ -19153,12 +18837,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let output_path = temp_dir.path().join("issues.jsonl");
 
-        // Create existing JSONL with issues
         let issue = make_test_issue("bd-existing", "Existing issue");
         let json = serde_json::to_string(&issue).unwrap();
         fs::write(&output_path, format!("{json}\n")).unwrap();
 
-        // Export with force (should succeed)
         let config = ExportConfig {
             force: true,
             ..Default::default()
@@ -19172,11 +18854,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test.jsonl");
 
-        // Empty file
         fs::write(&path, "").unwrap();
         assert_eq!(count_issues_in_jsonl(&path).unwrap(), 0);
 
-        // Two issues
         let issue1 = make_test_issue("bd-001", "One");
         let issue2 = make_test_issue("bd-002", "Two");
         let content = format!(
@@ -19325,7 +19005,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let output_path = temp_dir.path().join("issues.jsonl");
 
-        // Create regular and ephemeral issues
         let regular = make_test_issue("bd-regular", "Regular issue");
         let mut ephemeral = make_test_issue("bd-ephemeral", "Ephemeral issue");
         ephemeral.ephemeral = true;
@@ -19336,7 +19015,6 @@ mod tests {
         let config = ExportConfig::default();
         let result = export_to_jsonl(&storage, &output_path, &config).unwrap();
 
-        // Only regular issue should be exported
         assert_eq!(result.exported_count, 1);
         assert!(result.exported_ids.contains(&"bd-regular".to_string()));
         assert!(!result.exported_ids.contains(&"bd-ephemeral".to_string()));
@@ -19348,7 +19026,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let output_path = temp_dir.path().join("issues.jsonl");
 
-        // Create a JSONL with two issues
         let issue1 = make_test_issue("bd-001", "First");
         let issue2 = make_test_issue("bd-002", "Second");
         let content = format!(
@@ -19358,10 +19035,8 @@ mod tests {
         );
         fs::write(&output_path, content).unwrap();
 
-        // Only create one issue in DB (missing bd-002)
         storage.create_issue(&issue1, "test").unwrap();
 
-        // Export should fail because it would lose bd-002
         let config = ExportConfig::default();
         let result = export_to_jsonl(&storage, &output_path, &config);
 
@@ -19376,7 +19051,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let output_path = temp_dir.path().join("issues.jsonl");
 
-        // Create a JSONL with two issues
         let issue1 = make_test_issue("bd-001", "First");
         let issue2 = make_test_issue("bd-002", "Second");
         let content = format!(
@@ -19386,10 +19060,8 @@ mod tests {
         );
         fs::write(&output_path, content).unwrap();
 
-        // Only create one issue in DB
         storage.create_issue(&issue1, "test").unwrap();
 
-        // Export with force should succeed
         let config = ExportConfig {
             force: true,
             ..Default::default()
@@ -19923,7 +19595,6 @@ mod tests {
 
         normalize_issue(&mut issue);
 
-        // Issue ID containing "-wisp-" should be marked ephemeral
         assert!(issue.ephemeral);
     }
 
@@ -20023,12 +19694,6 @@ mod tests {
             .add_comment(&existing_b.id, "bob", "comment from B")
             .unwrap();
 
-        // Two divergent JSONL lineages independently used stale_b_comment.id.
-        // The merged JSONL kept that id for A and renumbered B, while the
-        // ignored local database still assigns the old id to B. A appears
-        // first in JSONL, so per-issue replacement used to AUTO-reallocate A
-        // before B released the authoritative id and then fail the semantic
-        // verifier because neither persisted id matched JSONL.
         let mut incoming_a = existing_a.clone();
         incoming_a.updated_at += chrono::Duration::minutes(1);
         incoming_a.comments = vec![crate::model::Comment {
@@ -20148,7 +19813,6 @@ mod tests {
 
         normalize_issue(&mut issue);
 
-        // closed_at should be set to updated_at for closed issues
         assert!(issue.closed_at.is_some());
         assert_eq!(issue.closed_at, Some(issue.updated_at));
     }
@@ -20161,7 +19825,6 @@ mod tests {
 
         normalize_issue(&mut issue);
 
-        // closed_at should be cleared for open issues
         assert!(issue.closed_at.is_none());
     }
 
@@ -20190,8 +19853,6 @@ mod tests {
 
     #[test]
     fn test_import_remaps_legacy_done_to_closed() {
-        // Go-beads "done" arrives as raw JSON; the pre-parse migration
-        // promotes it to Closed (bd-bqyb: typed parse would reject it).
         let line = r#"{"id":"bd-001","title":"Legacy done","status":"done","issue_type":"task","priority":2,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let issue = parse_normalized_import_issue(line, 1).expect("legacy done imports");
         assert_eq!(issue.status, Status::Closed);
@@ -20214,8 +19875,6 @@ mod tests {
 
     #[test]
     fn test_rebuild_from_event_log_restores_latest_snapshots() {
-        // bd-hj1t (3/3): wipe the table, rebuild purely from the dual-written
-        // log — latest snapshots win, tombstones stay tombstoned.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let one = make_test_issue("bd-r1", "v1");
         storage.create_issue(&one, "tester").unwrap();
@@ -20291,28 +19950,22 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("issues.jsonl");
 
-        // Create existing issue in DB with older timestamp.
-        // Pin both created_at and updated_at so the validator's
-        // "updated_at >= created_at" rule holds.
         let mut existing = make_test_issue("test-001", "Old title");
         existing.created_at = Utc::now() - chrono::Duration::hours(2);
         existing.updated_at = Utc::now() - chrono::Duration::hours(1);
         storage.create_issue(&existing, "test").unwrap();
 
-        // Create JSONL with same ID but newer timestamp and new title
         let mut incoming = make_test_issue("test-001", "New title");
         incoming.updated_at = Utc::now();
         let json = serde_json::to_string(&incoming).unwrap();
         fs::write(&path, format!("{json}\n")).unwrap();
 
-        // Import should update since incoming is newer
         let config = ImportConfig::default();
         let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
         assert_eq!(result.imported_count, 1);
         assert_eq!(result.created_count, 0);
         assert_eq!(result.updated_count, 1);
 
-        // The existing issue should be updated
         let updated = storage.get_issue("test-001").unwrap().unwrap();
         assert_eq!(updated.title, "New title");
     }
@@ -20323,19 +19976,16 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("issues.jsonl");
 
-        // Create existing issue in DB with newer timestamp
         let mut existing = make_test_issue("test-001", "Newer title");
         existing.updated_at = Utc::now();
         storage.create_issue(&existing, "test").unwrap();
 
-        // Create JSONL with same ID but older timestamp
         let mut incoming = make_test_issue("test-001", "Older title");
-        incoming.created_at = Utc::now() - chrono::Duration::hours(2); // Fix timestamp to be valid
+        incoming.created_at = Utc::now() - chrono::Duration::hours(2);
         incoming.updated_at = Utc::now() - chrono::Duration::hours(1);
         let json = serde_json::to_string(&incoming).unwrap();
         fs::write(&path, format!("{json}\n")).unwrap();
 
-        // Import should skip since existing is newer
         let config = ImportConfig::default();
         let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
         assert_eq!(result.skipped_count, 1);
@@ -20408,7 +20058,6 @@ mod tests {
 
     #[test]
     fn test_import_collision_by_external_ref_same_id() {
-        // Test collision detection by external_ref when IDs also match
         let storage = SqliteStorage::open_memory().unwrap();
 
         let mut ext_issue = make_issue_at("bd-ext", "External", fixed_time(100));
@@ -20420,8 +20069,6 @@ mod tests {
         set_content_hash(&mut hash_issue);
         storage.upsert_issue_for_import(&hash_issue).unwrap();
 
-        // Incoming has same external_ref as ext_issue - should match on external_ref
-        // even though it has same title/content_hash as hash_issue
         let mut incoming = make_issue_at("bd-new", "Incoming", fixed_time(300));
         incoming.external_ref = Some("JIRA-1".to_string());
         let computed_hash = crate::util::content_hash(&incoming);
@@ -20456,19 +20103,16 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("issues.jsonl");
 
-        // Create tombstone in DB
         let mut tombstone = make_issue_at("test-001", "Tombstone", fixed_time(100));
         tombstone.status = Status::Tombstone;
         tombstone.deleted_at = Some(Utc::now());
         storage.create_issue(&tombstone, "test").unwrap();
 
-        // Create JSONL with same ID but trying to resurrect
         let mut incoming = make_issue_at("test-001", "Resurrected", fixed_time(200));
         incoming.status = Status::Open;
         let json = serde_json::to_string(&incoming).unwrap();
         fs::write(&path, format!("{json}\n")).unwrap();
 
-        // Import should skip due to tombstone protection
         let config = ImportConfig::default();
         let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
         assert_eq!(result.tombstone_skipped, 1);
@@ -20483,7 +20127,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("issues.jsonl");
 
-        // Create JSONL with new issue
         let new_issue = make_test_issue("test-new", "Brand new");
         let json = serde_json::to_string(&new_issue).unwrap();
         fs::write(&path, format!("{json}\n")).unwrap();
@@ -20491,7 +20134,6 @@ mod tests {
         let config = ImportConfig::default();
         let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
 
-        // New issue should be imported
         assert_eq!(result.imported_count, 1);
         assert_eq!(result.created_count, 1);
         assert_eq!(result.updated_count, 0);
@@ -20550,9 +20192,7 @@ mod tests {
         let config = ExportConfig::default();
         let result = export_to_jsonl(&storage, &output_path, &config).unwrap();
 
-        // Result should include a non-empty content hash
         assert!(!result.content_hash.is_empty());
-        // Hash should be hex (64 chars for SHA256)
         assert_eq!(result.content_hash.len(), 64);
     }
 
@@ -20566,14 +20206,12 @@ mod tests {
 
         let config = ExportConfig::default();
 
-        // Export twice to different files
         let path1 = temp_dir.path().join("export1.jsonl");
         let path2 = temp_dir.path().join("export2.jsonl");
 
         let result1 = export_to_jsonl(&storage, &path1, &config).unwrap();
         let result2 = export_to_jsonl(&storage, &path2, &config).unwrap();
 
-        // Hashes should be identical for same content
         assert_eq!(result1.content_hash, result2.content_hash);
     }
 
@@ -20583,7 +20221,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("issues.jsonl");
 
-        // Create JSONL with ephemeral issue
         let mut ephemeral = make_test_issue("test-001", "Ephemeral");
         ephemeral.ephemeral = true;
         let json = serde_json::to_string(&ephemeral).unwrap();
@@ -20602,7 +20239,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("issues.jsonl");
 
-        // Create JSONL with empty lines
         let issue = make_test_issue("test-001", "Valid");
         let json = serde_json::to_string(&issue).unwrap();
         let content = format!("\n{json}\n\n\n");
@@ -21000,8 +20636,6 @@ mod tests {
         set_content_hash(&mut hash_issue);
         storage.upsert_issue_for_import(&hash_issue).unwrap();
 
-        // Incoming has same external_ref as ext_issue - should match on external_ref
-        // even though it has same title/content_hash as hash_issue
         let mut incoming = make_issue_at("bd-new", "Incoming", fixed_time(300));
         incoming.external_ref = Some("JIRA-1".to_string());
         let computed_hash = crate::util::content_hash(&incoming);
@@ -21900,9 +21534,6 @@ mod tests {
 
     #[test]
     fn test_export_policy_required_core_allows_non_core_errors() {
-        // This test verifies that RequiredCore policy exports all issues successfully
-        // and would tolerate non-core errors (Label, Dependency, Comment) if they occurred.
-        // The test doesn't generate non-core errors since the setup has no labels/deps.
         let mut storage = SqliteStorage::open_memory().unwrap();
         let issue1 = make_test_issue("bd-001", "First");
         let issue2 = make_test_issue("bd-002", "Second");
@@ -21915,7 +21546,6 @@ mod tests {
                 .unwrap();
 
         assert_eq!(result.exported_count, 2);
-        // Any errors present should be non-core (Issue errors would cause failure above)
         for err in &report.errors {
             assert_ne!(
                 err.entity_type,
@@ -21925,11 +21555,8 @@ mod tests {
         }
     }
 
-    // =====================================================================    // PREFLIGHT TESTS (beads-0v1.2.7)
-    // =====================================================================
     #[test]
     fn test_preflight_check_status_ordering() {
-        // Verify that PreflightCheckStatus can be used for comparison
         assert_ne!(PreflightCheckStatus::Pass, PreflightCheckStatus::Warn);
         assert_ne!(PreflightCheckStatus::Warn, PreflightCheckStatus::Fail);
         assert_ne!(PreflightCheckStatus::Pass, PreflightCheckStatus::Fail);
@@ -21939,28 +21566,23 @@ mod tests {
     fn test_preflight_result_aggregates_status() {
         let mut result = PreflightResult::new();
 
-        // Initial state is Pass
         assert_eq!(result.overall_status, PreflightCheckStatus::Pass);
         assert!(result.is_ok());
         assert!(result.has_no_failures());
 
-        // Add a passing check
         result.add(PreflightCheck::pass("test1", "Test 1", "Passed"));
         assert_eq!(result.overall_status, PreflightCheckStatus::Pass);
 
-        // Add a warning - overall becomes Warn
         result.add(PreflightCheck::warn("test2", "Test 2", "Warning", "Fix it"));
         assert_eq!(result.overall_status, PreflightCheckStatus::Warn);
         assert!(!result.is_ok());
         assert!(result.has_no_failures());
 
-        // Add a failure - overall becomes Fail
         result.add(PreflightCheck::fail("test3", "Test 3", "Failed", "Fix it"));
         assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
         assert!(!result.is_ok());
         assert!(!result.has_no_failures());
 
-        // Check counts
         assert_eq!(result.failures().len(), 1);
         assert_eq!(result.warnings().len(), 1);
     }
@@ -22022,7 +21644,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Write a file with conflict markers
         let mut file = std::fs::File::create(&jsonl_path).unwrap();
         writeln!(file, "<<<<<<< HEAD").unwrap();
         file.write_all(br#"{"id":"bd-1","title":"Test"}"#).unwrap();
@@ -22090,7 +21711,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Write valid JSONL
         let issue = make_test_issue("bd-001", "Test Issue");
         let json = serde_json::to_string(&issue).unwrap();
         std::fs::write(&jsonl_path, format!("{json}\n")).unwrap();
@@ -22131,8 +21751,6 @@ mod tests {
         assert!(result.failures().is_empty());
     }
 
-    // =================================================================    // Preflight Guardrail Tests (beads-1quj)
-    // =================================================================
     #[test]
     fn test_preflight_import_rejects_invalid_json_lines() {
         let temp = TempDir::new().unwrap();
@@ -22140,7 +21758,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Write JSONL with invalid lines
         let issue1 = make_test_issue("bd-001", "Good issue");
         let issue2 = make_test_issue("bd-002", "Another good issue");
         let good_json_1 = serde_json::to_string(&issue1).unwrap();
@@ -22188,7 +21805,6 @@ mod tests {
 
         let result = preflight_import(&jsonl_path, &config, None).unwrap();
 
-        // json_valid should pass
         let json_check = result.checks.iter().find(|c| c.name == "json_valid");
         assert!(json_check.is_some());
         assert_eq!(json_check.unwrap().status, PreflightCheckStatus::Pass);
@@ -22289,7 +21905,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Write issues with wrong prefix
         let issue1 = make_test_issue("xx-001", "Wrong prefix 1");
         let issue2 = make_test_issue("xx-002", "Wrong prefix 2");
         let content = format!(
@@ -22350,7 +21965,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Write issues with wrong prefix
         let issue = make_test_issue("xx-001", "Wrong prefix");
         let json = serde_json::to_string(&issue).unwrap();
         std::fs::write(&jsonl_path, format!("{json}\n")).unwrap();
@@ -22363,13 +21977,11 @@ mod tests {
 
         let result = preflight_import(&jsonl_path, &config, Some("bd")).unwrap();
 
-        // prefix_match check should NOT be present when skip_prefix_validation is true
         let prefix_check = result.checks.iter().find(|c| c.name == "prefix_match");
         assert!(
             prefix_check.is_none(),
             "prefix_match check should be skipped when skip_prefix_validation is true"
         );
-        // Overall should pass (or at least not fail on prefix)
         assert!(
             result.failures().iter().all(|c| c.name != "prefix_match"),
             "No prefix_match failures expected with override"
@@ -22471,7 +22083,6 @@ mod tests {
             ..Default::default()
         };
 
-        // No expected_prefix passed — prefix check should not be added
         let result = preflight_import(&jsonl_path, &config, None).unwrap();
 
         let prefix_check = result.checks.iter().find(|c| c.name == "prefix_match");
@@ -22488,7 +22099,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Valid JSONL with embedded conflict markers
         let issue = make_test_issue("bd-001", "Good issue");
         let good_json = serde_json::to_string(&issue).unwrap();
         let content = format!(
@@ -22504,7 +22114,6 @@ mod tests {
         let result = preflight_import(&jsonl_path, &config, None).unwrap();
 
         assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
-        // Should have both conflict marker AND json validation failures
         assert!(
             result
                 .failures()
@@ -22525,7 +22134,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Write valid JSONL with correct prefix
         let issue1 = make_test_issue("bd-001", "Issue One");
         let issue2 = make_test_issue("bd-002", "Issue Two");
         let content = format!(
@@ -22542,7 +22150,6 @@ mod tests {
 
         let result = preflight_import(&jsonl_path, &config, Some("bd")).unwrap();
 
-        // All checks should pass
         assert_eq!(
             result.overall_status,
             PreflightCheckStatus::Pass,
@@ -22555,7 +22162,6 @@ mod tests {
         );
         assert!(result.failures().is_empty());
 
-        // Verify all expected checks ran
         let check_names: Vec<&str> = result.checks.iter().map(|c| c.name.as_str()).collect();
         assert!(
             check_names.contains(&"beads_dir_exists"),
@@ -22586,7 +22192,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Mix of correct and incorrect prefix
         let good_issue = make_test_issue("bd-001", "Good prefix");
         let bad_issue = make_test_issue("xx-002", "Bad prefix");
         let content = format!(
@@ -22622,7 +22227,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Create a tombstone with wrong prefix — should be silently ignored
         let mut tombstone = make_test_issue("xx-001", "Foreign tombstone");
         tombstone.status = Status::Tombstone;
         let good_issue = make_test_issue("bd-001", "Good issue");
@@ -22640,7 +22244,6 @@ mod tests {
 
         let result = preflight_import(&jsonl_path, &config, Some("bd")).unwrap();
 
-        // Tombstone with wrong prefix should not cause failure
         let prefix_check = result.checks.iter().find(|c| c.name == "prefix_match");
         assert!(prefix_check.is_some());
         assert_eq!(
@@ -22657,7 +22260,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Empty file
         std::fs::write(&jsonl_path, "").unwrap();
 
         let config = ImportConfig {
@@ -22667,7 +22269,6 @@ mod tests {
 
         let result = preflight_import(&jsonl_path, &config, None).unwrap();
 
-        // An empty file should pass JSON validation (no invalid lines)
         let json_check = result.checks.iter().find(|c| c.name == "json_valid");
         assert!(json_check.is_some());
         assert_eq!(json_check.unwrap().status, PreflightCheckStatus::Pass);
@@ -22680,7 +22281,6 @@ mod tests {
         std::fs::create_dir_all(&beads_dir).unwrap();
         let jsonl_path = beads_dir.join("issues.jsonl");
 
-        // Only whitespace/blank lines
         std::fs::write(&jsonl_path, "\n\n  \n\t\n").unwrap();
 
         let config = ImportConfig {
@@ -22695,8 +22295,6 @@ mod tests {
         assert_eq!(json_check.unwrap().status, PreflightCheckStatus::Pass);
     }
 
-    // =================================================================    // 3-Way Merge Tests
-    // =================================================================
     fn fixed_time_merge(seconds: i64) -> chrono::DateTime<Utc> {
         chrono::DateTime::from_timestamp(seconds, 0).unwrap()
     }
@@ -22766,7 +22364,6 @@ mod tests {
 
     #[test]
     fn test_merge_new_local_issue_kept() {
-        // Issue only in left (new local) should be kept
         let local = make_issue_with_hash("bd-1", "New Local", fixed_time_merge(100), Some("hash1"));
         let result = merge_issue(None, Some(&local), None, ConflictResolution::PreferNewer);
         assert!(matches!(result, MergeResult::Keep(issue) if issue.id == "bd-1"));
@@ -22774,7 +22371,6 @@ mod tests {
 
     #[test]
     fn test_merge_new_external_issue_kept() {
-        // Issue only in right (new external) should be kept
         let external =
             make_issue_with_hash("bd-2", "New External", fixed_time_merge(100), Some("hash2"));
         let result = merge_issue(None, None, Some(&external), ConflictResolution::PreferNewer);
@@ -22783,7 +22379,6 @@ mod tests {
 
     #[test]
     fn test_merge_deleted_both_sides() {
-        // Issue in base but deleted in both local and external -> delete
         let base = make_issue_with_hash("bd-3", "Old", fixed_time_merge(100), Some("hash3"));
         let result = merge_issue(Some(&base), None, None, ConflictResolution::PreferNewer);
         assert!(matches!(result, MergeResult::Delete));
@@ -22791,7 +22386,6 @@ mod tests {
 
     #[test]
     fn test_merge_deleted_external_unmodified_local() {
-        // Issue in base and local (unmodified), deleted in external -> delete
         let base = make_issue_with_hash("bd-4", "Base", fixed_time_merge(100), Some("hash4"));
         let result = merge_issue(
             Some(&base),
@@ -22804,10 +22398,9 @@ mod tests {
 
     #[test]
     fn test_merge_deleted_external_modified_local() {
-        // Issue in base and local (modified), deleted in external -> conflict (or keep local with PreferNewer)
         let base = make_issue_with_hash("bd-5", "Base", fixed_time_merge(100), Some("hash5"));
         let local =
-            make_issue_with_hash("bd-5", "Modified", fixed_time_merge(200), Some("hash5_mod")); // Modified after base
+            make_issue_with_hash("bd-5", "Modified", fixed_time_merge(200), Some("hash5_mod"));
 
         let result = merge_issue(
             Some(&base),
@@ -22820,7 +22413,6 @@ mod tests {
 
     #[test]
     fn test_merge_deleted_local_modified_external() {
-        // Issue in base and external (modified), deleted in local -> conflict (or keep external with PreferNewer)
         let base = make_issue_with_hash("bd-006", "Base", fixed_time_merge(100), Some("hash6"));
         let external = make_issue_with_hash(
             "bd-006",
@@ -22840,7 +22432,6 @@ mod tests {
 
     #[test]
     fn test_merge_only_local_modified() {
-        // Issue in all three, only local modified -> keep local
         let base = make_issue_with_hash("bd-007", "Base", fixed_time_merge(100), Some("hash7"));
         let local = make_issue_with_hash(
             "bd-007",
@@ -22848,7 +22439,7 @@ mod tests {
             fixed_time_merge(200),
             Some("hash7_mod"),
         );
-        let external = make_issue_with_hash("bd-007", "Base", fixed_time_merge(100), Some("hash7")); // Same as base
+        let external = make_issue_with_hash("bd-007", "Base", fixed_time_merge(100), Some("hash7"));
 
         let result = merge_issue(
             Some(&base),
@@ -22861,9 +22452,8 @@ mod tests {
 
     #[test]
     fn test_merge_only_external_modified() {
-        // Issue in all three, only external modified -> keep external
         let base = make_issue_with_hash("bd-008", "Base", fixed_time_merge(100), Some("hash8"));
-        let local = make_issue_with_hash("bd-008", "Base", fixed_time_merge(100), Some("hash8")); // Same as base
+        let local = make_issue_with_hash("bd-008", "Base", fixed_time_merge(100), Some("hash8"));
         let external = make_issue_with_hash(
             "bd-008",
             "Modified",
@@ -22882,7 +22472,6 @@ mod tests {
 
     #[test]
     fn test_merge_both_modified_prefer_newer() {
-        // Issue in all three, both modified -> keep newer
         let base = make_issue_with_hash("bd-009", "Base", fixed_time_merge(100), Some("hash9"));
         let local = make_issue_with_hash(
             "bd-009",
@@ -22937,7 +22526,6 @@ mod tests {
 
     #[test]
     fn test_merge_convergent_creation_same_content() {
-        // Both created independently with same content hash -> keep one
         let local = make_issue_with_hash("bd-011", "Same", fixed_time_merge(100), Some("hash11"));
         let external =
             make_issue_with_hash("bd-011", "Same", fixed_time_merge(100), Some("hash11"));
@@ -22953,7 +22541,6 @@ mod tests {
 
     #[test]
     fn test_merge_convergent_creation_different_content() {
-        // Both created independently with different content -> keep newer
         let local = make_issue_with_hash(
             "bd-012",
             "Local",
@@ -22978,7 +22565,6 @@ mod tests {
 
     #[test]
     fn test_merge_neither_changed() {
-        // Issue in all three, neither changed -> keep (use left by convention)
         let base = make_issue_with_hash("bd-013", "Same", fixed_time_merge(100), Some("hash13"));
         let local = make_issue_with_hash("bd-013", "Same", fixed_time_merge(100), Some("hash13"));
         let external =
@@ -23015,11 +22601,8 @@ mod tests {
         assert_eq!(report.total_actions(), 3);
     }
 
-    // =================================================================    // three_way_merge orchestration tests
-    // =================================================================
     #[test]
     fn test_three_way_merge_basic() {
-        // Setup: one issue in each state
         let base_issue =
             make_issue_with_hash("bd-001", "Base", fixed_time_merge(100), Some("hash1"));
         let local_issue =
@@ -23045,7 +22628,6 @@ mod tests {
         let context = MergeContext::new(base, left, right);
         let report = three_way_merge(&context, ConflictResolution::PreferNewer, None);
 
-        // Should keep bd-001 (in all three), bd-002 (local only), bd-003 (external only)
         assert_eq!(report.kept.len(), 3);
         assert!(report.conflicts.is_empty());
         assert!(report.deleted.is_empty());
@@ -23053,7 +22635,6 @@ mod tests {
 
     #[test]
     fn test_three_way_merge_with_tombstone_protection() {
-        // Setup: tombstoned issue trying to resurrect from external
         let external_issue = make_issue_with_hash(
             "bd-tomb",
             "Should Not Resurrect",
@@ -23068,13 +22649,11 @@ mod tests {
 
         let context = MergeContext::new(base, left, right);
 
-        // Create tombstones set
         let mut tombstones = std::collections::HashSet::new();
         tombstones.insert("bd-tomb".to_string());
 
         let report = three_way_merge(&context, ConflictResolution::PreferNewer, Some(&tombstones));
 
-        // Should NOT keep the tombstoned issue
         assert!(report.kept.is_empty());
         assert_eq!(report.tombstone_protected.len(), 1);
         assert!(report.tombstone_protected.contains(&"bd-tomb".to_string()));
@@ -23082,7 +22661,6 @@ mod tests {
 
     #[test]
     fn test_three_way_merge_tombstone_allows_local() {
-        // Setup: tombstoned issue exists in local - should be allowed
         let local_issue = make_issue_with_hash(
             "bd-tomb",
             "Local Tombstoned",
@@ -23101,7 +22679,6 @@ mod tests {
 
         let report = three_way_merge(&context, ConflictResolution::PreferNewer, Some(&tombstones));
 
-        // Should keep local even if tombstoned
         assert_eq!(report.kept.len(), 1);
         assert!(report.tombstone_protected.is_empty());
     }
@@ -23144,7 +22721,6 @@ mod tests {
 
     #[test]
     fn test_three_way_merge_deletions() {
-        // Setup: issue in base but deleted in both left and right
         let base_issue =
             make_issue_with_hash("bd-del", "To Delete", fixed_time_merge(100), Some("hash1"));
 
@@ -23177,7 +22753,6 @@ mod tests {
 
     #[test]
     fn test_merge_conflict_manual_strategy() {
-        // Setup: issue deleted externally but modified locally with Manual strategy
         let base_issue =
             make_issue_with_hash("bd-001", "Base", fixed_time_merge(100), Some("base_hash"));
         let local_issue = make_issue_with_hash(
@@ -23196,7 +22771,6 @@ mod tests {
         let context = MergeContext::new(base, left, right);
         let report = three_way_merge(&context, ConflictResolution::Manual, None);
 
-        // With Manual strategy, delete-vs-modify should be a conflict
         assert_eq!(report.conflicts.len(), 1);
         assert!(matches!(
             report.conflicts[0].1,
@@ -23206,7 +22780,6 @@ mod tests {
 
     #[test]
     fn test_three_way_merge_with_notes() {
-        // Setup: issue modified in both left and right
         let base_issue = make_issue_with_hash(
             "bd-001",
             "Base Title",
@@ -23236,7 +22809,6 @@ mod tests {
         let context = MergeContext::new(base, left, right);
         let report = three_way_merge(&context, ConflictResolution::PreferNewer, None);
 
-        // Should have a note about the merge decision
         assert_eq!(report.kept.len(), 1);
         assert_eq!(report.notes.len(), 1);
         assert!(report.notes[0].1.contains("Both modified"));
@@ -23311,7 +22883,6 @@ mod tests {
         let path2 = temp_dir.path().join("file2.jsonl");
 
         let content1 = "{\"id\":\"bd-1\"}\n{\"id\":\"bd-2\"}\n";
-        // content2 has extra empty lines, different line endings, and extra whitespace
         let content2 = "\n{\"id\":\"bd-1\"}\r\n  \n{\"id\":\"bd-2\"}  \n\n";
 
         fs::write(&path1, content1).unwrap();
@@ -23362,7 +22933,6 @@ mod tests {
         assert_eq!(first.exported_count, 1);
         let published = fs::read(&gates_path).unwrap();
 
-        // A publication with no new gate rows must not rewrite the file.
         let second =
             export_gates_to_jsonl(&storage, &gates_path, &ExportConfig::default()).unwrap();
         assert_eq!(second.exported_count, 1);
@@ -23384,7 +22954,6 @@ mod tests {
             );
         }
 
-        // A new gate row is appended; the published rows stay byte-identical.
         storage
             .insert_gate_result_record(&record("second-gate"))
             .unwrap();
@@ -23407,12 +22976,9 @@ mod tests {
         fs::write(&jsonl_path, "{\"id\":\"br-1\"}\n").unwrap();
         let storage = SqliteStorage::open_memory().unwrap();
 
-        // A stored hash that does NOT match the file: had the probe
-        // consulted it, the file would read as changed.
         storage
             .set_metadata_shared(METADATA_JSONL_CONTENT_HASH, "not-the-file-hash")
             .unwrap();
-        // The file's own change-time, witnessed more than a second ago.
         let identity = file_identity_witness(&fs::metadata(&jsonl_path).unwrap())
             .expect("a change-time witness");
         let change_time = identity_change_time(&identity).expect("a change-time");
@@ -23445,8 +23011,6 @@ mod tests {
             .set_metadata_shared(METADATA_JSONL_CONTENT_HASH, &content_hash)
             .unwrap();
 
-        // The file is rewritten with the same bytes: the change-time moved,
-        // so the hash decides, and the content is unchanged.
         let content = fs::read_to_string(&jsonl_path).unwrap();
         fs::write(&jsonl_path, &content).unwrap();
         let probe = compute_jsonl_newer_impl(&storage, &jsonl_path).unwrap();
@@ -23455,7 +23019,6 @@ mod tests {
             "a touched file with unchanged content must not read as newer"
         );
 
-        // The same file with different content reads as newer.
         fs::write(&jsonl_path, "{\"id\":\"br-2\"}\n").unwrap();
         let probe = compute_jsonl_newer_impl(&storage, &jsonl_path).unwrap();
         assert!(probe.jsonl_newer, "a changed file must read as newer");
@@ -23479,7 +23042,6 @@ mod tests {
         storage.create_issue(&issue, "tester").unwrap();
         export_to_jsonl(&storage, &jsonl_path, &ExportConfig::default()).unwrap();
 
-        // Rebuild the data tables: the schema (with its indexes) is re-applied.
         storage.reset_data_tables().unwrap();
 
         let plan = storage.ready_query_plan().unwrap();

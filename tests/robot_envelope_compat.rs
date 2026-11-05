@@ -50,8 +50,6 @@ fn workspace_with_fixture() -> BrWorkspace {
     let workspace = BrWorkspace::new();
     let beads_dir = workspace.root.join(".beads");
     std::fs::create_dir_all(&beads_dir).expect("create .beads dir");
-    // Dangling dep refs are stripped: see beads_rust-svtxe and the
-    // plan/insights parity test for why replaying them diverges from bv.
     let stripped: Vec<String> = FIXTURE_ISSUES
         .lines()
         .filter(|line| !line.trim().is_empty())

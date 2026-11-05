@@ -44,7 +44,6 @@ fn doctor_repair_restores_the_gate_verdicts_a_rebuild_would_drop() {
     let id = parse_created_id(&created.stdout);
     assert!(!id.is_empty(), "create must report the id: {}", created.stdout);
 
-    // Record a PASS verdict for the close.
     let gate = run_br(
         &workspace,
         [
@@ -66,7 +65,6 @@ fn doctor_repair_restores_the_gate_verdicts_a_rebuild_would_drop() {
     );
     assert!(gate.status.success(), "gate report failed: {}", gate.stderr);
 
-    // FLUSH: the issues export plus the verdict sidecar.
     let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
@@ -78,11 +76,9 @@ fn doctor_repair_restores_the_gate_verdicts_a_rebuild_would_drop() {
         "the sidecar must carry the verdict row: {sidecar}"
     );
 
-    // Destroy the database: the JSONL pair is now the only source of truth.
     let db_path = beads_dir.join("beads.db");
     fs::remove_file(&db_path).expect("remove the database");
 
-    // The repair rebuilds the database family from the JSONL.
     let repair = run_br(&workspace, ["doctor", "--repair"], "repair");
     assert!(
         repair.status.success(),
@@ -91,7 +87,6 @@ fn doctor_repair_restores_the_gate_verdicts_a_rebuild_would_drop() {
         repair.stderr
     );
 
-    // The verdict must be BACK in the rebuilt database.
     let storage = SqliteStorage::open(&db_path).expect("open the rebuilt database");
     let rows = storage
         .get_scoped_gate_results(&id, "open", "closed")
@@ -99,7 +94,6 @@ fn doctor_repair_restores_the_gate_verdicts_a_rebuild_would_drop() {
     assert_eq!(rows.len(), 1, "the verdict must survive the rebuild");
     assert!(rows[0].passed, "the restored verdict must be the PASS row");
 
-    // And the next flush must NOT rewrite the sidecar empty.
     let flush_again = run_br(&workspace, ["sync", "--flush-only"], "flush_again");
     assert!(
         flush_again.status.success(),

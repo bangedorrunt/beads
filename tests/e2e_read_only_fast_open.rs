@@ -302,10 +302,6 @@ fn run_command(workspace: &BrWorkspace, command: &MatrixCommand, disable_fast_op
         );
     }
 
-    // The read-only fast path is opt-in: it is only selected when the caller
-    // has also waived auto-import and auto-flush, since both of those write.
-    // Ask for it explicitly rather than relying on the bare command happening
-    // to avoid the workspace write lock.
     let mut args: Vec<&str> = vec!["--no-auto-import", "--no-auto-flush"];
     args.extend(command.args.iter().map(String::as_str));
     run_br(workspace, args, &format!("{}_fast", command.label))

@@ -120,7 +120,6 @@ fn gate_verdict_written_refuses_a_close_verdict_with_no_proving_row() {
         "the refusal must name what is missing, got: {message}"
     );
 
-    // Refuse means roll back: no verdict, no closed status, no row.
     let issue = storage.get_issue("issue-orphan").unwrap().unwrap();
     assert_eq!(issue.status, Status::Open, "a refused close must not land");
     assert!(issue.close_verdict.is_none());

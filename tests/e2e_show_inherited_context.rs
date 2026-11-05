@@ -101,8 +101,6 @@ fn e2e_show_two_siblings_emits_shared_inherited_context_once() {
         show.stdout
     );
 
-    // The block must precede the first child referencing it, and both
-    // children must still render their own details.
     let block_pos = show
         .stdout
         .find(&header_marker)
@@ -153,8 +151,6 @@ fn e2e_show_single_child_still_emits_inherited_context() {
 
 #[test]
 fn e2e_show_json_carries_inherited_context_as_structured_field() {
-    // beads#430: JSON output must carry the same inherited governing
-    // context that text mode renders, as a structured field.
     let _log = common::test_log("e2e_show_json_carries_inherited_context_as_structured_field");
     let workspace = init_workspace();
     let (epic_id, child_a, _child_b) = epic_with_two_children(&workspace);
@@ -204,7 +200,6 @@ fn e2e_show_json_carries_inherited_context_as_structured_field() {
 
 #[test]
 fn e2e_show_toon_carries_inherited_context() {
-    // beads#430: TOON output parity with text mode.
     let _log = common::test_log("e2e_show_toon_carries_inherited_context");
     let workspace = init_workspace();
     let (epic_id, child_a, _child_b) = epic_with_two_children(&workspace);
@@ -230,8 +225,6 @@ fn e2e_show_toon_carries_inherited_context() {
 
 #[test]
 fn e2e_show_json_without_opt_in_omits_inherited_context() {
-    // Emission stays opt-in in structured formats too; the field is elided
-    // entirely when the project has not opted in.
     let _log = common::test_log("e2e_show_json_without_opt_in_omits_inherited_context");
     let workspace = init_workspace();
     let (_epic_id, child_a, _child_b) = epic_with_two_children(&workspace);

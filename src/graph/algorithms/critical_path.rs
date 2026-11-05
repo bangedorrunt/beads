@@ -22,15 +22,13 @@ pub fn critical_path_heights(graph: &DiGraph) -> Vec<f64> {
         return Vec::new();
     }
 
-    // Topological order (returns None if cyclic)
     let order = match topological_sort(graph) {
         Some(o) => o,
-        None => return vec![0.0; n], // Return zeros for cyclic graphs
+        None => return vec![0.0; n],
     };
 
     let mut heights = vec![0.0; n];
 
-    // Process in topological order
     for &v in &order {
         let max_pred_height = graph
             .predecessors_slice(v)
@@ -87,7 +85,6 @@ mod tests {
 
     #[test]
     fn test_linear_chain() {
-        // a -> b -> c
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");
@@ -96,18 +93,13 @@ mod tests {
         g.add_edge(b, c);
 
         let heights = critical_path_heights(&g);
-        assert!((heights[a] - 1.0).abs() < f64::EPSILON); // Root
-        assert!((heights[b] - 2.0).abs() < f64::EPSILON); // Depth 2
-        assert!((heights[c] - 3.0).abs() < f64::EPSILON); // Depth 3
+        assert!((heights[a] - 1.0).abs() < f64::EPSILON);
+        assert!((heights[b] - 2.0).abs() < f64::EPSILON);
+        assert!((heights[c] - 3.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_diamond() {
-        //     a (height 1)
-        //    / \
-        //   b   c  (both height 2)
-        //    \ /
-        //     d (height 3)
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");
@@ -127,8 +119,6 @@ mod tests {
 
     #[test]
     fn test_parallel_chains() {
-        // a -> b -> c (chain of 3)
-        // d -> e      (chain of 2)
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");
@@ -142,7 +132,7 @@ mod tests {
         let heights = critical_path_heights(&g);
         assert!((heights[a] - 1.0).abs() < f64::EPSILON);
         assert!((heights[b] - 2.0).abs() < f64::EPSILON);
-        assert!((heights[c] - 3.0).abs() < f64::EPSILON); // Max
+        assert!((heights[c] - 3.0).abs() < f64::EPSILON);
         assert!((heights[d] - 1.0).abs() < f64::EPSILON);
         assert!((heights[e] - 2.0).abs() < f64::EPSILON);
 
@@ -151,7 +141,6 @@ mod tests {
 
     #[test]
     fn test_cyclic_graph() {
-        // a -> b -> c -> a (cycle)
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");
@@ -161,13 +150,11 @@ mod tests {
         g.add_edge(c, a);
 
         let heights = critical_path_heights(&g);
-        // Should return zeros for cyclic graphs
         assert_eq!(heights, vec![0.0, 0.0, 0.0]);
     }
 
     #[test]
     fn test_critical_path_nodes() {
-        // a -> b -> c
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");
@@ -176,15 +163,11 @@ mod tests {
         g.add_edge(b, c);
 
         let critical = critical_path_nodes(&g);
-        // Only c has maximum height (3)
         assert_eq!(critical, vec![c]);
     }
 
     #[test]
     fn test_multiple_critical_path_nodes() {
-        // a -> b
-        // c -> d
-        // Both chains have length 2
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");
@@ -194,7 +177,6 @@ mod tests {
         g.add_edge(c, d);
 
         let critical = critical_path_nodes(&g);
-        // Both b and d have maximum height (2)
         assert_eq!(critical.len(), 2);
         assert!(critical.contains(&b));
         assert!(critical.contains(&d));
@@ -202,7 +184,6 @@ mod tests {
 
     #[test]
     fn test_wide_graph() {
-        // a points to b, c, d, e (all at depth 2)
         let mut g = DiGraph::new();
         let a = g.add_node("a");
         let b = g.add_node("b");

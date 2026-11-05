@@ -37,7 +37,6 @@ pub fn run() -> crate::error::Result<()> {
         .map_err(|e| crate::error::BeadsError::Config(format!("TUI backend: {e}")))?;
 
     loop {
-        // Keep responsive layout in sync with actual terminal size (iphone/mobile needs width <= 80 to collapse to single-column)
         if let Ok(size) = terminal.size() {
             app.set_size(size.width, size.height);
         }
@@ -52,7 +51,6 @@ pub fn run() -> crate::error::Result<()> {
         if let Event::Key(key) =
             event::read().map_err(|e| crate::error::BeadsError::Config(format!("TUI read: {e}")))?
         {
-            // Only fire on press; some terminals emit release events too.
             if key.kind == KeyEventKind::Press {
                 app.handle_key(to_key(&key));
             }

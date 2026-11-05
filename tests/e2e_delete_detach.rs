@@ -11,8 +11,6 @@ use common::cli::{BrWorkspace, extract_json_payload, run_br};
 use serde_json::Value;
 
 fn create_id(workspace: &BrWorkspace, title: &str, label: &str) -> String {
-    // bd-lt77 follow-on: create is fail-closed, so this fixture must satisfy the
-    // same contract a real caller does. It predates that contract.
     let brief = format!("fixture brief for {title}: create is fail-closed");
     let create = run_br(
         workspace,
@@ -61,7 +59,6 @@ fn e2e_delete_detach_drops_edges_and_spares_unrelated_work() {
     let dep2 = run_br(&workspace, ["dep", "add", &c, &mid], "dep_c_mid");
     assert!(dep2.status.success(), "dep add failed: {}", dep2.stderr);
 
-    // Plain delete still refuses while dependents exist.
     let blocked = run_br(&workspace, ["delete", &mid], "delete_blocked");
     assert!(
         blocked.stdout.contains("Use --detach"),

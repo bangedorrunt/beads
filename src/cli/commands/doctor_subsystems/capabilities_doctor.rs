@@ -14,7 +14,7 @@
 //! Stability: the JSON shape is stable contract. New fields are
 //! purely additive; agents must tolerate unknown keys.
 
-#![allow(dead_code)] // WP1 foundation; consumed by WP3-WP12.
+#![allow(dead_code)]
 
 use std::path::Path;
 
@@ -315,7 +315,6 @@ const DETECTOR_ROWS: &[DetectorRow] = &[
     ("schema.inspect", "schemas", "error", true),
     ("db.null_defaults", "schemas", "warn", true),
     ("sqlite.integrity_check", "state_files", "error", true),
-    // --quick drops these:
     ("db.recoverable_anomalies", "caches_indexes", "warn", false),
     ("counts.db_vs_jsonl", "state_files", "warn", false),
     ("sync.metadata", "state_files", "warn", false),
@@ -520,9 +519,6 @@ const EARLY_CHOKEPOINT_FIXER_ROWS: &[FixerRow] = &[
         &["wal_size"],
         &["fm-state_files-wal-oversized"],
     ),
-    // Pass-8 cycle 61: backfill schema-declared defaults into NULL
-    // NOT-NULL columns via Op::DbExec (previously missing from the
-    // registry entirely — beads-oow2).
     (
         "doctor.null_defaults_backfill",
         "schemas",
@@ -550,9 +546,6 @@ fn legacy_fixer_rows() -> &'static [FixerRow] {
                 "fm-state_files-wal-shm-sidecar-orphan",
             ],
         ),
-        // The partial-index REINDEX pass repairs "row N missing from
-        // index" warnings, which surface under the integrity checks —
-        // not `db.recoverable_anomalies` (corrected: beads-oow2).
         (
             "doctor.repair_partial_indexes",
             "caches_indexes",
@@ -569,10 +562,6 @@ fn legacy_fixer_rows() -> &'static [FixerRow] {
             &["sqlite.integrity_check", "sqlite3.integrity_check"],
             &["fm-state_files-sqlite-page-malformed"],
         ),
-        // Pass-10 cycle 62: VACUUM on db bloat. Requires the explicit
-        // `--unsafe-auto-fix` opt-in on top of `--repair`, hence
-        // auto_fixable=false (previously missing from the registry
-        // entirely — beads-oow2).
         (
             "doctor.db_bloat_vacuum",
             "caches_indexes",
@@ -659,8 +648,6 @@ fn fixer_entry_from_row(row: &FixerRow) -> FixerEntry {
 }
 
 fn build_fixer_registry() -> Vec<FixerEntry> {
-    // (id, subsystem, auto_fixable, mutates_via_chokepoint,
-    //  addressed_findings, filter_ids)
     early_chokepoint_fixer_rows()
         .iter()
         .chain(legacy_fixer_rows())
@@ -697,16 +684,13 @@ mod tests {
         assert_eq!(caps.contract_version, "1");
         assert_eq!(caps.doctor_version, env!("CARGO_PKG_VERSION"));
         assert!(!caps.exit_codes.is_empty());
-        // Healthy / RefusedUnsafe / IoError must always be present.
         let mut codes: Vec<i32> = caps.exit_codes.iter().map(|e| e.code).collect();
         codes.sort_unstable();
         assert!(codes.contains(&0));
         assert!(codes.contains(&4));
         assert!(codes.contains(&74));
-        // Scopes are non-empty.
         assert!(caps.write_scopes.contains(&".beads/".to_string()));
         assert!(caps.write_scopes.contains(&".doctor/".to_string()));
-        // Env vars include the run-dir override.
         assert!(caps.env_vars.contains(&super::super::run_dir::ENV_RUNS_DIR));
     }
 
@@ -720,7 +704,6 @@ mod tests {
         assert!(parsed["exit_codes"].is_array());
         assert!(parsed["fixers"].is_array());
         assert!(parsed["detectors"].is_array());
-        // WP4: ops_supported must enumerate the chokepoint contract.
         let ops = parsed["ops_supported"]
             .as_array()
             .expect("ops_supported array");
@@ -742,10 +725,6 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn capabilities_detectors_and_fixers_are_populated() {
-        // Phase 10 cold-prober finding (`beads-3idn`): a cold
-        // agent must see the actual detector + fixer registries, not
-        // empty arrays. Lock the floor so future refactors can't
-        // silently drop entries back to [].
         let caps = DoctorCapabilities::build();
         assert!(
             !caps.detectors.is_empty(),
@@ -755,7 +734,6 @@ mod tests {
             !caps.fixers.is_empty(),
             "fixer registry must enumerate the repair_* family"
         );
-        // Canonical entries must be present.
         let detector_ids: Vec<&str> = caps.detectors.iter().map(|d| d.id.as_str()).collect();
         let mut sorted_detector_ids = detector_ids.clone();
         sorted_detector_ids.sort_unstable();
@@ -839,8 +817,6 @@ mod tests {
                 "fixer registry missing {required}"
             );
         }
-        // Every detector must declare a subsystem the existing checks
-        // recognize.
         for d in &caps.detectors {
             assert!(
                 !d.subsystem.is_empty(),
@@ -848,7 +824,6 @@ mod tests {
                 d.id
             );
         }
-        // At least one fixer must route through the chokepoint (WP3+).
         assert!(
             caps.fixers.iter().any(|f| f.mutates),
             "at least one fixer must route through mutate()"

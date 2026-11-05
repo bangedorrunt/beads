@@ -40,7 +40,6 @@ impl<'a> DependencyTree<'a> {
     }
 
     fn build_node(&self, issue: &Issue, depth: usize) -> TreeNode {
-        // Create label with ID, status, and title
         let label = format!(
             "{} [{}] {}",
             sanitize_terminal_inline(&issue.id),
@@ -50,14 +49,12 @@ impl<'a> DependencyTree<'a> {
 
         let mut node = TreeNode::new(Text::new(label));
 
-        // Recursively add dependencies (if not too deep)
         if depth < self.max_depth {
             for dep in &issue.dependencies {
                 if let Some(dep_issue) = self.find_issue(&dep.depends_on_id) {
                     let child = self.build_node(dep_issue, depth + 1);
                     node = node.child(child);
                 } else {
-                    // Dependency not found (external or deleted)
                     let missing = TreeNode::new(Text::new(format!(
                         "{} [?] (not found)",
                         sanitize_terminal_inline(&dep.depends_on_id)
@@ -120,9 +117,7 @@ mod tests {
 
     #[test]
     fn test_dep_tree_truncation_safe() {
-        // Emojis are 2 visual columns each
-        let title = "😊".repeat(20); // 20 chars, 40 visual columns
-        // Max 10 visual columns → 3 emojis (6 cols) + "..." (3 cols) = 9 cols
+        let title = "😊".repeat(20);
         let truncated = truncate(&title, 10);
 
         assert!(UnicodeWidthStr::width(truncated.as_str()) <= 10);

@@ -131,7 +131,6 @@ mod tests {
 
     #[test]
     fn test_reachable_from_chain() {
-        // a -> b -> c -> d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -156,11 +155,6 @@ mod tests {
 
     #[test]
     fn test_reachable_from_diamond() {
-        //     a
-        //    / \
-        //   b   c
-        //    \ /
-        //     d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -182,7 +176,6 @@ mod tests {
 
     #[test]
     fn test_reachable_to_chain() {
-        // a -> b -> c -> d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -207,11 +200,6 @@ mod tests {
 
     #[test]
     fn test_reachable_to_diamond() {
-        //     a
-        //    / \
-        //   b   c
-        //    \ /
-        //     d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -241,7 +229,6 @@ mod tests {
 
     #[test]
     fn test_blockers_and_dependents() {
-        // a -> c, b -> c (c has two blockers)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -260,7 +247,6 @@ mod tests {
 
     #[test]
     fn test_is_actionable() {
-        // a -> b -> c
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -268,29 +254,21 @@ mod tests {
         graph.add_edge(a, b);
         graph.add_edge(b, c);
 
-        // Nothing closed: only a is actionable (no blockers)
         let closed_none = vec![false, false, false];
         assert!(is_actionable(&graph, a, &closed_none));
         assert!(!is_actionable(&graph, b, &closed_none));
         assert!(!is_actionable(&graph, c, &closed_none));
 
-        // a closed: b becomes actionable
         let closed_a = vec![true, false, false];
         assert!(is_actionable(&graph, b, &closed_a));
         assert!(!is_actionable(&graph, c, &closed_a));
 
-        // a and b closed: c becomes actionable
         let closed_ab = vec![true, true, false];
         assert!(is_actionable(&graph, c, &closed_ab));
     }
 
     #[test]
     fn test_actionable_nodes() {
-        //     a
-        //    / \
-        //   b   c
-        //    \ /
-        //     d
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -301,19 +279,16 @@ mod tests {
         graph.add_edge(b, d);
         graph.add_edge(c, d);
 
-        // Nothing closed: only a is actionable
         let closed_none = vec![false, false, false, false];
         let actionable = actionable_nodes(&graph, &closed_none);
         assert_eq!(actionable, vec![a]);
 
-        // a closed: b and c become actionable
         let closed_a = vec![true, false, false, false];
         let actionable = actionable_nodes(&graph, &closed_a);
         assert_eq!(actionable.len(), 2);
         assert!(actionable.contains(&b));
         assert!(actionable.contains(&c));
 
-        // a, b, c closed: d becomes actionable
         let closed_abc = vec![true, true, true, false];
         let actionable = actionable_nodes(&graph, &closed_abc);
         assert_eq!(actionable, vec![d]);
@@ -321,7 +296,6 @@ mod tests {
 
     #[test]
     fn test_open_blockers() {
-        // a -> c, b -> c
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -329,19 +303,16 @@ mod tests {
         graph.add_edge(a, c);
         graph.add_edge(b, c);
 
-        // Nothing closed: c has 2 open blockers
         let closed_none = vec![false, false, false];
         let open = open_blockers(&graph, c, &closed_none);
         assert_eq!(open.len(), 2);
         assert!(open.contains(&a));
         assert!(open.contains(&b));
 
-        // a closed: c has 1 open blocker (b)
         let closed_a = vec![true, false, false];
         let open = open_blockers(&graph, c, &closed_a);
         assert_eq!(open, vec![b]);
 
-        // Both closed: c has 0 open blockers
         let closed_ab = vec![true, true, false];
         let open = open_blockers(&graph, c, &closed_ab);
         assert!(open.is_empty());
@@ -349,7 +320,6 @@ mod tests {
 
     #[test]
     fn test_open_blocker_count() {
-        // a -> c, b -> c
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -369,7 +339,6 @@ mod tests {
 
     #[test]
     fn test_disconnected() {
-        // a -> b, c (isolated)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -386,7 +355,6 @@ mod tests {
 
     #[test]
     fn test_cycle() {
-        // a -> b -> c -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -395,7 +363,6 @@ mod tests {
         graph.add_edge(b, c);
         graph.add_edge(c, a);
 
-        // All nodes reachable from any node
         let from_a = reachable_from(&graph, a);
         assert_eq!(from_a.len(), 3);
 

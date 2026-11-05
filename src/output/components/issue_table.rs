@@ -142,7 +142,6 @@ impl<'a> IssueTable<'a> {
             .as_deref()
             .and_then(build_highlight_regex);
 
-        // Reserve ~100 chars for other columns (conservative) or min 60.
         let title_max_width = self.width.map_or(60, |w| w.saturating_sub(100).max(60));
 
         let mut table = Table::new()
@@ -154,7 +153,6 @@ impl<'a> IssueTable<'a> {
             table = table.title(Text::new(sanitize_terminal_inline(title).into_owned()));
         }
 
-        // Add columns based on config
         if self.columns.id {
             table = table.with_column(Column::new("ID").min_width(10));
         }
@@ -190,7 +188,6 @@ impl<'a> IssueTable<'a> {
             table = table.with_column(Column::new("Context").min_width(20).max_width(60));
         }
 
-        // Add rows
         for issue in self.issues {
             let mut cells: Vec<Cell> = vec![];
 
@@ -338,11 +335,10 @@ mod tests {
 
     #[test]
     fn test_table_truncation_safe() {
-        let title = "😊".repeat(60); // 240 bytes, 60 chars, 120 visual width
+        let title = "😊".repeat(60);
 
         let truncated = truncate_title(&title, 60);
 
-        // Should be safe and shorter than original
         assert!(truncated.chars().count() < 60);
         assert!(truncated.starts_with("😊"));
         assert!(truncated.ends_with("..."));

@@ -450,9 +450,6 @@ fn evaluate_close_policy(
         workflow,
         fail_closed_default,
     } = *inputs;
-    // Look up the in_progress actor only when the gate is enabled — this
-    // saves a query per close for repos that don't enable that specific
-    // gate.
     let in_progress_actor = if policy.forbid_self_close_after_in_progress.enabled {
         storage.find_last_in_progress_actor(issue_id)?
     } else {
@@ -472,9 +469,6 @@ fn evaluate_close_policy(
 
     let mut violations = close_policy::evaluate(policy, &evidence);
 
-    // Deferred-dependents gate (beads#303). Storage-backed, so it lives
-    // here rather than in the pure `close_policy::evaluate`. We only query when
-    // the gate is enabled to avoid a dependency lookup per close otherwise.
     if policy.forbid_close_with_deferred_dependents.enabled {
         let deferred_dependents = collect_deferred_blocks_dependents(storage, issue_id)?;
         if let Some(violation) =
@@ -484,10 +478,6 @@ fn evaluate_close_policy(
         }
     }
 
-    // The storage transaction is the canonical gate/required-field chokepoint.
-    // Pre-evaluate these rules only for an explicit bypass so the warning and
-    // close metadata can name exactly what the operator bypassed without
-    // introducing a read-before-write race on the ordinary path.
     if args.bypass_policy {
         let from = issue.status.as_str();
         let to = Status::Closed.as_str();
@@ -514,16 +504,9 @@ fn evaluate_close_policy(
         }
     }
 
-    // ADR-0001 §5.3 fail-closed close (rpay). Two triggers: an explicit
-    // `require_legal_close: true` rule guarding the transition, or the
-    // fail-closed default (policy.yaml absent, or workflow.strict unset with
-    // no gates configured) on any `-> closed` move.
     let from = issue.status.as_str();
     let to = Status::Closed.as_str();
     let mut close_verdict: Option<String> = None;
-    // ADR-0005 §2: deliverable is set at creation and immutable — it (not
-    // the reason text) decides the gate. The witness still cites the
-    // artifact paths; the schema carries no artifact-path column.
     let report_cited = report_close_artifacts(issue, args, to);
     let is_report_close = report_cited.is_some();
     if let Some(cited) = &report_cited {
@@ -537,12 +520,6 @@ fn evaluate_close_policy(
         && (fail_closed_default
             || close_policy::transition_requires_legal_close(workflow, from, to))
     {
-        // The fold owns this decision now: it reads the verdict rows through
-        // the ledger port and reuses the same pure evaluators this block used
-        // to call inline, so ADR-0001 §5.3 has one copy rather than two. The
-        // bead's TYPED verify decides the band, so it must reach the table
-        // (bd-close-policy-empty-verify-1-zdz6): an empty VERIFY flips every
-        // loop-runnable bead into the non-runnable band.
         let decision = crate::elm::CloseFold::over_storage(storage).request(
             issue_id,
             crate::elm::IssueFacts {
@@ -741,7 +718,6 @@ fn build_close_json_payload(
     capacity_warnings: Vec<crate::close_policy::WorkflowCapacityWarning>,
 ) -> Result<String> {
     let json = if args.suggest_next {
-        // suggest_next is br-only, so always use the wrapped machine format.
         let result = CloseWithSuggestResult {
             closed: closed_issues,
             skipped: skipped_issues,
@@ -750,10 +726,8 @@ fn build_close_json_payload(
         };
         serde_json::to_string_pretty(&result)?
     } else if skipped_issues.is_empty() && capacity_warnings.is_empty() {
-        // Preserve bd-compatible array output for pure-success closes.
         serde_json::to_string_pretty(&closed_issues)?
     } else {
-        // Once skips are present, a bare array loses machine-readable reasons.
         let result = CloseResult {
             closed: closed_issues,
             skipped: skipped_issues,
@@ -1001,12 +975,8 @@ pub fn execute_with_args(
     tracing::info!("Executing close command");
     let use_structured_output = use_json || ctx.is_json() || ctx.is_toon();
 
-    // Up-front bypass argument-pair validation. Done before any storage IO so
-    // a misuse of the bypass flag never silently slips past policy gates.
     validate_bypass_args(args)?;
 
-    // `--dry-run` is a read-only report of the same preconditions the live
-    // close evaluates: no writes, no lock, no gate rows.
     if args.dry_run {
         return preview_close(args, use_json || ctx.is_json(), cli, ctx);
     }
@@ -1129,12 +1099,6 @@ fn finish_close_execution(
     } = execution;
     let closed_count = closed_issues.len();
     let skipped_count = skipped_issues.len();
-    // Capture per-issue skip reasons BEFORE the vectors are moved into the
-    // output emitters. When every issue is skipped, the terminal error must
-    // carry the real reasons: a generic "all N skipped" used to imply
-    // "already closed or not found" even when the skip was actually a
-    // dependency block, sending operators down the wrong debugging path
-    // (issue #380).
     let skip_summary = summarize_skip_reasons(&skipped_issues);
 
     if let Some(last_closed) = closed_issues.last() {
@@ -1171,14 +1135,6 @@ fn finish_close_execution(
         }
     }
 
-    // Exit status must carry the outcome for EVERY requested id, not just for
-    // the all-or-nothing case. Gating this on `closed_count == 0` meant a batch
-    // that closed one issue and refused another exited 0 with the refusal
-    // visible only as a warning on stderr — so `br close <blocked> <closeable>`
-    // reported success while the blocked issue was untouched, and stdout showed
-    // an unqualified "✓ Closed". `docs/agent/ERRORS.md` tells callers to parse
-    // stdout precisely when the exit code is 0, which made that transcript
-    // authoritative. A no-op must not be able to read as success.
     if skipped_count > 0 {
         return Err(if closed_count == 0 {
             BeadsError::NothingToDo {
@@ -1557,9 +1513,6 @@ fn execute_route(
 ) -> Result<CloseExecution> {
     let routed_write_lock =
         acquire_routed_workspace_write_lock(beads_dir, auto_flush_external, cli.lock_timeout)?;
-    // Reuse the routed authority for the storage open below; acquiring the
-    // same database-family lock from a second descriptor in this process
-    // would self-deadlock until the lock timeout (#409 routed cluster).
     let mut route_cli = cli.clone();
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
     let cli = &route_cli;
@@ -1597,17 +1550,6 @@ fn run_close_core(
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
     let resolved_ids = resolve_issue_ids(&storage_ctx.storage, &resolver, &args.ids)?;
 
-    // bd-2qu9: the close sha must cite the bead being closed. Bypassed
-    // closes skip this like every other gate. An sha no searched repo
-    // contains warns (naming --repo) instead of failing: the work repo may
-    // simply not be checked out on this machine.
-    //
-    // RESIDUAL (stack-audit §19): this should REFUSE, not warn - a sha that
-    // resolves nowhere cannot be shown to cite the bead, so it is not the
-    // commit that proves it, and the close is legal here and unprovable in
-    // the ledger check. The refusal needs the 24 close tests to carry a REAL
-    // commit instead of the `test_sha()` placeholder, so it is filed as its
-    // own bead rather than landed as a silent behaviour change here.
     if !args.bypass_policy
         && let Some(sha) = args
             .commit_sha
@@ -1624,12 +1566,6 @@ fn run_close_core(
             match validate_close_sha(sha, id, &search_dirs)? {
                 ShaVerdict::Cited { .. } => {}
                 ShaVerdict::Unresolvable => {
-                    // A sha that resolves nowhere cannot be shown to cite the
-                    // bead, so it cannot be the commit that proves it. A
-                    // warning let the close bind a verdict to an unverifiable
-                    // sha: legal here, and unprovable in the ledger check,
-                    // where the derived revision is the commit that carries
-                    // the work.
                     return Err(BeadsError::validation(
                         "commit-sha",
                         format!(
@@ -1642,20 +1578,9 @@ fn run_close_core(
         }
     }
 
-    // Closure-time policy gates (issue #274 Phase 1). Loading happens once per
-    // route; if the file is absent the doc is the all-off default.
     let policy_doc = close_policy::load_for_beads_dir(beads_dir)?;
-    // ADR-0001 §5.3: the fail-closed close default applies when the project
-    // has no `.beads/policy.yaml`, or when it never configured workflow
-    // gating — the SAME ladder `resolve_effective_workflow` serves to the
-    // gate-record path (beads_rust-gate-report-default-uro91), so record and
-    // close can never disagree about the default again.
     let fail_closed_default = !beads_dir.join(close_policy::POLICY_FILE_NAME).exists()
         || close_policy::workflow_gating_unconfigured(&policy_doc.workflow);
-    // Active when close-policy gates are enabled (issue #274) OR the workflow
-    // gate engine is configured (issue #312, layer 2), OR the fail-closed
-    // close default applies. The latter must also trigger per-issue gate
-    // evaluation at close time.
     let policy_active = policy_doc.close_policy.is_active()
         || policy_doc.workflow.gates_enforced()
         || !policy_doc.workflow.required_fields.is_empty()
@@ -1667,8 +1592,6 @@ fn run_close_core(
             ".beads/policy.yaml has allow_bypass: false; --bypass-policy is disabled",
         ));
     }
-    // ADR-0001 §5.3: bypass is an OPERATOR action. Flywheel and agent skills
-    // never set this; only a human operator's environment does.
     if args.bypass_policy && std::env::var("BR_OPERATOR").as_deref() != Ok("1") {
         return Err(BeadsError::validation(
             "bypass-policy",
@@ -1676,9 +1599,6 @@ fn run_close_core(
              agents must satisfy the close gates instead",
         ));
     }
-    // ADR-0001 §5.3: a legal close carries the SHA of the commit whose
-    // message cites the bead id (`br` never runs git; the caller supplies
-    // it). Bypassed closes are exempt.
     let proved = proved_close_pair(args.task_id.as_deref(), args.verdict_id.as_deref())?;
     if !args.bypass_policy
         && proved.is_none()
@@ -1774,13 +1694,6 @@ fn run_close_core(
             continue;
         }
 
-        // Supplementary guard: catch dot-notation children (e.g. `epic.1`,
-        // `epic.2`) that exist in the issues table without a formal
-        // parent-child dep row. These slip past `epic_counts` because
-        // get_epic_counts only scans the dependencies table. Missing-dep
-        // children occur with legacy-bd migrations, bulk JSONL imports,
-        // and hand-edited JSONL. Without this check, closing the parent
-        // silently orphans the open children.
         let requested_dot_children = if args.force {
             Vec::new()
         } else {
@@ -1822,12 +1735,6 @@ fn run_close_core(
             continue;
         }
 
-        // Use *close* blockers, not generic blockers: a `parent-child` edge is
-        // hierarchy, not a prerequisite from the parent to the child, so a
-        // finished child must be closable even while its parent epic is itself
-        // blocked or open (#355). `get_close_blockers` strips the propagated
-        // `:parent-blocked` markers while retaining real prerequisite edges on
-        // the child and the `:child-open` close-ordering rollup.
         let close_blockers_result = storage_ctx.storage.get_close_blockers(id);
         let mut blocker_ids = preserve_blocked_cache_on_error(
             &mut storage_ctx.storage,
@@ -1909,10 +1816,6 @@ fn run_close_core(
             blocker_ids.sort();
             blocker_ids.dedup();
             tracing::debug!(blocked_by = ?blocker_ids, "Issue remains blocked in batch close");
-            // Name the open blockers AND the way out. Without the explicit
-            // remediation this skip used to surface as a bare "all N issue(s)
-            // skipped" error whose hint claimed the issue was "already closed
-            // or not found" — flatly wrong for a dependency block (#380).
             let reason = if blocker_ids.is_empty() {
                 "blocked by dependencies — close the open blocker(s) first, or use --force to close anyway".to_string()
             } else {
@@ -1942,10 +1845,6 @@ fn run_close_core(
         } else {
             Vec::new()
         };
-        // ADR-0001 §5.3 audit trail: the authorizing verdict kind and the
-        // commit SHA ride in close_metadata's gates JSON until the schema-v18
-        // columns land (uyb3 wires issue.commit_sha / issue.close_verdict).
-        // ADR-0005 §2: report closes ride the cited artifacts instead.
         if let Some(evaluated_gates) = policy_evaluations_by_id.get(id) {
             for artifact in &evaluated_gates.report_artifacts {
                 gates_fired.push(format!("report_artifact={artifact}"));
@@ -2210,10 +2109,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // CloseArgs tests
-    // =========================================================================
-
     #[test]
     fn test_close_args_default() {
         let args = CloseArgs::default();
@@ -2266,10 +2161,6 @@ mod tests {
         );
     }
 
-    // =========================================================================
-    // CloseResult serialization tests
-    // =========================================================================
-
     #[test]
     fn test_close_result_serialization_empty_skipped_omitted() {
         let result = CloseResult {
@@ -2284,7 +2175,6 @@ mod tests {
             warnings: vec![],
         };
         let json = serde_json::to_string(&result).unwrap();
-        // Empty skipped should be omitted due to skip_serializing_if
         assert!(!json.contains("\"skipped\""));
         assert!(json.contains("\"closed\""));
     }
@@ -2338,10 +2228,6 @@ mod tests {
         assert!(parsed.closed[1].close_reason.is_none());
     }
 
-    // =========================================================================
-    // CloseWithSuggestResult serialization tests
-    // =========================================================================
-
     #[test]
     fn test_close_with_suggest_result_serialization() {
         let result = CloseWithSuggestResult {
@@ -2373,7 +2259,6 @@ mod tests {
         assert!(json.contains("\"bd-child2\""));
         assert!(json.contains("\"priority\":1"));
         assert!(json.contains("\"priority\":2"));
-        // Empty skipped should be omitted
         assert!(!json.contains("\"skipped\""));
     }
 
@@ -2389,14 +2274,9 @@ mod tests {
             warnings: vec![],
         };
         let json = serde_json::to_string(&result).unwrap();
-        // unblocked is not marked skip_serializing_if, so it should appear as empty array
         assert!(json.contains("\"unblocked\":[]"));
         assert!(json.contains("\"skipped\""));
     }
-
-    // =========================================================================
-    // ClosedIssue serialization tests
-    // =========================================================================
 
     #[test]
     fn test_closed_issue_serialization_with_reason() {
@@ -2421,7 +2301,6 @@ mod tests {
             close_reason: None,
         };
         let json = serde_json::to_string(&issue).unwrap();
-        // close_reason should be omitted due to skip_serializing_if
         assert!(!json.contains("close_reason"));
     }
 
@@ -2521,10 +2400,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // SkippedIssue serialization tests
-    // =========================================================================
-
     #[test]
     fn test_skipped_issue_serialization() {
         let skipped = SkippedIssue {
@@ -2548,10 +2423,6 @@ mod tests {
         assert!(parsed.reason.contains("bd-dep1"));
         assert!(parsed.reason.contains("bd-dep2"));
     }
-
-    // =========================================================================
-    // UnblockedIssue serialization tests
-    // =========================================================================
 
     #[test]
     fn test_unblocked_issue_serialization() {
@@ -2579,10 +2450,6 @@ mod tests {
             assert_eq!(parsed.priority, priority);
         }
     }
-
-    // =========================================================================
-    // Edge case tests
-    // =========================================================================
 
     #[test]
     fn test_close_result_multiple_closed_multiple_skipped() {
@@ -2720,7 +2587,6 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
         seed_opt_out_policy(&temp);
 
         let beads_dir = temp.path().join(".beads");
@@ -2774,7 +2640,6 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
         seed_opt_out_policy(&temp);
 
         let beads_dir = temp.path().join(".beads");
@@ -2829,7 +2694,6 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
         seed_opt_out_policy(&temp);
 
         let beads_dir = temp.path().join(".beads");
@@ -2875,7 +2739,6 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
         seed_opt_out_policy(&temp);
 
         let beads_dir = temp.path().join(".beads");
@@ -2915,11 +2778,6 @@ mod tests {
 
     #[test]
     fn execute_with_args_closes_child_even_when_parent_epic_is_blocked() {
-        // Regression for #355: a finished child must be closable even while its
-        // parent epic is itself blocked by an unrelated prerequisite. The
-        // `parent-child` edge is hierarchy, not a prerequisite from parent to
-        // child, so the propagated `:parent-blocked` marker must not gate the
-        // child's own closure.
         let _lock = crate::util::test_helpers::TEST_DIR_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2927,20 +2785,17 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
         seed_opt_out_policy(&temp);
 
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
-        // A deferred prerequisite that blocks the parent epic.
         storage
             .create_issue(
                 &make_issue_with_status("bd-blocker", "Deferred blocker", Status::Deferred),
                 "tester",
             )
             .expect("create blocker");
-        // The parent epic, blocked by the deferred prerequisite.
         let mut parent = make_issue("bd-parent", "Parent epic");
         parent.issue_type = IssueType::Epic;
         storage
@@ -2954,7 +2809,6 @@ mod tests {
                 "tester",
             )
             .expect("add blocks dependency");
-        // A child of the parent epic, reviewed-complete and ready to close.
         storage
             .create_issue(&make_issue("bd-child", "Child task"), "tester")
             .expect("create child");
@@ -2967,7 +2821,6 @@ mod tests {
             )
             .expect("add parent-child dependency");
         storage.rebuild_blocked_cache(true).expect("rebuild cache");
-        // The child IS propagated `parent-blocked` in the readiness graph...
         assert!(
             storage
                 .get_blockers("bd-child")
@@ -2975,7 +2828,6 @@ mod tests {
                 .contains(&"bd-parent".to_string()),
             "child should inherit a parent-blocked readiness marker"
         );
-        // ...but it must NOT be a *close* blocker.
         assert!(
             storage
                 .get_close_blockers("bd-child")
@@ -3045,19 +2897,6 @@ mod tests {
 
     #[test]
     fn execute_with_args_reports_partial_batch_as_error_not_success() {
-        // A batch that closes one issue and refuses another used to return
-        // `Ok(())`, because the terminal error was gated on `closed_count == 0`.
-        // The refusal was then visible ONLY as a warning on stderr, while stdout
-        // carried an unqualified "✓ Closed" and `$?` was 0 — and
-        // `docs/agent/ERRORS.md` instructs callers to parse stdout precisely
-        // when the exit code is 0. Any caller branching on exit status read the
-        // untouched issue as closed.
-        //
-        // This is the direction that fires: under the old predicate this test
-        // fails at `expect_err`. The all-succeed case is covered by
-        // `execute_with_args_closes_requested_blocker_chain_in_one_batch`, which
-        // still expects `Ok(())` — so the new predicate is proven in both
-        // directions.
         let _lock = crate::util::test_helpers::TEST_DIR_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3065,7 +2904,6 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        // Fail-closed default is orthogonal here; opt out to isolate the partial-batch predicate.
         seed_opt_out_policy(&temp);
 
         let beads_dir = temp.path().join(".beads");
@@ -3107,8 +2945,6 @@ mod tests {
             matches!(err, BeadsError::CloseIncomplete { .. }),
             "a partial batch must surface as CloseIncomplete, got: {err:?}"
         );
-        // Destructure without a diverging arm: the fallback carries values that
-        // fail every assertion below, so a wrong variant is still loud.
         let (closed, skipped, summary) = match &err {
             BeadsError::CloseIncomplete {
                 closed,
@@ -3124,7 +2960,6 @@ mod tests {
             "summary must name the refused issue and the real reason, got: {summary}"
         );
 
-        // The exit status now agrees with the record, which is the whole point.
         assert_ne!(
             StructuredError::from_error(&err).code.exit_code(),
             0,
@@ -3175,8 +3010,6 @@ mod tests {
         )
         .expect("write policy");
 
-        // The fail-closed close default also applies (this policy has no
-        // workflow.gates block), so record the legal PASS row first.
         {
             let storage = SqliteStorage::open(&db_path).expect("storage");
             storage
@@ -3213,8 +3046,6 @@ mod tests {
         assert!(metadata.closed_by_agent_name.is_none());
         assert!(metadata.closed_by_harness.is_none());
         assert!(metadata.closed_by_model.is_none());
-        // The fail-closed audit trail rides in the gates JSON until schema
-        // v18 promotes close_verdict to a column.
         let fired = serde_json::to_string(&metadata.policy_gates_fired).unwrap_or_default();
         assert!(
             fired.contains("close_verdict=unit-test-verified") && fired.contains("commit_sha="),
@@ -3300,9 +3131,6 @@ mod tests {
             .expect("create no-policy issue");
         drop(storage);
 
-        // ADR-0001 §5.3: there is no "policy-invisible" close anymore — the
-        // fail-closed default is active even without a policy.yaml. A legal
-        // close (PASS row + SHA) records its metadata audit trail.
         {
             let storage = SqliteStorage::open(&db_path).expect("storage");
             storage
@@ -3372,10 +3200,6 @@ mod tests {
         .expect("write workflow policy");
 
         let _guard = DirGuard::new(temp.path());
-        // `strict: true` with no `gates:` block now keeps the fail-closed
-        // close default IN force (it used to turn it off), so the legal PASS
-        // row is recorded FIRST and the transitions map is what refuses the
-        // close below.
         {
             let storage = SqliteStorage::open(&db_path).expect("reopen storage");
             storage
@@ -3418,7 +3242,6 @@ mod tests {
         );
         drop(storage);
 
-        // Widening the map with the `any` wildcard makes the same close legal.
         std::fs::write(
             &policy_path,
             "workflow:\n  strict: true\n  statuses: [open, in_progress, closed]\n  \
@@ -3438,10 +3261,6 @@ mod tests {
             Status::Closed
         );
     }
-
-    // =========================================================================
-    // forbid_close_with_deferred_dependents gate (beads#303)
-    // =========================================================================
 
     const DEFERRED_DEPENDENTS_POLICY: &str = "close_policy:\n  forbid_close_with_deferred_dependents:\n    enabled: true\nworkflow:\n  strict: true\n  gates:\n    \"in_review -> closed\":\n      require_all:\n        - ci_green\n";
 
@@ -3463,8 +3282,6 @@ mod tests {
                 "tester",
             )
             .expect("create dependent");
-        // Row (issue_id=bd-dep, depends_on_id=bd-prereq, type=blocks):
-        // "bd-prereq blocks bd-dep" / "bd-dep depends on bd-prereq".
         storage
             .add_dependency(
                 "bd-dep",
@@ -3475,7 +3292,6 @@ mod tests {
             .expect("add dependency");
         storage.rebuild_blocked_cache(true).expect("rebuild cache");
         drop(storage);
-        // No policy.yaml written by default — callers add it when needed.
         let _ = beads_dir;
     }
 
@@ -3488,12 +3304,10 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        // Fail-closed default is orthogonal here; opt out to isolate the behavior under test.
         seed_opt_out_policy(&temp);
 
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
-        // Deferred dependent present, but NO policy.yaml => gate is off.
         setup_prereq_and_dependent(&beads_dir, &db_path, Status::Deferred);
 
         let _guard = DirGuard::new(temp.path());
@@ -3559,7 +3373,6 @@ mod tests {
             other => panic!("expected PolicyViolation, got {other:?}"),
         }
 
-        // The prereq must NOT have been closed.
         let storage = SqliteStorage::open(&db_path).expect("reopen storage");
         let prereq = storage
             .get_issue("bd-prereq")
@@ -3579,7 +3392,6 @@ mod tests {
 
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
-        // Dependent is open, not deferred => gate is satisfied.
         setup_prereq_and_dependent(&beads_dir, &db_path, Status::Open);
         std::fs::write(
             beads_dir.join(close_policy::POLICY_FILE_NAME),
@@ -3623,7 +3435,6 @@ mod tests {
         )
         .expect("write policy");
 
-        // First attempt is rejected.
         {
             let _guard = DirGuard::new(temp.path());
             let args = CloseArgs {
@@ -3636,7 +3447,6 @@ mod tests {
                 .expect_err("close should be rejected while dependent is deferred");
         }
 
-        // Reopen the deferred dependent (`br update bd-dep --status=open`).
         {
             let mut storage = SqliteStorage::open(&db_path).expect("storage");
             let update = IssueUpdate {
@@ -3648,7 +3458,6 @@ mod tests {
                 .expect("reopen dependent");
         }
 
-        // Second attempt now succeeds.
         {
             let _guard = DirGuard::new(temp.path());
             let args = CloseArgs {
@@ -3668,10 +3477,6 @@ mod tests {
             .expect("prereq exists");
         assert_eq!(prereq.status, Status::Closed);
     }
-
-    // =========================================================================
-    // Workflow gate enforcement at close (issue #312, layer 2 / beads#319)
-    // =========================================================================
 
     const GATE_POLICY_YAML: &str = r#"workflow:
   strict: true
@@ -3725,8 +3530,6 @@ mod tests {
         }
         git(&["config", "user.email", "test@test.local"]);
         git(&["config", "user.name", "test"]);
-        // One work file PER call: a second call in the same test must still
-        // have something to commit (`git commit` refuses an empty index).
         let count = std::process::Command::new("git")
             .args(["rev-list", "--count", "HEAD"])
             .current_dir(dir)
@@ -3793,7 +3596,6 @@ mod tests {
             "unexpected error: {err:?}"
         );
 
-        // The issue must remain un-closed.
         let storage = SqliteStorage::open(&db_path).expect("reopen");
         assert_eq!(
             storage.get_issue("bd-1").unwrap().unwrap().status,
@@ -3849,7 +3651,6 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().expect("tempdir");
-        // Fixture id is not a bead token. The commit guard treats `bd-` as one.
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
         let beads_dir = temp.path().join(".beads");
@@ -3903,8 +3704,6 @@ mod tests {
 
     #[test]
     fn close_unaffected_when_transition_not_gated() {
-        // The gate only guards `in_review -> closed`; closing an `open` issue is
-        // an `open -> closed` move with no rule, so it must proceed.
         let _lock = crate::util::test_helpers::TEST_DIR_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3931,10 +3730,6 @@ mod tests {
 
     #[test]
     fn close_unaffected_with_no_policy_file() {
-        // ADR-0001 §5.3: the fail-closed default applies even when a
-        // workspace carries NO policy.yaml (pre-init clones, older
-        // workspaces). Closing is refused until a legal PASS row exists;
-        // recording one (plus the SHA) completes the close.
         let _lock = crate::util::test_helpers::TEST_DIR_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3942,7 +3737,6 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
         let beads_dir = temp.path().join(".beads");
-        // Simulate a workspace that predates init writing policies.
         std::fs::remove_file(beads_dir.join(close_policy::POLICY_FILE_NAME))
             .expect("remove policy.yaml");
         assert!(
@@ -3973,8 +3767,6 @@ mod tests {
             "expected fail-closed refusal, got: {err:?}"
         );
 
-        // Recording a legal PASS row (P2/Normal/non-runnable VERIFY band:
-        // independent verification) completes the same close.
         {
             let storage = SqliteStorage::open(&db_path).expect("storage");
             storage
@@ -4001,8 +3793,6 @@ mod tests {
     }
 
     fn setup_report_repo(temp: &TempDir) -> std::path::PathBuf {
-        // Fail-closed default stays ACTIVE (no opt-out): report closes must
-        // prove themselves under the same default as diff closes.
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
         let beads_dir = temp.path().join(".beads");
@@ -4036,8 +3826,6 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().expect("tempdir");
         let db_path = setup_report_repo(&temp);
-        // Otherwise-legal verdict row: the failure must come from the
-        // missing artifact, not from a missing gate.
         record_report_gate(&db_path, "worker-receipt");
         let _guard = DirGuard::new(temp.path());
         let ctx = OutputContext::from_flags(false, false, true);
@@ -4063,7 +3851,6 @@ mod tests {
         let temp = TempDir::new().expect("tempdir");
         let db_path = setup_report_repo(&temp);
         std::fs::write(temp.path().join("survey.md"), "# survey\n").expect("write artifact");
-        // No gate row at all: artifact evidence replaces the verdict row.
         let _guard = DirGuard::new(temp.path());
         let ctx = OutputContext::from_flags(false, false, true);
         let args = CloseArgs {
@@ -4089,8 +3876,6 @@ mod tests {
         let temp = TempDir::new().expect("tempdir");
         let db_path = setup_report_repo(&temp);
         std::fs::write(temp.path().join("survey.md"), "# survey\n").expect("write artifact");
-        // unit-test-verified is a false witness for report beads: refused
-        // even though the artifact exists.
         record_report_gate(&db_path, "unit-test-verified");
         let _guard = DirGuard::new(temp.path());
         let ctx = OutputContext::from_flags(false, false, true);
@@ -4107,10 +3892,6 @@ mod tests {
             "expected verdict refusal, got: {err:?}"
         );
     }
-
-    // =========================================================================
-    // bd-2qu9: close validates commit-sha cites the bead (RED first)
-    // =========================================================================
 
     fn git_repo_with_commit(dir: &std::path::Path, message: &str) -> String {
         let run = |args: &[&str]| {
@@ -4137,17 +3918,13 @@ mod tests {
         assert!(sha_message_cites_bead("fix (BD-2QU9) done", "bd-2qu9"));
         assert!(sha_message_cites_bead("fix bd-2qu9 done", "bd-2qu9"));
         assert!(!sha_message_cites_bead("fix bd-other done", "bd-2qu9"));
-        // bd-2qu99 must not count as citing bd-2qu9.
         assert!(!sha_message_cites_bead("fix bd-2qu99 done", "bd-2qu9"));
-        // Sentence period / colon after the id is punctuation, not glue
-        // (bd-qf99: body "in bd-0cqt." was rejected as uncited).
         assert!(sha_message_cites_bead(
             "Also lands the remaining diagnosis in bd-0cqt.",
             "bd-0cqt"
         ));
         assert!(sha_message_cites_bead("see bd-0cqt:", "bd-0cqt"));
         assert!(sha_message_cites_bead("bd-0cqt\n\nPRINCIPLES:", "bd-0cqt"));
-        // Revision suffix still glues.
         assert!(!sha_message_cites_bead("fix bd-2qu9.1", "bd-2qu9"));
     }
 
@@ -4187,8 +3964,6 @@ mod tests {
             assert!(out.status.success(), "git {args:?} failed: {out:?}");
             String::from_utf8_lossy(&out.stdout).trim().to_string()
         };
-        // Fixture ids avoid the tracker's own id shape: a real-looking bead id
-        // in a test reads as a citation to the commit-message attribution guard.
         run(&["commit", "--allow-empty", "-m", "fix test-empty-proof done"]);
         let sha = run(&["rev-parse", "HEAD"]);
 

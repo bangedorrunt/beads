@@ -337,7 +337,6 @@ impl ArtifactValidator {
     pub fn validate_events_content(&self, content: &str) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
-        // Normalize line endings
         let content = content.replace("\r\n", "\n");
 
         for (idx, line) in content.lines().enumerate() {
@@ -370,7 +369,6 @@ impl ArtifactValidator {
     fn validate_event(&self, event: &RunEvent, line_num: usize) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
-        // Validate timestamp (RFC3339)
         if DateTime::parse_from_rfc3339(&event.timestamp).is_err() {
             result = result.with_error(ValidationError {
                 line: Some(line_num),
@@ -379,7 +377,6 @@ impl ArtifactValidator {
             });
         }
 
-        // Validate event_type
         if event.event_type != "command" && event.event_type != "snapshot" {
             result = result.with_error(ValidationError {
                 line: Some(line_num),
@@ -388,7 +385,6 @@ impl ArtifactValidator {
             });
         }
 
-        // Validate label is non-empty
         if event.label.is_empty() {
             result = result.with_error(ValidationError {
                 line: Some(line_num),
@@ -397,7 +393,6 @@ impl ArtifactValidator {
             });
         }
 
-        // Validate cwd is absolute
         if !event.cwd.is_empty() && !event.cwd.starts_with('/') && !event.cwd.contains(':') {
             result = result.with_warning(format!(
                 "Line {}: cwd should be absolute path: {}",
@@ -405,7 +400,6 @@ impl ArtifactValidator {
             ));
         }
 
-        // For command events, validate binary is set
         if event.event_type == "command" && event.binary.is_empty() {
             result = result.with_error(ValidationError {
                 line: Some(line_num),
@@ -414,7 +408,6 @@ impl ArtifactValidator {
             });
         }
 
-        // Validate exit code range
         if event.exit_code < -128 || event.exit_code > 255 {
             result = result.with_warning(format!(
                 "Line {}: exit_code {} outside typical range [-128, 255]",
@@ -472,7 +465,6 @@ impl ArtifactValidator {
         };
 
         for (idx, entry) in entries.iter().enumerate() {
-            // Validate path is relative
             if entry.path.starts_with('/') || entry.path.contains(':') {
                 result = result.with_error(ValidationError {
                     line: Some(idx + 1),
@@ -481,7 +473,6 @@ impl ArtifactValidator {
                 });
             }
 
-            // Validate no traversal
             if entry.path.contains("..") {
                 result = result.with_error(ValidationError {
                     line: Some(idx + 1),
@@ -490,7 +481,6 @@ impl ArtifactValidator {
                 });
             }
 
-            // Warn if directory has non-zero size
             if entry.is_dir && entry.size > 0 {
                 result = result.with_warning(format!(
                     "Entry {}: directory '{}' has non-zero size {}",
@@ -501,7 +491,6 @@ impl ArtifactValidator {
             }
         }
 
-        // Check for sorted order
         let mut sorted = entries.clone();
         sorted.sort_by(|a, b| a.path.cmp(&b.path));
         if entries.iter().map(|e| &e.path).collect::<Vec<_>>()
@@ -545,7 +534,6 @@ impl ArtifactValidator {
             }
         };
 
-        // Validate timestamp
         if DateTime::parse_from_rfc3339(&summary.timestamp).is_err() {
             result = result.with_error(ValidationError {
                 line: None,
@@ -554,7 +542,6 @@ impl ArtifactValidator {
             });
         }
 
-        // Validate suite name
         if summary.suite.is_empty() {
             result = result.with_error(ValidationError {
                 line: None,
@@ -563,7 +550,6 @@ impl ArtifactValidator {
             });
         }
 
-        // Validate test name
         if summary.test.is_empty() {
             result = result.with_error(ValidationError {
                 line: None,
@@ -1230,19 +1216,16 @@ impl ArtifactValidator {
     pub fn validate_artifact_dir(&self, dir: &Path) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
-        // Check events.jsonl
         let events_path = dir.join("events.jsonl");
         if events_path.exists() {
             result = result.merge(self.validate_events_file(&events_path));
         }
 
-        // Check summary.json
         let summary_path = dir.join("summary.json");
         if summary_path.exists() {
             result = result.merge(self.validate_summary_file(&summary_path));
         }
 
-        // Check all snapshot files
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();

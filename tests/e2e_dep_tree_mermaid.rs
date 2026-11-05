@@ -7,7 +7,6 @@
 //! - Title escaping for mermaid syntax
 //! - Real dataset tests via IsolatedDataset
 
-// These are test utilities with intentionally similar/short names
 #![allow(clippy::similar_names)]
 #![allow(clippy::many_single_char_names)]
 
@@ -32,7 +31,6 @@ fn parse_created_id(stdout: &str) -> String {
 fn validate_mermaid_syntax(output: &str) -> (Vec<String>, Vec<(String, String)>) {
     let lines: Vec<&str> = output.lines().collect();
 
-    // First non-empty line should be "graph TD"
     let first_line = lines.iter().find(|l| !l.trim().is_empty()).unwrap_or(&"");
     assert_eq!(
         first_line.trim(),
@@ -49,7 +47,6 @@ fn validate_mermaid_syntax(output: &str) -> (Vec<String>, Vec<(String, String)>)
             continue;
         }
 
-        // Node definition: node_key["issue_id: title [Pn]"]
         if trimmed.contains('[') && trimmed.contains(']') && !trimmed.contains("-->") {
             if let (Some(label_start), Some(label_end)) =
                 (trimmed.find("[\""), trimmed.rfind("\"]"))
@@ -59,7 +56,6 @@ fn validate_mermaid_syntax(output: &str) -> (Vec<String>, Vec<(String, String)>)
                 nodes.push(label.to_string());
             }
         }
-        // Edge definition: id --> id
         else if trimmed.contains("-->") {
             let parts: Vec<&str> = trimmed.split("-->").collect();
             if parts.len() == 2 {
@@ -108,7 +104,6 @@ fn e2e_dep_tree_mermaid_single_node_no_deps() {
 
     let (nodes, edges) = validate_mermaid_syntax(&tree.stdout);
 
-    // Single node with no dependencies
     assert_eq!(nodes.len(), 1, "Should have exactly one node");
     assert!(
         nodes
@@ -130,7 +125,6 @@ fn e2e_dep_tree_mermaid_linear_chain() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create chain: A -> B -> C (A depends on B, B depends on C)
     let a = run_br(
         &workspace,
         [
@@ -178,11 +172,9 @@ fn e2e_dep_tree_mermaid_linear_chain() {
     let id_b = parse_created_id(&b.stdout);
     let id_c = parse_created_id(&c.stdout);
 
-    // A depends on B
     let dep_ab = run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
     assert!(dep_ab.status.success(), "dep add A->B failed");
 
-    // B depends on C
     let dep_bc = run_br(&workspace, ["dep", "add", &id_b, &id_c], "dep_bc");
     assert!(dep_bc.status.success(), "dep add B->C failed");
 
@@ -195,7 +187,6 @@ fn e2e_dep_tree_mermaid_linear_chain() {
 
     let (nodes, edges) = validate_mermaid_syntax(&tree.stdout);
 
-    // Should have 3 nodes
     assert_eq!(nodes.len(), 3, "Linear chain should have 3 nodes");
     assert!(
         nodes
@@ -216,7 +207,6 @@ fn e2e_dep_tree_mermaid_linear_chain() {
         "Should contain C"
     );
 
-    // Should have 2 edges
     assert_eq!(edges.len(), 2, "Linear chain should have 2 edges");
 
     info!("e2e_dep_tree_mermaid_linear_chain: assertions passed");
@@ -231,7 +221,6 @@ fn e2e_dep_tree_mermaid_branching_deps() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create: A -> B and A -> C (A depends on both B and C)
     let a = run_br(
         &workspace,
         [
@@ -309,7 +298,6 @@ fn e2e_dep_tree_mermaid_diamond_shape() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Diamond: A -> B -> D and A -> C -> D
     let a = run_br(
         &workspace,
         [
@@ -386,7 +374,6 @@ fn e2e_dep_tree_mermaid_diamond_shape() {
 
     let (nodes, edges) = validate_mermaid_syntax(&tree.stdout);
 
-    // Diamond shape: D should appear twice (once under B, once under C)
     let d_count = nodes
         .iter()
         .filter(|label| label.starts_with(&format!("{id_d}: ")))
@@ -396,7 +383,6 @@ fn e2e_dep_tree_mermaid_diamond_shape() {
         "Diamond convergence node D should appear twice in mermaid output"
     );
 
-    // Should have 5 nodes total (A, B, C, D under B, D under C)
     assert_eq!(
         nodes.len(),
         5,
@@ -417,7 +403,6 @@ fn e2e_dep_tree_mermaid_max_depth_truncation() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create deep chain: A -> B -> C -> D -> E
     let a = run_br(
         &workspace,
         [
@@ -500,7 +485,6 @@ fn e2e_dep_tree_mermaid_max_depth_truncation() {
     run_br(&workspace, ["dep", "add", &id_c, &id_d], "dep_cd");
     run_br(&workspace, ["dep", "add", &id_d, &id_e], "dep_de");
 
-    // With max-depth=2, should only show A, B, C
     let tree = run_br(
         &workspace,
         ["dep", "tree", &id_a, "--format=mermaid", "--max-depth=2"],
@@ -510,7 +494,6 @@ fn e2e_dep_tree_mermaid_max_depth_truncation() {
 
     let (nodes, _edges) = validate_mermaid_syntax(&tree.stdout);
 
-    // Depth 0 = A, Depth 1 = B, Depth 2 = C (truncated)
     assert_eq!(nodes.len(), 3, "max-depth=2 should show 3 nodes");
     assert!(
         nodes
@@ -555,7 +538,6 @@ fn e2e_dep_tree_mermaid_title_with_quotes() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create issue with quotes in title that need escaping
     let create = run_br(
         &workspace,
         [
@@ -580,7 +562,6 @@ fn e2e_dep_tree_mermaid_title_with_quotes() {
     );
     assert!(tree.status.success(), "dep tree failed: {}", tree.stderr);
 
-    // Verify quotes are escaped (replaced with single quotes per implementation)
     assert!(
         tree.stdout.contains("'quotes'"),
         "Double quotes should be escaped to single quotes in mermaid output"
@@ -677,7 +658,6 @@ fn e2e_dep_tree_mermaid_vs_json_consistency() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create simple tree
     let a = run_br(
         &workspace,
         [
@@ -712,13 +692,11 @@ fn e2e_dep_tree_mermaid_vs_json_consistency() {
 
     run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
 
-    // Get JSON output
     let tree_json = run_br(&workspace, ["dep", "tree", &id_a, "--json"], "tree_json");
     assert!(tree_json.status.success(), "JSON tree failed");
     let json_payload = extract_json_payload(&tree_json.stdout);
     let json_nodes: Vec<Value> = serde_json::from_str(&json_payload).expect("parse json");
 
-    // Get Mermaid output
     let tree_mermaid = run_br(
         &workspace,
         ["dep", "tree", &id_a, "--format=mermaid"],
@@ -727,14 +705,12 @@ fn e2e_dep_tree_mermaid_vs_json_consistency() {
     assert!(tree_mermaid.status.success(), "Mermaid tree failed");
     let (mermaid_nodes, _) = validate_mermaid_syntax(&tree_mermaid.stdout);
 
-    // Both should have same number of nodes
     assert_eq!(
         json_nodes.len(),
         mermaid_nodes.len(),
         "JSON and mermaid should report same number of nodes"
     );
 
-    // All JSON node IDs should appear in mermaid output
     for json_node in &json_nodes {
         let node_id = json_node["id"].as_str().unwrap();
         assert!(
@@ -774,7 +750,6 @@ fn e2e_dep_tree_mermaid_format_case_insensitive() {
     );
     let issue_id = parse_created_id(&create.stdout);
 
-    // Test different cases
     for format_arg in &["--format=mermaid", "--format=MERMAID", "--format=Mermaid"] {
         let tree = run_br(
             &workspace,
@@ -802,7 +777,6 @@ fn e2e_dep_tree_mermaid_output_valid_mermaid_diagram() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create a non-trivial tree
     let epic = run_br(
         &workspace,
         [
@@ -880,18 +854,14 @@ fn e2e_dep_tree_mermaid_output_valid_mermaid_diagram() {
     );
     assert!(tree.status.success(), "dep tree failed: {}", tree.stderr);
 
-    // Validate the mermaid output structure
     let output = &tree.stdout;
     let lines: Vec<&str> = output.lines().collect();
 
-    // First line should be "graph TD"
     assert!(
         lines.iter().any(|l| l.trim() == "graph TD"),
         "Should have graph TD header"
     );
 
-    // Should have node definitions with proper format
-    // Format: node_key["id: title [Pn]"]
     let node_pattern = |id: &str| format!("[\"{}: ", id);
     assert!(
         output.contains(&node_pattern(&id_epic)),
@@ -910,8 +880,6 @@ fn e2e_dep_tree_mermaid_output_valid_mermaid_diagram() {
         "Should have subtask node definition"
     );
 
-    // Should have edge definitions
-    // Format: child --> parent
     assert!(
         output.contains(" --> "),
         "Should have edge definitions with -->"
@@ -963,11 +931,9 @@ fn e2e_dep_tree_mermaid_text_vs_mermaid_format() {
 
     run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
 
-    // Get text output (default)
     let tree_text = run_br(&workspace, ["dep", "tree", &id_a], "tree_text");
     assert!(tree_text.status.success(), "Text tree failed");
 
-    // Get mermaid output
     let tree_mermaid = run_br(
         &workspace,
         ["dep", "tree", &id_a, "--format=mermaid"],
@@ -975,13 +941,11 @@ fn e2e_dep_tree_mermaid_text_vs_mermaid_format() {
     );
     assert!(tree_mermaid.status.success(), "Mermaid tree failed");
 
-    // Text format should NOT contain mermaid syntax
     assert!(
         !tree_text.stdout.contains("graph TD"),
         "Text format should not contain mermaid syntax"
     );
 
-    // Mermaid format SHOULD contain mermaid syntax
     assert!(
         tree_mermaid.stdout.contains("graph TD"),
         "Mermaid format should contain mermaid syntax"
@@ -999,8 +963,6 @@ fn e2e_dep_tree_mermaid_with_different_priorities() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create issues with different priorities (0-4 or P0-P4 format)
-    // P1 = high priority, P4 = low priority
     let high = run_br(
         &workspace,
         [
@@ -1048,8 +1010,6 @@ fn e2e_dep_tree_mermaid_with_different_priorities() {
     );
     assert!(tree.status.success(), "dep tree failed: {}", tree.stderr);
 
-    // Verify priority is shown in mermaid output
-    // High priority = P1, Low priority = P4
     assert!(
         tree.stdout.contains("[P1]"),
         "Mermaid output should show high priority as [P1]"
@@ -1087,7 +1047,6 @@ fn e2e_dep_tree_mermaid_quiet_mode() {
     );
     let issue_id = parse_created_id(&create.stdout);
 
-    // Quiet mode should suppress output
     let tree = run_br(
         &workspace,
         ["dep", "tree", &issue_id, "--format=mermaid", "--quiet"],
@@ -1095,7 +1054,6 @@ fn e2e_dep_tree_mermaid_quiet_mode() {
     );
     assert!(tree.status.success(), "dep tree failed: {}", tree.stderr);
 
-    // Let's just verify it doesn't crash
     assert!(
         tree.stdout.trim().is_empty(),
         "quiet mode should suppress mermaid stdout: '{}'",
@@ -1114,14 +1072,12 @@ fn e2e_dep_tree_mermaid_issue_not_found() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Try to get mermaid tree for non-existent issue
     let tree = run_br(
         &workspace,
         ["dep", "tree", "bd-nonexistent", "--format=mermaid"],
         "tree_mermaid_notfound",
     );
 
-    // Should fail with appropriate error
     assert!(!tree.status.success(), "Should fail for non-existent issue");
     assert!(
         tree.stderr.contains("not found") || tree.stderr.contains("No match"),

@@ -11,10 +11,6 @@ use beads::storage::{IssueUpdate, SqliteStorage};
 use chrono::{Duration, Utc};
 use common::{fixtures, test_db, test_db_with_dir};
 
-// ============================================================================
-// CREATE ISSUE TESTS
-// ============================================================================
-
 #[test]
 fn create_issue_minimal_fields() {
     let mut storage = test_db();
@@ -59,11 +55,9 @@ fn create_issue_all_fields_populated() {
         ephemeral: false,
         pinned: true,
         is_template: false,
-        // Relations are populated separately
         labels: vec![],
         dependencies: vec![],
         comments: vec![],
-        // Other optional fields
         content_hash: None,
         closed_at: None,
         close_reason: None,
@@ -102,8 +96,6 @@ fn create_issue_all_fields_populated() {
         retrieved.description,
         Some("Detailed description".to_string())
     );
-    // The create transaction persists every populated field, including the
-    // governance fields settable via `br create` since #408.
     assert_eq!(retrieved.design, Some("Technical design notes".to_string()));
     assert_eq!(
         retrieved.acceptance_criteria,
@@ -133,7 +125,6 @@ fn create_issue_records_created_event() {
 
     storage.create_issue(&issue, "event-actor").unwrap();
 
-    // Get events for the issue
     let details = storage
         .get_issue_details(&issue.id, false, true, 100)
         .unwrap()
@@ -166,14 +157,9 @@ fn create_duplicate_id_fails() {
 
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Attempt to create with same ID should fail
     let result = storage.create_issue(&issue, "tester");
     assert!(result.is_err());
 }
-
-// ============================================================================
-// GET ISSUE TESTS
-// ============================================================================
 
 #[test]
 fn get_issue_returns_none_for_nonexistent() {
@@ -203,14 +189,12 @@ fn get_issue_returns_issue_with_correct_types() {
 fn get_issue_for_export_includes_relations() {
     let mut storage = test_db();
 
-    // Create two issues with dependency
     let blocking_issue = fixtures::issue("export-blocker");
     let blocked_issue = fixtures::issue("export-blocked");
 
     storage.create_issue(&blocking_issue, "tester").unwrap();
     storage.create_issue(&blocked_issue, "tester").unwrap();
 
-    // Add dependency
     storage
         .add_dependency(
             &blocked_issue.id,
@@ -220,17 +204,14 @@ fn get_issue_for_export_includes_relations() {
         )
         .unwrap();
 
-    // Add label
     storage
         .add_label(&blocked_issue.id, "test-label", "tester")
         .unwrap();
 
-    // Add comment
     storage
         .add_comment(&blocked_issue.id, "commenter", "Test comment")
         .unwrap();
 
-    // Get for export - should include all relations
     let exported = storage
         .get_issue_for_export(&blocked_issue.id)
         .unwrap()
@@ -307,13 +288,8 @@ fn get_issue_details_includes_events_and_relations() {
 
     assert_eq!(details.issue.id, issue.id);
     assert!(details.labels.contains(&"detail-label".to_string()));
-    // Should have at least the Created event
     assert!(!details.events.is_empty());
 }
-
-// ============================================================================
-// UPDATE ISSUE TESTS
-// ============================================================================
 
 #[test]
 fn update_issue_single_field_title() {
@@ -330,7 +306,6 @@ fn update_issue_single_field_title() {
     let updated = storage.update_issue(&issue.id, &update, "updater").unwrap();
     assert_eq!(updated.title, "Updated Title");
 
-    // Verify persisted
     let retrieved = storage.get_issue(&issue.id).unwrap().expect("issue exists");
     assert_eq!(retrieved.title, "Updated Title");
 }
@@ -420,17 +395,14 @@ fn update_issue_empty_update_is_noop() {
 
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Clear dirty flags first
     let dirty = storage.get_dirty_issue_ids().unwrap();
     storage.clear_dirty_flags(&dirty).unwrap();
 
     let update = IssueUpdate::default();
     let updated = storage.update_issue(&issue.id, &update, "updater").unwrap();
 
-    // Should return the original issue unchanged
     assert_eq!(updated.title, issue.title);
 
-    // Should NOT mark dirty since nothing changed
     let dirty_after = storage.get_dirty_issue_ids().unwrap();
     assert!(dirty_after.is_empty());
 }
@@ -442,7 +414,6 @@ fn update_issue_marks_dirty() {
 
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Clear dirty from create
     let dirty = storage.get_dirty_issue_ids().unwrap();
     storage.clear_dirty_flags(&dirty).unwrap();
 
@@ -517,7 +488,6 @@ fn update_issue_rejects_negative_estimate_without_persisting() {
 fn update_issue_clear_optional_fields() {
     let mut storage = test_db();
 
-    // Create issue with all optional fields set
     let issue = Issue {
         id: "test-clear-fields".to_string(),
         title: "Clear Fields Test".to_string(),
@@ -575,7 +545,6 @@ fn update_issue_clear_optional_fields() {
 
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Clear the optional fields by setting to None
     let update = IssueUpdate {
         description: Some(None),
         assignee: Some(None),
@@ -590,10 +559,6 @@ fn update_issue_clear_optional_fields() {
     assert!(updated.owner.is_none());
     assert!(updated.estimated_minutes.is_none());
 }
-
-// ============================================================================
-// DELETE ISSUE TESTS (Soft Delete / Tombstone)
-// ============================================================================
 
 #[test]
 fn delete_issue_creates_tombstone() {
@@ -643,7 +608,6 @@ fn delete_issue_marks_dirty() {
 
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Clear dirty from create
     let dirty = storage.get_dirty_issue_ids().unwrap();
     storage.clear_dirty_flags(&dirty).unwrap();
 
@@ -684,10 +648,6 @@ fn deleted_issues_excluded_from_list() {
     assert!(!ids.contains(&issue2.id));
 }
 
-// ============================================================================
-// DIRTY TRACKING TESTS
-// ============================================================================
-
 #[test]
 fn get_dirty_issue_ids_returns_all_dirty() {
     let mut storage = test_db();
@@ -717,7 +677,6 @@ fn clear_dirty_flags_removes_specified() {
     storage.create_issue(&issue1, "tester").unwrap();
     storage.create_issue(&issue2, "tester").unwrap();
 
-    // Clear only issue1
     storage
         .clear_dirty_flags(std::slice::from_ref(&issue1.id))
         .unwrap();
@@ -741,10 +700,6 @@ fn clear_dirty_flags_empty_list_is_noop() {
     assert!(dirty_ids.contains(&issue.id));
 }
 
-// ============================================================================
-// TRANSACTION BEHAVIOR TESTS
-// ============================================================================
-
 #[test]
 fn failed_create_does_not_persist() {
     let mut storage = test_db();
@@ -752,24 +707,17 @@ fn failed_create_does_not_persist() {
 
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Attempt to create duplicate (should fail)
     let result = storage.create_issue(&issue, "tester");
     assert!(result.is_err());
 
-    // Original should still exist unchanged
     let retrieved = storage.get_issue(&issue.id).unwrap().expect("issue exists");
     assert_eq!(retrieved.title, issue.title);
 
-    // Only one issue should exist
     let all_issues = storage
         .list_issues(&beads::storage::ListFilters::default())
         .unwrap();
     assert_eq!(all_issues.len(), 1);
 }
-
-// ============================================================================
-// UPSERT TESTS
-// ============================================================================
 
 #[test]
 fn upsert_issue_for_import_creates_new() {
@@ -789,7 +737,6 @@ fn upsert_issue_for_import_updates_existing() {
 
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Modify and upsert
     issue.title = "Updated via upsert".to_string();
     issue.description = Some("New description".to_string());
 
@@ -938,10 +885,6 @@ fn upsert_issue_stores_all_fields() {
     assert!(!retrieved.is_template);
 }
 
-// ============================================================================
-// ID EXISTENCE TESTS
-// ============================================================================
-
 #[test]
 fn id_exists_returns_true_for_existing() {
     let mut storage = test_db();
@@ -958,10 +901,6 @@ fn id_exists_returns_false_for_nonexistent() {
 
     assert!(!storage.id_exists("nonexistent-id").unwrap());
 }
-
-// ============================================================================
-// COUNT TESTS
-// ============================================================================
 
 #[test]
 fn count_issues_returns_correct_count() {
@@ -1005,10 +944,6 @@ fn count_active_issues_excludes_closed_and_templates_but_includes_deferred() {
     assert_eq!(storage.count_active_issues().unwrap(), 2);
 }
 
-// ============================================================================
-// PERSISTENCE TESTS (with file-backed DB)
-// ============================================================================
-
 #[test]
 fn data_persists_across_connections() {
     let (mut storage, dir) = test_db_with_dir();
@@ -1018,7 +953,6 @@ fn data_persists_across_connections() {
     storage.create_issue(&issue, "tester").unwrap();
     drop(storage);
 
-    // Reopen and verify
     let storage2 = SqliteStorage::open(&db_path).unwrap();
     let retrieved = storage2
         .get_issue(&issue.id)

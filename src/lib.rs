@@ -17,12 +17,7 @@
 //! - [`format`] - Output formatting (text, JSON)
 //! - [`util`] - Utility functions (hashing, time, paths)
 
-// Deny (not forbid) so the single sanctioned exemption in
-// `sync::db_inode_lock` — the SQLite-compatible database-inode range lock,
-// which has no safe wrapper on macOS/Windows — can carry a scoped
-// `#[allow(unsafe_code)]`. Everything else must stay free of `unsafe`.
 #![deny(unsafe_code)]
-// Lint configuration is in Cargo.toml [lints.clippy] section
 #![allow(clippy::module_name_repetitions)]
 
 pub(crate) mod agent_registry;
@@ -34,10 +29,6 @@ pub mod coordination;
 pub mod elm;
 pub mod error;
 pub mod format;
-// Vendored graph algorithms (ADR-0003 §3.2). Upstream wrote these for a
-// wasm crate with its own lint profile; the fork's style lints are relaxed
-// *only inside this module* so the vendored files stay close to their
-// beads_viewer originals for provenance. Correctness lints stay on.
 #[allow(
     clippy::must_use_candidate,
     clippy::many_single_char_names,
@@ -83,10 +74,8 @@ pub use error::{BeadsError, ErrorCode, Result, StructuredError};
 /// # Errors
 ///
 /// Returns an error if command execution fails.
-#[allow(clippy::missing_const_for_fn)] // Will have side effects once implemented
+#[allow(clippy::missing_const_for_fn)]
 pub fn run() -> Result<()> {
-    // CLI execution is currently handled in main.rs directly.
-    // This function can be used for library-level integration tests or embedding.
     Ok(())
 }
 

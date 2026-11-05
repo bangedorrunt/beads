@@ -46,7 +46,6 @@ fn short_alias_resolves_through_show_update_and_dep() {
     );
     let plain = seed_issue(&workspace, "Alias dependent", &[], "create_alias_dependent");
 
-    // Slice alias: drop the project prefix, keep the slug and hash segments.
     let slice = slugged
         .strip_prefix("elm-effect-rs-")
         .expect("slugged id carries the configured prefix")
@@ -54,12 +53,10 @@ fn short_alias_resolves_through_show_update_and_dep() {
     let shown = show_json(&workspace, &slice, "show_via_slice_alias");
     assert_eq!(shown["id"].as_str(), Some(slugged.as_str()));
 
-    // Hash alias: the final segment alone.
     let hash = plain.rsplit('-').next().expect("hash segment");
     let shown = show_json(&workspace, hash, "show_via_hash_alias");
     assert_eq!(shown["id"].as_str(), Some(plain.as_str()));
 
-    // Update through the slice alias.
     let update = run_br(
         &workspace,
         ["update", &slice, "--priority", "1"],
@@ -69,7 +66,6 @@ fn short_alias_resolves_through_show_update_and_dep() {
     let shown = show_json(&workspace, &slugged, "show_after_alias_update");
     assert_eq!(shown["priority"].as_u64(), Some(1));
 
-    // Dependency through aliases on both ends.
     let dep = run_br(
         &workspace,
         ["dep", "add", hash, &slice],
@@ -108,7 +104,6 @@ fn short_alias_resolves_child_and_close_via_slice_alias() {
         "create_alias_target",
     );
 
-    // Child alias: hash plus child suffix.
     let child = seed_issue(
         &workspace,
         "Alias child",
@@ -123,7 +118,6 @@ fn short_alias_resolves_child_and_close_via_slice_alias() {
     let shown = show_json(&workspace, &child_alias, "show_via_child_alias");
     assert_eq!(shown["id"].as_str(), Some(child.as_str()));
 
-    // Gate + close through a slice alias, on an issue with no open children.
     let closable = seed_issue(
         &workspace,
         "Alias closable",
@@ -181,13 +175,9 @@ fn short_alias_resolves_abbreviated_prefix_handle() {
     );
     assert_eq!(child, format!("{parent}.1"));
 
-    // `eer` is `abbreviate_prefix("elm-effect-rs")` — the initials of the
-    // configured prefix, per that helper's own contract (`My_Project-Name`
-    // abbreviates to `mpn`).
     let shown = show_json(&workspace, "eer-1", "show_via_abbreviated_handle");
     assert_eq!(shown["id"].as_str(), Some(child.as_str()));
 
-    // The handle only resolves real children; a missing one stays not-found.
     let missing = run_br(
         &workspace,
         ["show", "eer-99"],
@@ -231,7 +221,6 @@ fn short_alias_resolves_create_warns_on_dispatch_brief_budget_and_config_prefix(
         created.stderr
     );
 
-    // The JSON envelope carries the same warning instead of only stderr.
     let json_created = run_br(
         &workspace,
         ["create", "Long prefix json bead", "--json"],
@@ -252,7 +241,6 @@ fn short_alias_resolves_create_warns_on_dispatch_brief_budget_and_config_prefix(
         json_created.stdout
     );
 
-    // A short prefix stays quiet.
     let short = BrWorkspace::new();
     init_with_prefix(&short, "bd");
     let quiet = run_br(
@@ -267,7 +255,6 @@ fn short_alias_resolves_create_warns_on_dispatch_brief_budget_and_config_prefix(
         quiet.stderr
     );
 
-    // `br config set id.prefix` is the documented knob, and it takes effect.
     let set = run_br(
         &workspace,
         ["config", "set", "id.prefix", "zz"],

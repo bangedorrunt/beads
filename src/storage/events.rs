@@ -370,8 +370,6 @@ pub fn get_events(conn: &Connection, issue_id: &str, limit: usize) -> Result<Vec
     )?;
 
     let mut result: Vec<Event> = events.iter().map(event_from_row).collect::<Result<_>>()?;
-    // Enforce ORDER BY DESC + LIMIT in Rust rather than trusting every query
-    // plan: LIMIT cannot discard the wrong rows before sorting.
     result.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
     if limit > 0 && result.len() > limit {
         result.truncate(limit);
@@ -403,17 +401,12 @@ fn event_from_row(row: &Row) -> Result<Event> {
     let created_at_str = row.get(7).and_then(|v| v.as_text()).ok_or_else(|| {
         BeadsError::Config(format!("events row missing created_at for {issue_id}"))
     })?;
-    // Tier 1 attribution (issue #312, Layer 3 capture-only). Absent on events
-    // recorded without attribution and on rows from pre-v13 databases; both
-    // coerce to None. These are recorded-only and never gated on.
     let agent_name = row.get(8).and_then(|v| v.as_text()).map(String::from);
     let harness = row.get(9).and_then(|v| v.as_text()).map(String::from);
     let model = row.get(10).and_then(|v| v.as_text()).map(String::from);
 
-    // Parse event type
     let event_type = parse_event_type(event_type_str)?;
 
-    // Parse timestamp (support RFC3339 and SQLite default format)
     let created_at = parse_event_timestamp(created_at_str)?;
 
     Ok(Event {
@@ -462,8 +455,6 @@ pub fn get_all_events(conn: &Connection, limit: usize) -> Result<Vec<Event>> {
     )?;
 
     let mut result: Vec<Event> = rows.iter().map(event_from_row).collect::<Result<_>>()?;
-    // Enforce ORDER BY DESC + LIMIT in Rust rather than trusting every query
-    // plan: LIMIT cannot discard the wrong rows before sorting.
     result.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
     if limit > 0 && result.len() > limit {
         result.truncate(limit);
@@ -538,7 +529,6 @@ mod tests {
     fn setup_test_db() -> Connection {
         let conn = Connection::open(":memory:").expect("Failed to create in-memory database");
 
-        // Create minimal issues table for foreign key
         execute_batch(
             &conn,
             r"
@@ -551,10 +541,8 @@ mod tests {
         )
         .expect("Failed to create issues table");
 
-        // Create events table
         init_events_table(&conn).expect("Failed to create events table");
 
-        // Insert a test issue
         conn.execute("INSERT INTO issues (id, title) VALUES ('test-001', 'Test Issue')")
             .expect("Failed to insert test issue");
 
@@ -641,7 +629,6 @@ mod tests {
     fn test_insert_dependency_added_event() {
         let conn = setup_test_db();
 
-        // Add second issue for dependency
         conn.execute("INSERT INTO issues (id, title) VALUES ('test-002', 'Blocking Issue')")
             .expect("Failed to insert second issue");
 
@@ -671,7 +658,6 @@ mod tests {
         let events = get_events(&conn, "test-001", 0).expect("Failed to get events");
         assert_eq!(events.len(), 2);
 
-        // Events are DESC order, so removed is first
         assert_eq!(events[0].event_type, EventType::LabelRemoved);
         assert_eq!(events[0].old_value.as_deref(), Some("urgent"));
 
@@ -683,7 +669,6 @@ mod tests {
     fn test_get_events_ordering() {
         let conn = setup_test_db();
 
-        // Insert multiple events
         for i in 0..5 {
             conn.execute("BEGIN").expect("Failed to start tx");
             insert_commented_event(&conn, "test-001", "user", &format!("Comment {i}"))
@@ -694,7 +679,6 @@ mod tests {
         let events = get_events(&conn, "test-001", 0).expect("Failed to get events");
         assert_eq!(events.len(), 5);
 
-        // Verify DESC ordering (newest first)
         assert!(events[0].comment.as_ref().unwrap().contains("Comment 4"));
         assert!(events[4].comment.as_ref().unwrap().contains("Comment 0"));
     }
@@ -703,7 +687,6 @@ mod tests {
     fn test_get_events_with_limit() {
         let conn = setup_test_db();
 
-        // Insert 10 events
         for i in 0..10 {
             conn.execute("BEGIN").expect("Failed to start tx");
             insert_commented_event(&conn, "test-001", "user", &format!("Comment {i}"))
@@ -711,11 +694,9 @@ mod tests {
             conn.execute("COMMIT").expect("Failed to commit");
         }
 
-        // Get only 3 events
         let events = get_events(&conn, "test-001", 3).expect("Failed to get events");
         assert_eq!(events.len(), 3);
 
-        // Should be newest 3
         assert!(events[0].comment.as_ref().unwrap().contains("Comment 9"));
         assert!(events[2].comment.as_ref().unwrap().contains("Comment 7"));
     }
@@ -775,7 +756,6 @@ mod tests {
             .expect("insert event");
         }
 
-        // Unknown persisted types fail loud at read (bd-bqyb).
         assert!(get_events(&conn, "test-001", 0).is_err());
     }
 
@@ -783,7 +763,6 @@ mod tests {
     fn test_count_events() {
         let conn = setup_test_db();
 
-        // Insert events
         for _ in 0..5 {
             conn.execute("BEGIN").expect("Failed to start tx");
             insert_commented_event(&conn, "test-001", "user", "A comment")
@@ -809,7 +788,6 @@ mod tests {
         let events = get_events(&conn, "test-001", 0).expect("Failed to get events");
         assert_eq!(events.len(), 2);
 
-        // Restored is newer (first in DESC order)
         assert_eq!(events[0].event_type, EventType::Restored);
         assert_eq!(events[0].comment.as_deref(), Some("Not a duplicate"));
 
@@ -836,11 +814,9 @@ mod tests {
     fn test_get_all_events() {
         let conn = setup_test_db();
 
-        // Add second issue
         conn.execute("INSERT INTO issues (id, title) VALUES ('test-002', 'Second Issue')")
             .expect("Failed to insert second issue");
 
-        // Insert events for both issues
         conn.execute("BEGIN").expect("Failed to start tx");
         insert_created_event(&conn, "test-001", "alice").expect("Failed to insert event");
         insert_created_event(&conn, "test-002", "bob").expect("Failed to insert event");
@@ -854,7 +830,6 @@ mod tests {
     fn test_multiple_event_types_sequence() {
         let conn = setup_test_db();
 
-        // Simulate a typical issue lifecycle
         conn.execute("BEGIN").expect("Failed to start tx");
         insert_created_event(&conn, "test-001", "alice").expect("Created");
         conn.execute("COMMIT").expect("Commit");
@@ -875,7 +850,6 @@ mod tests {
         let events = get_events(&conn, "test-001", 0).expect("Failed to get events");
         assert_eq!(events.len(), 4);
 
-        // Verify order (newest first)
         assert_eq!(events[0].event_type, EventType::Closed);
         assert_eq!(events[1].event_type, EventType::Commented);
         assert_eq!(events[2].event_type, EventType::StatusChanged);
@@ -884,8 +858,6 @@ mod tests {
 
     #[test]
     fn test_event_attribution_round_trips_through_columns() {
-        // Issue #312, Layer 3 capture-only: attribution written to the events
-        // table round-trips back through the read path unchanged.
         let conn = setup_test_db();
         conn.execute_with_params(
             "INSERT INTO events (issue_id, event_type, actor, created_at, agent_name, harness, model)
@@ -911,8 +883,6 @@ mod tests {
 
     #[test]
     fn test_event_without_attribution_reads_as_none() {
-        // Absent attribution (the common case) must coerce to None, never to a
-        // blank string or invalid value.
         let conn = setup_test_db();
         conn.execute("BEGIN").expect("begin");
         insert_created_event(&conn, "test-001", "alice").expect("insert event");
@@ -927,7 +897,6 @@ mod tests {
 
     #[test]
     fn test_partial_attribution_round_trips() {
-        // Only some attribution fields supplied; the others stay None.
         let conn = setup_test_db();
         conn.execute_with_params(
             "INSERT INTO events (issue_id, event_type, actor, created_at, model)

@@ -35,7 +35,7 @@
 //! On creation we ensure `.doctor/` is in `<repo>/.gitignore`. The
 //! existing `.beads/` ignore patterns and conventions are not touched.
 
-#![allow(dead_code)] // WP1 foundation; consumed by WP3-WP12.
+#![allow(dead_code)]
 
 use std::fmt::Write as FmtWrite;
 use std::fs::{self, OpenOptions};
@@ -132,16 +132,6 @@ pub fn create_run_dir(repo_root: &Path) -> Result<RunDir, BeadsError> {
         )));
     }
 
-    // Round-5 fresh-eyes follow-through (`beads-dfjs`): when
-    // `BR_DOCTOR_RUNS_DIR` is set the run artifacts live OUTSIDE
-    // `<repo>/.doctor/`, so adding `.doctor/` to `<repo>/.gitignore`
-    // would be a surprise mutation against the parent tree without
-    // any benefit. Test fixtures, CI sandboxes, and `br doctor undo`
-    // (which builds a fresh run-dir purely to audit its own writes)
-    // are the primary callers of the env-override path. Skip the
-    // gitignore touch in that case so those callers cannot
-    // accidentally mutate a host repo's `.gitignore` outside the
-    // chokepoint.
     if std::env::var_os(ENV_RUNS_DIR).is_none() {
         ensure_doctor_in_gitignore(repo_root)?;
     }
@@ -163,7 +153,6 @@ pub fn create_run_dir(repo_root: &Path) -> Result<RunDir, BeadsError> {
 
     let report_file = root.join("report.json");
     if !report_file.exists() {
-        // Touch an empty placeholder so the file path is stable.
         OpenOptions::new()
             .create(true)
             .append(true)
@@ -173,8 +162,6 @@ pub fn create_run_dir(repo_root: &Path) -> Result<RunDir, BeadsError> {
 
     let undo_script = root.join("undo.sh");
 
-    // .doctor/latest symlink (points relative inside the runs root so
-    // it survives moves of the repo root).
     let latest_link = runs_root.parent().unwrap_or(&runs_root).join("latest");
     update_latest_symlink(&latest_link, &root)?;
 
@@ -232,10 +219,6 @@ fn update_latest_symlink(latest_link: &Path, target: &Path) -> Result<(), BeadsE
         fs::create_dir_all(parent).map_err(BeadsError::Io)?;
     }
 
-    // Use a relative target so the link stays valid if `<repo>` is
-    // moved. The symlink lives under `<runs_root>/..`, the target lives
-    // at `<runs_root>/<run-id>/`, so `runs/<run-id>/` is the right
-    // relative path.
     let rel_target = target
         .strip_prefix(latest_link.parent().unwrap_or(target))
         .map(Path::to_path_buf)
@@ -247,19 +230,12 @@ fn update_latest_symlink(latest_link: &Path, target: &Path) -> Result<(), BeadsE
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
     ));
 
-    // Clear stale tmp from a crashed run unconditionally — using
-    // `is_ok()` then `remove_file` opens a TOCTOU window where a
-    // concurrent process could delete the symlink between our check
-    // and our remove, turning NotFound into a hard error. Treat
-    // NotFound as success.
     match fs::remove_file(&tmp) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(BeadsError::Io(e)),
     }
     create_symlink(&rel_target, &tmp).map_err(BeadsError::Io)?;
-    // `fs::rename` over an existing symlink atomically replaces it on
-    // Unix.
     fs::rename(&tmp, latest_link).map_err(BeadsError::Io)?;
     fsync_dir(latest_link.parent().unwrap_or_else(|| Path::new(".")))?;
     Ok(())
@@ -311,16 +287,6 @@ fn ensure_doctor_in_gitignore(repo_root: &Path) -> Result<(), BeadsError> {
         return Ok(());
     }
 
-    // SACRED INVARIANT: if the operator has locked the repo-root
-    // `.gitignore` read-only (compliance-controlled file, vendored
-    // shared config), do NOT bypass that intent. The tmp+rename below
-    // would otherwise replace the file even at mode 0o444, since rename
-    // only needs parent-directory write permission. The
-    // `permissions.root_gitignore` detector already surfaces the locked
-    // file to the operator; here we skip the `.doctor/` addition rather
-    // than silently overwriting it. Trade-off: `.doctor/` run artifacts
-    // won't be auto-ignored on a locked repo, but respecting an explicit
-    // operator chmod outranks the convenience of the carveout.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -344,7 +310,6 @@ fn ensure_doctor_in_gitignore(repo_root: &Path) -> Result<(), BeadsError> {
     new_contents.push_str(needle);
     new_contents.push('\n');
 
-    // Atomic write: tmp + rename.
     let parent = gitignore.parent().unwrap_or_else(|| Path::new("."));
     let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(BeadsError::Io)?;
     tmp.write_all(new_contents.as_bytes())
@@ -483,25 +448,17 @@ mod tests {
         let tmp = unique_temp_root("stable");
         let run = create_run_dir(tmp.path()).expect("create_run_dir");
 
-        // Format: <YYYYMMDDTHHMMSSZ>__<6 hex chars>
         let parts: Vec<&str> = run.run_id.split("__").collect();
         assert_eq!(parts.len(), 2, "run_id must split into ts__hash");
         assert_eq!(parts[0].len(), 16, "iso ts must be 16 chars");
         assert_eq!(parts[1].len(), 6, "short hash must be 6 hex");
         assert!(parts[1].chars().all(|c| c.is_ascii_hexdigit()));
 
-        // Directory layout exists.
         assert!(run.root.is_dir(), "root dir missing");
         assert!(run.backups.is_dir(), "backups dir missing");
         assert!(run.actions_file.is_file(), "actions.jsonl missing");
         assert!(run.report_file.is_file(), "report.json placeholder missing");
 
-        // Symlink atomically updated. Note: the only env-controlled
-        // path lives behind `runs_root_for`, which falls back to
-        // `<repo>/.doctor/runs/`. If `BR_DOCTOR_RUNS_DIR` happens to be
-        // set in the calling shell, the latest_link path will be under
-        // that override, so we only assert that the symlink resolves
-        // to a target containing run_id.
         let meta = fs::symlink_metadata(&run.latest_link).expect("latest");
         assert!(meta.file_type().is_symlink(), "latest must be symlink");
         let target = fs::read_link(&run.latest_link).unwrap();
@@ -512,7 +469,6 @@ mod tests {
             run.run_id
         );
 
-        // .gitignore now contains .doctor/.
         let gi = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
         assert!(gi.contains(".doctor/"));
     }
@@ -522,15 +478,12 @@ mod tests {
         let tmp = unique_temp_root("atomic");
 
         let run1 = create_run_dir(tmp.path()).expect("first run");
-        // Sleep just over one second so the second run's iso-second
-        // timestamp differs.
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let run2 = create_run_dir(tmp.path()).expect("second run");
         assert_ne!(run1.run_id, run2.run_id);
 
         let target = fs::read_link(&run2.latest_link).unwrap();
         assert!(target.to_string_lossy().contains(&run2.run_id));
-        // The first run's directory still exists — we don't delete it.
         assert!(run1.root.is_dir());
     }
 
@@ -631,7 +584,6 @@ mod tests {
         assert!(computed.starts_with(override_dir.path()));
         assert!(computed.ends_with("runs"));
 
-        // And without an override, falls back to <repo>/.doctor/runs.
         let fallback = runs_root_with_override(outer.path(), None);
         assert_eq!(fallback, outer.path().join(".doctor").join("runs"));
     }
@@ -764,9 +716,6 @@ mod tests {
     /// message and require a contract update.)
     #[test]
     fn create_run_dir_call_to_gitignore_is_gated_on_env_override() {
-        // Self-document the carveout the production code relies on.
-        // If the gating disappears, this string-search regression
-        // catches it.
         let src = include_str!("run_dir.rs");
         let production_section = src
             .split("\nmod tests {")

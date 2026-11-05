@@ -251,9 +251,6 @@ impl Program for BeadsCore {
                 )
             }
             BeadsMsg::GatesLoaded { issue_id, rows } => {
-                // The verdict stream is its own log. This fold fills it from
-                // the interpreter's reply and from nothing else, so an event
-                // log can never mint a verdict.
                 next.gates.insert(issue_id.clone(), rows.clone());
                 let decision = next
                     .pending
@@ -268,8 +265,6 @@ impl Program for BeadsCore {
                 Update::quiet(next)
             }
             BeadsMsg::Persisted { issue_id } => {
-                // The request never moves a status. Only the interpreter's
-                // confirmation does, and only when the decision was legal.
                 let legal = next.pending.get(issue_id).is_some_and(|pending| {
                     pending
                         .decision
@@ -286,9 +281,6 @@ impl Program for BeadsCore {
                 Update::quiet(next)
             }
             BeadsMsg::Failed(failure) => {
-                // The three cause kinds stay apart: a typed failure is
-                // recorded as one, and a defect or interrupt is never
-                // relabelled as a policy violation.
                 next.failures.push(failure.clone());
                 Update::quiet(next)
             }

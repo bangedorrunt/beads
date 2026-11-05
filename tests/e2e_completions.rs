@@ -12,10 +12,6 @@ use common::cli::{BrWorkspace, run_br};
 use std::fs;
 use tracing::info;
 
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
 fn init_workspace(workspace: &BrWorkspace) {
     let init = run_br(workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
@@ -26,29 +22,21 @@ fn init_workspace(workspace: &BrWorkspace) {
 /// that calls the binary at runtime to resolve completions, rather than embedding
 /// static subcommand/flag lists in the script.
 fn assert_contains_dynamic_markers(output: &str, shell_name: &str) {
-    // All dynamic completion scripts must reference the binary name
     assert!(
         output.contains("br"),
         "{shell_name} completions should reference 'br' binary"
     );
-    // All dynamic completion scripts set a COMPLETE env var
     assert!(
         output.contains("COMPLETE"),
         "{shell_name} completions should contain COMPLETE env var for dynamic resolution"
     );
 }
 
-// =============================================================================
-// Bash Completions Tests
-// =============================================================================
-
 #[test]
 fn e2e_completions_bash_generates_valid_script() {
     common::init_test_logging();
     info!("e2e_completions_bash_generates_valid_script: start");
-    // Generate bash completions and verify it's a valid bash script
     let workspace = BrWorkspace::new();
-    // Note: completions don't require init
 
     let completions = run_br(&workspace, ["completions", "bash"], "completions_bash");
     assert!(
@@ -57,7 +45,6 @@ fn e2e_completions_bash_generates_valid_script() {
         completions.stderr
     );
 
-    // Dynamic bash completions register via clap_complete::env::Shells
     assert!(
         completions.stdout.contains("_clap_complete_br"),
         "bash completions should define _clap_complete_br dynamic function"
@@ -111,15 +98,10 @@ fn e2e_completions_bash_contains_flags() {
     info!("e2e_completions_bash_contains_flags: done");
 }
 
-// =============================================================================
-// Zsh Completions Tests
-// =============================================================================
-
 #[test]
 fn e2e_completions_zsh_generates_valid_script() {
     common::init_test_logging();
     info!("e2e_completions_zsh_generates_valid_script: start");
-    // Generate zsh completions and verify structure
     let workspace = BrWorkspace::new();
 
     let completions = run_br(&workspace, ["completions", "zsh"], "completions_zsh");
@@ -129,7 +111,6 @@ fn e2e_completions_zsh_generates_valid_script() {
         completions.stderr
     );
 
-    // Zsh completions should have the compdef directive
     assert!(
         completions.stdout.contains("#compdef") || completions.stdout.contains("_br"),
         "zsh completions should have compdef or _br function"
@@ -158,15 +139,10 @@ fn e2e_completions_zsh_contains_subcommands() {
     info!("e2e_completions_zsh_contains_subcommands: done");
 }
 
-// =============================================================================
-// Fish Completions Tests
-// =============================================================================
-
 #[test]
 fn e2e_completions_fish_generates_valid_script() {
     common::init_test_logging();
     info!("e2e_completions_fish_generates_valid_script: start");
-    // Generate fish completions and verify structure
     let workspace = BrWorkspace::new();
 
     let completions = run_br(&workspace, ["completions", "fish"], "completions_fish");
@@ -176,7 +152,6 @@ fn e2e_completions_fish_generates_valid_script() {
         completions.stderr
     );
 
-    // Fish completions use 'complete' command
     assert!(
         completions.stdout.contains("complete"),
         "fish completions should use 'complete' command"
@@ -205,15 +180,10 @@ fn e2e_completions_fish_contains_subcommands() {
     info!("e2e_completions_fish_contains_subcommands: done");
 }
 
-// =============================================================================
-// PowerShell Completions Tests
-// =============================================================================
-
 #[test]
 fn e2e_completions_powershell_generates_valid_script() {
     common::init_test_logging();
     info!("e2e_completions_powershell_generates_valid_script: start");
-    // Generate PowerShell completions and verify structure
     let workspace = BrWorkspace::new();
 
     let completions = run_br(
@@ -227,7 +197,6 @@ fn e2e_completions_powershell_generates_valid_script() {
         completions.stderr
     );
 
-    // Dynamic PowerShell completions register via COMPLETE env var
     assert!(
         completions.stdout.contains("Register-ArgumentCompleter")
             || completions.stdout.contains("COMPLETE"),
@@ -257,15 +226,10 @@ fn e2e_completions_powershell_contains_subcommands() {
     info!("e2e_completions_powershell_contains_subcommands: done");
 }
 
-// =============================================================================
-// Elvish Completions Tests
-// =============================================================================
-
 #[test]
 fn e2e_completions_elvish_generates_valid_script() {
     common::init_test_logging();
     info!("e2e_completions_elvish_generates_valid_script: start");
-    // Generate elvish completions and verify structure
     let workspace = BrWorkspace::new();
 
     let completions = run_br(&workspace, ["completions", "elvish"], "completions_elvish");
@@ -275,7 +239,6 @@ fn e2e_completions_elvish_generates_valid_script() {
         completions.stderr
     );
 
-    // Dynamic elvish completions register via COMPLETE env var
     assert!(
         completions.stdout.contains("edit:") || completions.stdout.contains("COMPLETE"),
         "elvish completions should have edit: namespace or COMPLETE registration"
@@ -283,15 +246,10 @@ fn e2e_completions_elvish_generates_valid_script() {
     info!("e2e_completions_elvish_generates_valid_script: done");
 }
 
-// =============================================================================
-// Edge Case Tests
-// =============================================================================
-
 #[test]
 fn e2e_completions_unknown_shell_error() {
     common::init_test_logging();
     info!("e2e_completions_unknown_shell_error: start");
-    // Unknown shell should result in error
     let workspace = BrWorkspace::new();
 
     let completions = run_br(&workspace, ["completions", "csh"], "completions_unknown");
@@ -306,7 +264,6 @@ fn e2e_completions_unknown_shell_error() {
 fn e2e_completions_idempotent() {
     common::init_test_logging();
     info!("e2e_completions_idempotent: start");
-    // Running completions twice should produce identical output
     let workspace = BrWorkspace::new();
 
     let run1 = run_br(&workspace, ["completions", "bash"], "completions_idem_1");
@@ -322,9 +279,7 @@ fn e2e_completions_idempotent() {
 fn e2e_completions_no_workspace_required() {
     common::init_test_logging();
     info!("e2e_completions_no_workspace_required: start");
-    // Completions should work without an initialized workspace
     let workspace = BrWorkspace::new();
-    // Deliberately NOT calling init_workspace
 
     let completions = run_br(
         &workspace,
@@ -343,7 +298,6 @@ fn e2e_completions_no_workspace_required() {
 fn e2e_completions_with_initialized_workspace() {
     common::init_test_logging();
     info!("e2e_completions_with_initialized_workspace: start");
-    // Completions should also work with an initialized workspace
     let workspace = BrWorkspace::new();
     init_workspace(&workspace);
 
@@ -360,15 +314,10 @@ fn e2e_completions_with_initialized_workspace() {
     info!("e2e_completions_with_initialized_workspace: done");
 }
 
-// =============================================================================
-// All Shells Consistency Tests
-// =============================================================================
-
 #[test]
 fn e2e_completions_all_shells_succeed() {
     common::init_test_logging();
     info!("e2e_completions_all_shells_succeed: start");
-    // All supported shells should generate completions successfully
     let workspace = BrWorkspace::new();
     let shells = ["bash", "zsh", "fish", "powershell", "elvish"];
 
@@ -395,7 +344,6 @@ fn e2e_completions_all_shells_succeed() {
 fn e2e_completions_all_shells_have_help() {
     common::init_test_logging();
     info!("e2e_completions_all_shells_have_help: start");
-    // All shell completions should include --help descriptions
     let workspace = BrWorkspace::new();
     let shells = ["bash", "zsh", "fish", "powershell", "elvish"];
 
@@ -409,7 +357,6 @@ fn e2e_completions_all_shells_have_help() {
             completions.status.success(),
             "completions for {shell} failed"
         );
-        // Dynamic completions produce registration stubs referencing the binary name
         assert!(
             completions.stdout.contains("br"),
             "completions for {shell} should reference the binary name"
@@ -418,15 +365,10 @@ fn e2e_completions_all_shells_have_help() {
     info!("e2e_completions_all_shells_have_help: done");
 }
 
-// =============================================================================
-// File Output Tests
-// =============================================================================
-
 #[test]
 fn e2e_completions_bash_file_output() {
     common::init_test_logging();
     info!("e2e_completions_bash_file_output: start");
-    // Generate bash completions to a file and verify content
     let workspace = BrWorkspace::new();
     let output_file = workspace.root.join("completions_bash.sh");
 
@@ -441,14 +383,12 @@ fn e2e_completions_bash_file_output() {
         completions.stderr
     );
 
-    // Verify file was created
     assert!(
         output_file.exists(),
         "completion file should exist at {}",
         output_file.display()
     );
 
-    // Verify file content
     let file_content = fs::read_to_string(&output_file).expect("read completion file");
     assert!(
         file_content.contains("_clap_complete_br"),
@@ -465,7 +405,6 @@ fn e2e_completions_bash_file_output() {
 fn e2e_completions_zsh_file_output() {
     common::init_test_logging();
     info!("e2e_completions_zsh_file_output: start");
-    // Generate zsh completions to a file
     let workspace = BrWorkspace::new();
     let output_file = workspace.root.join("_br");
 
@@ -480,14 +419,12 @@ fn e2e_completions_zsh_file_output() {
         completions.stderr
     );
 
-    // Verify file was created
     assert!(
         output_file.exists(),
         "completion file should exist at {}",
         output_file.display()
     );
 
-    // Verify file content
     let file_content = fs::read_to_string(&output_file).expect("read completion file");
     assert!(
         file_content.contains("#compdef") || file_content.contains("_br"),
@@ -500,7 +437,6 @@ fn e2e_completions_zsh_file_output() {
 fn e2e_completions_fish_file_output() {
     common::init_test_logging();
     info!("e2e_completions_fish_file_output: start");
-    // Generate fish completions to a file
     let workspace = BrWorkspace::new();
     let output_file = workspace.root.join("br.fish");
 
@@ -515,7 +451,6 @@ fn e2e_completions_fish_file_output() {
         completions.stderr
     );
 
-    // Verify file was created and contains fish-specific syntax
     assert!(output_file.exists(), "completion file should exist");
     let file_content = fs::read_to_string(&output_file).expect("read completion file");
     assert!(
@@ -529,7 +464,6 @@ fn e2e_completions_fish_file_output() {
 fn e2e_completions_powershell_file_output() {
     common::init_test_logging();
     info!("e2e_completions_powershell_file_output: start");
-    // Generate PowerShell completions to a file
     let workspace = BrWorkspace::new();
     let output_file = workspace.root.join("br.ps1");
 
@@ -549,7 +483,6 @@ fn e2e_completions_powershell_file_output() {
         completions.stderr
     );
 
-    // Verify file was created and contains PowerShell-specific syntax
     assert!(output_file.exists(), "completion file should exist");
     let file_content = fs::read_to_string(&output_file).expect("read completion file");
     assert!(
@@ -563,18 +496,15 @@ fn e2e_completions_powershell_file_output() {
 fn e2e_completions_file_output_matches_stdout() {
     common::init_test_logging();
     info!("e2e_completions_file_output_matches_stdout: start");
-    // Verify that file output matches stdout output
     let workspace = BrWorkspace::new();
     let output_file = workspace.root.join("completions_bash_test.sh");
 
-    // Get stdout output
     let stdout_run = run_br(&workspace, ["completions", "bash"], "completions_stdout");
     assert!(
         stdout_run.status.success(),
         "completions bash stdout failed"
     );
 
-    // Get file output
     let file_run = run_br(
         &workspace,
         ["completions", "bash", "-o", output_file.to_str().unwrap()],
@@ -588,7 +518,6 @@ fn e2e_completions_file_output_matches_stdout() {
 
     let file_content = fs::read_to_string(&output_file).expect("read completion file");
 
-    // Content should match (stdout and file should be identical)
     assert_eq!(
         stdout_run.stdout.trim(),
         file_content.trim(),
@@ -601,14 +530,11 @@ fn e2e_completions_file_output_matches_stdout() {
 fn e2e_completions_file_output_overwrites_existing() {
     common::init_test_logging();
     info!("e2e_completions_file_output_overwrites_existing: start");
-    // Verify that file output overwrites an existing file
     let workspace = BrWorkspace::new();
     let output_file = workspace.root.join("completions_overwrite.sh");
 
-    // Create existing file with dummy content
     fs::write(&output_file, "dummy content").expect("write dummy file");
 
-    // Generate completions to the same file
     let completions = run_br(
         &workspace,
         ["completions", "bash", "-o", output_file.to_str().unwrap()],
@@ -620,7 +546,6 @@ fn e2e_completions_file_output_overwrites_existing() {
         completions.stderr
     );
 
-    // Verify file was overwritten
     let file_content = fs::read_to_string(&output_file).expect("read completion file");
     assert!(
         !file_content.contains("dummy content"),
@@ -637,7 +562,6 @@ fn e2e_completions_file_output_overwrites_existing() {
 fn e2e_completions_all_shells_file_output() {
     common::init_test_logging();
     info!("e2e_completions_all_shells_file_output: start");
-    // Test file output for all supported shells
     let workspace = BrWorkspace::new();
     let shells = [
         ("bash", "br.bash"),

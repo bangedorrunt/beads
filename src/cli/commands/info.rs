@@ -599,12 +599,10 @@ fn render_info_rich(info: &InfoOutput, ctx: &OutputContext) {
 
     let mut content = Text::new("");
 
-    // Location section
     content.append_styled("Location    ", theme.dimmed.clone());
     content.append_styled(&info_display_text(&info.beads_dir), theme.accent.clone());
     content.append("\n");
 
-    // Prefix (if available)
     if let Some(prefix) = info.resolved_prefix.as_deref() {
         content.append_styled("Prefix      ", theme.dimmed.clone());
         content.append_styled(&info_display_text(prefix), theme.issue_id.clone());
@@ -613,7 +611,6 @@ fn render_info_rich(info: &InfoOutput, ctx: &OutputContext) {
 
     content.append("\n");
 
-    // Database section
     content.append_styled("Database\n", theme.section.clone());
     content.append_styled("  Path      ", theme.dimmed.clone());
     content.append_styled(
@@ -634,7 +631,6 @@ fn render_info_rich(info: &InfoOutput, ctx: &OutputContext) {
         content.append_styled(" total\n", theme.dimmed.clone());
     }
 
-    // JSONL section
     if let Some(jsonl_path) = &info.jsonl_path {
         content.append("\n");
         content.append_styled("JSONL\n", theme.section.clone());
@@ -649,7 +645,6 @@ fn render_info_rich(info: &InfoOutput, ctx: &OutputContext) {
         }
     }
 
-    // Mode section
     content.append("\n");
     content.append_styled("Mode        ", theme.dimmed.clone());
     content.append(&info_display_text(&info.mode));
@@ -658,7 +653,6 @@ fn render_info_rich(info: &InfoOutput, ctx: &OutputContext) {
     }
     content.append("\n");
 
-    // Schema section (if requested)
     if let Some(schema) = &info.schema {
         content.append("\n");
         content.append_styled("Schema\n", theme.section.clone());
@@ -994,7 +988,6 @@ mod tests {
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let blocker = crate::model::Issue {
             id: "bd-blocker".to_string(),
-            // ADR-0001 §5.5: dispatchable projection fixture.
             verify: Some("cargo test --offline".to_string()),
             principles: vec![crate::model::PrincipleCitation {
                 name: "prove-it-works".to_string(),
@@ -1007,7 +1000,6 @@ mod tests {
         };
         let target = crate::model::Issue {
             id: "bd-target".to_string(),
-            // ADR-0001 §5.5: dispatchable projection fixture.
             verify: Some("cargo test --offline".to_string()),
             principles: vec![crate::model::PrincipleCitation {
                 name: "prove-it-works".to_string(),
@@ -1120,7 +1112,6 @@ mod tests {
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let blocker = crate::model::Issue {
             id: "bd-real-blocker".to_string(),
-            // ADR-0001 §5.5: dispatchable projection fixture.
             verify: Some("cargo test --offline".to_string()),
             principles: vec![crate::model::PrincipleCitation {
                 name: "prove-it-works".to_string(),
@@ -1133,7 +1124,6 @@ mod tests {
         };
         let target = crate::model::Issue {
             id: "bd-parity-target".to_string(),
-            // ADR-0001 §5.5: dispatchable projection fixture.
             verify: Some("cargo test --offline".to_string()),
             principles: vec![crate::model::PrincipleCitation {
                 name: "prove-it-works".to_string(),
@@ -1212,7 +1202,6 @@ mod tests {
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let blocker = crate::model::Issue {
             id: "bd-ready-blocker".to_string(),
-            // ADR-0001 §5.5: dispatchable projection fixture.
             verify: Some("cargo test --offline".to_string()),
             principles: vec![crate::model::PrincipleCitation {
                 name: "prove-it-works".to_string(),
@@ -1225,7 +1214,6 @@ mod tests {
         };
         let target = crate::model::Issue {
             id: "bd-ready-target".to_string(),
-            // ADR-0001 §5.5: dispatchable projection fixture.
             verify: Some("cargo test --offline".to_string()),
             principles: vec![crate::model::PrincipleCitation {
                 name: "prove-it-works".to_string(),

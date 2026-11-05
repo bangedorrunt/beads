@@ -202,7 +202,7 @@ mod tests {
     fn assert_priority_ordered_panics_when_higher_priority_comes_after_lower() {
         let issues = [
             make_issue("a", Priority::MEDIUM, 0),
-            make_issue("b", Priority::CRITICAL, 1), // P0 after P2 → panic
+            make_issue("b", Priority::CRITICAL, 1),
         ];
         assert_priority_ordered(&issues);
     }

@@ -68,19 +68,14 @@ fn test_import_collision_remaps_dependencies() {
     let temp_dir = TempDir::new().unwrap();
     let jsonl_path = temp_dir.path().join("issues.jsonl");
 
-    // 1. Create DB with issue bd-1 (external_ref="EXT-1")
     let mut db_issue = make_issue("bd-1", "Original");
     db_issue.external_ref = Some("EXT-1".to_string());
-    // Ensure it has a hash
     db_issue.content_hash = Some(beads::util::content_hash(&db_issue));
     storage.create_issue(&db_issue, "user").unwrap();
 
-    // 2. Create JSONL with:
-    //    - bd-2 (external_ref="EXT-1") -> Should collide with bd-1 and trigger update
-    //    - bd-3 (depends on bd-2)      -> Should be remapped to depend on bd-1
     let mut jsonl_issue1 = make_issue("bd-2", "Updated via Import");
     jsonl_issue1.external_ref = Some("EXT-1".to_string());
-    jsonl_issue1.updated_at = Utc::now() + chrono::Duration::seconds(10); // Newer
+    jsonl_issue1.updated_at = Utc::now() + chrono::Duration::seconds(10);
 
     let mut jsonl_issue2 = make_issue("bd-3", "Dependent");
     jsonl_issue2.dependencies.push(Dependency {
@@ -100,26 +95,20 @@ fn test_import_collision_remaps_dependencies() {
     );
     fs::write(&jsonl_path, content).unwrap();
 
-    // 3. Import
     let config = ImportConfig::default();
     let _result = import_from_jsonl(&mut storage, &jsonl_path, &config, None).unwrap();
 
-    // 4. Verify
-    // bd-1 should be updated
     let bd1 = storage.get_issue("bd-1").unwrap().unwrap();
     assert_eq!(bd1.title, "Updated via Import");
 
-    // bd-2 should NOT exist
     assert!(
         storage.get_issue("bd-2").unwrap().is_none(),
         "bd-2 should have been merged into bd-1"
     );
 
-    // bd-3 should exist
     let bd3 = storage.get_issue("bd-3").unwrap().unwrap();
     assert_eq!(bd3.title, "Dependent");
 
-    // bd-3 should depend on bd-1 (NOT bd-2)
     let deps = storage.get_dependencies("bd-3").unwrap();
     assert!(
         deps.contains(&"bd-1".to_string()),

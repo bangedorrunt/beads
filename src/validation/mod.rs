@@ -34,7 +34,6 @@ impl IssueValidator {
     pub fn validate(issue: &Issue) -> Result<(), Vec<ValidationError>> {
         let mut errors = Vec::new();
 
-        // ID: Required, max length, prefix-hash format.
         if issue.id.trim().is_empty() {
             errors.push(ValidationError::new("id", "cannot be empty"));
         }
@@ -53,12 +52,10 @@ impl IssueValidator {
 
         validate_issue_text_fields(issue, &mut errors);
 
-        // Priority: 0-4 range.
         if issue.priority.0 < Priority::CRITICAL.0 || issue.priority.0 > Priority::BACKLOG.0 {
             errors.push(ValidationError::new("priority", "must be 0-4"));
         }
 
-        // Timestamps: created_at <= updated_at.
         if issue.updated_at < issue.created_at {
             errors.push(ValidationError::new(
                 "updated_at",
@@ -66,7 +63,6 @@ impl IssueValidator {
             ));
         }
 
-        // Estimated minutes: Optional, must be non-negative and reasonable.
         if let Some(minutes) = issue.estimated_minutes {
             if minutes < 0 {
                 errors.push(ValidationError::new(
@@ -74,7 +70,6 @@ impl IssueValidator {
                     "cannot be negative",
                 ));
             } else if minutes > 525_960 {
-                // ~1 year in minutes
                 errors.push(ValidationError::new(
                     "estimated_minutes",
                     "exceeds maximum (525960 minutes / ~1 year)",
@@ -97,7 +92,6 @@ impl IssueValidator {
             ));
         }
 
-        // Closed timestamps: closed_at must not precede created_at.
         if let Some(closed_at) = issue.closed_at
             && closed_at < issue.created_at
         {
@@ -116,7 +110,6 @@ impl IssueValidator {
 }
 
 fn validate_issue_text_fields(issue: &Issue, errors: &mut Vec<ValidationError>) {
-    // Title: Required, max 500 chars.
     if issue.title.trim().is_empty() {
         errors.push(ValidationError::new("title", "cannot be empty"));
     }
@@ -125,13 +118,6 @@ fn validate_issue_text_fields(issue: &Issue, errors: &mut Vec<ValidationError>) 
     }
     reject_nul("title", &issue.title, errors);
 
-    // Long-text fields (description, design, acceptance_criteria, notes) are
-    // unbounded by design — these capture full specs, RFC text, agent
-    // session transcripts, etc. A prior 100KB cap rejected legitimate
-    // pre-existing records on JSONL rebuild and blocked workspace recovery
-    // (frankensqlite .beads had nine records up to 554KB that were valid
-    // bead bodies, not corruption). We still reject NUL bytes for SQLite
-    // compatibility.
     if let Some(s) = issue.description.as_deref() {
         reject_nul("description", s, errors);
     }
@@ -399,8 +385,6 @@ impl CommentValidator {
             errors.push(ValidationError::new("content", "cannot be empty"));
         }
 
-        // Comment bodies are unbounded — same reasoning as long-text issue
-        // fields above. Reject only NUL bytes for SQLite compatibility.
         reject_nul("content", &comment.body, &mut errors);
 
         if comment.author.trim().is_empty() {
@@ -424,9 +408,7 @@ pub fn is_valid_id_format(id: &str) -> bool {
     crate::util::id::is_valid_id_format(id)
 }
 
-// =============================================================================
 // SYNC SAFETY VALIDATION
-// =============================================================================
 
 /// Validates sync operations adhere to safety invariants.
 ///
@@ -487,7 +469,6 @@ impl SyncSafetyValidator {
     ///
     /// Returns `ValidationError` if path contains `.git`.
     pub fn validate_no_git_path(path: &Path) -> Result<(), ValidationError> {
-        // Check each component of the path for .git
         for component in path.components() {
             if let std::path::Component::Normal(name) = component
                 && name == ".git"
@@ -499,7 +480,6 @@ impl SyncSafetyValidator {
             }
         }
 
-        // Also check the string representation for hidden .git references
         let path_str = path.to_string_lossy();
         if path_str.contains("/.git/")
             || path_str.contains("\\.git\\")
@@ -531,21 +511,17 @@ impl SyncSafetyValidator {
         beads_dir: &Path,
         allow_external: bool,
     ) -> Result<(), ValidationError> {
-        // First, ensure no .git access
         Self::validate_no_git_path(path)?;
 
-        // If external paths are allowed, skip containment check
         if allow_external {
             return Ok(());
         }
 
-        // Canonicalize if possible, otherwise use the path as-is
         let canonical_path =
             crate::sync::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let canonical_beads =
             crate::sync::path::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
 
-        // Check if path starts with beads_dir
         if !canonical_path.starts_with(&canonical_beads) {
             return Err(ValidationError::new(
                 "path",
@@ -888,8 +864,6 @@ mod tests {
 
         let errors = IssueValidator::validate(&issue).unwrap_err();
         let fields: Vec<_> = errors.iter().map(|err| err.field.as_str()).collect();
-        // bd-bqyb: status/issue_type are closed enums — NUL bytes cannot
-        // reach validation (parse rejects them); only string fields apply.
         for field in [
             "title",
             "description",
@@ -926,9 +900,6 @@ mod tests {
 
     #[test]
     fn issue_validation_accepts_arbitrarily_large_description() {
-        // Long-text fields (description / design / acceptance_criteria /
-        // notes) are intentionally unbounded — spec write-ups, RFC text,
-        // and agent session transcripts routinely exceed any small cap.
         let mut issue = base_issue();
         issue.description = Some("x".repeat(600_000));
 
@@ -1222,19 +1193,15 @@ mod tests {
     fn id_format_validation_rejects_invalid_ids() {
         assert!(!is_valid_id_format("BD-abc123"));
         assert!(!is_valid_id_format("bd-ABC"));
-        // 1 char hash is now allowed (min 1)
         assert!(is_valid_id_format("bd-1"));
-        // 9 char hash is allowed (max 40 for hierarchical IDs)
         assert!(is_valid_id_format("bd-abc123456"));
 
         assert!(!is_valid_id_format("bd_abc"));
         assert!(!is_valid_id_format("bd-abc.def"));
         assert!(!is_valid_id_format("bd-abc.1a"));
 
-        // 26 char hash is now valid (within max 40)
         assert!(is_valid_id_format("bd-abc12345678901234567890123456"));
 
-        // Too long (41 chars) - exceeds max 40
         assert!(!is_valid_id_format(
             "bd-abc123456789012345678901234567890123456789"
         ));
@@ -1242,25 +1209,20 @@ mod tests {
 
     #[test]
     fn id_format_validation_accepts_long_hash() {
-        // Fallback generates 12+ chars. Should be accepted.
         assert!(is_valid_id_format("bd-abc123456789"));
     }
 
-    // =========================================================================
     // SYNC SAFETY VALIDATOR TESTS
-    // =========================================================================
 
     #[test]
     fn sync_safety_rejects_git_path_component() {
         use std::path::PathBuf;
 
-        // Direct .git directory
         let git_path = PathBuf::from("/project/.git/config");
         let result = SyncSafetyValidator::validate_no_git_path(&git_path);
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains(".git"));
 
-        // .git as intermediate component
         let git_path2 = PathBuf::from("/project/.git/objects/pack");
         assert!(SyncSafetyValidator::validate_no_git_path(&git_path2).is_err());
     }
@@ -1278,7 +1240,6 @@ mod tests {
     fn sync_safety_allows_gitignore_file() {
         use std::path::PathBuf;
 
-        // .gitignore is NOT .git - should be allowed
         let gitignore_path = PathBuf::from("/project/.gitignore");
         let result = SyncSafetyValidator::validate_no_git_path(&gitignore_path);
         assert!(result.is_ok());
@@ -1288,11 +1249,9 @@ mod tests {
     fn sync_safety_rejects_git_in_string() {
         use std::path::PathBuf;
 
-        // Paths ending with .git
         let git_path = PathBuf::from("/project/.git");
         assert!(SyncSafetyValidator::validate_no_git_path(&git_path).is_err());
 
-        // Path with /.git/ in middle
         let git_path2 = PathBuf::from("/repo/.git/hooks/pre-commit");
         assert!(SyncSafetyValidator::validate_no_git_path(&git_path2).is_err());
     }
@@ -1305,7 +1264,6 @@ mod tests {
         let beads_dir = temp.path().join(".beads");
         std::fs::create_dir_all(&beads_dir).unwrap();
 
-        // Path outside beads_dir
         let outside_path = temp.path().join("src/main.rs");
         let result =
             SyncSafetyValidator::validate_path_containment(&outside_path, &beads_dir, false);
@@ -1326,7 +1284,6 @@ mod tests {
         let beads_dir = temp.path().join(".beads");
         std::fs::create_dir_all(&beads_dir).unwrap();
 
-        // Create the file so canonicalize works
         let jsonl_path = beads_dir.join("issues.jsonl");
         std::fs::write(&jsonl_path, "").unwrap();
 
@@ -1341,7 +1298,6 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let beads_dir = temp.path().join(".beads");
 
-        // Path outside beads_dir but external allowed
         let outside_path = temp.path().join("external.jsonl");
         let result =
             SyncSafetyValidator::validate_path_containment(&outside_path, &beads_dir, true);
@@ -1355,7 +1311,6 @@ mod tests {
         let beads_dir = PathBuf::from("/project/.beads");
         let git_path = PathBuf::from("/project/.git/config");
 
-        // Even with allow_external=true, .git should be rejected
         let result = SyncSafetyValidator::validate_path_containment(&git_path, &beads_dir, true);
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains(".git"));
@@ -1645,8 +1600,6 @@ mod tests {
 
     #[test]
     fn sync_safety_no_direct_runtime_git_library_dependencies() {
-        // Anchor to the crate root: sibling tests may change the process CWD,
-        // and a relative path would then resolve against their directory.
         validate_manifest_has_no_direct_runtime_git_dependencies(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
         )

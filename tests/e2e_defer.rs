@@ -33,9 +33,6 @@ fn setup_workspace_with_issue() -> (BrWorkspace, String) {
         [
             "create",
             "Test issue for defer",
-            // bd-lt77 follow-on: create is fail-closed, so a fixture must satisfy
-            // the same contract a real caller does. This test predates that
-            // contract and was failing for exactly this reason.
             "-d",
             "fixture brief: create is fail-closed, so title alone is not a brief",
             "-p",
@@ -68,8 +65,6 @@ fn setup_workspace_with_multiple_issues() -> (BrWorkspace, Vec<String>) {
             [
                 "create",
                 &format!("Issue {i}"),
-                // bd-lt77 follow-on: same fail-closed create contract as the
-                // single-issue helper above.
                 "-d",
                 "fixture brief: create is fail-closed, so title alone is not a brief",
                 "-p",
@@ -90,10 +85,6 @@ fn setup_workspace_with_multiple_issues() -> (BrWorkspace, Vec<String>) {
     (workspace, ids)
 }
 
-// =============================================================================
-// Defer Basic Tests
-// =============================================================================
-
 #[test]
 fn defer_sets_status_deferred() {
     common::init_test_logging();
@@ -108,7 +99,6 @@ fn defer_sets_status_deferred() {
     let payload = extract_json_payload(&show.stdout);
     let issue: Value = serde_json::from_str(&payload).expect("valid json");
 
-    // show single returns bare object
     assert_eq!(
         issue["status"].as_str().unwrap(),
         "deferred",
@@ -158,7 +148,6 @@ fn defer_with_until_timestamp() {
     );
     assert!(defer.status.success(), "defer failed: {}", defer.stderr);
 
-    // Verify via show
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
     let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
@@ -236,10 +225,6 @@ fn defer_json_output() {
     info!("defer_json_output: assertions passed");
 }
 
-// =============================================================================
-// Natural Time Parsing Tests
-// =============================================================================
-
 #[test]
 fn defer_until_tomorrow() {
     common::init_test_logging();
@@ -305,9 +290,6 @@ fn defer_until_specific_date() {
     let issue: Value = serde_json::from_str(&show_payload).expect("valid json");
 
     let defer_until = issue["defer_until"].as_str().unwrap();
-    // Contract: a bare --until date means 09:00 LOCAL on that calendar
-    // date; the stored RFC3339 is UTC, whose day shifts on hosts east of
-    // UTC. Compare in local time.
     let parsed = chrono::DateTime::parse_from_rfc3339(defer_until).expect("defer_until is RFC3339");
     let local = parsed.with_timezone(&chrono::Local);
     assert_eq!(
@@ -349,10 +331,6 @@ fn defer_until_past_allows() {
     info!("defer_until_past_allows: starting");
     let (workspace, id) = setup_workspace_with_issue();
 
-    // Past dates should be allowed. Pass value with --until=-1d to avoid flag confusion
-    // or use -- to separate args if id comes after?
-    // clap syntax for negative values usually requires equals sign or --
-    // br defer id --until=-1d should work
     let defer = run_br(
         &workspace,
         ["defer", &id, "--until=-1d", "--json"],
@@ -395,10 +373,6 @@ fn defer_until_invalid_error() {
     );
     info!("defer_until_invalid_error: assertions passed");
 }
-
-// =============================================================================
-// Undefer Tests
-// =============================================================================
 
 #[test]
 fn undefer_sets_status_open() {
@@ -513,10 +487,6 @@ fn undefer_json_output() {
     info!("undefer_json_output: assertions passed");
 }
 
-// =============================================================================
-// Edge Cases
-// =============================================================================
-
 #[test]
 fn defer_already_deferred_updates_time() {
     common::init_test_logging();
@@ -543,11 +513,9 @@ fn defer_already_deferred_updates_time() {
     let deferred = result["deferred"].as_array().expect("deferred array");
     assert_eq!(deferred.len(), 1);
 
-    // Check time updated via show
     let show = run_br(&workspace, ["show", &id, "--json"], "show");
     let show_payload = extract_json_payload(&show.stdout);
     let show_issue: Value = serde_json::from_str(&show_payload).expect("valid json");
-    // Verify defer_until is > 1d from now
     assert!(show_issue["defer_until"].as_str().is_some());
     info!("defer_already_deferred_updates_time: assertions passed");
 }
@@ -621,7 +589,6 @@ fn defer_closed_issue_skips() {
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    // Closed issues should be reported as skipped instead of being deferred.
     let defer = run_br(&workspace, ["defer", &id, "--json"], "defer_closed");
     assert!(defer.status.success());
 
@@ -663,15 +630,10 @@ fn defer_nonexistent_error() {
         "defer_nonexistent",
     );
 
-    // Should fail with not found
     assert!(!defer.status.success());
     assert!(defer.stdout.contains("not found") || defer.stdout.contains("matching"));
     info!("defer_nonexistent_error: assertions passed");
 }
-
-// =============================================================================
-// Ready/Blocked Interaction Tests
-// =============================================================================
 
 #[test]
 fn deferred_not_in_ready() {
@@ -679,7 +641,6 @@ fn deferred_not_in_ready() {
     info!("deferred_not_in_ready: starting");
     let (workspace, ids) = setup_workspace_with_multiple_issues();
 
-    // Defer one issue
     let defer = run_br(&workspace, ["defer", &ids[0]], "defer_one");
     assert!(defer.status.success());
 
@@ -688,7 +649,6 @@ fn deferred_not_in_ready() {
 
     let issues: Vec<Value> = extract_issues_array(&ready.stdout);
 
-    // Deferred issue should NOT appear in ready list
     let ready_ids: Vec<&str> = issues.iter().filter_map(|i| i["id"].as_str()).collect();
 
     assert!(
@@ -696,7 +656,6 @@ fn deferred_not_in_ready() {
         "deferred issue should not appear in ready list"
     );
 
-    // Other issues should still be in ready
     assert!(
         ready_ids.contains(&ids[1].as_str()),
         "non-deferred issues should be in ready list"
@@ -718,7 +677,6 @@ fn deferred_not_blocked() {
 
     let issues: Vec<Value> = extract_issues_array(&blocked.stdout);
 
-    // Deferred issue should NOT appear in blocked list (deferred != blocked)
     assert!(
         !issues
             .iter()
@@ -735,7 +693,6 @@ fn undefer_appears_in_ready() {
     info!("undefer_appears_in_ready: starting");
     let (workspace, id) = setup_workspace_with_issue();
 
-    // Defer then undefer
     let defer = run_br(&workspace, ["defer", &id], "defer");
     assert!(defer.status.success());
 
@@ -748,7 +705,6 @@ fn undefer_appears_in_ready() {
             .any(|x| x == id.as_str())
     );
 
-    // Undefer
     let undefer = run_br(&workspace, ["undefer", &id], "undefer");
     assert!(undefer.status.success());
 

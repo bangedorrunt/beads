@@ -71,10 +71,6 @@ fn print_json<T: Serialize>(payload: &T) -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// br triage
-// ---------------------------------------------------------------------------
-
 /// bv wraps the triage result in an envelope WITHOUT output_format/version
 /// (its other robot commands carry them; the triage handler does not).
 #[derive(Serialize)]
@@ -125,10 +121,6 @@ pub fn execute_triage(
     };
     print_json(&envelope)
 }
-
-// ---------------------------------------------------------------------------
-// br next — fail-closed claim contract (bv robotNext port)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
 struct NextDegradation {
@@ -211,8 +203,6 @@ fn external_statuses_for_claimability(
     if external_ids.is_empty() {
         return std::collections::HashMap::new();
     }
-    // Resolve via storage's external resolution (read-only, per-query cache).
-    // Best-effort: if beads dir discovery fails, treat all external as unsatisfied (blocked).
     let beads_dir = match crate::config::discover_beads_dir_with_cli(cli) {
         Ok(dir) => dir,
         Err(_) => return external_ids.into_iter().map(|id| (id, false)).collect(),
@@ -301,9 +291,6 @@ fn claimability_reasons(
         ));
     }
 
-    // ADR-0001 §5.5 conditions 4–5 (parity with `br ready`'s SQL gate): a bead
-    // without a single-line VERIFY command — or a P≤2 bead without a valid
-    // principles citation — is not dispatchable (beads_rust-ready-empty-set-bug-g0wra).
     match issue.verify.as_deref().map(str::trim) {
         None | Some("") => reasons.push(format!(
             "{} has no VERIFY command (br update {} --verify '<cmd>')",
@@ -388,8 +375,6 @@ pub fn execute_next(
         return print_json(&output);
     }
 
-    // Walk the picks with the STRICT raw-issue predicate; on failure the
-    // diagnostic names the FIRST pick either way (bv behavior).
     let by_id: HashMap<&str, &Issue> = issues
         .iter()
         .map(|issue| (issue.id.as_str(), issue))

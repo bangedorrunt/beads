@@ -175,7 +175,6 @@ fn parse_issues_and_label(
     issues: &[String],
     label_flag: Option<&String>,
 ) -> Result<(Vec<String>, String)> {
-    // If label is provided via flag, all positional args are issues
     if let Some(label) = label_flag {
         if issues.is_empty() {
             return Err(BeadsError::validation(
@@ -186,7 +185,6 @@ fn parse_issues_and_label(
         return Ok((issues.to_vec(), label.clone()));
     }
 
-    // Otherwise, last positional arg is the label
     if issues.len() < 2 {
         return Err(BeadsError::validation(
             "arguments",
@@ -458,7 +456,6 @@ fn label_list(
     ctx: &OutputContext,
 ) -> Result<()> {
     if let Some(input) = &args.issue {
-        // List labels for a specific issue
         let issue_id = resolve_issue_id(storage, resolver, input)?;
         let labels = storage.get_labels(&issue_id)?;
 
@@ -486,7 +483,6 @@ fn label_list(
 }
 
 fn label_list_unique(storage: &SqliteStorage, ctx: &OutputContext) -> Result<()> {
-    // List all unique labels (without counts - use list-all for counts)
     let labels_with_counts = storage.get_unique_labels_with_counts()?;
     let unique_labels: Vec<String> = labels_with_counts.into_iter().map(|(l, _)| l).collect();
 
@@ -705,13 +701,8 @@ fn reorder_routed_items_by_requested_inputs<T>(
         .collect()
 }
 
-// ============================================================================
-// Rich Output Rendering Functions
-// ============================================================================
-
 /// Get a consistent color for a label based on its name hash.
 fn label_color(label: &str) -> Color {
-    // Color palette for labels - varied but readable colors
     const LABEL_PALETTE: &[&str] = &[
         "cyan",
         "green",
@@ -786,7 +777,6 @@ fn render_labels_for_issue_rich(issue_id: &str, labels: &[String], ctx: &OutputC
     text.append(":");
     console.print_renderable(&text);
 
-    // Display labels on a single line with spacing
     let mut label_line = Text::new("  ");
     for (i, label) in labels.iter().enumerate() {
         if i > 0 {
@@ -816,7 +806,6 @@ fn render_unique_labels_rich(labels: &[String], ctx: &OutputContext) {
     header.append_styled(&format!("({} total)", labels.len()), theme.dimmed.clone());
     console.print_renderable(&header);
 
-    // Display labels in a compact format
     let mut label_line = Text::new("  ");
     for (i, label) in labels.iter().enumerate() {
         if i > 0 {
@@ -843,7 +832,6 @@ fn render_label_counts_rich(label_counts: &[LabelCount], ctx: &OutputContext) {
 
     let mut content = Text::new("");
 
-    // Calculate total issues with labels
     let total_issues: usize = label_counts.iter().map(|lc| lc.count).sum();
 
     for (i, lc) in label_counts.iter().enumerate() {

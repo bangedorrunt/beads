@@ -204,8 +204,6 @@ fn inspect_jsonl_prefix(path: &Path) -> JsonlPrefixState {
             continue;
         };
 
-        // Skip tombstones — they may retain a foreign prefix from before
-        // a prefix migration and should not cause mixed-prefix detection.
         if value
             .get("status")
             .and_then(|v| v.as_str())
@@ -259,12 +257,10 @@ fn render_where_rich(output: &WhereOutput, ctx: &OutputContext) {
 
     let mut content = Text::new("");
 
-    // Main path
     content.append_styled("Directory   ", theme.dimmed.clone());
     content.append_styled(&where_display_text(&output.path), theme.accent.clone());
     content.append("\n");
 
-    // Redirect info
     if let Some(origin) = &output.redirected_from {
         content.append_styled("            ", theme.dimmed.clone());
         content.append_styled("(via redirect from ", theme.muted.clone());
@@ -272,21 +268,18 @@ fn render_where_rich(output: &WhereOutput, ctx: &OutputContext) {
         content.append_styled(")\n", theme.muted.clone());
     }
 
-    // Prefix
     if let Some(prefix) = &output.prefix {
         content.append_styled("Prefix      ", theme.dimmed.clone());
         content.append_styled(&where_display_text(prefix), theme.issue_id.clone());
         content.append("\n");
     }
 
-    // Database path
     if let Some(db_path) = &output.database_path {
         content.append_styled("Database    ", theme.dimmed.clone());
         content.append_styled(&where_display_text(db_path), theme.accent.clone());
         content.append("\n");
     }
 
-    // JSONL path
     if let Some(jsonl_path) = &output.jsonl_path {
         content.append_styled("JSONL       ", theme.dimmed.clone());
         content.append_styled(&where_display_text(jsonl_path), theme.accent.clone());
@@ -309,8 +302,6 @@ fn canonicalize_lossy(path: &Path) -> PathBuf {
     if let Ok(canonical) = crate::sync::path::canonicalize(path) {
         return canonical;
     }
-    // Non-existent leaf: still normalize symlinked prefixes by resolving
-    // the nearest existing ancestor, then re-append the remaining tail.
     let mut resolved = match path.parent() {
         Some(parent) => {
             crate::sync::path::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf())

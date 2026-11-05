@@ -309,9 +309,6 @@ fn e2e_dep_cycles_agrees_with_add_time_related_semantics() {
         assert!(add.status.success(), "dep add failed: {}", add.stderr);
     }
 
-    // Documented containment rule: the descendant's blocks-edge back into a
-    // chain reaching the epic is rejected, and the hint explains that epic
-    // containment participates.
     let rejected = run_br(
         &workspace,
         ["dep", "add", grandchild, blocker_r],
@@ -328,7 +325,6 @@ fn e2e_dep_cycles_agrees_with_add_time_related_semantics() {
         "rejection hint must explain containment participation: {combined}"
     );
 
-    // A `related` edge is accepted unchecked and must not fail the report.
     let related = run_br(
         &workspace,
         ["dep", "add", grandchild, blocker_m, "--type", "related"],
@@ -362,7 +358,6 @@ fn e2e_list_and_count_status_all_matches_every_status() {
     let init = run_br(&workspace, ["init"], "status_all_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // One open, one in_progress, one closed issue.
     let ids: Vec<String> = ["Open one", "Working one", "Closed one"]
         .into_iter()
         .map(|title| create_brief_issue(&workspace, title, "status_all_create"))
@@ -387,10 +382,6 @@ fn e2e_list_and_count_status_all_matches_every_status() {
             "pass",
             "--to",
             "closed",
-            // The close below is authorised by this PASS row (ADR-0001
-            // §5.3): a note that leads with `task=<id> verdict=<id>`.
-            // A named sha would have to resolve and cite the bead, and
-            // this harness has no commit to cite.
             "--note",
             "task=e2e-status-all-task verdict=e2e-status-all-verdict",
         ],
@@ -413,8 +404,6 @@ fn e2e_list_and_count_status_all_matches_every_status() {
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    // `--status all` must return every issue (beads-6ilv: it used to
-    // parse as the literal custom status "all" and silently match nothing).
     let list = run_br(
         &workspace,
         ["list", "--status", "all", "--json"],
@@ -507,10 +496,6 @@ fn run_sync_merge_with_exhausted_publication_names(
             .expect("reserve PID-scoped publication namespace");
     }
 
-    // The child can now acquire the workspace authority and commit its
-    // database transaction. Its subsequent atomic JSONL publication must
-    // exhaust the real create-new namespace rather than relying on Unix mode
-    // bits, which privileged RCH workers may legitimately bypass.
     drop(write_lock);
     let output = child
         .wait_with_output()
@@ -634,9 +619,6 @@ fn e2e_basic_lifecycle() {
         "show text missing title"
     );
 
-    // Terminal-state transitions must go through `br close` so close-policy
-    // (close-reason / AC / attribution) is enforced; `update --status closed`
-    // refuses by design (#301).
     let gate = run_br(
         &workspace,
         [
@@ -651,10 +633,6 @@ fn e2e_basic_lifecycle() {
             "pass",
             "--to",
             "closed",
-            // The close below is authorised by this PASS row (ADR-0001 §5.3):
-            // a note that leads with `task=<id> verdict=<id>`. A named sha
-            // would have to resolve and cite the bead, and this harness has
-            // no commit to cite.
             "--note",
             "task=e2e-lifecycle-task verdict=e2e-lifecycle-verdict",
         ],
@@ -757,10 +735,6 @@ fn e2e_update_description_file_preserves_exact_content() {
         "an empty file is an explicit empty-description update: {}",
         clear_to_empty.stdout
     );
-    // A cleared description reads back as null: the storage layer normalizes
-    // empty text to None on read (`get_non_empty_str`), so `Some("")` is
-    // unrepresentable after a round-trip. The contract under test is that the
-    // empty file CLEARS the previous description rather than being a no-op.
     let show = run_br(&workspace, ["show", &issue_id, "--json"], "show_cleared");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
@@ -916,17 +890,6 @@ fn e2e_non_hermetic_smoke_existing_workspace_preserves_env_sensitive_paths() {
         match common::dataset_registry::migrate_workspace_to_current_schema(&fixture.root) {
             Ok(()) => false,
             Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
-                // The checked-in fixture's custom.db predates the reviewed
-                // schema-migration floor (header user_version 4; reviewed plans
-                // exist only for sources 13..=16), so no in-place upgrade path
-                // exists for it. Under the current startup contract an
-                // exactly-missing database beside a live JSONL export is no
-                // longer a fail-closed pending-merge refusal: it auto-rebuilds
-                // at the current schema (commit 23cd3659). Stage the legacy
-                // database aside inside this isolated copy — preserving its
-                // bytes for inspection — so the smoke exercises that supported
-                // JSONL-only path while still proving env-sensitive custom
-                // paths are honored.
                 let legacy_db = fixture.root.join(".beads").join("custom.db");
                 let staged = fixture
                     .root
@@ -957,9 +920,6 @@ fn e2e_non_hermetic_smoke_existing_workspace_preserves_env_sensitive_paths() {
     };
 
     if staged_legacy_db {
-        // `info` reads the database without recovery, so give the JSONL-only
-        // workspace one storage-opening command to auto-rebuild custom.db at
-        // the current schema before the smoke assertions run against it.
         let rebuild_cmd = run_br_smoke_at_root_with_env(
             &runner_root,
             ["sync", "--status"],
@@ -986,9 +946,6 @@ fn e2e_non_hermetic_smoke_existing_workspace_preserves_env_sensitive_paths() {
     );
     let where_json: Value =
         serde_json::from_str(&extract_json_payload(&where_cmd.stdout)).expect("where smoke json");
-    // br reports resolved (canonicalized) routes; compare against the
-    // canonical form of the operator-supplied paths so symlinked system
-    // prefixes (/var -> /private/var) don't fail the smoke assertions.
     let canonical = |p: &str| {
         std::fs::canonicalize(p)
             .unwrap_or_else(|_| PathBuf::from(p))
@@ -1222,8 +1179,6 @@ fn e2e_update_claim_json_echo_reports_assignee() {
         claim.stdout
     );
 
-    // A non-claim update on an unassigned issue still carries the key, as
-    // an explicit null rather than an omitted field.
     let create_plain = run_br(
         &workspace,
         [
@@ -1295,11 +1250,6 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let id = created["id"].as_str().expect("issue id").to_string();
 
-    // The generated close policy (bd-close-policy-empty-verify-1-zdz6) is
-    // fail-closed: a legal close needs a PASS gate row + --commit-sha whose
-    // message cites the bead. Close the policy-compliant way, like every
-    // sibling test, and diagnose --json failures with stdout (the structured
-    // error rides stdout; stderr is empty) so a refusal names its reason.
     let gate = run_br(
         &workspace,
         [
@@ -1314,10 +1264,6 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
             "pass",
             "--to",
             "closed",
-            // The close below is authorised by this PASS row (ADR-0001
-            // §5.3): a note that leads with `task=<id> verdict=<id>`.
-            // A named sha would have to resolve and cite the bead, and
-            // this harness has no commit to cite.
             "--note",
             "task=e2e-claim-task verdict=e2e-claim-verdict",
         ],
@@ -1400,7 +1346,6 @@ fn e2e_update_claim_refuses_closed_issue_and_preserves_close_fields() {
     assert_eq!(after["close_reason"].as_str(), Some("DONE: baseline close"));
     assert_eq!(after["closed_at"], closed_at, "{after}");
 
-    // The sanctioned path still works: reopen, then claim.
     let reopen = run_br(&workspace, ["reopen", &id, "--json"], "reopen_claim_target");
     assert!(reopen.status.success(), "reopen failed: {}", reopen.stderr);
     let claim = run_br(
@@ -1649,7 +1594,6 @@ fn e2e_sync_roundtrip() {
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     assert!(jsonl_path.exists(), "issues.jsonl missing after flush");
     let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    // Parse and update the issue properly (title + timestamp for last-write-wins)
     let mut updated_lines = Vec::new();
     for line in contents.lines() {
         if line.trim().is_empty() {
@@ -1658,7 +1602,6 @@ fn e2e_sync_roundtrip() {
         let mut issue: Value = serde_json::from_str(line).expect("parse issue");
         if issue["title"] == "Original title" {
             issue["title"] = Value::String("Modified title".to_string());
-            // Bump updated_at to ensure import sees it as newer
             issue["updated_at"] = Value::String(Utc::now().to_rfc3339());
         }
         updated_lines.push(serde_json::to_string(&issue).expect("serialize issue"));
@@ -1920,10 +1863,6 @@ fn e2e_sync_merge_resume_reuses_receipt_tombstone_cutoff() {
     let jsonl_path = external_dir.join("issues.jsonl");
     fs::create_dir_all(&external_dir).expect("create external JSONL directory");
 
-    // The tombstone expires twelve seconds after this fixture is created.
-    // That leaves comfortable headroom for the first merge to commit, while
-    // keeping the regression bounded: resume happens only after wall clock has
-    // crossed the exact one-day retention boundary.
     let deleted_at = Utc::now() - chrono::Duration::days(1) + chrono::Duration::seconds(12);
     let retention_boundary = deleted_at + chrono::Duration::days(1);
     let mut storage = SqliteStorage::open(&db_path).expect("open merge-resume database");
@@ -2514,8 +2453,6 @@ workflow:
     )
     .expect("route sync to external JSONL");
 
-    // Force the real merge to stop after its database transaction has
-    // committed the warning-bearing receipt but before JSONL publication.
     let interrupted = run_sync_merge_with_exhausted_publication_names(
         &workspace,
         &jsonl_path,
@@ -2623,14 +2560,6 @@ workflow:
         "successful warning-bearing resume must clear its receipt"
     );
 
-    // Reuse the reconciled workspace for a second, independent soft-capacity
-    // transition so the human warning path is covered without duplicating the
-    // interruption fixture.
-    //
-    // Non-sync commands intentionally cannot opt into an external JSONL path.
-    // Route only this genuine CLI create through the internal JSONL, with both
-    // automatic import and export disabled, then restore the exact reviewed
-    // external route before the explicitly authorized flush.
     let external_route_metadata =
         fs::read(&metadata_path).expect("save exact external-route metadata");
     let mut internal_route_metadata: Value =
@@ -3475,11 +3404,6 @@ fn e2e_sync_additive_reconciliation_is_read_only_then_lossless_and_idempotent() 
         .as_str()
         .expect("dry-run receipt plan_sha256")
         .to_string();
-    // Real WAL databases mutate their header change counter and -shm/-wal
-    // sidecar family on every open, even for read-only or rolled-back work,
-    // so byte-level family identity is no longer a meaningful contract under
-    // rusqlite. Assert logical equivalence instead: the reviewed plan must
-    // leave every pre-existing issue row exactly where it was.
     assert!(
         storage
             .get_issue(&database_seed_id)
@@ -3535,9 +3459,6 @@ fn e2e_sync_additive_reconciliation_is_read_only_then_lossless_and_idempotent() 
         Some(6),
         "stale reviewed tokens use the documented sync-conflict exit code"
     );
-    // Logical equivalence again (see the dry-run note above): a rejected
-    // apply must leave the issue set untouched even though real WAL
-    // bookkeeping mutates database-family bytes.
     let storage =
         SqliteStorage::open(&db_path).expect("open additive database after rejected apply");
     assert!(
@@ -4154,7 +4075,6 @@ fn e2e_sync_conflict_markers_aborts_import() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create initial issue and export
     let create = run_br(
         &workspace,
         [
@@ -4178,7 +4098,6 @@ fn e2e_sync_conflict_markers_aborts_import() {
         flush.stderr
     );
 
-    // Inject conflict markers into JSONL
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let conflicted = format!(
@@ -4188,7 +4107,6 @@ fn e2e_sync_conflict_markers_aborts_import() {
     );
     fs::write(&jsonl_path, conflicted).expect("write conflicted jsonl");
 
-    // Import should fail due to conflict markers
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -4214,7 +4132,6 @@ fn e2e_sync_tombstone_preservation() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create and then delete an issue (creates tombstone)
     let create = run_br(
         &workspace,
         [
@@ -4239,7 +4156,6 @@ fn e2e_sync_tombstone_preservation() {
     );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
 
-    // Verify issue is now a tombstone
     let show = run_br(&workspace, ["show", &id, "--json"], "show_tombstone");
     assert!(
         show.status.success(),
@@ -4253,7 +4169,6 @@ fn e2e_sync_tombstone_preservation() {
         "issue should be tombstone"
     );
 
-    // Export to JSONL
     let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
@@ -4261,7 +4176,6 @@ fn e2e_sync_tombstone_preservation() {
         flush.stderr
     );
 
-    // Read the JSONL and verify tombstone is present
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
     assert!(
@@ -4269,16 +4183,13 @@ fn e2e_sync_tombstone_preservation() {
         "JSONL should contain tombstone status"
     );
 
-    // Create a new workspace to simulate importing into fresh database
     let workspace2 = BrWorkspace::new();
     let init2 = run_br(&workspace2, ["init"], "init2");
     assert!(init2.status.success(), "init2 failed: {}", init2.stderr);
 
-    // Copy the JSONL to new workspace
     let jsonl_path2 = workspace2.root.join(".beads").join("issues.jsonl");
     fs::copy(&jsonl_path, &jsonl_path2).expect("copy jsonl");
 
-    // Import
     let import = run_br(
         &workspace2,
         ["sync", "--import-only", "--force"],
@@ -4286,7 +4197,6 @@ fn e2e_sync_tombstone_preservation() {
     );
     assert!(import.status.success(), "import failed: {}", import.stderr);
 
-    // Verify tombstone was imported
     let show2 = run_br(&workspace2, ["show", &id, "--json"], "show_after_import");
     assert!(
         show2.status.success(),
@@ -4308,7 +4218,6 @@ fn e2e_sync_tombstone_protection() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create and delete an issue
     let create = run_br(
         &workspace,
         [
@@ -4333,7 +4242,6 @@ fn e2e_sync_tombstone_protection() {
     );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
 
-    // Export tombstone to JSONL
     let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
@@ -4341,7 +4249,6 @@ fn e2e_sync_tombstone_protection() {
         flush.stderr
     );
 
-    // Modify JSONL to try to resurrect the tombstone (change status to open)
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let mut modified_lines = Vec::new();
@@ -4351,7 +4258,6 @@ fn e2e_sync_tombstone_protection() {
         }
         let mut issue: Value = serde_json::from_str(line).expect("parse issue");
         if issue["status"] == "tombstone" {
-            // Try to resurrect it
             issue["status"] = Value::String("open".to_string());
             issue["updated_at"] = Value::String(Utc::now().to_rfc3339());
         }
@@ -4361,7 +4267,6 @@ fn e2e_sync_tombstone_protection() {
 
     sleep(Duration::from_millis(50));
 
-    // Import - tombstone should be protected (resurrection blocked)
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -4369,7 +4274,6 @@ fn e2e_sync_tombstone_protection() {
     );
     assert!(import.status.success(), "import failed: {}", import.stderr);
 
-    // Verify the issue is still a tombstone (not resurrected)
     let show = run_br(
         &workspace,
         ["show", &id, "--json"],
@@ -4391,7 +4295,6 @@ fn e2e_sync_content_hash_consistency() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create issues
     let create1 = run_br(
         &workspace,
         [
@@ -4433,7 +4336,6 @@ fn e2e_sync_content_hash_consistency() {
         create2.stderr
     );
 
-    // Export and get hash
     let flush1 = run_br(
         &workspace,
         ["sync", "--flush-only", "--json"],
@@ -4448,7 +4350,6 @@ fn e2e_sync_content_hash_consistency() {
     let flush_json1: Value = serde_json::from_str(&payload1).expect("flush json1");
     let hash1 = flush_json1["content_hash"].as_str().expect("content_hash1");
 
-    // Export again without changes (force to re-export)
     let flush2 = run_br(
         &workspace,
         ["sync", "--flush-only", "--force", "--json"],
@@ -4463,13 +4364,11 @@ fn e2e_sync_content_hash_consistency() {
     let flush_json2: Value = serde_json::from_str(&payload2).expect("flush json2");
     let hash2 = flush_json2["content_hash"].as_str().expect("content_hash2");
 
-    // Content hash should be consistent for same content
     assert_eq!(
         hash1, hash2,
         "content hash should be consistent for same content"
     );
 
-    // Verify status shows the hash
     let status = run_br(&workspace, ["sync", "--status", "--json"], "sync_status");
     assert!(
         status.status.success(),
@@ -4491,7 +4390,6 @@ fn e2e_jsonl_discovery_prefers_issues() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Create an issue and export
     let create = run_br(
         &workspace,
         [
@@ -4516,15 +4414,12 @@ fn e2e_jsonl_discovery_prefers_issues() {
         flush.stderr
     );
 
-    // Verify issues.jsonl was created (default)
     let issues_path = workspace.root.join(".beads").join("issues.jsonl");
     assert!(issues_path.exists(), "issues.jsonl should be created");
 
-    // Create a legacy beads.jsonl with different content
     let beads_path = workspace.root.join(".beads").join("beads.jsonl");
     fs::write(&beads_path, "{\"id\": \"fake-id\", \"title\": \"Legacy issue\", \"status\": \"open\", \"issue_type\": \"task\", \"priority\": 2, \"labels\": [], \"created_at\": \"2026-01-01T00:00:00Z\", \"updated_at\": \"2026-01-01T00:00:00Z\", \"ephemeral\": false, \"pinned\": false, \"is_template\": false, \"dependencies\": [], \"comments\": []}\n").expect("write legacy");
 
-    // When both exist, import should use issues.jsonl (the issue we created)
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -4532,7 +4427,6 @@ fn e2e_jsonl_discovery_prefers_issues() {
     );
     assert!(import.status.success(), "import failed: {}", import.stderr);
 
-    // Verify our issue exists (from issues.jsonl), not the fake one
     let show = run_br(&workspace, ["show", &id, "--json"], "show_original");
     assert!(
         show.status.success(),
@@ -4540,9 +4434,7 @@ fn e2e_jsonl_discovery_prefers_issues() {
         show.stderr
     );
 
-    // Verify fake-id doesn't exist (wasn't imported from beads.jsonl)
     let show_fake = run_br(&workspace, ["show", "fake-id", "--json"], "show_fake");
-    // Should fail or return empty since fake-id shouldn't exist
     let fake_payload = extract_json_payload(&show_fake.stdout);
     let fake_json: Value = serde_json::from_str(&fake_payload).unwrap_or_default();
     assert!(
@@ -4558,17 +4450,14 @@ fn e2e_jsonl_discovery_uses_legacy_when_no_issues() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Remove issues.jsonl if it exists
     let issues_path = workspace.root.join(".beads").join("issues.jsonl");
     if issues_path.exists() {
         fs::remove_file(&issues_path).expect("remove issues.jsonl");
     }
 
-    // Create a legacy beads.jsonl with an issue (using bd- prefix)
     let beads_path = workspace.root.join(".beads").join("beads.jsonl");
     fs::write(&beads_path, "{\"id\": \"bd-legacy1\", \"title\": \"Legacy issue\", \"status\": \"open\", \"issue_type\": \"task\", \"priority\": 2, \"labels\": [], \"created_at\": \"2026-01-01T00:00:00Z\", \"updated_at\": \"2026-01-01T00:00:00Z\", \"ephemeral\": false, \"pinned\": false, \"is_template\": false, \"dependencies\": [], \"comments\": []}\n").expect("write legacy");
 
-    // Import should use beads.jsonl since issues.jsonl doesn't exist
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -4580,7 +4469,6 @@ fn e2e_jsonl_discovery_uses_legacy_when_no_issues() {
         import.stderr
     );
 
-    // Verify the legacy issue was imported
     let show = run_br(&workspace, ["show", "bd-legacy1", "--json"], "show_legacy");
     assert!(show.status.success(), "show legacy failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);

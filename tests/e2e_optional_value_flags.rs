@@ -39,7 +39,6 @@ fn show_json(workspace: &BrWorkspace, id: &str) -> serde_json::Value {
     assert!(out.status.success(), "show failed: {}", out.stderr);
     let parsed: serde_json::Value =
         serde_json::from_str(&extract_json_payload(&out.stdout)).expect("valid show JSON");
-    // `br show --json` emits a details array; the target is its only entry.
     match parsed {
         serde_json::Value::Array(items) => items
             .into_iter()
@@ -102,12 +101,10 @@ fn optional_value_flags_refuse_space_separated() {
     );
     assert!(!id.is_empty(), "create must yield an id");
 
-    // Seed a wave through the equals form: setting must keep working.
     let set = run_br(&workspace, ["update", &id, "--wave=3"], "wave_equals_set");
     assert!(set.status.success(), "equals set failed: {}", set.stderr);
     assert_eq!(show_json(&workspace, &id)["wave"].as_u64(), Some(3));
 
-    // The space form refuses loudly, naming BOTH legal forms...
     assert_space_form_refused(
         &workspace,
         &["update", &id, "--wave", "6"],
@@ -115,14 +112,12 @@ fn optional_value_flags_refuse_space_separated() {
         "--wave=",
         "wave_space",
     );
-    // ...and the refused update must not have mutated anything.
     assert_eq!(
         show_json(&workspace, &id)["wave"].as_u64(),
         Some(3),
         "a refused space form must not clear the wave"
     );
 
-    // Same refusal for --defer, and it must not silently skip the defer.
     assert_space_form_refused(
         &workspace,
         &["update", &id, "--defer", "2100-01-01T00:00:00Z"],
@@ -135,7 +130,6 @@ fn optional_value_flags_refuse_space_separated() {
         "the refused form must not defer"
     );
 
-    // Equals forms keep working: set...
     let set_defer = run_br(
         &workspace,
         ["update", &id, "--defer=2100-01-01T00:00:00Z"],
@@ -151,7 +145,6 @@ fn optional_value_flags_refuse_space_separated() {
         Some("2100-01-01T00:00:00Z")
     );
 
-    // ...and clear.
     let clear_defer = run_br(
         &workspace,
         ["update", &id, "--defer="],

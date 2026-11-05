@@ -23,9 +23,6 @@ fn make_issue(id: &str) -> Issue {
     }
 }
 
-// `update_issue` always advances `updated_at`, so a change-then-revert pair is
-// still a real JSONL content change. This remains ignored until the integration
-// surface has a supported way to reproduce a byte-identical dirty marker.
 #[test]
 #[ignore = "integration test cannot mark an issue dirty without changing JSONL bytes"]
 fn test_auto_flush_optimizes_no_content_change() {
@@ -37,20 +34,13 @@ fn test_auto_flush_optimizes_no_content_change() {
 
     let mut storage = SqliteStorage::open(&db_path).unwrap();
 
-    // 1. Create an issue
     let issue = make_issue("bd-1");
     storage.create_issue(&issue, "tester").unwrap();
 
-    // 2. First auto-flush (should export)
     let result = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
     assert!(result.flushed, "First flush should happen");
     assert_eq!(result.exported_count, 1);
 
-    // 3. Mark issue dirty effectively WITHOUT changing content
-    // We do this by changing it and changing it back.
-    // NOTE: This relies on the fact that we haven't exported the intermediate state.
-
-    // Change title
     let update_change = beads::storage::IssueUpdate {
         title: Some("Changed Title".to_string()),
         ..Default::default()
@@ -59,7 +49,6 @@ fn test_auto_flush_optimizes_no_content_change() {
         .update_issue("bd-1", &update_change, "tester")
         .unwrap();
 
-    // Revert title
     let update_revert = beads::storage::IssueUpdate {
         title: Some("Test Issue".to_string()),
         ..Default::default()
@@ -68,12 +57,9 @@ fn test_auto_flush_optimizes_no_content_change() {
         .update_issue("bd-1", &update_revert, "tester")
         .unwrap();
 
-    // Verify it is dirty
     let dirty_ids = storage.get_dirty_issue_ids().unwrap();
     assert_eq!(dirty_ids.len(), 1, "Issue should be dirty after updates");
 
-    // 4. Second auto-flush should now skip the rewrite because the exported JSONL
-    // would be byte-identical.
     let result = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
 
     assert!(
@@ -81,7 +67,6 @@ fn test_auto_flush_optimizes_no_content_change() {
         "Auto-flush should skip a no-op rewrite when the JSONL would be unchanged"
     );
 
-    // And dirty flags should be cleared
     let dirty_ids = storage.get_dirty_issue_ids().unwrap();
     assert!(dirty_ids.is_empty(), "Dirty flags should be cleared");
 }
@@ -96,25 +81,19 @@ fn test_auto_flush_flush_on_label_change() {
 
     let mut storage = SqliteStorage::open(&db_path).unwrap();
 
-    // 1. Create an issue
     let issue = make_issue("bd-1");
     storage.create_issue(&issue, "tester").unwrap();
 
-    // 2. First auto-flush
     let result = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
     assert!(result.flushed);
 
-    // 3. Add a label
     storage.add_label("bd-1", "bug", "tester").unwrap();
 
-    // Verify dirty
     let dirty_ids = storage.get_dirty_issue_ids().unwrap();
     assert_eq!(dirty_ids.len(), 1);
 
-    // 4. Second auto-flush - SHOULD FLUSH because label was added
     let result = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
 
-    // This assertion will FAIL if my optimization is active and flawed
     assert!(result.flushed, "Should flush when label is added");
 }
 
@@ -129,8 +108,6 @@ fn test_auto_flush_uses_resolved_jsonl_path() {
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     storage.create_issue(&make_issue("bd-1"), "tester").unwrap();
 
-    // A JSONL path outside `.beads/` requires `allow_external_jsonl = true`
-    // — otherwise export refuses with "Path is outside the beads directory"
     // as a safety check against wayward writes during refactors.
     let result = auto_flush(&mut storage, &beads_dir, &custom_jsonl_path, true).unwrap();
 
@@ -213,8 +190,6 @@ fn test_auto_flush_keeps_jsonl_id_sorted_after_creates() {
             .flushed
     );
 
-    // Both new ids sort *before* the row already on disk — the shape from the
-    // report, where `demo-gy5` was created after `demo-r48`.
     storage
         .create_issue(&make_issue("bd-gy5"), "tester")
         .unwrap();
@@ -236,8 +211,6 @@ fn test_auto_flush_keeps_jsonl_id_sorted_after_creates() {
         "creates must leave the JSONL id-sorted, not appended at the tail"
     );
 
-    // An update touches an id already in the file, so it still takes the
-    // in-place writer — and the file stays canonical.
     storage
         .update_issue(
             "bd-r48",
@@ -487,13 +460,6 @@ fn e2e_auto_flush_single_mutations_preserve_bounded_jsonl_diff_after_import() {
         create_new.stderr
     );
     let delta_id = parse_created_id(&create_new.stdout);
-    // GitHub #404: a create is the one mutation that cannot both keep a
-    // bounded positional diff and leave the file canonically ordered — the
-    // fixture above deliberately reversed the JSONL, so restoring id order
-    // moves every row. Canonical order is the confirmed contract for creates
-    // (`export_sorts_by_id`), so the create leg keeps the changed-issue-set
-    // assertion and pins id-sortedness instead of positional churn. The
-    // update / comment / dep legs above still assert the bounded diff.
     let after_create = read_jsonl_lines(&jsonl_path);
     assert_eq!(
         changed_issue_ids(&before_create, &after_create),

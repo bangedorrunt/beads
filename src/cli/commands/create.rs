@@ -155,7 +155,6 @@ pub fn execute_with_storage(
         return execute_import(file_path, args, cli, ctx, pre_opened);
     }
 
-    // 1. Open storage (reuse pre-opened if available)
     let mut storage_ctx = if let Some(ctx) = pre_opened {
         ctx
     } else {
@@ -164,9 +163,6 @@ pub fn execute_with_storage(
     };
     let layer = storage_ctx.load_config(cli)?;
 
-    // Strict status-workflow enforcement (issue #311). Reject an out-of-set
-    // `--status` before any write when the project configures
-    // `workflow.strict: true`. No-op when the workflow section is absent.
     enforce_workflow_status(&storage_ctx.paths.beads_dir, args.status.as_deref())?;
 
     let config = CreateConfig {
@@ -178,10 +174,6 @@ pub fn execute_with_storage(
         source_repo_path: canonical_source_repo_path(&storage_ctx.paths.beads_dir),
     };
 
-    // Resolve the description up front — before the retry closure — so the
-    // verbatim `--description-file` content (or `-` stdin, which can only be
-    // read once) is captured a single time and reused across any
-    // JSONL-recovery retry.
     let description = resolve_create_description(args)?;
 
     let issue =
@@ -201,7 +193,6 @@ pub fn execute_with_storage(
         crate::util::set_last_touched_id(&last_touched_dir, &created_id);
     }
 
-    // Output
     if args.silent {
         println!("{}", issue.id);
     } else if ctx.is_toon() {
@@ -307,18 +298,11 @@ fn enforce_workflow_status(beads_dir: &Path, raw_status: Option<&str>) -> Result
     if !policy.workflow.is_enforced() && !policy.workflow.transitions_enforced() {
         return Ok(());
     }
-    // Parse to the canonical string so a custom-cased config entry and the
-    // canonical name (`In_Progress` vs `in_progress`) compare equal. When
-    // `--status` is omitted the effective status is the create default, `Open`.
     let parsed: Status = match raw_status {
         Some(raw) => raw.parse()?,
         None => Status::Open,
     };
-    // Status-set enforcement (issue #311).
     policy.workflow.validate_status(parsed.as_str())?;
-    // Initial-transition enforcement (issue #312, layer 1): a create has no
-    // prior status, so the effective starting status is validated against the
-    // reserved `initial` key (no-op when `transitions`/`initial` is absent).
     policy.workflow.validate_transition(None, parsed.as_str())
 }
 
@@ -474,14 +458,7 @@ pub fn create_issue_impl(
     config: &CreateConfig,
     description: Option<String>,
 ) -> Result<Issue> {
-    // Real callers pass the pre-resolved `--description-file`/`-d` value
-    // (resolved once at the call site so `-` stdin is read exactly once,
-    // before the JSONL-recovery retry closure). When a caller passes `None`,
-    // fall back to the description carried on `args` so arg-based descriptions
-    // still apply. `description_file` conflicts with `-d`, so this never
-    // double-counts.
     let description = description.or_else(|| args.description.clone());
-    // 1. Resolve title
     let title = args
         .title
         .as_ref()
@@ -492,7 +469,6 @@ pub fn create_issue_impl(
         return Err(BeadsError::validation("title", "cannot be empty"));
     }
 
-    // 2. Parse fields
     let priority = if let Some(p) = &args.priority {
         Priority::from_str(p)?
     } else {
@@ -507,36 +483,20 @@ pub fn create_issue_impl(
 
     let due_at = parse_optional_date(args.due.as_deref())?;
     let defer_until = parse_optional_date(args.defer.as_deref())?;
-    // ADR-0001 §5.2 typed brief fields: parse/validate BEFORE any mutation
-    // so invalid input leaves no issue row, event, dirty marker, or JSONL
-    // record behind. Reuses the update parsers so create and update accept
-    // identical forms.
     let principles = super::update::parse_principle_args(&args.principle)?;
     let blast = super::update::parse_blast_arg(args.blast.as_deref())?.unwrap_or_default();
-    // ADR-0005 §2: typed deliverable, default diff. Parsed BEFORE any
-    // mutation so an invalid value leaves no row behind.
     let deliverable: crate::model::Deliverable = match args.deliverable.as_deref() {
         None => crate::model::Deliverable::Diff,
         Some(raw) => raw
             .parse()
             .map_err(|e: String| BeadsError::validation("deliverable", e))?,
     };
-    // Fail-closed create (bd-h8d6): same brief schema as ready/lint.
-    // Title-only beads never become dispatchable — refuse here instead of
-    // waiting for an empty ready set. Description carries the brief body;
-    // --verify is the one runnable proof; P≤2 also needs principles.
     if description.as_deref().is_none_or(|d| d.trim().is_empty()) {
         return Err(BeadsError::validation(
             "description",
             "create requires -d/--description or --description-file (title alone is not a brief)",
         ));
     }
-    // `--ac judgment` declares that acceptance is a human judgement rather than a
-    // runnable command, so such a bead has NO VERIFY by design. Demanding one
-    // anyway makes the flag unreachable: fail-closed create refuses the exact
-    // bead the caller is declaring. It satisfies the brief the same way
-    // `--verify` does. Parsed here so the gate below can consult it, and reused
-    // below so the value is only parsed once.
     let declared_ac_shape = super::update::parse_ac_arg(args.ac.as_deref())?;
     let declares_judgment_shape = declared_ac_shape == Some(crate::model::AcShape::Judgment);
     if args.verify.as_deref().is_none_or(|v| v.trim().is_empty()) && !declares_judgment_shape {
@@ -558,11 +518,6 @@ pub fn create_issue_impl(
         args.verify.as_deref().is_some_and(|v| !v.trim().is_empty()),
         declared_ac_shape,
     )?;
-    // Parse/validate the governing agent context BEFORE any mutation so
-    // invalid context leaves no issue row, event, dirty marker, or JSONL
-    // record behind (beads#408). Reuses the update parser so create and
-    // update accept identical forms (inline JSON, @file.json, @file.yaml,
-    // empty string). For create, "clear" and "absent" both mean NULL.
     let initial_agent_context =
         super::update::agent_context_update_from_arg(args.agent_context.as_deref())?.flatten();
     let id_resolver = IdResolver::new(ResolverConfig::with_prefix(config.id_config.prefix.clone()));
@@ -571,11 +526,6 @@ pub fn create_issue_impl(
         .as_deref()
         .map(|parent| resolve_issue_id(storage, &id_resolver, parent))
         .transpose()?;
-    // F16 (bd-9ewu): validate --parent's state at CUT time. The edge created is
-    // child -> parent; a parent that is already closed/tombstone means new work
-    // is being filed under a finished grouping — it never rolls up, and the
-    // epic's numbers stay wrong. Refuse and name the remedy rather than write
-    // the inverted edge (verified BEFORE any mutation).
     if let Some(parent_id) = resolved_parent.as_deref()
         && let Some(parent_issue) = storage.get_issue(parent_id)?
         && matches!(parent_issue.status, Status::Closed | Status::Tombstone)
@@ -589,9 +539,6 @@ pub fn create_issue_impl(
             ),
         ));
     }
-    // ADR-0005 §3: advisory promotes link. Resolve the cited bead and
-    // refuse unknown ids at creation (provenance, not readiness gating:
-    // the link never affects ready).
     let promotes = args
         .promotes
         .as_deref()
@@ -608,7 +555,6 @@ pub fn create_issue_impl(
         })
         .transpose()?;
 
-    // Parse status (default to Open if not provided)
     let status = if let Some(s) = &args.status {
         Status::from_str(s)?
     } else {
@@ -618,7 +564,6 @@ pub fn create_issue_impl(
     let count = storage.count_issues()?;
     let mut retries = 0;
     loop {
-        // 2. Generate ID
         let now = Utc::now();
 
         let id_input = NewIdInput {
@@ -636,7 +581,6 @@ pub fn create_issue_impl(
             args.slug.as_deref(),
         )?;
 
-        // Set closed_at if status is Closed
         let closed_at = if matches!(status, Status::Closed) {
             Some(now)
         } else {
@@ -649,9 +593,7 @@ pub fn create_issue_impl(
             None
         };
 
-        // 4. Construct Issue
         let mut issue = Issue {
-            // ADR-0001 §5.2 typed brief fields, parsed and validated above.
             verify: args.verify.clone().filter(|v| !v.trim().is_empty()),
             principles: principles.clone(),
             wave: args.wave,
@@ -678,7 +620,6 @@ pub fn create_issue_impl(
             defer_until,
             external_ref: args.external_ref.clone(),
             ephemeral: args.ephemeral,
-            // Defaults
             content_hash: None,
             design: None,
             acceptance_criteria: args.acceptance_criteria.clone(),
@@ -711,16 +652,12 @@ pub fn create_issue_impl(
             comments: vec![],
         };
 
-        // Compute content hash
         issue.content_hash = Some(issue.compute_content_hash());
 
-        // 5. Validate Issue
         IssueValidator::validate(&issue).map_err(BeadsError::from_validation_errors)?;
 
-        // 5b. Validate Relations (fail fast before DB writes)
         validate_relations(args, &id)?;
 
-        // 6. Populate Relations (labels & dependencies)
         let relation_context = RelationContext {
             actor: &config.actor,
             now,
@@ -729,15 +666,10 @@ pub fn create_issue_impl(
             prefix: &config.id_config.prefix,
         };
         populate_relations(&mut issue, args, &relation_context)?;
-        // 7. Dry Run check - return early
         if args.dry_run {
             return Ok(issue);
         }
 
-        // Stage Tier 1 attribution (issue #312, Layer 3 capture-only) so the
-        // creation audit event records the self-reported agent identity. This
-        // is recorded ONLY — it never gates or alters the create. Re-staged on
-        // every loop iteration because `mutate()` consumes it on each attempt.
         storage.set_pending_event_attribution(EventAttribution::new(
             args.agent_name.as_deref(),
             args.harness.as_deref(),
@@ -745,7 +677,6 @@ pub fn create_issue_impl(
             super::session_attribution_from_env().as_deref(),
         ));
 
-        // 8. Create (atomic)
         match storage.create_issue(&issue, &config.actor) {
             Ok(()) => return Ok(issue),
             Err(BeadsError::IdCollision { .. }) => {
@@ -775,20 +706,17 @@ fn generate_new_id(
     slug: Option<&str>,
 ) -> Result<String> {
     if let Some(parent_id) = parent_id {
-        // Verify parent exists
         if !storage.id_exists(parent_id)? {
             return Err(BeadsError::IssueNotFound {
                 id: parent_id.to_string(),
             });
         }
 
-        // Find next available child number
         let next_num = storage.next_child_number(parent_id)?;
         let candidate = child_id(parent_id, next_num);
 
         // Double-check the ID doesn't exist (race condition safety)
         if storage.id_exists(&candidate)? {
-            // Extremely unlikely, but handle by incrementing
             let mut num = next_num + 1;
             loop {
                 let alt = child_id(parent_id, num);
@@ -807,7 +735,6 @@ fn generate_new_id(
 
         Ok(candidate)
     } else {
-        // Standard ID generation for non-child issues
         let id_gen = IdGenerator::new(input.id_config.clone());
         match slug {
             Some(s) if !s.trim().is_empty() => id_gen.generate_with_slug(
@@ -860,7 +787,6 @@ fn resolve_dependency_id(
 }
 
 fn validate_relations(args: &CreateArgs, issue_id: &str) -> Result<()> {
-    // Validate Labels
     for label in &args.labels {
         let trimmed = label.trim();
         if !trimmed.is_empty() {
@@ -869,7 +795,6 @@ fn validate_relations(args: &CreateArgs, issue_id: &str) -> Result<()> {
         }
     }
 
-    // Validate Parent
     if let Some(parent_id) = &args.parent
         && parent_id == issue_id
     {
@@ -879,9 +804,6 @@ fn validate_relations(args: &CreateArgs, issue_id: &str) -> Result<()> {
         ));
     }
 
-    // Validate Dependencies (strict entries only — entries whose prefix is
-    // not a known type are resolved against titles in `populate_relations`,
-    // which has storage access; unresolvable ones error there).
     for dep_str in &args.deps {
         let Ok((_, dep_id)) = parse_create_dependency(dep_str) else {
             continue;
@@ -897,9 +819,6 @@ fn validate_relations(args: &CreateArgs, issue_id: &str) -> Result<()> {
 
 fn parse_create_dependency(dep_str: &str) -> Result<(DependencyType, String)> {
     // Strict `type:id` grammar: split on the first colon and validate the
-    // type against the dependency vocabulary. `depends`, `depends-on`, and
-    // `blocked-by` are accepted as aliases for `blocks`. A bare id defaults
-    // to `blocks`; resolution errors then name the id.
     const ALLOWED_TYPES: &str = "blocks, blocked-by, depends, depends-on, parent-child, \
         conditional-blocks, waits-for, related, discovered-from, replies-to, \
         relates-to, duplicates, supersedes, caused-by";
@@ -962,7 +881,6 @@ fn populate_relations(
 ) -> Result<()> {
     let resolver = IdResolver::new(ResolverConfig::with_prefix(ctx.prefix.to_string()));
 
-    // Labels
     for label in &args.labels {
         let label = label.trim();
         if !label.is_empty() && !issue.labels.iter().any(|existing| existing == label) {
@@ -970,7 +888,6 @@ fn populate_relations(
         }
     }
 
-    // Parent
     if let Some(parent_id) = ctx.resolved_parent {
         issue.dependencies.push(Dependency {
             issue_id: issue.id.clone(),
@@ -983,16 +900,11 @@ fn populate_relations(
         });
     }
 
-    // Dependencies
     for dep_str in &args.deps {
         let (dep_type, dep_id) = match parse_create_dependency(dep_str) {
             Ok(parsed) => parsed,
             Err(parse_err) => {
                 // The prefix is not a known type: the whole token may be a
-                // title containing a colon ("Step 1: Setup Database").
-                // Resolve it verbatim as a bare id; when that fails too,
-                // return the original type error so bad input names the
-                // type instead of surfacing as a phantom id lookup.
                 match resolve_dependency_id(&resolver, ctx.storage, dep_str.trim()) {
                     Ok(resolved) => (DependencyType::Blocks, resolved),
                     Err(_) => return Err(parse_err),
@@ -1042,7 +954,6 @@ fn execute_import(
     };
     let layer = storage_ctx.load_config(cli)?;
 
-    // Strict status-workflow enforcement (issue #311); see `execute`.
     enforce_workflow_status(&storage_ctx.paths.beads_dir, args.status.as_deref())?;
 
     let id_config = config::id_config_from_layer(&layer);
@@ -1056,14 +967,12 @@ fn execute_import(
     let due_at = parse_optional_date(args.due.as_deref())?;
     let defer_until = parse_optional_date(args.defer.as_deref())?;
 
-    // Parse status (default to Open if not provided)
     let import_status = if let Some(s) = &args.status {
         Status::from_str(s)?
     } else {
         Status::Open
     };
 
-    // Set closed_at if status is Closed
     let import_closed_at = if matches!(import_status, Status::Closed) {
         Some(now)
     } else {
@@ -1086,11 +995,8 @@ fn execute_import(
 
     let id_resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix.clone()));
 
-    // Phase 1: Create all issues, deferring intra-file dependency resolution.
-    // Maps for resolving symbolic references between issues in the same import.
     let mut title_to_ids: HashMap<String, Vec<String>> = HashMap::new();
     let mut standin_to_ids: HashMap<String, Vec<String>> = HashMap::new();
-    // Deferred deps: (issue_id, raw_dep_strings, dep_types_from_cli)
     let mut deferred_deps: Vec<(String, Vec<String>)> = Vec::new();
     let mut deferred_parent_deps: Vec<(String, String)> = Vec::new();
     let import_title_keys: HashSet<String> = parsed_issues
@@ -1130,7 +1036,6 @@ fn execute_import(
         let acceptance_criteria = parsed.acceptance_criteria.clone();
         let agent_context = parsed.agent_context.clone();
 
-        // Resolve parent (item-specific header or CLI global fallback)
         let parent_candidate = parsed.parent.as_deref().or(args.parent.as_deref());
         let mut deferred_parent_ref = None;
         let resolved_parent: Option<String> = if let Some(p) = parent_candidate {
@@ -1214,8 +1119,6 @@ fn execute_import(
             };
 
             let mut issue = Issue {
-                // Schema v18 (beads_rust-schema-v18-uyb3): defaults; typed fields are
-                // set explicitly by later waves' surfaces.
                 verify: None,
                 principles: Vec::new(),
                 wave: None,
@@ -1246,8 +1149,6 @@ fn execute_import(
                 acceptance_criteria: acceptance_criteria.clone(),
                 content_hash: None,
                 notes: None,
-                // Keep import hashes actor-independent so identical markdown imports
-                // still deduplicate across sync boundaries.
                 created_by: None,
                 closed_at: import_closed_at,
                 close_reason: None,
@@ -1284,7 +1185,6 @@ fn execute_import(
                 break;
             }
 
-            // Populate Labels (with validation)
             let mut labels = parsed.labels.clone();
             labels.extend(args.labels.clone());
             for label in labels {
@@ -1306,7 +1206,6 @@ fn execute_import(
                 }
             }
 
-            // Parent dependency is wired inline (parent must pre-exist or be CLI-provided).
             if let Some(parent_id) = resolved_parent.as_deref() {
                 issue.dependencies.push(Dependency {
                     issue_id: id.clone(),
@@ -1320,15 +1219,11 @@ fn execute_import(
             }
 
             if args.dry_run {
-                // Skip persistence: dry-run validates the bulk file and reports what
-                // would be created without writing to storage or JSONL.
                 created_issues.push(issue.clone());
                 final_id = id;
                 created = true;
                 break;
             }
-            // Stage Tier 1 attribution (issue #312, Layer 3 capture-only) for
-            // the bulk-import creation audit event. Recorded only; never gated.
             storage.set_pending_event_attribution(EventAttribution::new(
                 args.agent_name.as_deref(),
                 args.harness.as_deref(),
@@ -1369,15 +1264,12 @@ fn execute_import(
             deferred_parent_deps.push((id.clone(), parent_ref));
         }
 
-        // Collect dependencies for deferred resolution (Phase 2).
-        // Must be OUTSIDE the retry loop so we only record the final (non-colliding) ID.
         let mut deps = parsed.dependencies.clone();
         deps.extend(args.deps.clone());
         if !deps.is_empty() {
             deferred_deps.push((id.clone(), deps));
         }
 
-        // Register this issue for intra-file dependency resolution.
         title_to_ids
             .entry(title.to_lowercase())
             .or_default()
@@ -1385,7 +1277,6 @@ fn execute_import(
         if let Some(ref sid) = parsed.stand_in_id {
             let sid_trimmed = sid.trim().to_string();
             if !sid_trimmed.is_empty() {
-                // Case-insensitive, consistent with title-based resolution.
                 standin_to_ids
                     .entry(sid_trimmed.to_lowercase())
                     .or_default()
@@ -1393,18 +1284,12 @@ fn execute_import(
             }
         }
 
-        // Increment count for next ID generation in the loop
         count += 1;
         last_created_id = Some(id.clone());
         created_ids.push((id, title));
     }
 
-    // Phase 2: Resolve and wire up deferred dependencies.
-    // Now that all issues exist in storage, we can resolve intra-file references
-    // by title or stand-in ID, as well as references to pre-existing issues.
     let mut resolved_import_deps = Vec::new();
-    // #368: count declared edges we fail to resolve so the command can exit
-    // non-zero for scripted callers instead of silently reporting success.
     let mut dropped_import_edges = 0usize;
     if !deferred_parent_deps.is_empty() && !args.dry_run {
         for (issue_id, parent_ref) in &deferred_parent_deps {
@@ -1445,9 +1330,6 @@ fn execute_import(
 
         for (issue_id, deps) in &deferred_deps {
             for dep_str in deps {
-                // First, check the raw string against intra-file maps before parsing.
-                // This handles titles containing colons (e.g., "Step 1: Setup Database")
-                // that would otherwise be misinterpreted as typed dependencies.
                 let (type_str, resolved_dep_id) = if let Some(import_ref) =
                     lookup_import_reference(&standin_to_ids, &title_to_ids, dep_str)
                 {
@@ -1473,8 +1355,6 @@ fn execute_import(
                         t = "blocks".to_string();
                     }
 
-                    // Resolution order: stand-in ID → title → storage ID
-                    // All intra-file lookups are case-insensitive.
                     let resolved = if let Some(import_ref) =
                         lookup_import_reference(&standin_to_ids, &title_to_ids, &dep_id)
                     {
@@ -1555,12 +1435,6 @@ fn execute_import(
                         );
                     }
                 }
-                // #368: The transactional bulk insert detected a cycle (or other
-                // constraint) and the per-edge fallback then silently dropped the
-                // offending edge(s). The issues are still created and the graph is
-                // persisted, but it differs from the declared spec — surface that
-                // to scripted callers via a non-zero exit code once output and
-                // auto-flush have completed, rather than reporting success.
                 if dropped_edges > 0 {
                     crate::output::record_pending_exit_code(
                         crate::error::ErrorCode::CycleDetected.exit_code(),
@@ -1570,11 +1444,6 @@ fn execute_import(
         }
     }
 
-    // #368: declared dependency edges that couldn't be resolved during Phase 2
-    // (a referenced parent/dependency that doesn't exist) were dropped above
-    // with only an eprintln warning. The issues are still created, but the
-    // persisted graph is missing intended edges — surface that to scripted
-    // callers via a non-zero exit code rather than reporting a false success.
     if dropped_import_edges > 0 {
         crate::output::record_pending_exit_code(
             crate::error::ErrorCode::DependencyNotFound.exit_code(),
@@ -1583,12 +1452,10 @@ fn execute_import(
 
     if ctx.is_json() || ctx.is_toon() {
         if args.dry_run {
-            // In dry run, we already populated created_issues in the loop
         } else {
             let ids: Vec<String> = created_ids.iter().map(|(id, _)| id.clone()).collect();
             match storage.get_issues_for_export(&ids) {
                 Ok(issues) => {
-                    // Ensure output order matches creation order
                     let mut issues_by_id: std::collections::HashMap<String, crate::model::Issue> =
                         issues.into_iter().map(|i| (i.id.clone(), i)).collect();
                     for (id, _) in &created_ids {
@@ -1724,7 +1591,6 @@ mod tests {
     use chrono::Local;
     use tracing::info;
 
-    // Helper to create basic args that satisfy fail-closed create (bd-h8d6).
     fn default_args() -> CreateArgs {
         CreateArgs {
             title: Some("Test Issue".to_string()),
@@ -1788,7 +1654,6 @@ mod tests {
 
         let mut no_principle = default_args();
         no_principle.principle = vec![];
-        // default priority is P2 — principles required
         let err = create_issue_impl(&mut storage, &no_principle, &config, None).unwrap_err();
         assert!(
             format!("{err:#}").contains("principle"),
@@ -1842,9 +1707,7 @@ mod tests {
 
     #[test]
     fn canonical_source_repo_returns_none_for_pathological_locations() {
-        // The empty path has no parent, so we cannot derive a name.
         assert!(canonical_source_repo(Path::new("")).is_none());
-        // Filesystem root has a parent of "/" with no file_name component.
         assert!(canonical_source_repo(Path::new("/.beads")).is_none());
     }
 
@@ -1906,7 +1769,6 @@ mod tests {
         assert_eq!(issue.issue_type, IssueType::Task);
         assert!(issue.id.starts_with("bd-"));
 
-        // Verify persisted
         let loaded = storage.get_issue(&issue.id).expect("get issue");
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().title, "Test Issue");
@@ -1964,7 +1826,6 @@ mod tests {
 
         let issue = create_issue_impl(&mut storage, &args, &config, None).expect("create failed");
 
-        // Should return issue but not verify existence in DB
         assert_eq!(issue.title, "Test Issue");
         let loaded = storage.get_issue(&issue.id).expect("get issue");
         assert!(loaded.is_none(), "dry run should not persist issue");
@@ -1997,7 +1858,6 @@ mod tests {
         let mut storage = setup_memory_storage();
         let config = default_config();
 
-        // Create dependency target first
         let target_args = CreateArgs {
             title: Some("Target".to_string()),
             ..default_args()
@@ -2005,18 +1865,15 @@ mod tests {
         let target =
             create_issue_impl(&mut storage, &target_args, &config, None).expect("create target");
 
-        // Create issue with label and dep
         let mut args = default_args();
         args.labels = vec!["backend".to_string()];
         args.deps = vec![target.id.clone()];
 
         let issue = create_issue_impl(&mut storage, &args, &config, None).expect("create failed");
 
-        // Verify labels
         let labels = storage.get_labels(&issue.id).expect("get labels");
         assert!(labels.contains(&"backend".to_string()));
 
-        // Verify deps
         let deps = storage.get_dependencies(&issue.id).expect("get deps");
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0], target.id);
@@ -2066,7 +1923,6 @@ mod tests {
         )
         .expect("create target");
 
-        // `depends:` is an alias for `blocks` and must roundtrip to an edge.
         let mut args = default_args();
         args.title = Some("Dep Dependent".to_string());
         args.deps = vec![format!("depends:{}", target.id)];
@@ -2077,7 +1933,6 @@ mod tests {
         assert_eq!(deps[0].depends_on_id, target.id);
         assert_eq!(deps[0].dep_type, DependencyType::Blocks);
 
-        // `depends-on:` and `blocked-by:` are aliases too (parse-level).
         assert!(matches!(
             parse_create_dependency("depends-on:bd-1"),
             Ok((DependencyType::Blocks, _))
@@ -2086,13 +1941,11 @@ mod tests {
             parse_create_dependency("blocked-by:bd-1"),
             Ok((DependencyType::Blocks, _))
         ));
-        // Bare ids still default to `blocks`.
         assert!(matches!(
             parse_create_dependency(&target.id),
             Ok((DependencyType::Blocks, _))
         ));
 
-        // Unknown types name the type, not a phantom id.
         let mut bad = default_args();
         bad.title = Some("Bad Type".to_string());
         bad.deps = vec!["frobnicate:bd-123".to_string()];
@@ -2102,7 +1955,6 @@ mod tests {
             "type error must name the bad type, got: {err}"
         );
 
-        // Empty ids name the id problem.
         let mut empty = default_args();
         empty.title = Some("Empty Id".to_string());
         empty.deps = vec!["blocks:".to_string()];
@@ -2136,11 +1988,9 @@ mod tests {
         let mut storage = setup_memory_storage();
         let config = default_config();
 
-        // Parent
         let parent =
             create_issue_impl(&mut storage, &default_args(), &config, None).expect("parent");
 
-        // Child
         let mut args = default_args();
         args.parent = Some(parent.id.clone());
         let child = create_issue_impl(&mut storage, &args, &config, None).expect("child");
@@ -2158,18 +2008,15 @@ mod tests {
         let mut storage = setup_memory_storage();
         let config = default_config();
 
-        // Create parent (epic)
         let mut parent_args = default_args();
         parent_args.title = Some("Epic Parent".to_string());
         let parent = create_issue_impl(&mut storage, &parent_args, &config, None).expect("parent");
 
-        // Create first child - should get parent.1
         let mut child1_args = default_args();
         child1_args.title = Some("First Child".to_string());
         child1_args.parent = Some(parent.id.clone());
         let child1 = create_issue_impl(&mut storage, &child1_args, &config, None).expect("child1");
 
-        // Verify child ID has the correct format: parent_id.1
         let expected_child1_id = format!("{}.1", parent.id);
         assert_eq!(
             child1.id, expected_child1_id,
@@ -2177,7 +2024,6 @@ mod tests {
             child1.id
         );
 
-        // Create second child - should get parent.2
         let mut child2_args = default_args();
         child2_args.title = Some("Second Child".to_string());
         child2_args.parent = Some(parent.id.clone());
@@ -2190,7 +2036,6 @@ mod tests {
             child2.id
         );
 
-        // Verify dependencies are set correctly
         let deps1 = storage.get_dependencies(&child1.id).expect("get deps1");
         assert_eq!(deps1.len(), 1);
         assert_eq!(deps1[0], parent.id);
@@ -2209,7 +2054,6 @@ mod tests {
         let mut storage = setup_memory_storage();
         let config = default_config();
 
-        // Try to create child with non-existent parent
         let mut args = default_args();
         args.parent = Some("bd-nonexistent".to_string());
 
@@ -2229,7 +2073,6 @@ mod tests {
     fn test_create_issue_custom_type_rejected() {
         init_test_logging();
         info!("test_create_issue_custom_type_rejected: starting");
-        // bd-bqyb: unknown types fail loud at the boundary.
         let mut storage = setup_memory_storage();
         let mut args = default_args();
         args.type_ = Some("custom_type".to_string());
@@ -2240,10 +2083,6 @@ mod tests {
         assert!(err.to_string().contains("custom_type"));
         info!("test_create_issue_custom_type_rejected: assertions passed");
     }
-
-    // =========================================================================
-    // parse_optional_date tests (preserved)
-    // =========================================================================
 
     #[test]
     fn test_parse_optional_date_none() {
@@ -2289,8 +2128,6 @@ mod tests {
         let date = result.unwrap();
         assert!(date.is_some());
         let dt = date.unwrap();
-        // Contract: bare dates mean 09:00 LOCAL on that calendar date; UTC
-        // fields shift with the host timezone, so assert in local time.
         let local = dt.with_timezone(&Local);
         assert_eq!(local.year(), 2026);
         assert_eq!(local.month(), 12);
@@ -2320,25 +2157,18 @@ mod tests {
     fn test_parse_optional_date_partial_date() {
         init_test_logging();
         info!("test_parse_optional_date_partial_date: starting");
-        // Flexible parser may accept various formats
         let result = parse_optional_date(Some("2026-01"));
         let _ = result;
         info!("test_parse_optional_date_partial_date: assertions passed");
     }
 
-    // =========================================================================
-    // Date boundary tests
-    // =========================================================================
-
     #[test]
     fn test_parse_optional_date_year_boundaries() {
         init_test_logging();
         info!("test_parse_optional_date_year_boundaries: starting");
-        // Far future date
         let result = parse_optional_date(Some("2099-12-31"));
         assert!(result.is_ok());
 
-        // Past date
         let result = parse_optional_date(Some("2000-01-01"));
         assert!(result.is_ok());
         info!("test_parse_optional_date_year_boundaries: assertions passed");
@@ -2348,13 +2178,11 @@ mod tests {
     fn test_parse_optional_date_leap_year() {
         init_test_logging();
         info!("test_parse_optional_date_leap_year: starting");
-        // Feb 29 on leap year
         let result = parse_optional_date(Some("2024-02-29"));
         assert!(result.is_ok());
         let date = result.unwrap();
         assert!(date.is_some());
         let dt = date.unwrap();
-        // Assert in local time: UTC day fields shift on hosts east of UTC.
         let local = dt.with_timezone(&Local);
         assert_eq!(local.month(), 2);
         assert_eq!(local.day(), 29);
@@ -2365,25 +2193,18 @@ mod tests {
     fn test_parse_optional_date_end_of_month() {
         init_test_logging();
         info!("test_parse_optional_date_end_of_month: starting");
-        // 31-day month
         let result = parse_optional_date(Some("2026-03-31"));
         assert!(result.is_ok());
 
-        // 30-day month
         let result = parse_optional_date(Some("2026-04-30"));
         assert!(result.is_ok());
         info!("test_parse_optional_date_end_of_month: assertions passed");
     }
 
-    // =========================================================================
-    // Whitespace handling tests
-    // =========================================================================
-
     #[test]
     fn test_parse_optional_date_whitespace_only() {
         init_test_logging();
         info!("test_parse_optional_date_whitespace_only: starting");
-        // Should be treated as empty/None
         let result = parse_optional_date(Some("   "));
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());

@@ -68,13 +68,11 @@ fn execute_inner(args: &StaleArgs, ctx: &OutputContext, storage: &SqliteStorage)
     let now = Utc::now();
     let threshold = now - Duration::days(args.days);
     filters.updated_before = Some(threshold);
-    // Sort by updated_at ASC (oldest first) to show most stale items first
     filters.sort = Some("updated_at".to_string());
-    filters.reverse = true; // updated_at default is DESC, so reverse gets ASC
+    filters.reverse = true;
 
     let stale = storage.list_stale_issues_for_command_output(&filters)?;
 
-    // Output based on mode
     if matches!(ctx.mode(), OutputMode::Quiet) {
         return Ok(());
     }
@@ -167,7 +165,6 @@ fn render_stale_rich(
         return;
     }
 
-    // Header
     let mut header = Text::new("");
     header.append_styled("\u{23f3} ", theme.warning.clone());
     header.append_styled("Stale issues", theme.warning.clone().bold());
@@ -181,44 +178,35 @@ fn render_stale_rich(
     for issue in stale {
         let days_stale = (now - issue.updated_at).num_days().max(0);
 
-        // Staleness coloring: red (>30d), orange (14-30d), yellow (7-14d), dim (<7d)
-        // Using theme colors where possible, or falling back to specific logic
-        // We can use priority styles as proxies for urgency or define direct colors if needed
         let staleness_style = if days_stale > 30 {
             theme.error.clone().bold()
         } else if days_stale > 14 {
-            theme.warning.clone().bold() // Bright yellow/orange
+            theme.warning.clone().bold()
         } else if days_stale > 7 {
             theme.warning.clone()
         } else {
             theme.dimmed.clone()
         };
 
-        // Status style
         let status_style = theme.status_style(&issue.status);
 
         let mut line = Text::new("");
 
-        // Days stale badge
         line.append_styled(&format!("{:>3}d ", days_stale), staleness_style);
 
-        // Status badge
         line.append_styled(
             &format!("[{}] ", format_status_label(&issue.status, false)),
             status_style,
         );
 
-        // Issue ID
         line.append_styled(&stale_display_text(&issue.id), theme.issue_id.clone());
         line.append(" ");
 
-        // Title
         line.append_styled(
             sanitize_terminal_inline(&issue.title).as_ref(),
             theme.issue_title.clone(),
         );
 
-        // Assignee if present
         if let Some(ref assignee) = issue.assignee {
             line.append_styled(
                 &format!(" (@{})", sanitize_terminal_inline(assignee)),
@@ -342,7 +330,6 @@ mod tests {
             .into_iter()
             .filter(|i| i.updated_at <= threshold)
             .collect();
-        // Sort by updated_at ascending (oldest first)
         stale.sort_by_key(|a| a.updated_at);
         stale
     }

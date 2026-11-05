@@ -848,7 +848,6 @@ pub fn validate_sync_mode_args(args: &SyncArgs) -> Result<()> {
             reason: "--export-parallelism must be greater than zero".to_string(),
         });
     }
-    // --rebuild only makes sense with explicit import mode.
     if args.rebuild && !args.import_only {
         return Err(BeadsError::Validation {
             field: "rebuild".to_string(),
@@ -951,12 +950,6 @@ fn maybe_delegate_rebuild(
         jsonl_path = %open_result.paths.jsonl_path.display(),
         "--rebuild requested on existing DB: delegating to auto-recovery rebuild path"
     );
-    // Recovery itself now captures the JSONL once before inspecting
-    // tombstones or replacing the database. It preserves unflushed
-    // tombstones (and dirty live issues, GitHub #394) against that same
-    // immutable generation, then imports the identical bytes. Keeping this
-    // at the recovery boundary prevents a path replacement from mixing
-    // filter state from A with rows from B.
     open_result.recover_database_from_jsonl()?;
     Ok(())
 }
@@ -1532,7 +1525,6 @@ fn finalize_sync_result(
 }
 
 fn should_render_human_sync_output(ctx: &OutputContext, use_json: bool) -> bool {
-    // Keep JSON/robot output paths alive even when quiet suppresses human text.
     !ctx.is_quiet() || use_json
 }
 
@@ -1556,10 +1548,6 @@ fn validate_sync_paths(
         ))
     })?;
 
-    // Resolve the requested path to an absolute operator-facing location without
-    // collapsing the final component. Raw-path validation must inspect the
-    // actual path the operator asked sync to touch so symlink and `.git`
-    // invariants cannot be bypassed by early canonicalization.
     let jsonl_path = resolve_requested_sync_path(jsonl_path)?;
 
     let extension = jsonl_path
@@ -1573,14 +1561,6 @@ fn validate_sync_paths(
         )));
     }
 
-    // External means outside the tree under EITHER route form: workspaces
-    // legitimately live under symlinked system prefixes (macOS
-    // /var -> /private/var), so a raw path that prefixes against the
-    // operator-facing beads_dir is internal even when its canonical form
-    // differs. Component-wise `starts_with` keeps `.beads-evil` from
-    // matching `.beads`. The resolution probe covers the inverse mix: a
-    // RAW operator path over a CANONICAL beads_dir (BEADS_JSONL env values
-    // are not pre-canonicalized).
     let is_external = !crate::sync::path::resolves_under_route(&jsonl_path, &canonical_beads)
         && !crate::sync::path::resolves_under_route(&jsonl_path, beads_dir);
     if is_external && !allow_external_jsonl {
@@ -1609,10 +1589,6 @@ fn validate_sync_paths(
         )));
     }
 
-    // Pass the RAW beads_dir: the callee re-canonicalizes internally and
-    // classifies internal-vs-external across both route forms, so a raw
-    // $TMPDIR prefix (/var/...) must not be misread as external just
-    // because this caller already holds the canonical form.
     validate_sync_path_with_external(&jsonl_path, beads_dir, allow_external_jsonl)?;
 
     debug!(
@@ -1668,11 +1644,6 @@ fn validate_operator_requested_sync_path(beads_dir: &Path, jsonl_path: &Path) ->
     let mut candidate = PathBuf::new();
     for component in operator_path.components() {
         candidate.push(component.as_os_str());
-        // Only components strictly BELOW .beads can steer the path out of
-        // the tree. Ancestors shared with .beads itself (e.g. macOS
-        // /var -> /private/var under $TMPDIR workspaces) are common to both
-        // sides — canonical_beads already resolves them — so judging their
-        // link targets here would refuse every such workspace.
         let below_raw = candidate.starts_with(beads_dir) && candidate != beads_dir;
         let below_canonical =
             candidate.starts_with(&canonical_beads) && candidate != canonical_beads;
@@ -1869,9 +1840,6 @@ fn status_coverage(
 /// issues import must not be rolled back because a sidecar row went stale,
 /// and `br doctor`'s orphan-verdict check surfaces unprovable closes.
 fn load_gates_sidecar_if_present(storage: &mut crate::storage::SqliteStorage, beads_dir: &Path) {
-    // The restore lives in `crate::sync` so the REBUILD paths can use the
-    // same one: a rebuild that does not restore the verdicts empties the
-    // store, and the next flush writes that emptiness over the sidecar.
     crate::sync::restore_gate_verdicts(storage, beads_dir);
 }
 
@@ -1948,7 +1916,6 @@ fn execute_status(
     }
 
     if use_json {
-        // Print JSON directly so --robot works even if OutputContext is non-JSON.
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else if ctx.is_rich() {
         render_status_rich(&status, ctx);
@@ -1995,7 +1962,6 @@ fn render_status_rich(status: &SyncStatus, ctx: &OutputContext) {
     let _console = Console::default();
     let theme = ctx.theme();
 
-    // Determine sync state and color
     let (state_icon, state_text, state_style) = if status.jsonl_newer {
         (
             "⬇",
@@ -2018,16 +1984,13 @@ fn render_status_rich(status: &SyncStatus, ctx: &OutputContext) {
         ("✓", "In sync", theme.success.clone())
     };
 
-    // Build status content
     let mut text = Text::new("");
 
-    // State line
     text.append_styled(state_icon, state_style.clone());
     text.append(" ");
     text.append_styled(state_text, state_style);
     text.append("\n\n");
 
-    // Dirty count
     text.append_styled("Dirty issues: ", theme.dimmed.clone());
     if status.dirty_count > 0 {
         text.append_styled(&status.dirty_count.to_string(), theme.warning.clone());
@@ -2042,7 +2005,6 @@ fn render_status_rich(status: &SyncStatus, ctx: &OutputContext) {
     text.append_styled(status.git_export.diagnostic_command, theme.accent.clone());
     text.append(")\n");
 
-    // JSONL exists
     text.append_styled("JSONL exists: ", theme.dimmed.clone());
     text.append_styled(
         if status.jsonl_exists { "yes" } else { "no" },
@@ -2054,21 +2016,18 @@ fn render_status_rich(status: &SyncStatus, ctx: &OutputContext) {
     );
     text.append("\n");
 
-    // Last export time
     if let Some(ref t) = status.last_export_time {
         text.append_styled("Last export:  ", theme.dimmed.clone());
         text.append_styled(t, theme.timestamp.clone());
         text.append("\n");
     }
 
-    // Last import time
     if let Some(ref t) = status.last_import_time {
         text.append_styled("Last import:  ", theme.dimmed.clone());
         text.append_styled(t, theme.timestamp.clone());
         text.append("\n");
     }
 
-    // Content hash (truncated)
     if let Some(ref hash) = status.jsonl_content_hash {
         text.append_styled("Content hash: ", theme.dimmed.clone());
         let display_hash = if hash.len() > 12 {
@@ -2352,33 +2311,20 @@ fn execute_flush(
         });
     }
 
-    // Check for dirty issues
     let dirty_ids = storage.get_dirty_issue_ids()?;
     let needs_flush = storage.get_metadata("needs_flush")?.as_deref() == Some("true");
     let jsonl_exists = source.is_some();
     let db_issue_count = storage.count_issues()?;
     debug!(dirty_count = dirty_ids.len(), "Found dirty issues");
 
-    // Refuse to overwrite a JSONL that still holds unresolved merge-conflict
-    // markers. The main flush path below would blow away the `<<<<<<<` /
-    // `=======` / `>>>>>>>` regions along with whatever remote side of the
-    // merge they contain, silently resolving the conflict in favor of the
-    // local DB. Detect the markers up-front so the operator can resolve the
-    // merge (or pass `--force` if they actually intend the DB to win).
     if let Some(source) = source
         && !args.force
     {
         ensure_no_conflict_markers_snapshot(source)?;
     }
 
-    // If no dirty issues and no force, report nothing to do
     if dirty_ids.is_empty() && !needs_flush && jsonl_exists && !args.force {
-        // `ensure_no_conflict_markers` ran above before we got here, so
-        // `analyze_jsonl_snapshot` below won't trip over unresolved `<<<<<<<` /
-        // `=======` / `>>>>>>>` lines.
 
-        // Guard against stale DB state without parsing the JSONL twice for count
-        // and IDs.
         let (existing_count, jsonl_ids) =
             analyze_jsonl_snapshot(source.expect("existing JSONL has an immutable snapshot"))?;
         if existing_count > 0 && db_issue_count == 0 {
@@ -2432,26 +2378,6 @@ fn execute_flush(
             }
         }
 
-        // Even with nothing to export, maintain the merge anchor from the
-        // clean JSONL (issues #378/#394): a missing anchor is materialized
-        // and a stale anchor is replaced, making `br sync --flush-only` an
-        // idempotent recovery command for the doctor's
-        // `base_jsonl.missing_post_flush` / stale-anchor findings.
-        //
-        // IDs/counts alone cannot prove that a same-ID JSONL record still
-        // matches the database. Immediately before touching the merge
-        // anchor, require the last certified semantic hash and compare it
-        // directly with the captured snapshot. Missing or mismatched
-        // evidence fails closed; --force deliberately takes the real-export
-        // path instead.
-        //
-        // beads_rust-a6kl bootstrap exception: a workspace that has NEVER
-        // been certified (no stored hash — fresh `br init`, or a tracker
-        // predating hash bookkeeping) is a vacuum, not tampering. When the
-        // database issue set EXACTLY matches the captured JSONL, the no-op
-        // flush self-certifies by storing the observed content hash —
-        // deterministic for the unchanged state, so every later no-op flush
-        // compares equal. Any id/count divergence still refuses below.
         let noop_source = source.expect("existing JSONL has an immutable snapshot");
         let observed_content_hash = noop_source.content_sha256();
         let stored_content_hash = storage
@@ -2495,12 +2421,6 @@ fn execute_flush(
             Some(_) => {}
         }
 
-        // Certified: ensure the anchor holds the exact snapshot bytes (also
-        // covers the missing-anchor case). A byte-identical regular-file
-        // anchor is left untouched so an idempotent no-op flush keeps its
-        // inode; anything else (missing, symlinked, byte-divergent — even
-        // whitespace-only drift the content hash cannot see) is replaced
-        // with the exact snapshot bytes.
         let anchor_path = path_policy.beads_dir.join("beads.base.jsonl");
         let snapshot_bytes = {
             let mut bytes = Vec::with_capacity(usize::try_from(noop_source.size()).unwrap_or(0));
@@ -2515,10 +2435,6 @@ fn execute_flush(
             refresh_base_snapshot_from_flushed_jsonl_snapshot(noop_source, &path_policy.beads_dir)?;
         }
 
-        // ADR-0001 §5.4: even with zero dirty issues the gates sidecar must
-        // be republished — gate verdict rows are not issue-dirty state, so
-        // without this a fresh `br gate report` followed by `--flush-only`
-        // would report "nothing to do" and strand the PASS row unexported.
         let gates_path = path_policy.beads_dir.join("gates.jsonl");
         let gates_export = crate::sync::export_gates_to_jsonl(
             storage,
@@ -2555,13 +2471,6 @@ fn execute_flush(
         return Ok(None);
     }
 
-    // Configure export. `needs_flush` must NOT be conflated with the user's
-    // explicit `--force`: its only job is to bypass the nothing-to-do early
-    // return above so a re-export happens when the DB holds canonical
-    // content. Passing it as `force` disabled the exporter's data-loss
-    // guards, letting a post-merge flush silently destroy JSONL issues the
-    // DB had never imported (#405). Intentional purges are excluded from the
-    // guard via the purged-pending-export marker instead.
     let export_config = ExportConfig {
         force: args.force,
         is_default_path: true,
@@ -2576,7 +2485,6 @@ fn execute_flush(
         expected_staged_output: None,
     };
 
-    // Execute export
     info!(path = %jsonl_path.display(), "Writing issues.jsonl");
     let (export_result, report) = export_to_jsonl_with_policy_expected_under_authority(
         storage,
@@ -2603,21 +2511,6 @@ fn execute_flush(
         "Exported issues to JSONL"
     );
 
-    // A clean flush leaves DB == JSONL, so the JSONL that just reached disk
-    // is the new common state future 3-way merges should diff against.
-    // Refresh the merge anchor to match (issue #378): historically only the
-    // merge path wrote `beads.base.jsonl`, leaving flush-only workspaces
-    // permanently anchor-less and tripping the doctor's
-    // `base_jsonl.missing_post_flush` warning while `br sync --status`
-    // reported "In sync". Skip when the export had per-record errors — a
-    // partial export must not become the merge base. Publish the anchor
-    // BEFORE clearing dirty/export metadata so an anchor publication failure
-    // keeps the workspace dirty and remains recoverable by a later explicit
-    // flush: certifying "In sync" over a stale anchor would hand future
-    // 3-way merges the wrong ancestor. (This fail-closed ordering shipped in
-    // 5414143b alongside the failure-injection coverage; the 77ae88ff
-    // tree-preference merge silently reverted it to the older best-effort
-    // wording while keeping the test.)
     if !report.has_errors() {
         refresh_base_snapshot_from_flushed_jsonl_snapshot(
             export_result.published_source()?,
@@ -2633,8 +2526,6 @@ fn execute_flush(
         })?;
     }
 
-    // Finalize export (clear dirty flags, update metadata) only after a
-    // clean export's anchor is durable.
     finalize_export_under_authority(
         storage,
         &export_result,
@@ -2648,10 +2539,6 @@ fn execute_flush(
     })?;
     info!("Export complete, cleared dirty flags");
 
-    // ADR-0001 §5.4: the gates.jsonl sidecar rides every flush so a clone
-    // can prove a close. Published only after the issues export finalized —
-    // a sidecar newer than its issues.jsonl is harmless (import refuses rows
-    // for unknown issues), the reverse would orphan verdicts.
     let gates_path = path_policy.beads_dir.join("gates.jsonl");
     let gates_export = crate::sync::export_gates_to_jsonl(
         storage,
@@ -2668,11 +2555,7 @@ fn execute_flush(
         "Exported gate verdict sidecar"
     );
 
-    // Write manifest if requested (atomic: temp + fsync + durable_rename)
     let manifest_path = if args.manifest {
-        // `br.publication.v1` is the clone-visible publication contract. The
-        // generation is deterministic for one issue/gate byte pair and schema
-        // version; wall-clock time remains useful metadata but is not identity.
         let mut generation_hasher = Sha256::new();
         generation_hasher.update(export_result.content_hash.as_bytes());
         generation_hasher.update(gates_export.content_hash.as_bytes());
@@ -2734,7 +2617,6 @@ fn execute_flush(
         None
     };
 
-    // Output result
     let cleared_dirty = export_result.exported_marked_at.len();
     let result = FlushResult {
         exported_issues: report.issues_exported,
@@ -2868,8 +2750,6 @@ fn write_manifest_atomically(
 
     let (temp_path, mut file) = create_temp_manifest_file(manifest_path)?;
 
-    // Close the handle before attempting cleanup so Windows does not retain a
-    // torn temp solely because the writer still had the file open.
     if let Err(error) = file.write_all(content.as_bytes()) {
         drop(file);
         let _ = fs::remove_file(&temp_path);
@@ -2892,7 +2772,6 @@ fn render_flush_result_rich(result: &FlushResult, errors: &[ExportError], ctx: &
 
     let mut text = Text::new("");
 
-    // Success indicator
     if errors.is_empty() {
         text.append_styled("✓ ", theme.success.clone());
         text.append_styled("Export Complete", theme.success.clone());
@@ -2902,12 +2781,10 @@ fn render_flush_result_rich(result: &FlushResult, errors: &[ExportError], ctx: &
     }
     text.append("\n\n");
 
-    // Direction indicator
     text.append_styled("Direction     ", theme.dimmed.clone());
     text.append_styled("SQLite → JSONL", theme.info.clone());
     text.append("\n");
 
-    // Exported counts
     text.append_styled("Issues        ", theme.dimmed.clone());
     text.append_styled(&result.exported_issues.to_string(), theme.accent.clone());
     text.append("\n");
@@ -2924,14 +2801,12 @@ fn render_flush_result_rich(result: &FlushResult, errors: &[ExportError], ctx: &
     text.append(&result.exported_comments.to_string());
     text.append("\n");
 
-    // Dirty flags cleared
     if result.cleared_dirty > 0 {
         text.append_styled("Dirty cleared ", theme.dimmed.clone());
         text.append_styled(&result.cleared_dirty.to_string(), theme.success.clone());
         text.append("\n");
     }
 
-    // Content hash (truncated)
     if !result.content_hash.is_empty() {
         text.append("\n");
         text.append_styled("Content hash  ", theme.dimmed.clone());
@@ -2943,7 +2818,6 @@ fn render_flush_result_rich(result: &FlushResult, errors: &[ExportError], ctx: &
         text.append_styled(&display_hash, theme.muted.clone());
     }
 
-    // Manifest path
     if let Some(ref path) = result.manifest_path {
         text.append("\n");
         text.append_styled("Manifest      ", theme.dimmed.clone());
@@ -2955,7 +2829,6 @@ fn render_flush_result_rich(result: &FlushResult, errors: &[ExportError], ctx: &
         .box_style(theme.box_style);
     ctx.render(&panel);
 
-    // Errors section if any
     if !errors.is_empty() {
         ctx.newline();
         render_errors_rich(errors, ctx);
@@ -3030,13 +2903,9 @@ fn push_cli_rerun_overrides(rerun: &mut Vec<String>, cli: &config::CliOverrides)
     if cli.quiet == Some(true) {
         rerun.push("--quiet".to_string());
     }
-    // Preserve `--no-color` so the re-run inherits the caller's output
-    // preference; dropping it silently flips colorized output back on.
     if cli.display_color == Some(false) {
         rerun.push("--no-color".to_string());
     }
-    // Preserve `--actor` so audit-log entries from the re-run carry the
-    // same identity the operator originally specified.
     if let Some(actor) = &cli.actor {
         rerun.push("--actor".to_string());
         rerun.push(shell_quote(actor));
@@ -3095,8 +2964,6 @@ fn replace_database_from_jsonl_snapshot(
             .insert("issue_prefix".to_string(), prefix.to_string());
     }
 
-    // Close the old connection before the verified backup-and-replace path
-    // opens a new database at the same location.
     let placeholder = crate::storage::SqliteStorage::open_memory()?;
     let previous_storage = std::mem::replace(storage, placeholder);
     drop(previous_storage);
@@ -3308,11 +3175,6 @@ fn execute_import(
         "Import configuration resolved"
     );
 
-    // A missing import source is a no-op, but every present source is captured
-    // exactly once before prefix inference, validation, tombstone filtering, or
-    // any SQLite mutation. The retained JSONL-family authority serializes
-    // cooperating writers for the full import; the immutable bytes also make an
-    // out-of-band path replacement harmless to internal pass consistency.
     let owned_jsonl_authority = retained_authority
         .is_none()
         .then(|| {
@@ -3368,16 +3230,6 @@ fn execute_import(
     };
     let source_content_hash = compute_jsonl_snapshot_content_hash(source)?;
 
-    // If the storage was just rebuilt from JSONL during the open sequence
-    // (either the DB file did not exist or a recoverable anomaly triggered
-    // `rebuild_database_from_jsonl`), the DB is already a clean import of the
-    // JSONL. Re-running `--rebuild`/`--force` here would redo the import and
-    // trigger the engine's stale-pager OpenRead bug ("could not open storage
-    // cursor on root page N") because `reset_data_tables` + bulk INSERT within
-    // the fresh connection exercises exactly the code path that just ran.
-    // Prefix is a default for newly generated IDs, not a project-wide import
-    // invariant. Only compute an expected prefix when the caller explicitly
-    // asked to rename imported IDs into the configured prefix.
     let target_prefix = if args.rename_prefix {
         let layer = config::load_config_with_external_jsonl_policy_snapshot(
             beads_dir,
@@ -3388,33 +3240,23 @@ fn execute_import(
         )?;
         let id_cfg = config::id_config_from_layer(&layer);
         Some(if id_cfg.prefix == "br" {
-            // Prefix is still the default — check if we should auto-detect from JSONL
             let db_prefix = storage.get_config("issue_prefix")?;
             if let Some(p) = db_prefix {
                 p
             } else if let Some(detected) = detect_prefix_from_jsonl(source)? {
                 info!(detected_prefix = %detected, "Auto-detected prefix from JSONL (no prefix configured)");
-                // Persist the detected prefix to config for future operations
                 storage.set_config("issue_prefix", &detected)?;
                 detected
             } else {
                 "br".to_string()
             }
         } else {
-            // Config layer resolved a non-default prefix — use it
             id_cfg.prefix
         })
     } else {
         None
     };
 
-    // When the caller requested semantics that auto-recovery could not honor
-    // (`--rename-prefix`) *and* the JSONL actually contains mismatched IDs
-    // that would have been renamed, fail explicitly so the operator can re-run
-    // on the now-healthy DB. If the flag would have been a no-op, preserve the
-    // happy-path short-circuit because the rebuild is already done. Skip the
-    // whole check when there is no rename request (`target_prefix.is_none()`)
-    // so we avoid the disk-touching `resolve_paths` call on the common path.
     let auto_rebuilt_source_is_current = auto_rebuilt
         && (matches!(retained_source, config::RetainedJsonlSourceRef::Present(_))
             || storage
@@ -3456,22 +3298,13 @@ fn execute_import(
         return Ok(());
     }
 
-    // Check staleness (unless --force or --rebuild)
     if !args.force && !args.rebuild {
         let last_import_time = storage.get_metadata(METADATA_LAST_IMPORT_TIME)?;
         let stored_hash = storage.get_metadata(METADATA_JSONL_CONTENT_HASH)?;
 
         if let (Some(import_time), Some(stored)) = (last_import_time, stored_hash) {
-            // Check if JSONL content hash matches
             let current_hash = source_content_hash.clone();
             let coverage_probe = if current_hash == stored {
-                // Coverage invariant (`beads-jdmh`): a matching stored
-                // hash proves the JSONL bytes are unchanged since the last
-                // *recorded* import, not that this DB ingested them. If the
-                // exportable DB issue count disagrees with the JSONL's
-                // unique id count, the shortcut would assert health over a
-                // partial/lost import — fall through to the real (additive,
-                // never-deleting) import body instead.
                 jsonl_unique_id_count(source.reader()).map(|jsonl_unique_ids| {
                     storage
                         .count_exportable_issues()
@@ -3503,14 +3336,8 @@ fn execute_import(
 
                 crate::sync::verify_jsonl_source_snapshot_current(source, jsonl_authority)?;
 
-                // ADR-0001 §5.4: the issues shortcut must not strand the
-                // gates sidecar — gate verdicts are not issue-dirty state.
-                // The load is idempotent (full-tuple dedupe), so replaying it
-                // on every "already current" import is cheap and safe.
                 load_gates_sidecar_if_present(storage, beads_dir);
 
-                // ADR-0001 §5.2: same for the fence import — legacy fences
-                // must stamp even when issues themselves are current.
                 match crate::sync::fence_import::sync_fences_into_typed_fields(
                     storage,
                     "fence-import",
@@ -3544,7 +3371,6 @@ fn execute_import(
         }
     }
 
-    // Parse orphan mode
     let orphan_mode = match args.orphans.as_deref() {
         Some("strict") | None => OrphanMode::Strict,
         Some("resurrect") => OrphanMode::Resurrect,
@@ -3561,9 +3387,7 @@ fn execute_import(
     };
     debug!(orphan_mode = ?orphan_mode, "Import orphan handling configured");
 
-    // Configure import
     let import_config = ImportConfig {
-        // Keep prefix validation when explicitly renaming prefixes.
         skip_prefix_validation: args.force && !args.rename_prefix,
         rename_on_import: args.rename_prefix,
         clear_duplicate_external_refs: args.rename_prefix,
@@ -3574,10 +3398,6 @@ fn execute_import(
         show_progress,
     };
 
-    // Force/rebuild prepasses and the import itself all consume the same
-    // captured bytes. Run the marker scan first so malformed merge content
-    // retains its actionable error class, then derive IDs and tombstone state
-    // before any destructive table reset.
     if args.force || args.rebuild {
         ensure_no_conflict_markers_snapshot(source)?;
     }
@@ -3613,10 +3433,6 @@ fn execute_import(
             .count()
     });
 
-    // Force/rebuild imports replace the database through the verified
-    // backup-and-restore recovery path. This avoids in-place
-    // DROP/CREATE pager hazards and, critically, guarantees that any late
-    // validation or storage failure restores the complete previous DB family.
     let import_used_backup_rebuild = args.force || args.rebuild;
     let force_import_target_was_empty = false;
     info!(path = %jsonl_path.display(), "Importing from JSONL");
@@ -3643,15 +3459,8 @@ fn execute_import(
         "Import complete"
     );
 
-    // ADR-0001 §5.4: load the gates.jsonl sidecar after the issues are in —
-    // verdict rows reference issues, and a PASS row for an unknown issue is
-    // refused rather than dropped. Missing sidecar stays legal (older
-    // workspaces, or a clone with zero gate history).
     load_gates_sidecar_if_present(storage, beads_dir);
 
-    // ADR-0001 §5.2: one-shot fence import — stamp empty typed brief fields
-    // from description fences so a clone materializing a legacy JSONL gets
-    // the typed shape without manual `br update` passes.
     match crate::sync::fence_import::sync_fences_into_typed_fields(storage, "fence-import") {
         Ok(outcome) if outcome.issues_updated > 0 => info!(
             count = outcome.issues_updated,
@@ -3664,24 +3473,6 @@ fn execute_import(
         ),
     }
 
-    // --rebuild: remove DB entries not present in JSONL.
-    //
-    // Skip this entirely when `--rename-prefix` is also set: the import just
-    // rewrote every JSONL ID into the configured prefix, so `db_ids` are
-    // post-rename (e.g. "newpref-xre") while `jsonl_ids` are pre-rename
-    // (e.g. "oldpref-001"). The set-difference would classify every
-    // newly-imported issue as an orphan and wipe the DB — exactly the
-    // opposite of what the user asked for. With `reset_data_tables` having
-    // cleared everything beforehand, the post-import DB contents already
-    // mirror the JSONL (modulo the prefix rewrite), so the orphan pass has
-    // nothing legitimate to remove anyway.
-    //
-    // Tombstones preserved across `reset_data_tables` via `snapshot_tombstones`
-    // are NOT orphans — the whole point of preserving them was to keep
-    // deletion-retention state alive across the rebuild. If the user has not
-    // flushed to JSONL since deleting an issue, the tombstone is in the DB
-    // but not in the JSONL, and a naïve set-difference would wipe it. Union
-    // their IDs into the "acceptable" set so they survive the cleanup.
     if args.rebuild && !args.rename_prefix {
         let jsonl_ids = jsonl_issue_ids
             .as_ref()
@@ -3707,7 +3498,6 @@ fn execute_import(
                 storage.delete_issue(id, "br-rebuild", "rebuild: not in JSONL", None)?;
             }
             import_result.orphans_removed = orphan_ids.len();
-            // Rebuild blocked cache again after removals
             storage.rebuild_blocked_cache(true)?;
             info!(
                 removed = orphan_ids.len(),
@@ -3727,26 +3517,11 @@ fn execute_import(
         import_result.tombstone_skipped += preserved_resurrection_attempts;
     }
 
-    // Update the source JSONL content hash before post-import maintenance.
-    // Metadata table/index writes are part of the same B-tree surface that
-    // triggered frankentorch-dbp, so compaction must be the final storage
-    // mutation in this path.
     if !import_used_backup_rebuild {
         storage.set_metadata(METADATA_JSONL_CONTENT_HASH, &source_content_hash)?;
     }
 
-    // Post-import VACUUM + REINDEX to eliminate B-tree/index corruption
-    // artifacts that frankensqlite's bulk-insert and metadata-update paths
-    // can leave behind.  This mirrors what `rebuild_database_family` (used
-    // by `br doctor --repair` and auto recovery) does at the equivalent
-    // chokepoint.
-    //
-    // Without this, large `br sync --import-only` runs can produce a DB
     // where C sqlite3's `PRAGMA integrity_check` reports free-space or
-    // index-entry corruption.  Force/rebuild imports hit this through
-    // `reset_data_tables()` + bulk import (issue #248); the FrankenTorch
-    // current-JSONL reproducer hit the plain import path through metadata
-    // table/index churn after importing hundreds of rows.
     let import_rewrote_storage = import_result.imported_count > 0
         || import_result.blocked_cache_entries > 0
         || import_result.child_counter_entries > 0;
@@ -3778,12 +3553,6 @@ fn execute_import(
         && (args.force || args.rebuild || import_rewrote_storage)
         && !skip_heavy_import_maintenance
     {
-        // Drain the WAL before VACUUM/REINDEX so the snapshot they operate
-        // on matches what's actually on disk. Without this, the
-        // post-import MVCC state lags behind and VACUUM fails silently with
-        // "database is busy (snapshot conflict on pages)", leaving the
-        // free-space / partial-index corruption that triggered issue #248
-        // and frankentorch-dbp.
         if let Err(e) = storage.checkpoint_full() {
             warn!(
                 error = %e,
@@ -3797,18 +3566,7 @@ fn execute_import(
         if let Err(e) = storage.execute_raw("REINDEX") {
             warn!(error = %e, "REINDEX after JSONL import failed (non-fatal); partial-index entries may be inconsistent");
         }
-        // Final compaction via `VACUUM INTO` + atomic rename. The
-        // in-place VACUUM does not truncate the trailing pages that its
         // REINDEX leaves orphaned, so upstream sqlite3's `PRAGMA
-        // integrity_check` reports `Page N: never used` on the rebuilt
-        // file (issue #248). `VACUUM INTO` sidesteps the bug because it
-        // writes a brand-new compacted file from the reachable page set,
-        // page count and layout matching what `sqlite3 "VACUUM INTO"`
-        // would produce. The helper runs its own pre-VACUUM-INTO WAL
-        // checkpoint to drain the frames the VACUUM/REINDEX above just
-        // wrote. Once it closes the old handle, reopen failures must abort
-        // this import rather than letting subsequent metadata updates run
-        // against a throwaway placeholder.
         let placeholder = crate::storage::SqliteStorage::open_memory()?;
         let original_storage = std::mem::replace(storage, placeholder);
         match config::compact_database_via_vacuum_into_in_place(
@@ -3839,7 +3597,6 @@ fn execute_import(
 
     crate::sync::verify_jsonl_source_snapshot_current(source, jsonl_authority)?;
 
-    // Output result
     let result = ImportResultOutput {
         created: import_result.created_count,
         updated: import_result.updated_count,
@@ -3888,29 +3645,24 @@ fn render_import_result_rich(result: &ImportResultOutput, ctx: &OutputContext) {
 
     let mut text = Text::new("");
 
-    // Success indicator
     text.append_styled("✓ ", theme.success.clone());
     text.append_styled("Import Complete", theme.success.clone());
     text.append("\n\n");
 
-    // Direction indicator
     text.append_styled("Direction          ", theme.dimmed.clone());
     text.append_styled("JSONL → SQLite", theme.info.clone());
     text.append("\n");
 
-    // Created count
     text.append_styled("Created            ", theme.dimmed.clone());
     text.append_styled(&result.created.to_string(), theme.accent.clone());
     text.append_styled(" issues", theme.dimmed.clone());
     text.append("\n");
 
-    // Updated count
     text.append_styled("Updated            ", theme.dimmed.clone());
     text.append_styled(&result.updated.to_string(), theme.accent.clone());
     text.append_styled(" issues", theme.dimmed.clone());
     text.append("\n");
 
-    // Skipped count
     if result.skipped > 0 {
         text.append_styled("Skipped            ", theme.dimmed.clone());
         text.append(&result.skipped.to_string());
@@ -3918,14 +3670,12 @@ fn render_import_result_rich(result: &ImportResultOutput, ctx: &OutputContext) {
         text.append("\n");
     }
 
-    // Tombstone protected
     if result.tombstone_skipped > 0 {
         text.append_styled("Tombstone protected ", theme.dimmed.clone());
         text.append(&result.tombstone_skipped.to_string());
         text.append("\n");
     }
 
-    // Orphans removed
     if result.orphans_removed > 0 {
         text.append_styled("Orphans removed    ", theme.dimmed.clone());
         text.append_styled(&result.orphans_removed.to_string(), theme.warning.clone());
@@ -3933,7 +3683,6 @@ fn render_import_result_rich(result: &ImportResultOutput, ctx: &OutputContext) {
         text.append("\n");
     }
 
-    // Cache rebuilt
     text.append("\n");
     text.append_styled("✓ ", theme.success.clone());
     text.append_styled("Blocked cache rebuilt", theme.muted.clone());
@@ -3986,7 +3735,6 @@ fn execute_reconcile(
     );
 
     let import_config = ImportConfig {
-        // Mixed prefixes are supported and reconcile never rewrites ids.
         skip_prefix_validation: true,
         rename_on_import: false,
         clear_duplicate_external_refs: false,
@@ -4611,11 +4359,9 @@ fn execute_merge(
 
     let database_before = capture_sync_database_witness(storage)?;
 
-    // 1. Load Base State (ancestor) from the exact retained generation.
     let base = load_base_snapshot_from_source(base_source.as_ref())?;
     debug!(base_count = base.len(), "Loaded base snapshot");
 
-    // 2. Load Left State (local DB)
     let mut left_issues = storage.get_all_issues_for_export()?;
     let all_deps = storage.get_all_dependency_records()?;
     let all_labels = storage.get_all_labels()?;
@@ -4646,15 +4392,8 @@ fn execute_merge(
         });
     }
 
-    // 3. Load Right State (external JSONL)
     let mut right = HashMap::new();
     if let Some(source) = source {
-        // The JSONL parser yields a generic
-        // generic "Invalid JSON at line 1" error when the JSONL still
-        // contains unresolved merge-conflict markers from a botched
-        // `git merge` / `git pull`. A three-way merge on top of that state
-        // would be nonsense, so scan for markers first and surface the
-        // helpful error before we try to parse.
         ensure_no_conflict_markers_snapshot(source)?;
         for issue in read_issues_from_jsonl_snapshot(source)? {
             right.insert(issue.id.clone(), issue);
@@ -4681,7 +4420,6 @@ fn execute_merge(
         });
     }
 
-    // 4. Perform Merge
     let context = MergeContext::new(base, left, right);
     let strategy = merge_conflict_resolution(args);
     let resolution = merge_conflict_resolution_label(strategy);
@@ -4699,7 +4437,6 @@ fn execute_merge(
 
     let report = three_way_merge(&context, strategy, tombstones);
 
-    // 5. Apply Changes to DB
     info!(
         kept = report.kept.len(),
         deleted = report.deleted.len(),
@@ -4709,7 +4446,6 @@ fn execute_merge(
     );
 
     if report.has_conflicts() {
-        // Require an explicit merge winner instead of guessing when both sides changed.
         if ctx.is_rich() {
             render_merge_conflicts_rich(&report.conflicts, ctx);
         }
@@ -4877,18 +4613,15 @@ fn render_merge_result_rich(report: &crate::sync::MergeReport, ctx: &OutputConte
 
     let mut text = Text::new("");
 
-    // Success indicator
     text.append_styled("✓ ", theme.success.clone());
     text.append_styled("3-Way Merge Complete", theme.success.clone());
     text.append("\n\n");
 
-    // Kept/Updated count
     text.append_styled("Kept/Updated  ", theme.dimmed.clone());
     text.append_styled(&report.kept.len().to_string(), theme.accent.clone());
     text.append_styled(" issues", theme.dimmed.clone());
     text.append("\n");
 
-    // Deleted count
     text.append_styled("Deleted       ", theme.dimmed.clone());
     if report.deleted.is_empty() {
         text.append("0");
@@ -4898,7 +4631,6 @@ fn render_merge_result_rich(report: &crate::sync::MergeReport, ctx: &OutputConte
     text.append_styled(" issues", theme.dimmed.clone());
     text.append("\n");
 
-    // Notes section
     if !report.notes.is_empty() {
         text.append("\n");
         text.append_styled("Notes:\n", theme.dimmed.clone());
@@ -4917,7 +4649,6 @@ fn render_merge_result_rich(report: &crate::sync::MergeReport, ctx: &OutputConte
         }
     }
 
-    // Final status
     text.append("\n");
     text.append_styled("✓ ", theme.success.clone());
     text.append_styled("Base snapshot updated\n", theme.muted.clone());
@@ -5650,7 +5381,6 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("beads.db");
         let jsonl_path = temp.path().join("issues.jsonl");
-        // Valid SQLite header so file-state probes stay quiet.
         let storage = SqliteStorage::open(&db_path).unwrap();
         drop(storage);
         fs::write(&jsonl_path, "{\"id\":\"bd-x\"}\n").unwrap();
@@ -5707,7 +5437,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let _jsonl_path = temp_dir.path().join("issues.jsonl");
 
-        // Execute status (would need to serialize manually for test)
         let dirty_ids = storage.get_dirty_issue_ids().unwrap();
         assert!(dirty_ids.is_empty());
     }
@@ -5881,10 +5610,6 @@ mod tests {
 
     #[test]
     fn test_tombstones_missing_from_jsonl_tombstones_blocks_resurrection() {
-        // Regression: when the JSONL has an ID as a *non*-tombstone, the
-        // preserved tombstone must still overwrite the imported open row.
-        // Timestamp ordering cannot resurrect a tombstone; that requires
-        // an explicit reopen operation.
         use crate::model::Status;
         use chrono::{Duration, Utc};
 
@@ -5934,13 +5659,10 @@ mod tests {
 
     #[test]
     fn test_dirty_issues_missing_from_jsonl_keeps_only_unreproducible_rows() {
-        // GitHub #394: dirty live issues survive a rebuild only when the
-        // JSONL cannot reproduce them — absent entirely, or strictly older.
         use chrono::{Duration, Utc};
 
         let jsonl_updated_at = Utc::now();
 
-        // Never flushed anywhere: must be preserved.
         let never_flushed = PreservedIssue {
             issue: make_test_issue("bd-never-flushed", "db only"),
             labels: Some(vec!["local".to_string()]),
@@ -5948,8 +5670,6 @@ mod tests {
             comments: Some(Vec::new()),
         };
 
-        // JSONL copy is as new as the local row: rebuild's import restores
-        // an identical row, no preservation needed.
         let mut jsonl_current = make_test_issue("bd-jsonl-current", "flushed");
         jsonl_current.updated_at = jsonl_updated_at;
         let jsonl_current_preserved = PreservedIssue {
@@ -5959,7 +5679,6 @@ mod tests {
             comments: None,
         };
 
-        // Local edit newer than the JSONL copy: must be preserved.
         let mut locally_edited = make_test_issue("bd-locally-edited", "edited");
         locally_edited.updated_at = jsonl_updated_at + Duration::hours(1);
         let locally_edited_preserved = PreservedIssue {
@@ -5969,8 +5688,6 @@ mod tests {
             comments: None,
         };
 
-        // JSONL has the ID as a flushed tombstone: the deletion wins over
-        // the unflushed local edit (mirrors the import tombstone guard).
         let flushed_delete = PreservedIssue {
             issue: make_test_issue("bd-flushed-delete", "deleted upstream"),
             labels: None,
@@ -6025,8 +5742,6 @@ mod tests {
             .delete_issue("bd-deleted", "test", "gone", None)
             .unwrap();
 
-        // Both rows are dirty (nothing has been flushed), but the tombstone
-        // belongs to the `snapshot_tombstones` pass, not this one.
         let dirty = snapshot_dirty_live_issues(&storage);
         assert_eq!(dirty.len(), 1);
         assert_eq!(dirty[0].issue.id, "bd-live");
@@ -6037,9 +5752,6 @@ mod tests {
         assert_eq!(dirty[0].comments.as_ref().unwrap().len(), 1);
         assert_eq!(dirty[0].dependencies.as_ref().unwrap().len(), 1);
 
-        // Round-trip: after a wipe (stand-in for the rebuild), restoring
-        // the tombstone pass then the dirty pass — the order the rebuild
-        // wiring uses — brings the live issue back and re-marks it dirty.
         let tombstones = snapshot_tombstones(&storage);
         storage.reset_data_tables().unwrap();
         restore_preserved_issues(&mut storage, &tombstones).unwrap();

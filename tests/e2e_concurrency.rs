@@ -86,9 +86,6 @@ fn find_non_shim_sqlite3_dir() -> Option<PathBuf> {
         if !candidate.is_file() {
             continue;
         }
-        // mise shims are symlinks named `sqlite3` that point at the `mise`
-        // binary; they need a real HOME tool install and break under hermetic
-        // `$HOME`. Prefer a concrete install or system binary instead.
         if let Ok(target) = fs::read_link(&candidate)
             && target.file_name().and_then(|name| name.to_str()) == Some("mise")
         {
@@ -97,8 +94,6 @@ fn find_non_shim_sqlite3_dir() -> Option<PathBuf> {
         return Some(dir);
     }
 
-    // Fall back to the ambient user's mise installs tree (not the hermetic
-    // temp HOME br children use).
     let real_home = std::env::var_os("HOME").map(PathBuf::from)?;
     let installs = real_home.join(".local/share/mise/installs/sqlite");
     if let Ok(entries) = fs::read_dir(&installs) {
@@ -132,8 +127,6 @@ where
     cmd.env("RUST_LOG", "error");
     cmd.env("RUST_BACKTRACE", "1");
     cmd.env("HOME", root);
-    // Hermetic $PATH: dual `br` installs otherwise trip the br_path_dupes
-    // doctor warning inside spawned doctor runs (beads-ozdh class).
     cmd.env("PATH", hermetic_br_path());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -152,9 +145,6 @@ fn is_write_lock_wait_channel(channel: &str) -> bool {
     let channel = channel.to_ascii_lowercase();
     channel.contains("lock")
         || channel.contains("flock")
-        // blocking_write_lock_with_timeout uses bounded try_lock polling.
-        // While contended, Linux commonly reports the waiter in the sleep
-        // between polls rather than inside flock/lock_file_wait.
         || channel.contains("nanosleep")
         || channel.contains("hrtimer")
 }
@@ -221,7 +211,6 @@ where
     cmd.current_dir(root);
     cmd.args(args);
     clear_inherited_br_env(&mut cmd);
-    // Hermetic defaults; explicit env_vars below may override RUST_LOG.
     cmd.env("RUST_LOG", "error");
     cmd.env("PATH", hermetic_br_path());
     cmd.envs(env_vars);
@@ -371,11 +360,9 @@ fn extract_json_payload(stdout: &str) -> String {
 /// `{"issues": [...], "total": N, "limit": N, "offset": 0, "has_more": false}`.
 fn extract_issues_array(stdout: &str) -> Vec<serde_json::Value> {
     let payload = extract_json_payload(stdout);
-    // Try plain array first (legacy / future-proof).
     if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&payload) {
         return arr;
     }
-    // Try paginated envelope.
     if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&payload)
         && let Some(issues) = obj.get("issues").and_then(|v| v.as_array())
     {
@@ -397,7 +384,6 @@ fn assert_doctor_healthy(root: &PathBuf) {
     if doctor.success {
         return;
     }
-    // Attempt auto-repair (checkpoint WAL, quarantine anomalous sidecars).
     let repair = run_br_in_dir(root, ["doctor", "--repair", "--json"]);
     assert!(
         repair.success,
@@ -451,8 +437,6 @@ fn assert_doctor_has_no_page_anomalies(root: &PathBuf, label: &str) {
         if name != "sqlite.integrity_check" && name != "sqlite3.integrity_check" {
             continue;
         }
-        // Hermetic HOME + mise shim: external CLI unavailable — skip anomaly
-        // scan for that check only (do not invent-green other doctor failures).
         if name == "sqlite3.integrity_check"
             && (lower.contains("mise error")
                 || lower.contains("not a valid shim")
@@ -482,8 +466,6 @@ fn assert_doctor_has_no_page_anomalies(root: &PathBuf, label: &str) {
         return;
     }
 
-    // Allow failure only when the sole non-ok check is sqlite3.integrity_check
-    // with mise/shim/not-found misconfig. Any other doctor failure stays red.
     let sole_sqlite3_cli_misconfig = matches!(
         non_ok.as_slice(),
         [(name, message)] if name == "sqlite3.integrity_check" && {
@@ -767,9 +749,6 @@ fn e2e_write_lock_contention_respects_lock_timeout() {
         "write lock timeout should not block indefinitely; elapsed={elapsed:?}"
     );
     let combined = format!("{}{}", create.stdout, create.stderr);
-    // The reported millisecond figure is a MEASURED duration, not the
-    // configured bound, so asserting an exact value races (71 vs 75).
-    // Assert the bounded-diagnostic shape instead.
     assert!(
         combined.contains("Timed out after")
             && combined.contains("ms waiting for write lock")
@@ -1106,11 +1085,6 @@ fn e2e_read_command_witness_refresh_waits_for_write_lock() {
         .expect("delete jsonl_size witness");
     conn.execute("INSERT INTO metadata (key, value) VALUES ('jsonl_size', '0')")
         .expect("write stale jsonl_size witness");
-    // beads-mjmk: also corrupt jsonl_content_hash so the staleness probe
-    // actually concludes the JSONL is newer. compute_jsonl_newer_impl falls
-    // back to hash comparison when size mismatches; if the hash still matches
-    // the actual JSONL, the probe returns "not newer" and the read command
-    // never tries to refresh witnesses, making this test a no-op.
     conn.execute("DELETE FROM metadata WHERE key = 'jsonl_content_hash'")
         .expect("delete jsonl_content_hash witness");
     conn.execute(
@@ -1154,15 +1128,12 @@ fn e2e_read_command_witness_refresh_waits_for_write_lock() {
 fn e2e_concurrent_writes_succeed_with_retry() {
     let _log = common::test_log("e2e_concurrent_writes_succeed_with_retry");
 
-    // Create workspace
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    // Initialize workspace
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    // Create a barrier to synchronize thread start
     let barrier = Arc::new(Barrier::new(2));
     let root1 = Arc::new(root.clone());
     let root2 = Arc::new(root.clone());
@@ -1172,9 +1143,6 @@ fn e2e_concurrent_writes_succeed_with_retry() {
     let root1_clone = Arc::clone(&root1);
     let root2_clone = Arc::clone(&root2);
 
-    // Spawn two threads that will try to create issues concurrently.
-    // Use an explicit timeout here so the retry behavior is stable under
-    // remote worker load instead of depending on the ambient default.
     let handle1 = thread::spawn(move || {
         barrier1.wait();
         run_br_in_dir(
@@ -1243,8 +1211,6 @@ fn e2e_concurrent_writes_succeed_with_retry() {
         "expected at least one concurrent writer to succeed"
     );
 
-    // Verify successful issues were created. Use --no-auto-import to avoid
-    // SYNC_CONFLICT when JSONL is newer than the DB after concurrent flushes.
     let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(list.success, "list failed: {}", list.stderr);
     let issues = extract_issues_array(&list.stdout);
@@ -1257,7 +1223,6 @@ fn e2e_concurrent_writes_succeed_with_retry() {
         assert!(list.stdout.contains(title), "missing issue title {title}");
     }
 
-    // Keep temp_dir alive until end
     drop(temp_dir);
 }
 
@@ -1274,11 +1239,9 @@ fn e2e_lock_timeout_behavior() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    // Initialize workspace
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    // Create an issue first
     let create = run_br_in_dir(
         &root,
         [
@@ -1295,7 +1258,6 @@ fn e2e_lock_timeout_behavior() {
     assert!(create.success, "create seed failed: {}", create.stderr);
     let seed_id = parse_created_id(&create.stdout);
 
-    // Use a synchronization primitive
     let barrier = Arc::new(Barrier::new(2));
     let root_shared = Arc::new(root);
     let seed_id_arc = Arc::new(seed_id);
@@ -1306,7 +1268,6 @@ fn e2e_lock_timeout_behavior() {
     let root2_clone = Arc::clone(&root_shared);
     let seed_id_clone = Arc::clone(&seed_id_arc);
 
-    // Thread 1: Do multiple rapid updates to keep the DB busy
     let handle1 = thread::spawn(move || {
         barrier1.wait();
         for i in 0..10 {
@@ -1316,10 +1277,8 @@ fn e2e_lock_timeout_behavior() {
         }
     });
 
-    // Thread 2: Try to create with low timeout
     let handle2 = thread::spawn(move || {
         barrier2.wait();
-        // Small delay to let the first thread start
         thread::sleep(Duration::from_millis(25));
         let start = Instant::now();
         let result = run_br_in_dir(
@@ -1344,18 +1303,13 @@ fn e2e_lock_timeout_behavior() {
     handle1.join().expect("thread 1 panicked");
     let (result2, elapsed2) = handle2.join().expect("thread 2 panicked");
 
-    // Log timing for diagnostics
     eprintln!(
         "Low timeout operation: success={}, elapsed={elapsed2:?}",
         result2.success
     );
 
-    // Either outcome is valid depending on timing:
-    // - Success if no contention was hit
-    // - Failure with lock/busy error if contention occurred
     if !result2.success {
         let combined = format!("{} {}", result2.stderr, result2.stdout).to_lowercase();
-        // Check for any database-related error (busy, lock, or general database error)
         assert!(
             combined.contains("busy")
                 || combined.contains("lock")
@@ -1383,7 +1337,6 @@ fn e2e_concurrent_reads_succeed() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    // Initialize and create some issues
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
@@ -1406,7 +1359,6 @@ fn e2e_concurrent_reads_succeed() {
         ids.push(parse_created_id(&create.stdout));
     }
 
-    // Spawn multiple threads doing read operations
     let barrier = Arc::new(Barrier::new(5));
     let mut handles = Vec::new();
 
@@ -1419,7 +1371,6 @@ fn e2e_concurrent_reads_succeed() {
             barrier_clone.wait();
             let start = Instant::now();
 
-            // Mix of read operations
             let list = run_br_in_dir(&root_clone, ["list", "--json"]);
             let show = run_br_in_dir(&root_clone, ["show", &issue_id, "--json"]);
             let stats = run_br_in_dir(&root_clone, ["stats", "--json"]);
@@ -1431,13 +1382,11 @@ fn e2e_concurrent_reads_succeed() {
         handles.push(handle);
     }
 
-    // Collect results
     let results: Vec<_> = handles
         .into_iter()
         .map(|h| h.join().expect("thread panicked"))
         .collect();
 
-    // All read operations should succeed
     for (i, list, show, stats, elapsed) in &results {
         assert!(list.success, "thread {i} list failed: {}", list.stderr);
         assert!(show.success, "thread {i} show failed: {}", show.stderr);
@@ -1568,11 +1517,9 @@ fn e2e_lock_timeout_timing() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    // Initialize workspace
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    // Create a seed issue
     let create = run_br_in_dir(
         &root,
         [
@@ -1588,7 +1535,6 @@ fn e2e_lock_timeout_timing() {
     );
     assert!(create.success, "create failed: {}", create.stderr);
 
-    // Test with a 500ms timeout (should complete quickly without contention)
     let timeout_ms = 500;
     let start = Instant::now();
     let result = run_br_in_dir(
@@ -1597,7 +1543,6 @@ fn e2e_lock_timeout_timing() {
     );
     let elapsed = start.elapsed();
 
-    // Without contention, should complete very quickly
     assert!(result.success, "list failed: {}", result.stderr);
     let timeout_ms_u64 = u64::try_from(timeout_ms).unwrap_or(0);
     assert!(
@@ -1620,7 +1565,6 @@ fn e2e_write_serialization() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    // Initialize
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
@@ -1628,7 +1572,6 @@ fn e2e_write_serialization() {
     let mut handles = Vec::new();
     let barrier = Arc::new(Barrier::new(3));
 
-    // Spawn 3 threads doing writes
     for i in 0..3 {
         let root_clone = Arc::new(root.clone());
         let barrier_clone = Arc::clone(&barrier);
@@ -1693,8 +1636,6 @@ fn e2e_write_serialization() {
 
     eprintln!("Total time for 3 serialized writes: {total_elapsed:?}");
 
-    // Verify all successful writes persist. Use --no-auto-import to avoid
-    // SYNC_CONFLICT when concurrent flushes leave JSONL ahead of DB.
     let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(list.success, "final list failed: {}", list.stderr);
     let issues = extract_issues_array(&list.stdout);
@@ -1727,7 +1668,6 @@ fn e2e_mixed_read_write_concurrency() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    // Initialize with some existing data
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
@@ -1748,10 +1688,9 @@ fn e2e_mixed_read_write_concurrency() {
         assert!(create.success, "create {i} failed");
     }
 
-    let barrier = Arc::new(Barrier::new(6)); // 3 readers + 3 writers
+    let barrier = Arc::new(Barrier::new(6));
     let mut handles = Vec::new();
 
-    // Spawn readers
     for i in 0..3 {
         let root_clone = Arc::new(root.clone());
         let barrier_clone = Arc::clone(&barrier);
@@ -1759,9 +1698,6 @@ fn e2e_mixed_read_write_concurrency() {
         let handle = thread::spawn(move || {
             barrier_clone.wait();
             let start = Instant::now();
-            // This reader deliberately opts out of both startup mutations, so
-            // it exercises the current-schema read-only connection instead of
-            // competing with writers for the workspace authority.
             let result = run_br_in_dir(
                 &root_clone,
                 [
@@ -1779,7 +1715,6 @@ fn e2e_mixed_read_write_concurrency() {
         handles.push(handle);
     }
 
-    // Spawn writers
     for i in 0..3 {
         let root_clone = Arc::new(root.clone());
         let barrier_clone = Arc::clone(&barrier);
@@ -1835,12 +1770,9 @@ fn e2e_mixed_read_write_concurrency() {
         "expected at least one successful writer under mixed contention"
     );
 
-    // Verify final state. Use --no-auto-import to avoid SYNC_CONFLICT when
-    // JSONL is newer than the DB after concurrent flushes.
     let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(list.success, "final list failed: {}", list.stderr);
 
-    // All successful writers should persist; explicit contention failures are acceptable.
     let issues = extract_issues_array(&list.stdout);
     assert!(
         issues.len() >= 3 + writer_successes,
@@ -1999,8 +1931,6 @@ fn e2e_interleaved_command_families_remain_bounded() {
         let _ = assert_only_success_or_contention(worker, results);
     }
 
-    // Use --no-auto-import for post-contention reads to avoid SYNC_CONFLICT
-    // when concurrent flushes leave JSONL ahead of the DB.
     let show = run_br_in_dir(&root, ["--no-auto-import", "show", &seed_id_arc, "--json"]);
     assert!(
         show.success,
@@ -2287,11 +2217,9 @@ fn e2e_lock_error_reporting() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    // Initialize
     let init = run_br_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    // Create a seed issue
     let create = run_br_in_dir(
         &root,
         [
@@ -2307,7 +2235,6 @@ fn e2e_lock_error_reporting() {
     );
     assert!(create.success, "create failed: {}", create.stderr);
 
-    // Normal operation should report no lock issues
     let list = run_br_in_dir(&root, ["list", "--json"]);
     assert!(list.success, "list failed: {}", list.stderr);
     assert!(
@@ -2381,9 +2308,6 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
         comment_barrier.wait();
         let mut results = Vec::new();
         for i in 0..6 {
-            // Use --no-auto-import to avoid SYNC_CONFLICT when concurrent creates
-            // have updated the JSONL but left dirty flags in the DB. Comments add
-            // does not need to sync from JSONL before appending a comment.
             let args = vec![
                 "--no-auto-import".to_string(),
                 "--lock-timeout".to_string(),
@@ -2406,7 +2330,6 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
         label_barrier.wait();
         let mut results = Vec::new();
         for i in 0..6 {
-            // Use --no-auto-import to avoid SYNC_CONFLICT during concurrent creates.
             let args = vec![
                 "--no-auto-import".to_string(),
                 "--lock-timeout".to_string(),
@@ -2485,7 +2408,6 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
 
     assert_doctor_healthy(&root);
 
-    // Use --no-auto-import to avoid SYNC_CONFLICT from concurrent flushes.
     let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(
         list.success,
@@ -2698,7 +2620,6 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
         status.stdout, status.stderr
     );
 
-    // Use --no-auto-import to avoid SYNC_CONFLICT from concurrent flushes.
     let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(
         list.success,
@@ -2805,8 +2726,6 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
             barrier.wait();
             let mut results = Vec::new();
             for _ in 0..8 {
-                // Use --no-auto-import to avoid SYNC_CONFLICT when other concurrent
-                // threads update the JSONL but leave dirty flags in the DB.
                 let args = vec![
                     "--no-auto-import".to_string(),
                     "--lock-timeout".to_string(),
@@ -2833,7 +2752,6 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
             barrier.wait();
             let mut results = Vec::new();
             for _ in 0..8 {
-                // Use --no-auto-import to avoid SYNC_CONFLICT during concurrent writes.
                 let args = vec![
                     "--no-auto-import".to_string(),
                     "--lock-timeout".to_string(),
@@ -2861,9 +2779,6 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
             barrier.wait();
             let mut results = Vec::new();
             for i in 0..8 {
-                // Use --no-auto-import to avoid SYNC_CONFLICT when concurrent
-                // claimer/deferrer threads update the JSONL but leave dirty flags
-                // in the DB. Comment add does not need to sync from JSONL first.
                 let args = vec![
                     "--no-auto-import".to_string(),
                     "--lock-timeout".to_string(),
@@ -2890,7 +2805,6 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
             barrier.wait();
             let mut results = Vec::new();
             for i in 0..8 {
-                // Use --no-auto-import to avoid SYNC_CONFLICT during concurrent writes.
                 let args = vec![
                     "--no-auto-import".to_string(),
                     "--lock-timeout".to_string(),
@@ -2991,7 +2905,6 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
     assert_eq!(claim_json["status"].as_str(), Some("in_progress"));
     assert_eq!(claim_json["assignee"].as_str(), Some("alice"));
 
-    // Use --no-auto-import for post-contention reads to avoid SYNC_CONFLICT.
     let defer_show = run_br_in_dir(&root, ["--no-auto-import", "show", &defer_id, "--json"]);
     assert!(
         defer_show.success,
@@ -3667,8 +3580,6 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
     );
     let shown: serde_json::Value =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show JSON");
-    // Single-id `br show --json` is a bare object on this fork (see
-    // `emit_show_json`); upstream ports may still emit a one-element array.
     let shown_issue = match shown {
         serde_json::Value::Array(items) => items
             .into_iter()
@@ -3865,7 +3776,6 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
     );
     assert_doctor_healthy(&main_root);
 
-    // Use --no-auto-import for post-contention reads to avoid SYNC_CONFLICT.
     let routed_show = run_br_in_dir(
         &main_root,
         ["--no-auto-import", "show", &external_id, "--json"],

@@ -91,7 +91,6 @@ impl KnownDataset {
 
     pub fn source_path(self) -> PathBuf {
         match self {
-            // Use CARGO_MANIFEST_DIR for BeadsRust since we're running from within the repo
             Self::BeadsRust => PathBuf::from(env!("CARGO_MANIFEST_DIR")),
             Self::BeadsViewer => PathBuf::from("/data/projects/beads_viewer"),
             Self::CodingAgentSessionSearch => {
@@ -320,7 +319,6 @@ impl DatasetRegistry {
         let jsonl_path = beads_dir.join("issues.jsonl");
         let db_path = beads_dir.join("beads.db");
 
-        // Require beads.db to exist (not committed to git, only present in dev environments)
         if !db_path.exists() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -340,7 +338,6 @@ impl DatasetRegistry {
 
         let content_hash = hash_beads_directory(&beads_dir)?;
 
-        // Get git commit from source repository (if .git exists)
         let source_commit = get_git_commit(&dataset.source_path());
 
         Ok(DatasetMetadata {
@@ -416,16 +413,13 @@ impl IsolatedDataset {
         let root = temp_dir.path().to_path_buf();
         let beads_dir = root.join(".beads");
 
-        // Copy .beads directory
         copy_dir_recursive(&source_beads, &beads_dir)?;
 
-        // Create minimal repo scaffold (empty .git marker, not a real git repo)
         fs::create_dir_all(root.join(".git"))?;
         fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n")?;
 
         let copy_duration = start.elapsed();
 
-        // Scan copied dataset for metadata
         let jsonl_path = beads_dir.join("issues.jsonl");
         let db_path = beads_dir.join("beads.db");
 
@@ -435,7 +429,6 @@ impl IsolatedDataset {
         let dependency_count = count_dependencies(&jsonl_path).unwrap_or(0);
         let content_hash = hash_beads_directory(&beads_dir)?;
 
-        // Get git commit from source repository (if .git exists)
         let source_commit = get_git_commit(&dataset.source_path());
 
         let metadata = DatasetMetadata {
@@ -468,7 +461,6 @@ impl IsolatedDataset {
         let root = temp_dir.path().to_path_buf();
         let beads_dir = root.join(".beads");
 
-        // Create minimal git scaffold
         fs::create_dir_all(root.join(".git"))?;
         fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n")?;
 
@@ -492,7 +484,7 @@ impl IsolatedDataset {
             root,
             beads_dir,
             metadata,
-            source_dataset: KnownDataset::BeadsRust, // Placeholder
+            source_dataset: KnownDataset::BeadsRust,
         })
     }
 
@@ -538,11 +530,6 @@ pub fn migrate_workspace_to_current_schema(root: &Path) -> std::io::Result<()> {
     if !plan.status.success() {
         let plan_stdout = String::from_utf8_lossy(&plan.stdout);
         let plan_stderr = String::from_utf8_lossy(&plan.stderr);
-        // Sources below the reviewed-migration floor (schemas before 13) have
-        // no reviewed plan/apply pair, so `plan` refuses outright instead of
-        // reporting an ineligible plan. Surface that refusal as
-        // `ErrorKind::Unsupported` so callers can fall back to the JSONL-only
-        // rebuild contract instead of treating it as a harness failure.
         if plan_stdout.contains("unsupported source version")
             || plan_stderr.contains("unsupported source version")
         {
@@ -607,13 +594,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
         let file_name = entry.file_name();
         let dst_path = dst.join(&file_name);
 
-        // Skip socket files (like bd.sock)
         let name = file_name.to_string_lossy();
         if name.ends_with(".sock") {
             continue;
         }
 
-        // Skip SQLite sidecars (will be regenerated)
         if name.ends_with("-wal")
             || name.ends_with("-wal-cert")
             || name.ends_with("-wal-cert-head")
@@ -623,13 +608,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
             continue;
         }
 
-        // Skip sync lock
         if name == ".sync.lock" {
             continue;
         }
 
         if file_type.is_dir() {
-            // Skip history subdirectory (can be large, recreated as needed)
             if name == "history" {
                 continue;
             }
@@ -728,7 +711,6 @@ fn count_dependencies(path: &Path) -> std::io::Result<usize> {
 fn hash_beads_directory(beads_dir: &Path) -> std::io::Result<String> {
     let mut hasher = Sha256::new();
 
-    // Hash key files in deterministic order
     let files_to_hash = ["issues.jsonl", "config.yaml"];
 
     for filename in &files_to_hash {
@@ -802,10 +784,6 @@ fn get_git_commit(repo_path: &Path) -> Option<String> {
         .or_else(|| compile_time_git_commit(repo_path))
 }
 
-// =============================================================================
-// Dataset Override Support (beads-b4nj)
-// =============================================================================
-
 /// Configuration for dataset override.
 ///
 /// Allows tests to use custom `.beads` directories instead of known datasets.
@@ -861,16 +839,13 @@ pub fn isolated_from_override(
     let root = temp_dir.path().to_path_buf();
     let beads_dir = root.join(".beads");
 
-    // Copy .beads directory
     copy_dir_recursive(&source_beads_dir, &beads_dir)?;
 
-    // Create minimal repo scaffold
     fs::create_dir_all(root.join(".git"))?;
     fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n")?;
 
     let copy_duration = start.elapsed();
 
-    // Scan copied dataset for metadata
     let jsonl_path = beads_dir.join("issues.jsonl");
     let db_path = beads_dir.join("beads.db");
 
@@ -880,10 +855,8 @@ pub fn isolated_from_override(
     let dependency_count = count_dependencies(&jsonl_path).unwrap_or(0);
     let content_hash = hash_beads_directory(&beads_dir)?;
 
-    // Get git commit from source repository (if .git exists)
     let source_commit = get_git_commit(source_path);
 
-    // Derive name from directory or use override
     let name = override_config
         .name
         .clone()
@@ -909,7 +882,6 @@ pub fn isolated_from_override(
         override_reason: Some(override_config.reason.clone()),
     };
 
-    // Log the override for traceability
     eprintln!(
         "[dataset_registry] Using override dataset: {} (reason: {})",
         source_path.display(),
@@ -921,13 +893,9 @@ pub fn isolated_from_override(
         root,
         beads_dir,
         metadata,
-        source_dataset: KnownDataset::BeadsRust, // Placeholder for overrides
+        source_dataset: KnownDataset::BeadsRust,
     })
 }
-
-// =============================================================================
-// Dataset Integrity Guard (beads-b4nj)
-// =============================================================================
 
 /// Integrity verification result.
 #[derive(Debug, Clone)]
@@ -1085,10 +1053,6 @@ impl DatasetIntegrityGuard {
     }
 }
 
-// =============================================================================
-// Provenance Logging (beads-b4nj)
-// =============================================================================
-
 /// Full provenance information for a test run.
 ///
 /// This captures everything needed to reproduce the test environment.
@@ -1195,25 +1159,19 @@ pub fn run_with_integrity<F, T>(
 where
     F: FnOnce(&IsolatedDataset) -> std::io::Result<T>,
 {
-    // Create integrity guard and verify before
     let mut guard = DatasetIntegrityGuard::new(dataset)?;
     let before_result = guard.verify_before();
 
-    // Fail fast if source is already corrupted
     if !before_result.passed {
         return Err(std::io::Error::other(before_result.message));
     }
 
-    // Create isolated dataset
     let isolated = IsolatedDataset::from_dataset(dataset)?;
 
-    // Run the test function
     let result = test_fn(&isolated)?;
 
-    // Verify after
     let after_result = guard.verify_after();
 
-    // Build provenance
     let provenance = DatasetProvenance::from_isolated(&isolated)
         .with_integrity_before(before_result)
         .with_integrity_after(after_result);
@@ -1244,8 +1202,6 @@ mod tests {
     #[test]
     fn test_registry_creation() {
         let registry = DatasetRegistry::new();
-        // beads may not be available in CI (no beads.db)
-        // Just verify the registry can be created
         let _ = registry.is_available(KnownDataset::BeadsRust);
     }
 
@@ -1255,11 +1211,9 @@ mod tests {
             return;
         };
 
-        // Verify the copy was created
         assert!(isolated.beads_dir.exists());
         assert!(isolated.beads_dir.join("beads.db").exists());
 
-        // Verify metadata was captured
         assert_eq!(isolated.metadata.name, "beads");
         assert!(isolated.metadata.issue_count > 0);
         assert!(isolated.metadata.copy_duration.is_some());
@@ -1269,11 +1223,9 @@ mod tests {
     fn test_empty_workspace() {
         let isolated = IsolatedDataset::empty().expect("should create empty workspace");
 
-        // Verify workspace structure
         assert!(isolated.root.exists());
         assert!(isolated.root.join(".git").exists());
 
-        // Beads dir should not exist yet (init will create it)
         assert!(!isolated.beads_dir.exists());
     }
 
@@ -1291,14 +1243,9 @@ mod tests {
 
         let registry = DatasetRegistry::new();
 
-        // This should pass (source unchanged during test)
         let result = registry.verify_source_integrity(KnownDataset::BeadsRust);
         assert!(result.is_ok(), "Source integrity check failed: {result:?}");
     }
-
-    // =========================================================================
-    // DatasetIntegrityGuard tests (beads-b4nj)
-    // =========================================================================
 
     #[test]
     fn test_integrity_guard_creation() {
@@ -1312,7 +1259,7 @@ mod tests {
 
         assert_eq!(guard.dataset_name(), "beads");
         assert!(!guard.original_hash().is_empty());
-        assert!(!guard.fully_verified()); // Not yet verified
+        assert!(!guard.fully_verified());
     }
 
     #[test]
@@ -1340,11 +1287,9 @@ mod tests {
         let mut guard =
             DatasetIntegrityGuard::new(KnownDataset::BeadsRust).expect("should create guard");
 
-        // Verify both before and after
         let before = guard.verify_before();
         assert!(before.passed);
 
-        // Source shouldn't change during test
         let after = guard.verify_after();
         assert!(after.passed, "After check failed: {}", after.message);
 
@@ -1386,10 +1331,6 @@ mod tests {
         assert_eq!(json["message"], "Test passed");
     }
 
-    // =========================================================================
-    // DatasetOverride tests (beads-b4nj)
-    // =========================================================================
-
     #[test]
     fn test_dataset_override_creation() {
         let override_cfg = DatasetOverride::new("/some/path", "testing override feature");
@@ -1413,7 +1354,6 @@ mod tests {
             return;
         }
 
-        // Use beads as the override source (we know it exists)
         let override_cfg = DatasetOverride::new(
             KnownDataset::BeadsRust.source_path(),
             "testing override with beads",
@@ -1423,7 +1363,6 @@ mod tests {
         let isolated =
             isolated_from_override(&override_cfg).expect("should create isolated from override");
 
-        // Verify metadata reflects override
         assert_eq!(isolated.metadata.name, "override_test");
         assert!(isolated.metadata.is_override);
         assert_eq!(
@@ -1521,10 +1460,6 @@ mod tests {
         );
     }
 
-    // =========================================================================
-    // DatasetProvenance tests (beads-b4nj)
-    // =========================================================================
-
     #[test]
     fn test_provenance_from_metadata() {
         let metadata = DatasetMetadata {
@@ -1615,10 +1550,6 @@ mod tests {
         assert_eq!(json["context"]["test"], "value");
     }
 
-    // =========================================================================
-    // run_with_integrity tests (beads-b4nj)
-    // =========================================================================
-
     #[test]
     fn test_run_with_integrity() {
         let registry = DatasetRegistry::new();
@@ -1628,26 +1559,19 @@ mod tests {
         }
 
         let (result, provenance) = run_with_integrity(KnownDataset::BeadsRust, |isolated| {
-            // Verify we have a valid isolated dataset
             assert!(isolated.beads_dir.exists());
             assert!(isolated.metadata.issue_count > 0);
-            Ok(42) // Return a value to verify it's passed through
+            Ok(42)
         })
         .expect("should run with integrity");
 
-        // Verify the result was passed through
         assert_eq!(result, 42);
 
-        // Verify integrity checks were performed
         assert!(provenance.integrity_before.is_some());
         assert!(provenance.integrity_after.is_some());
         provenance.integrity_before.as_ref().unwrap().assert_ok();
         provenance.integrity_after.as_ref().unwrap().assert_ok();
     }
-
-    // =========================================================================
-    // Metadata enhancement tests (beads-b4nj)
-    // =========================================================================
 
     #[test]
     fn test_metadata_includes_source_commit() {
@@ -1674,12 +1598,10 @@ mod tests {
 
         let json = isolated.metadata.to_json();
 
-        // Verify new fields are present
         assert!(json.get("source_commit").is_some());
         assert!(json.get("is_override").is_some());
         assert!(json.get("override_reason").is_some());
 
-        // Verify values
         assert_eq!(json["is_override"], false);
         assert!(json["override_reason"].is_null());
     }

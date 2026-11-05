@@ -32,8 +32,6 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 fn id_pinning_pattern() -> Regex {
-    // Matches: `assert_eq!(<lhs>, "<prefix>-<suffix>")`
-    // where prefix ∈ {test, tmp, br, bd, proj} and suffix has 4+ alphanumeric chars.
     Regex::new(r#"assert_(eq|ne)!\([^,]*,\s*"(test|tmp|br|bd|proj)-[a-zA-Z0-9]{4,}""#)
         .expect("compile lint regex")
 }
@@ -63,7 +61,6 @@ fn scan_tests_for_id_pinning() -> Vec<String> {
         if path.extension().and_then(|e| e.to_str()) != Some("rs") {
             continue;
         }
-        // Skip ourselves
         if path.file_name().and_then(|n| n.to_str()) == Some("no_id_pinning.rs") {
             continue;
         }
@@ -109,15 +106,12 @@ fn lint_regex_catches_canonical_violation_inline() {
         pattern.as_str()
     );
 
-    // Also confirm the non-violation form does NOT match
     let safe = "    assert_eq!(parsed.priority, Priority::CRITICAL);";
     assert!(
         !pattern.is_match(safe),
         "lint regex must NOT match safe assertions; falsely matched: {safe:?}"
     );
 
-    // And confirm the invariant-annotated form is detected by the regex
-    // (the annotation check is the second filter).
     let annotated = r#"    assert_eq!(id, "bd-abc123"); // invariant: parser test, not ID-pinning"#;
     assert!(
         pattern.is_match(annotated),
@@ -164,12 +158,6 @@ fn invariant_annotation_count_matches_2026_05_09_audit_baseline() {
             }
         }
     }
-    // Exactly 10 known-legitimate hits, all from
-    // docs/audit_id_pinning_2026_05_09.md. This used to be 12: the two extra
-    // were normalize_value masker unit tests in tests/conformance.rs, which
-    // were deleted with the rest of the Go-oracle conformance suite when bd
-    // was retired. No annotation was lost, so the audit baseline is
-    // unchanged.
     assert_eq!(
         annotated, 10,
         "audit baseline drift: expected 10 lines with `// invariant:` annotation \

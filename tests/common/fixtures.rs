@@ -6,8 +6,7 @@ use chrono::{Duration, TimeZone, Utc};
 /// Base time for test fixtures - set in the past to allow tests to manipulate
 /// `updated_at` without violating the `created_at` <= `updated_at` constraint.
 fn base_time() -> chrono::DateTime<Utc> {
-    // Use a fixed timestamp to ensure deterministic IDs for snapshot tests
-    Utc.timestamp_opt(1_735_689_600, 0).unwrap() // 2025-01-01 00:00:00 UTC
+    Utc.timestamp_opt(1_735_689_600, 0).unwrap()
 }
 
 /// ADR-0001 §5.5: ready-dispatchable fixtures carry a runnable VERIFY and a
@@ -98,7 +97,6 @@ impl IssueBuilder {
     }
 
     pub fn with_status(mut self, s: Status) -> Self {
-        // Database constraint requires closed_at to be set when status is Closed
         if s == Status::Closed && self.issue.closed_at.is_none() {
             self.issue.closed_at = Some(Utc::now());
         }

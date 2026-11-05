@@ -234,9 +234,6 @@ fn execute_defer_route(
 ) -> Result<DeferResult> {
     let routed_write_lock =
         acquire_routed_workspace_write_lock(beads_dir, auto_flush_external, cli.lock_timeout)?;
-    // Reuse the routed authority for the storage open below; acquiring the
-    // same database-family lock from a second descriptor in this process
-    // would self-deadlock until the lock timeout (#409 routed cluster).
     let mut route_cli = cli.clone();
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
     let cli = &route_cli;
@@ -537,9 +534,6 @@ fn execute_undefer_route(
 ) -> Result<UndeferResult> {
     let routed_write_lock =
         acquire_routed_workspace_write_lock(beads_dir, auto_flush_external, cli.lock_timeout)?;
-    // Reuse the routed authority for the storage open below; acquiring the
-    // same database-family lock from a second descriptor in this process
-    // would self-deadlock until the lock timeout (#409 routed cluster).
     let mut route_cli = cli.clone();
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
     let cli = &route_cli;
@@ -761,10 +755,6 @@ fn reorder_routed_items_by_requested_inputs<T>(
         })
         .collect()
 }
-
-// ─────────────────────────────────────────────────────────────
-// Rich Output Rendering
-// ─────────────────────────────────────────────────────────────
 
 /// Render defer results with rich formatting.
 fn render_defer_rich(deferred: &[DeferredIssue], skipped: &[SkippedIssue], ctx: &OutputContext) {
@@ -1119,8 +1109,6 @@ mod tests {
     #[test]
     fn test_parse_defer_time_simple_date() {
         let result = parse_flexible_timestamp("2025-06-20", "defer_until").unwrap();
-        // Contract: 09:00 LOCAL on that date; assert in local time so this
-        // holds on hosts where local 09:00 is the previous UTC day.
         let local = result.with_timezone(&Local);
         assert_eq!(local.year(), 2025);
         assert_eq!(local.month(), 6);
@@ -1133,7 +1121,6 @@ mod tests {
         let result = parse_flexible_timestamp("+2h", "defer_until").unwrap();
         let after = Utc::now();
 
-        // Result should be about 2 hours from now
         assert!(result > before + Duration::hours(1));
         assert!(result < after + Duration::hours(3));
     }
@@ -1144,7 +1131,6 @@ mod tests {
         let result = parse_flexible_timestamp("+1d", "defer_until").unwrap();
         let after = Utc::now();
 
-        // Result should be about 1 day from now
         assert!(result > before + Duration::hours(23));
         assert!(result < after + Duration::hours(25));
     }
@@ -1155,7 +1141,6 @@ mod tests {
         let result = parse_flexible_timestamp("+1w", "defer_until").unwrap();
         let after = Utc::now();
 
-        // Result should be about 1 week from now
         assert!(result > before + Duration::days(6));
         assert!(result < after + Duration::days(8));
     }
@@ -1165,7 +1150,6 @@ mod tests {
         let result = parse_flexible_timestamp("tomorrow", "defer_until").unwrap();
         let expected_date = Local::now().date_naive() + Duration::days(1);
 
-        // Check it's tomorrow (in UTC, might differ by a day due to timezone)
         let result_local = result.with_timezone(&Local);
         assert_eq!(result_local.date_naive(), expected_date);
     }
@@ -1191,7 +1175,6 @@ mod tests {
         let result = parse_flexible_timestamp("+30m", "defer_until").unwrap();
         let after = Utc::now();
 
-        // Result should be about 30 minutes from now
         assert!(result > before + Duration::minutes(29));
         assert!(result < after + Duration::minutes(31));
     }
@@ -1202,7 +1185,6 @@ mod tests {
         let result = parse_flexible_timestamp("-1d", "defer_until").unwrap();
         let after = Utc::now();
 
-        // Result should be about 1 day ago
         assert!(result < before - Duration::hours(23));
         assert!(result > after - Duration::hours(25));
     }

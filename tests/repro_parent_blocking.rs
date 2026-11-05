@@ -18,7 +18,6 @@ fn test_blocked_parent_blocks_child_ready() {
     };
     storage.create_issue(&blocker, "tester").unwrap();
 
-    // Create a parent issue
     let parent = Issue {
         id: "bd-parent".to_string(),
         title: "Parent Epic".to_string(),
@@ -30,7 +29,6 @@ fn test_blocked_parent_blocks_child_ready() {
     };
     storage.create_issue(&parent, "tester").unwrap();
 
-    // Create a child issue
     let child = Issue {
         id: "bd-child".to_string(),
         title: "Child Task".to_string(),
@@ -51,7 +49,6 @@ fn test_blocked_parent_blocks_child_ready() {
         )
         .unwrap();
 
-    // Parent-child relationships should propagate a blocked parent to its child.
     storage
         .add_dependency(
             "bd-child",
@@ -61,16 +58,13 @@ fn test_blocked_parent_blocks_child_ready() {
         )
         .unwrap();
 
-    // Manually trigger cache rebuild
     storage.rebuild_blocked_cache(true).unwrap();
 
     assert!(storage.is_blocked("bd-parent").unwrap());
 
-    // Check if child is blocked transitively through the parent.
     let is_blocked = storage.is_blocked("bd-child").unwrap();
     assert!(is_blocked, "Child should be blocked by blocked parent");
 
-    // Check if child is in ready issues
     let ready = storage
         .get_ready_issues(&ReadyFilters::default(), ReadySortPolicy::default())
         .unwrap();

@@ -31,10 +31,6 @@ use beads::sync::{
     METADATA_LAST_IMPORT_TIME, apply_sync_reconcile, compute_jsonl_hash, plan_sync_reconcile,
 };
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
 fn beads_dir(ws: &BrWorkspace) -> PathBuf {
     ws.root.join(".beads")
 }
@@ -184,7 +180,6 @@ fn clone_row(template: &str, id: &str, title: &str, created_at: &str, updated_at
     row["title"] = json!(title);
     row["created_at"] = json!(created_at);
     row["updated_at"] = json!(updated_at);
-    // Stale content_hash is fine: import normalization recomputes it.
     serde_json::to_string(&row).expect("serialize row")
 }
 
@@ -256,10 +251,6 @@ fn reconcile_import_config(ws: &BrWorkspace) -> ImportConfig {
     }
 }
 
-// ============================================================================
-// Mode validation
-// ============================================================================
-
 #[test]
 fn bare_sync_refused_and_reconcile_mode_exclusive() {
     let ws = BrWorkspace::new();
@@ -304,17 +295,12 @@ fn bare_sync_refused_and_reconcile_mode_exclusive() {
         );
     }
 
-    // --dry-run without --reconcile is rejected at the clap layer.
     let dry = run_br(&ws, ["sync", "--flush-only", "--dry-run"], "modes_dry");
     assert!(
         !dry.status.success(),
         "--dry-run without --reconcile must be rejected"
     );
 }
-
-// ============================================================================
-// The false-equal state (the bug this mode exists to repair)
-// ============================================================================
 
 /// Build a workspace in the false-equal state:
 /// - DB holds 3 issues,
@@ -338,7 +324,6 @@ fn build_false_equal_workspace(ws: &BrWorkspace, label: &str) -> (Vec<String>, S
     assert_eq!(lines.len(), 3, "expected 3 exported rows");
     let template = lines[0].clone();
 
-    // One shared row becomes strictly newer in JSONL (with real drift).
     let newer_shared_id = row_id(&lines[2]);
     lines[2] = set_row_field(&lines[2], "updated_at", json!("2030-01-01T00:00:00Z"));
     lines[2] = set_row_field(
@@ -347,7 +332,6 @@ fn build_false_equal_workspace(ws: &BrWorkspace, label: &str) -> (Vec<String>, S
         json!("newer JSONL-side description"),
     );
 
-    // Two JSONL-only rows the DB has never imported.
     let extra_a = clone_row(
         &template,
         "br-reconx1",
@@ -366,8 +350,6 @@ fn build_false_equal_workspace(ws: &BrWorkspace, label: &str) -> (Vec<String>, S
     lines.push(extra_b);
     write_jsonl_lines(ws, &lines);
 
-    // Record the stored hash AS IF the auto-flush had just certified this
-    // exact file — the finalize_incremental_auto_flush false-equal.
     plant_false_equal_metadata(ws);
 
     (
@@ -381,7 +363,6 @@ fn import_only_heals_false_equal_and_dry_run_sees_it() {
     let ws = BrWorkspace::new();
     let (jsonl_only_ids, newer_shared_id) = build_false_equal_workspace(&ws, "blind");
 
-    // Dry-run reconcile sees through the false-equal state.
     let receipt = reconcile_receipt(&ws, true, "blind_dry");
     assert_eq!(
         receipt["schema_version"].as_str(),
@@ -416,9 +397,6 @@ fn import_only_heals_false_equal_and_dry_run_sees_it() {
         "updated preview ids"
     );
 
-    // `beads-jdmh`: the stored-hash shortcut is no longer blind — the
-    // coverage invariant rejects the uncovered hash match and the plain
-    // import falls through and heals the divergence additively.
     let import = run_br(&ws, ["sync", "--import-only", "--json"], "blind_import");
     assert!(import.status.success(), "import failed: {}", import.stderr);
     let import_json = parse_json_value(&import.stdout);
@@ -442,8 +420,6 @@ fn dry_run_mutates_no_files_and_is_deterministic() {
     let before_hashes = hash_files_under(&beads_dir(&ws));
     let before_stats = stat_files_under(&beads_dir(&ws));
 
-    // The read-only fast open engages with the explicit no-auto opt-outs;
-    // the dry-run contract is zero mutation including the -wal/-shm family.
     let first = run_br(
         &ws,
         [
@@ -464,9 +440,6 @@ fn dry_run_mutates_no_files_and_is_deterministic() {
         before_hashes, after_hashes,
         "dry-run must not change any .beads file contents (incl. -wal/-shm)"
     );
-    // Stat comparison: transient engine sidecars get their mtime refreshed by
-    // the engine on EVERY database open, read-only included. Their contents
-    // are covered by the hash assertion above; exempt only their stats.
     let strip_ns_sidecars = |m: &BTreeMap<String, (u128, u64)>| -> BTreeMap<String, (u128, u64)> {
         m.iter().map(|(k, v)| (k.clone(), *v)).collect()
     };
@@ -524,8 +497,6 @@ fn apply_recovers_false_equal_state_without_touching_jsonl_or_events() {
         "apply must repair the sync metadata: {receipt}"
     );
 
-    // DB recovered: all five issues present, the shared row took the newer
-    // JSONL description.
     assert_eq!(issue_count(&ws, "recover_count"), 5);
     let show = run_br(&ws, ["show", &newer_shared_id, "--json"], "recover_show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
@@ -535,7 +506,6 @@ fn apply_recovers_false_equal_state_without_touching_jsonl_or_events() {
         show.stdout
     );
 
-    // JSONL bytes untouched; events byte-identical.
     let jsonl_bytes_after = fs::read(jsonl_path(&ws)).expect("jsonl after");
     assert_eq!(
         jsonl_bytes_before, jsonl_bytes_after,
@@ -548,22 +518,16 @@ fn apply_recovers_false_equal_state_without_touching_jsonl_or_events() {
         "event rows must be preserved byte-for-byte"
     );
 
-    // A second dry-run is a zero-change no-op.
     let second = reconcile_receipt(&ws, true, "recover_dry2");
     assert_eq!(plan_count(&second, "created"), 0);
     assert_eq!(plan_count(&second, "updated"), 0);
 
-    // And the metadata repair means plain import agrees the file is current.
     let import = run_br(&ws, ["sync", "--import-only", "--json"], "recover_import");
     assert!(import.status.success());
     let import_json = parse_json_value(&import.stdout);
     assert_eq!(import_json["created"].as_u64(), Some(0));
     assert_eq!(import_json["updated"].as_u64(), Some(0));
 }
-
-// ============================================================================
-// Timestamp classification and drift
-// ============================================================================
 
 #[test]
 fn timestamp_newer_equal_older_classification() {
@@ -577,19 +541,10 @@ fn timestamp_newer_equal_older_classification() {
 
     let mut lines = read_jsonl_lines(&ws);
     assert_eq!(lines.len(), 3);
-    // Row 0: JSONL strictly newer → update.
     lines[0] = set_row_field(&lines[0], "updated_at", json!("2031-01-01T00:00:00Z"));
     lines[0] = set_row_field(&lines[0], "description", json!("newer body"));
-    // Row 1: untouched → equal timestamps → skip, certified equal.
-    // Row 2: JSONL strictly older → skip, DB copy is newer. Back-dating the
-    // JSONL row below its created_at would be repaired by import
-    // normalization, so instead make the DB copy genuinely newer while the
-    // JSONL keeps the pre-update export.
     let older_id = row_id(&lines[2]);
     write_jsonl_lines(&ws, &lines);
-    // --no-auto-import: the modified JSONL would otherwise be imported at
-    // this command's own startup, consuming the classifications this test
-    // exists to observe. --no-auto-flush keeps the JSONL byte-stable.
     let bump = run_br(
         &ws,
         [
@@ -611,8 +566,6 @@ fn timestamp_newer_equal_older_classification() {
     assert_eq!(plan_count(&receipt, "skipped_equal"), 1);
     assert_eq!(plan_count(&receipt, "skipped_older"), 1);
 
-    // The older JSONL copy must NOT clobber the newer DB row: the local
-    // priority-0 edit survives.
     let show = run_br(&ws, ["show", &older_id, "--json"], "ts_show_older");
     assert!(show.status.success());
     let shown = parse_json_value(&show.stdout);
@@ -628,8 +581,6 @@ fn timestamp_newer_equal_older_classification() {
         show.stdout
     );
 
-    // A local-newer row means the JSONL is behind: apply must mark the DB
-    // for flush so the divergence is exported later.
     assert_eq!(
         receipt["apply"]["needs_flush_set"].as_bool(),
         Some(true),
@@ -647,8 +598,6 @@ fn content_hash_only_drift_is_uncertified_local_win() {
     assert!(flush.status.success());
 
     let mut lines = read_jsonl_lines(&ws);
-    // Same updated_at, different content: equal timestamps skip, but the DB
-    // copy no longer matches the JSONL → uncertified local win.
     lines[0] = set_row_field(
         &lines[0],
         "description",
@@ -670,7 +619,6 @@ fn content_hash_only_drift_is_uncertified_local_win() {
         "uncertified local wins must set needs_flush"
     );
 
-    // DB keeps its own copy.
     let list = run_br(&ws, ["list", "--status", "all", "--json"], "drift_list");
     assert!(
         !list.stdout.contains("drifted body"),
@@ -687,8 +635,6 @@ fn tombstone_protection_wins_over_live_jsonl_row() {
     assert!(flush.status.success());
     let live_lines = read_jsonl_lines(&ws);
 
-    // Tombstone the issue in the DB, then present the old live row again
-    // (strictly newer timestamp so only tombstone protection can skip it).
     let delete = run_br(&ws, ["delete", &id, "--force"], "tomb_delete");
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
     let mut lines = live_lines;
@@ -707,10 +653,6 @@ fn tombstone_protection_wins_over_live_jsonl_row() {
         show.stdout
     );
 }
-
-// ============================================================================
-// Relations, orphans, caches
-// ============================================================================
 
 #[test]
 fn created_rows_carry_relations_and_unsuperseded_rows_survive() {
@@ -733,8 +675,6 @@ fn created_rows_carry_relations_and_unsuperseded_rows_survive() {
     let flush = run_br(&ws, ["sync", "--flush-only", "--json"], "rel_flush");
     assert!(flush.status.success());
 
-    // JSONL: only the anchor row plus one new row that depends on the anchor
-    // and carries a label + comment. The keeper is db-only.
     let lines = read_jsonl_lines(&ws);
     let anchor_line = lines
         .iter()
@@ -774,7 +714,6 @@ fn created_rows_carry_relations_and_unsuperseded_rows_survive() {
     assert_eq!(receipt["relations"]["dependencies"].as_u64(), Some(1));
     assert_eq!(receipt["relations"]["comments"].as_u64(), Some(1));
 
-    // New row landed with relations; blocked cache sees the dependency.
     let show_new = run_br(&ws, ["show", "br-relnew1", "--json"], "rel_show_new");
     assert!(show_new.status.success(), "new row must exist");
     assert!(show_new.stdout.contains("fromjsonl"), "label imported");
@@ -789,7 +728,6 @@ fn created_rows_carry_relations_and_unsuperseded_rows_survive() {
         blocked.stdout
     );
 
-    // The db-only keeper kept every unsuperseded relation.
     let show_keeper = run_br(&ws, ["show", &keeper, "--json"], "rel_show_keeper");
     assert!(show_keeper.status.success(), "keeper must survive");
     assert!(
@@ -850,7 +788,6 @@ fn dangling_dependency_on_created_row_is_cleaned_scoped() {
         "exactly the dangling edge must be cleaned: {receipt}"
     );
 
-    // The valid edge survived, the dangling one is gone.
     let deps = run_br(&ws, ["dep", "list", "br-orphn1", "--json"], "orph_deps");
     assert!(deps.stdout.contains(&anchor), "valid dependency kept");
     assert!(
@@ -859,7 +796,6 @@ fn dangling_dependency_on_created_row_is_cleaned_scoped() {
         deps.stdout
     );
 
-    // Doctor-grade integrity: a follow-up mutating command works fine.
     let touch = run_br(
         &ws,
         ["update", "br-orphn1", "--priority", "1", "--json"],
@@ -907,8 +843,6 @@ fn parent_child_rows_import_and_counters_rebuild() {
         "child counters must be rebuilt: {receipt}"
     );
 
-    // `dep tree`/`dep list` walk what an issue depends ON, so inspect the
-    // child (which carries the parent-child edge to its parent).
     let deps = run_br(&ws, ["dep", "list", "br-pcchild1", "--json"], "pc_deps");
     assert!(
         deps.stdout.contains(&parent) && deps.stdout.contains("parent-child"),
@@ -916,10 +850,6 @@ fn parent_child_rows_import_and_counters_rebuild() {
         deps.stdout
     );
 }
-
-// ============================================================================
-// Malformed input
-// ============================================================================
 
 #[test]
 fn malformed_jsonl_conflict_markers_and_duplicates_reject_cleanly() {
@@ -931,7 +861,6 @@ fn malformed_jsonl_conflict_markers_and_duplicates_reject_cleanly() {
     let good_lines = read_jsonl_lines(&ws);
     let before = hash_files_under(&beads_dir(&ws));
 
-    // Malformed JSON.
     let mut broken = good_lines.clone();
     broken.push("{not valid json".to_string());
     write_jsonl_lines(&ws, &broken);
@@ -952,7 +881,6 @@ fn malformed_jsonl_conflict_markers_and_duplicates_reject_cleanly() {
         );
     }
 
-    // Conflict markers.
     let mut conflicted = good_lines.clone();
     conflicted.push("<<<<<<< HEAD".to_string());
     write_jsonl_lines(&ws, &conflicted);
@@ -966,7 +894,6 @@ fn malformed_jsonl_conflict_markers_and_duplicates_reject_cleanly() {
         run.stderr
     );
 
-    // Duplicate ids.
     let mut duplicated = good_lines.clone();
     duplicated.push(good_lines[0].clone());
     write_jsonl_lines(&ws, &duplicated);
@@ -979,9 +906,6 @@ fn malformed_jsonl_conflict_markers_and_duplicates_reject_cleanly() {
         run.stderr
     );
 
-    // The issue data never changed across any of the failures. Workspace
-    // bookkeeping (last-touched, lock files, engine sidecars) is
-    // touched by every storage open and is not issue data.
     write_jsonl_lines(&ws, &good_lines);
     let after = hash_files_under(&beads_dir(&ws));
     let changed: Vec<&String> = before
@@ -1015,9 +939,7 @@ fn missing_base_snapshot_is_irrelevant() {
     assert!(!base.exists(), "reconcile must not create a base snapshot");
 }
 
-// ============================================================================
 // Path policy and file-safety
-// ============================================================================
 
 #[test]
 fn external_jsonl_requires_explicit_opt_in() {
@@ -1062,9 +984,6 @@ fn external_jsonl_requires_explicit_opt_in() {
 }
 
 #[test]
-// Restoring the fixture file's original writable bits after the read-only
-// probe is exactly the case this lint warns about; the file is a temp
-// fixture, not a shared resource.
 #[allow(clippy::permissions_set_readonly_false)]
 fn read_only_jsonl_applies_fine_because_reconcile_never_writes_it() {
     let ws = BrWorkspace::new();
@@ -1110,9 +1029,6 @@ fn apply_touches_only_the_db_family() {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
-            // Only the SQLite DB family may change; the write lock and
-            // last-touched marker are workspace bookkeeping shared by every
-            // storage-opening command, and logs are harness-owned.
             let db_family = name == "beads.db"
                 || name.starts_with("beads.db-")
                 || name.ends_with("-wal")
@@ -1128,10 +1044,6 @@ fn apply_touches_only_the_db_family() {
     );
 }
 
-// ============================================================================
-// Concurrency: witnesses, rollback, locks
-// ============================================================================
-
 #[test]
 fn lib_apply_rolls_back_when_db_changed_after_planning() {
     let ws = BrWorkspace::new();
@@ -1144,11 +1056,6 @@ fn lib_apply_rolls_back_when_db_changed_after_planning() {
     };
     assert_eq!(plan.actions.len(), 5);
 
-    // Concurrent DB change on a row the plan classified SkipEqual: the local
-    // edit makes the DB copy strictly newer, so the same row now classifies
-    // SkipOlder and the apply-time re-classification must diverge. (Racing
-    // the Update row would NOT diverge: its 2030 JSONL timestamp still wins,
-    // which is the same outcome a fresh plan would produce.)
     let equal_shared_id = read_jsonl_lines(&ws)
         .iter()
         .map(|l| row_id(l))
@@ -1205,7 +1112,6 @@ fn lib_apply_rolls_back_when_jsonl_changed_after_planning() {
         plan_sync_reconcile(&storage, &jsonl_path(&ws), &config).expect("plan")
     };
 
-    // Concurrent JSONL change after planning.
     let mut lines = read_jsonl_lines(&ws);
     let template = lines[0].clone();
     lines.push(clone_row(
@@ -1244,7 +1150,6 @@ fn apply_fails_under_lock_contention_but_fast_dry_run_proceeds() {
         .expect("open .write.lock");
     lock_file.lock().expect("hold .write.lock");
 
-    // Apply needs the write lock: with a short timeout it must fail cleanly.
     let blocked = run_br(
         &ws,
         ["--lock-timeout", "300", "sync", "--reconcile", "--json"],
@@ -1261,7 +1166,6 @@ fn apply_fails_under_lock_contention_but_fast_dry_run_proceeds() {
         "no rows applied under contention"
     );
 
-    // Dry-run through the read-only fast path takes no lock and succeeds.
     let dry = run_br(
         &ws,
         [
@@ -1284,7 +1188,6 @@ fn apply_fails_under_lock_contention_but_fast_dry_run_proceeds() {
 
     drop(lock_file);
 
-    // After release, apply succeeds.
     let receipt = reconcile_receipt(&ws, false, "lock_apply");
     assert_eq!(plan_count(&receipt, "created"), 2);
 }
@@ -1296,13 +1199,8 @@ fn issue_count_unlocked(ws: &BrWorkspace) -> usize {
     storage.count_all_issues().expect("count")
 }
 
-// ============================================================================
-// Empty inputs
-// ============================================================================
-
 #[test]
 fn empty_jsonl_and_empty_db_edge_cases() {
-    // Both empty: zero-change plan, apply succeeds and repairs metadata.
     let ws = BrWorkspace::new();
     init_workspace(&ws, "empty");
     fs::write(jsonl_path(&ws), "").expect("write empty jsonl");
@@ -1313,8 +1211,6 @@ fn empty_jsonl_and_empty_db_edge_cases() {
     let receipt = reconcile_receipt(&ws, false, "empty_apply");
     assert_eq!(receipt["apply"]["metadata_repaired"].as_bool(), Some(true));
 
-    // Empty JSONL + populated DB: nothing created, everything db-only, and
-    // the needs_flush repair lets a follow-up flush restore the JSONL.
     let ws2 = BrWorkspace::new();
     init_workspace(&ws2, "empty2");
     let _ = create_issue(&ws2, "Survivor row", "empty2_a");
@@ -1333,7 +1229,6 @@ fn empty_jsonl_and_empty_db_edge_cases() {
         "reconcile never deletes"
     );
 
-    // The flush marker means the next explicit flush restores the export.
     let reflush = run_br(&ws2, ["sync", "--flush-only", "--json"], "empty2_reflush");
     assert!(
         reflush.status.success(),
@@ -1343,10 +1238,6 @@ fn empty_jsonl_and_empty_db_edge_cases() {
     let restored = read_jsonl_lines(&ws2);
     assert_eq!(restored.len(), 1, "flush must restore the db-only row");
 }
-
-// ============================================================================
-// Schema registration
-// ============================================================================
 
 #[test]
 fn reconcile_receipt_schema_is_registered() {
@@ -1359,10 +1250,6 @@ fn reconcile_receipt_schema_is_registered() {
         "SyncReconcileReceipt must be in the schema catalog"
     );
 }
-
-// ============================================================================
-// Scale: the CASS-shaped fixture and a 2K+ bulk run
-// ============================================================================
 
 /// Deterministic synthetic issue row for bulk fixtures.
 fn synthetic_row(template: &str, index: usize) -> String {
@@ -1403,7 +1290,6 @@ fn cass_shaped_fixture_recovers_exactly() {
     assert!(flush.status.success());
     let template = read_jsonl_lines(&ws)[0].clone();
 
-    // Import the 1,732 shared rows (minus the seed, which is row zero).
     let mut shared_rows: Vec<String> = vec![template.clone()];
     for i in 1..SHARED {
         shared_rows.push(synthetic_row(&template, i));
@@ -1417,9 +1303,6 @@ fn cass_shaped_fixture_recovers_exactly() {
     );
     assert_eq!(issue_count(&ws, "cass_count0"), SHARED);
 
-    // Plant exactly 315 audit events via real mutations (priority toggles on
-    // the seed row; each writes at least one event, so top off one op at a
-    // time until the witness hits the target exactly).
     let mut planted = events_witness(&ws).0;
     let mut toggle = 1u8;
     let mut guard = 0usize;
@@ -1443,7 +1326,7 @@ fn cass_shaped_fixture_recovers_exactly() {
             "event mutation failed: {}",
             run.stderr
         );
-        toggle ^= 3; // 1 <-> 2
+        toggle ^= 3;
         planted = events_witness(&ws).0;
     }
     assert_eq!(
@@ -1451,8 +1334,6 @@ fn cass_shaped_fixture_recovers_exactly() {
         "fixture must hold exactly 315 events"
     );
 
-    // Flush so the JSONL reflects the DB, then build the canonical 1,915-row
-    // file: all shared rows (5 of them strictly newer) + 183 JSONL-only rows.
     let flush = run_br(&ws, ["sync", "--flush-only", "--json"], "cass_flush1");
     assert!(flush.status.success());
     let mut lines = read_jsonl_lines(&ws);
@@ -1473,12 +1354,6 @@ fn cass_shaped_fixture_recovers_exactly() {
     write_jsonl_lines(&ws, &lines);
     plant_false_equal_metadata(&ws);
 
-    // Note: a plain `--import-only` would no longer be blind here — the
-    // `beads-jdmh` coverage invariant rejects the uncovered hash match
-    // and heals the state — so this fixture goes straight to reconcile to
-    // keep the divergence intact for the receipt assertions.
-
-    // Dry-run: exact counts, zero mutation.
     let before_hashes = hash_files_under(&beads_dir(&ws));
     let receipt = reconcile_receipt(&ws, true, "cass_dry");
     assert_eq!(plan_count(&receipt, "created"), JSONL_ONLY as u64);
@@ -1496,7 +1371,6 @@ fn cass_shaped_fixture_recovers_exactly() {
         "dry-run must leave every .beads file byte-identical"
     );
 
-    // Apply: full recovery, events preserved exactly, JSONL untouched.
     let jsonl_before = fs::read(jsonl_path(&ws)).expect("jsonl bytes");
     let events_dump_before = all_events_dump(&ws);
     let receipt = reconcile_receipt(&ws, false, "cass_apply");
@@ -1517,7 +1391,6 @@ fn cass_shaped_fixture_recovers_exactly() {
         "apply must not write the JSONL"
     );
 
-    // Second dry-run: zero-change no-op.
     let second = reconcile_receipt(&ws, true, "cass_dry2");
     assert_eq!(plan_count(&second, "created"), 0);
     assert_eq!(plan_count(&second, "updated"), 0);
@@ -1545,7 +1418,6 @@ fn bulk_two_thousand_issue_input() {
     assert_eq!(plan_count(&receipt, "created"), (TOTAL - 1) as u64);
     assert_eq!(issue_count(&ws, "bulk_count"), TOTAL);
 
-    // Second pass: bump a slice to newer timestamps → pure updates.
     let mut lines = read_jsonl_lines(&ws);
     for line in lines.iter_mut().skip(1).take(SECOND_PASS_NEWER) {
         *line = set_row_field(line, "updated_at", json!("2035-01-01T00:00:00Z"));

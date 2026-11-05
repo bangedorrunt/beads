@@ -147,19 +147,16 @@ impl Metadata {
 /// 5. If no valid JSONL exists, return `None` (caller should use default for writing).
 #[must_use]
 pub fn discover_jsonl(beads_dir: &Path) -> Option<PathBuf> {
-    // Check preferred file first
     let issues_path = beads_dir.join(DEFAULT_JSONL_FILENAME);
     if issues_path.is_file() {
         return Some(issues_path);
     }
 
-    // Check legacy file
     let legacy_path = beads_dir.join(LEGACY_JSONL_FILENAME);
     if legacy_path.is_file() {
         return Some(legacy_path);
     }
 
-    // No valid JSONL found
     None
 }
 
@@ -191,11 +188,7 @@ impl ConfigPaths {
     /// Returns an error if metadata cannot be read.
     pub fn resolve(beads_dir: &Path, db_override: Option<&PathBuf>) -> Result<Self> {
         let metadata = Metadata::load(beads_dir)?;
-        // Resolve an explicit database authority once before deriving either
-        // member of the DB/JSONL family. Keeping a raw `subdir/../.beads`
-        // spelling here made the database and its sibling JSONL disagree
         // with the already-canonical workspace route, and the JSONL safety
-        // boundary then correctly refused the surviving traversal token.
         let normalized_db_override = db_override.map(|path| normalize_db_override_path(path));
         let normalized_db_override_ref = normalized_db_override.as_ref();
         let db_path = resolve_db_path(beads_dir, &metadata, normalized_db_override_ref);
@@ -311,22 +304,11 @@ fn discover_beads_dir_candidate_with_env_and_ceiling(
         None => env::current_dir()?,
     };
 
-    // First `.git` FILE seen on the walk: the marker of a linked git
-    // worktree (a primary checkout has a `.git` directory). Used for the
-    // common-dir fallback below when the walk finds no workspace at all.
     let mut linked_worktree_git_file: Option<PathBuf> = None;
 
     loop {
         let candidate = current.join(".beads");
         if candidate.is_dir() {
-            // Linked-worktree resolution (GitHub #429's underlying bug): a
-            // fresh linked worktree checks out the TRACKED half of `.beads`
-            // (issues.jsonl, metadata.json, config.yaml) but not the local
-            // database. Treating that snapshot as a workspace would rebuild
-            // a private database from potentially stale JSONL and split
-            // state from the primary checkout. When the candidate has no
-            // local database and no explicit redirect, resolve through the
-            // worktree's `.git` file to the primary checkout's `.beads`.
             if let Some(primary) = linked_worktree_primary_beads_dir(&current, &candidate) {
                 return Ok(primary);
             }
@@ -352,10 +334,6 @@ fn discover_beads_dir_candidate_with_env_and_ceiling(
         }
     }
 
-    // No workspace anywhere up the walk, but we passed a linked-worktree
-    // marker: worktrees checked out OUTSIDE the primary tree (e.g.
-    // `git worktree add ../feature-x`) cannot reach the primary `.beads`
-    // by walking up, so resolve it through the worktree's gitdir instead.
     if let Some(git_file) = linked_worktree_git_file
         && let Some(primary) = primary_beads_dir_from_git_file(&git_file)
     {
@@ -861,14 +839,6 @@ fn open_sqlite_storage_with_recovery_after_fast_open_miss(
             message: "Writable fast-open fallback has no database authority".to_string(),
         })?;
     let database_was_missing = effective_authority.bind_database_inode_for_mutation()?;
-    // Read-only fast-open commands legitimately skip the startup
-    // pending-merge gate, so this writable fallback must re-impose the same
-    // barriers under the authority it just acquired, before any open that
-    // could recover or migrate: a valid database on a stale schema routes to
-    // the reviewed migration workflow instead of auto-migrating, and a
-    // pending sync merge refuses writable recovery until `br sync --merge`
-    // reconciles it. Missing files and non-SQLite bytes classify Absent and
-    // keep the normal recovery path.
     if !database_was_missing {
         match SqliteStorage::inspect_pending_sync_merge_under_authority(
             &paths.db_path,
@@ -941,8 +911,6 @@ fn open_sqlite_storage_with_recovery_strategy(
     write_authority: Option<&Arc<crate::sync::DatabaseFamilyWriteLock>>,
 ) -> Result<SqliteRecoveryOpenResult> {
     if !paths.db_path.is_file() && paths.jsonl_path.is_file() {
-        // beads_rust-avhq: a dangling sidecar from a dead lineage must not
-        // survive into the rebuilt family.
         quarantine_orphan_sidecars_when_database_absent(&paths.db_path, beads_dir);
         return open_when_db_file_is_missing(
             beads_dir,
@@ -955,9 +923,6 @@ fn open_sqlite_storage_with_recovery_strategy(
         );
     }
     if !paths.db_path.is_file() {
-        // beads_rust-avhq: quarantine orphaned sidecars BEFORE installing
-        // the empty replacement so the fresh database never opens beside a
-        // foreign WAL.
         quarantine_orphan_sidecars_when_database_absent(&paths.db_path, beads_dir);
         let authority = write_authority.ok_or_else(|| BeadsError::SyncConflict {
             message: "Missing database creation has no database-family authority".to_string(),
@@ -1132,8 +1097,6 @@ pub(crate) fn quarantine_truncated_wal_sidecar(db_path: &Path, beads_dir: &Path)
     }
     // A 0-byte WAL is the documented post-`PRAGMA wal_checkpoint(TRUNCATE)`
     // state — SqliteStorage::Drop runs that pragma on every mutating
-    // invocation, so quarantining the empty file would re-pathologize the
-    // healthy hand-off between two well-behaved processes (#291).
     if meta.len() == 0 {
         return;
     }
@@ -1310,21 +1273,9 @@ fn should_attempt_jsonl_recovery(open_err: &BeadsError, db_path: &Path, jsonl_pa
             if is_recoverable_database_internal_error(detail)
     ) || matches!(
         open_err,
-        // A member of the database family is a directory where the engine
-        // expects a regular file (e.g. a `-journal` directory left by a
-        // hostile or interrupted tool). The engine reports this as a plain I/O
-        // error rather than a corruption variant, but it is exactly the
-        // structural damage a JSONL rebuild repairs: recovery backs the whole
-        // family up and recreates it.
         BeadsError::Database(DbError::Io(io_err))
             if io_err.kind() == std::io::ErrorKind::IsADirectory
     ) || matches!(
-        // Real SQLite surfaces a non-file database-family member as
-        // SQLITE_CANTOPEN (e.g. a `-wal` DIRECTORY blocks opening at all)
-        // or as a plain "disk I/O error" (a `-journal` directory hit
-        // mid-open). Both are the same structural damage; gate on an
-        // actual non-file family member so genuine permission/missing-file
-        // CannotOpen cases stay fail-closed.
         open_err,
         BeadsError::Database(DbError::CannotOpen { .. })
             if database_family_has_non_file_member(db_path)
@@ -1409,15 +1360,6 @@ fn rebuild_or_defer_after_recoverable_anomaly(
                 anomaly = %anomaly,
                 "Detected recoverable database anomaly after open; rebuilding from JSONL"
             );
-            // Snapshot tombstones from the anomalous (but still queryable)
-            // storage BEFORE we drop it. The anomaly detector only flags
-            // duplicates on `blocked_issues_cache` / its index and on
-            // `config`/`metadata` kv duplicates — none of which break a
-            // plain `SELECT … FROM issues`. Without this snapshot, any
-            // unflushed local tombstones that haven't landed in JSONL
-            // would be silently dropped by the rebuild (which only
-            // imports what's in JSONL), taking their deletion-retention
-            // state with them.
             let (storage, recovered_jsonl) = rebuild_with_tombstone_preservation(
                 storage,
                 beads_dir,
@@ -1479,14 +1421,6 @@ fn rebuild_or_defer_after_probe_error(
                 probe_error = %probe_err,
                 "Post-open database probe failed; rebuilding from JSONL"
             );
-            // Best-effort tombstone + dirty-issue snapshot. If the probe
-            // failed the storage may be in a strange state, but the
-            // snapshot helpers are fault-tolerant (warn+empty on
-            // enumeration failure, warn+partial on per-issue failure), so
-            // we try anyway: the worst case is the same as the old
-            // behavior (no preservation), the best case is we rescue the
-            // unflushed tombstones and unflushed local edits the old code
-            // lost silently (GitHub #394).
             let (storage, recovered_jsonl) = rebuild_with_tombstone_preservation(
                 storage,
                 beads_dir,
@@ -1679,11 +1613,6 @@ fn preserved_unflushed_state(
     let jsonl_filter = match scan_jsonl_snapshot_for_tombstone_filter(source) {
         Ok(filter) => filter,
         Err(err) => {
-            // The rebuild itself will re-surface the same immutable source
-            // error with a full diagnostic. For the purposes of preservation,
-            // fall back to treating the JSONL as empty so every snapshotted
-            // issue is kept; if the rebuild ultimately fails, the backup set
-            // has our back.
             tracing::debug!(
                 error = %err,
                 "Could not scan immutable JSONL snapshot for tombstone filter during startup auto-rebuild; preserving all snapshotted state and letting the rebuild surface the JSONL error"
@@ -1787,8 +1716,6 @@ pub(crate) fn repair_database_from_jsonl_snapshot_with_import_config(
 }
 
 #[allow(clippy::too_many_arguments)]
-// Takes `ImportConfig` by value for external callers (cli/commands/sync.rs);
-// the internal impl only borrows it.
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn repair_database_from_jsonl_snapshot_with_import_config_under_write_authority(
     beads_dir: &Path,
@@ -2293,10 +2220,6 @@ fn rebuild_database_family(
         fresh_witness,
     )?;
 
-    // Drain the WAL to the main DB file so the follow-up maintenance (VACUUM,
-    // REINDEX, VACUUM INTO) operates against what is actually on disk.
-    // Without this, maintenance can run against stale on-disk state and
-    // leave the corruption it was supposed to clean up in place.
     if let Err(e) = storage.checkpoint_full() {
         tracing::warn!(
             error = %e,
@@ -2305,10 +2228,7 @@ fn rebuild_database_family(
         );
     }
 
-    // Post-rebuild VACUUM to eliminate freeblock accounting anomalies
-    // bulk import may leave behind. Without this, sqlite3's
     // `PRAGMA integrity_check` can report "free space corruption"
-    // even though the data is intact (issue #237).
     if let Err(e) = storage.execute_raw("VACUUM") {
         tracing::warn!(
             error = %e,
@@ -2317,11 +2237,7 @@ fn rebuild_database_family(
         );
     }
 
-    // Post-rebuild REINDEX to fix partial-index row mismatches that
-    // bulk insert can introduce.
-    // VACUUM rewrites pages but does not rebuild index entries; without
     // REINDEX, `PRAGMA integrity_check` reports "row N missing from index"
-    // for partial indexes like idx_issues_list_active_order (issue #246).
     if let Err(e) = storage.execute_raw("REINDEX") {
         tracing::warn!(
             error = %e,
@@ -2330,18 +2246,7 @@ fn rebuild_database_family(
         );
     }
 
-    // Compact the rebuilt DB via `VACUUM INTO` and atomic rename. This is
-    // the reliable way to make sqlite3's
     // `PRAGMA integrity_check` report `ok` after the
-    // bulk-insert + REINDEX rebuild path (issue #248). In-place VACUUM alone —
-    // even called twice after a fresh checkpoint — can leave trailing pages
-    // orphaned: they exist in the file but are neither on the freelist nor
-    // referenced from any B-tree root. `VACUUM INTO` sidesteps in-place
-    // truncation quirks because it writes a brand-new compacted file from
-    // the reachable page set — page count matches exactly what sqlite3's
-    // own `VACUUM INTO` produces. The subsequent atomic rename is
-    // crash-safe on POSIX (within a filesystem) and keeps the database
-    // family consistent with its sidecars, which we drop first.
     storage = compact_database_via_vacuum_into_in_place_under_write_authority(
         storage,
         db_path,
@@ -2350,14 +2255,6 @@ fn rebuild_database_family(
     )?;
     write_authority.verify_database_authority()?;
     verify_rebuilt_database_postconditions(&storage, &import_result)?;
-    // ADR-0001 §5.4: the issues JSONL is a PARTIAL source of truth - it
-    // carries issues, not gate verdict rows. This rebuild therefore empties
-    // the verdict store, and the next flush writes that emptiness over
-    // `.beads/gates.jsonl`: every closed bead then reports "no legal verdict"
-    // and `closed -> closed` is not a legal gate transition, so the repair is
-    // a reopen/re-gate/re-close per bead. Restore the verdicts from the
-    // sidecar here, at the ONE rebuild entry every path routes through
-    // (the recovery path, `br doctor --repair`, and the integrity repair).
     if let Some(beads_dir) = db_path.parent() {
         crate::sync::restore_gate_verdicts(&mut storage, beads_dir);
     }
@@ -2669,7 +2566,7 @@ pub(crate) fn quarantine_orphan_sidecars_when_database_absent(db_path: &Path, be
             );
             return;
         }
-        Ok(_) => return, // live database: its sidecars are not ours to move
+        Ok(_) => return,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => {
             tracing::warn!(
@@ -2804,11 +2701,6 @@ fn compact_database_via_vacuum_into_in_place_with_reopener(
     write_authority: &Arc<crate::sync::DatabaseFamilyWriteLock>,
     reopen_storage: impl Fn(&Path, Option<u64>) -> Result<SqliteStorage>,
 ) -> Result<SqliteStorage> {
-    // Drain any WAL frames the prior VACUUM/REINDEX (run by the caller)
-    // left behind, so `VACUUM INTO` sees the fully-committed on-disk
-    // state instead of reaching into a WAL. Keeping this inside the
-    // helper means every caller gets the same guarantee regardless of
-    // whether they remembered to checkpoint themselves.
     if let Err(err) = storage.checkpoint_full() {
         tracing::debug!(
             error = %err,
@@ -2817,29 +2709,15 @@ fn compact_database_via_vacuum_into_in_place_with_reopener(
         );
     }
 
-    // Unique temp path next to the real DB so the subsequent rename is on
-    // the same filesystem (atomic) and so parallel rebuilds of different
-    // DBs don't collide.
     let stem = db_path
         .file_stem()
         .and_then(|s| s.to_str())
         .map_or_else(|| "beads".to_string(), str::to_string);
     let temp_path = db_path.with_file_name(format!(".{stem}.vacuum.{}.tmp", std::process::id()));
-    // Defensive: if a previous aborted rebuild from this same PID left a
-    // stale temp file behind, remove it before `VACUUM INTO` tries to
-    // open it. Stale temp files from other (crashed) PIDs are left alone
-    // because we cannot safely distinguish "crashed process" from
-    // "concurrent rebuild holding the temp open" without coordinating
-    // via the `.write.lock` we already depend on upstream.
     let _ = fs::remove_file(&temp_path);
     remove_db_sidecars(&temp_path);
 
     let temp_path_display = temp_path.display().to_string();
-    // Escape single quotes the SQL way (doubling) for the literal path
-    // embedded in the `VACUUM INTO` statement. The temp path is
-    // constructed from the DB path + our own PID suffix, so in practice
-    // it never contains a quote, but the doubling keeps us safe against
-    // unusual filesystem names.
     let escaped_path = temp_path_display.replace('\'', "''");
     let vacuum_into_sql = format!("VACUUM INTO '{escaped_path}'");
     if let Err(err) = storage.execute_raw(&vacuum_into_sql) {
@@ -2854,19 +2732,8 @@ fn compact_database_via_vacuum_into_in_place_with_reopener(
     }
     let replacement_lock = write_authority.lock_database_replacement_candidate(&temp_path)?;
 
-    // Close the on-disk connection before swapping its file under our own
-    // feet. This helper consumes and returns the storage handle so callers
-    // cannot keep using a throwaway placeholder if reopening fails.
     drop(storage);
 
-    // Atomic swap: rename `temp_path` onto `db_path`. On POSIX this
-    // atomically replaces the target, so there is never a moment when
-    // db_path does not exist (unlike a "remove then rename" sequence,
-    // which would leave a gap where another process could see db_path
-    // missing and create a fresh empty DB). The old sidecars are cleaned
-    // up AFTER the rename so any error there doesn't roll back the
-    // successful swap — stale `-wal`/`-shm` left alongside a clean DB
-    // are recovered automatically on next open.
     if let Err(err) = crate::util::durable_rename(&temp_path, db_path) {
         tracing::warn!(
             error = %err,
@@ -2876,8 +2743,6 @@ fn compact_database_via_vacuum_into_in_place_with_reopener(
         );
         let _ = fs::remove_file(&temp_path);
         remove_db_sidecars(&temp_path);
-        // db_path is still the original file here (rename failed, so the
-        // old file is intact). Reopen it so the caller gets a valid handle.
         return reopen_storage(db_path, lock_timeout)
             .and_then(|mut reopened| {
                 write_authority.verify_database_authority()?;
@@ -2895,17 +2760,7 @@ fn compact_database_via_vacuum_into_in_place_with_reopener(
     write_authority.adopt_locked_database_replacement(replacement_lock)?;
     write_authority.verify_database_authority()?;
 
-    // Clean up the stale sidecars from the pre-compaction file. These
-    // describe a DIFFERENT file layout than the one we just installed, so
-    // leaving them in place can mislead the next open into a recovery
-    // attempt. Best-effort: if a sidecar can't be removed, log and
-    // continue — next open will still work because the compacted db_path
-    // header declares the canonical layout.
     remove_db_sidecars(db_path);
-    // `rename` moved only the temp file itself, so the engine sidecars the
-    // VACUUM target accumulated are now orphans next to the installed
-    // database. Left behind they leak one pair of files per compaction and
-    // trip the sync path allowlist.
     remove_db_sidecars(&temp_path);
 
     reopen_storage(db_path, lock_timeout)
@@ -3453,11 +3308,6 @@ impl OpenStorageResult {
                 })?;
         write_authority.verify_database_authority()?;
 
-        // Preserve any attribution staged on the storage being replaced so the
-        // post-recovery retry can still stamp it (#312 hardening, F1). The
-        // failed first write did NOT commit, so `mutate()` left the staged value
-        // intact — but recovery swaps in a brand-new `SqliteStorage`, which would
-        // otherwise start with an empty pending slot and drop the attribution.
         let preserved_attribution = self.storage.take_pending_event_attribution();
         let preserved_workflow_policy = self.storage.workflow_policy();
         let import_config = import_config_for_resolved_jsonl(
@@ -3482,9 +3332,6 @@ impl OpenStorageResult {
         let (preserved_tombstones, preserved_dirty_issues) =
             preserved_unflushed_state(&self.storage, &source);
 
-        // Close the old connection before rebuilding at the same path:
-        // keeping it open while creating a new database at the same path
-        // causes lock conflicts.
         self.storage = SqliteStorage::open_memory()?;
 
         let (storage, _, backup_set) =
@@ -3624,11 +3471,6 @@ impl OpenStorageResult {
             .files
             .iter()
             .any(|(_, backup)| fs::symlink_metadata(backup).is_ok());
-        // A missing original database has no backup artifacts, but the fresh
-        // placeholder family still has to be staged out of the routed path
-        // before its inode authority can be cleared. When an original family
-        // did exist, only attempt restoration while its verified backups are
-        // still present; otherwise preserve the current path fail-closed.
         if !had_original_database_family || backup_artifacts_remain {
             restore_database_family_after_failed_rebuild(&backup_set)?;
         }
@@ -3696,13 +3538,6 @@ impl OpenStorageResult {
                         .to_string(),
                 })?;
         let export_config = ExportConfig {
-            // `needs_flush` is deliberately NOT passed as `force` (#405):
-            // doing so disabled the exporter's data-loss guards, and the
-            // import path also arms `needs_flush` when a local record wins
-            // over JSONL — a state in which a forced flush can destroy
-            // merged issues the DB never imported. The purge_issue flow that
-            // used to need force is handled by the purged-pending-export
-            // marker, which the guard subtracts from its loss computation.
             force: false,
             is_default_path: self.paths.jsonl_path == self.paths.beads_dir.join("issues.jsonl"),
             beads_dir: Some(self.paths.beads_dir.clone()),
@@ -3783,12 +3618,6 @@ impl OpenStorageResult {
             });
         }
 
-        // A recovered session (DB rebuilt from JSONL, or no-DB with write
-        // intent) retains the JSONL-family write authority for its whole
-        // lifetime. The auto-flush must reuse that authority instead of
-        // acquiring a second flock on the same sidecar — same-process
-        // re-acquisition blocks on itself and times out. The retained source
-        // snapshot is verified current under the held authority before export.
         if let Some(jsonl_authority) = self.jsonl_write_authority.as_deref() {
             let expected_source = match &self.loaded_jsonl_source {
                 RetainedJsonlSource::Uncaptured => {
@@ -3923,9 +3752,6 @@ fn open_storage_with_owned_write_authority(
     }
 
     if cli.read_only_fast_open {
-        // Same-process reuse: if the caller already holds the database-family
-        // authority (sync_status fast-open miss rebuild), reuse it instead of
-        // trying to acquire a new one with the tiny cli lock_timeout.
         if let Some(authority) = cli
             .database_family_write_authority_for(&startup.paths.beads_dir, &startup.paths.db_path)
         {
@@ -4154,10 +3980,6 @@ fn open_storage_with_startup_config_impl(
         };
         storage.set_config("issue_prefix", &prefix)?;
 
-        // Prefix inference, every validation pass, canonical hashing, and the
-        // imported rows all consume one immutable byte snapshot. Retain its
-        // exact raw witness so a later no-DB flush rejects even whitespace-only
-        // or missing-vs-empty source changes.
         let loaded_jsonl_state = loaded_jsonl_snapshot.as_ref().map_or(
             JsonlSourceStateWitness::Missing,
             JsonlSourceSnapshot::state_witness,
@@ -4297,7 +4119,6 @@ pub fn no_db_from_layer(layer: &ConfigLayer) -> Option<bool> {
 /// happens to contain a stale legacy `no-auto-flush` entry.
 #[must_use]
 pub fn no_auto_flush_from_layer(layer: &ConfigLayer) -> Option<bool> {
-    // Canonical key: sync.auto_flush (false => no_auto_flush = true)
     if let Some(v) = get_startup_value(
         layer,
         &["sync.auto_flush", "sync.auto-flush", "sync.auto.flush"],
@@ -4306,7 +4127,6 @@ pub fn no_auto_flush_from_layer(layer: &ConfigLayer) -> Option<bool> {
     {
         return Some(!v);
     }
-    // Legacy key: no-auto-flush / no_auto_flush / no.auto.flush
     get_startup_value(layer, &["no-auto-flush", "no_auto_flush", "no.auto.flush"])
         .and_then(|value| parse_bool(value))
 }
@@ -4366,7 +4186,6 @@ pub fn history_enabled_from_layer(layer: &ConfigLayer) -> Option<bool> {
 /// 2. `no-auto-import` / `no_auto_import` / `no.auto.import` — legacy inverted key
 #[must_use]
 pub fn no_auto_import_from_layer(layer: &ConfigLayer) -> Option<bool> {
-    // Canonical key: sync.auto_import (false => no_auto_import = true)
     if let Some(v) = get_startup_value(
         layer,
         &["sync.auto_import", "sync.auto-import", "sync.auto.import"],
@@ -4375,7 +4194,6 @@ pub fn no_auto_import_from_layer(layer: &ConfigLayer) -> Option<bool> {
     {
         return Some(!v);
     }
-    // Legacy key: no-auto-import / no_auto_import / no.auto.import
     get_startup_value(
         layer,
         &["no-auto-import", "no_auto_import", "no.auto.import"],
@@ -4490,13 +4308,6 @@ fn import_config_for_resolved_jsonl(
         allow_external_jsonl: explicit_allow_external_jsonl
             || implicit_external_jsonl_allowed(beads_dir, db_path, jsonl_path),
         show_progress: false,
-        // Every caller re-ingests the workspace's own resolved sidecar
-        // (rebuild/recovery/bootstrap), never a foreign JSONL. The configured
-        // prefix is the default for NEW ids, not a project-wide invariant, so
-        // mixed-prefix workspaces (e.g. migrated legacy `<project>-<n>` ids)
-        // must round-trip untouched — matching auto-import and reconcile.
-        // Validating here made every automatic recovery fail with "Prefix
-        // mismatch" on such workspaces (GitHub #440).
         skip_prefix_validation: true,
         ..Default::default()
     }
@@ -4576,8 +4387,6 @@ fn first_prefix_from_jsonl_reader(reader: impl BufRead) -> Result<Option<String>
             Err(_) => continue,
         };
 
-        // Skip tombstones — they may retain a foreign prefix from before
-        // a prefix migration and should not influence inference.
         if value
             .get("status")
             .and_then(|v| v.as_str())
@@ -4623,9 +4432,6 @@ fn resolve_db_path(
     if candidate.is_absolute() {
         candidate
     } else {
-        // Use BEADS_CACHE_DIR if set, otherwise beads_dir
-        // This allows storing the database on a fast local filesystem
-        // when .beads is on a slow network mount
         crate::util::resolve_cache_dir(beads_dir).join(candidate)
     }
 }
@@ -4635,14 +4441,12 @@ fn resolve_jsonl_path(
     metadata: &Metadata,
     db_override: Option<&PathBuf>,
 ) -> PathBuf {
-    // Priority 1: BEADS_JSONL environment variable (highest priority)
     if let Ok(env_path) = env::var("BEADS_JSONL")
         && !env_path.trim().is_empty()
     {
         return PathBuf::from(env_path);
     }
 
-    // Priority 2: metadata.json override (if explicitly set to non-default)
     let metadata_jsonl = &metadata.jsonl_export;
     let is_explicit_override =
         metadata_jsonl != DEFAULT_JSONL_FILENAME && !is_excluded_jsonl(metadata_jsonl);
@@ -4656,9 +4460,6 @@ fn resolve_jsonl_path(
         };
     }
 
-    // Priority 3: DB override uses a sibling JSONL file. Prefer an existing
-    // issues.jsonl/beads.jsonl next to the overridden DB before falling back
-    // to the default issues.jsonl path.
     if db_override.is_some() {
         return db_override.and_then(|path| path.parent()).map_or_else(
             || beads_dir.join(DEFAULT_JSONL_FILENAME),
@@ -4666,12 +4467,10 @@ fn resolve_jsonl_path(
         );
     }
 
-    // Priority 4: File discovery (prefer issues.jsonl, fall back to beads.jsonl)
     if let Some(discovered) = discover_jsonl(beads_dir) {
         return discovered;
     }
 
-    // Priority 5: Default (issues.jsonl) for writing when nothing exists
     beads_dir.join(DEFAULT_JSONL_FILENAME)
 }
 
@@ -4700,8 +4499,6 @@ impl ConfigLayer {
     pub fn merge_from(&mut self, other: &Self) {
         for (key, value) in &other.startup {
             let canonical = key.replace('-', "_");
-            // Remove any variant of this key that already exists under a
-            // different spelling (e.g. hyphenated vs underscored).
             if canonical == *key {
                 let hyphenated = key.replace('_', "-");
                 if hyphenated != *key {
@@ -4868,8 +4665,6 @@ impl CliOverrides {
         if held_dir == beads_dir {
             return true;
         }
-        // Handle /var vs /private/var canonicalization on macOS (same
-        // physical directory appears under two logical prefixes).
         let canonical_held =
             std::fs::canonicalize(held_dir).unwrap_or_else(|_| held_dir.to_path_buf());
         let canonical_query =
@@ -4923,8 +4718,6 @@ impl CliOverrides {
             insert_key_value(&mut layer, "no-daemon", no_daemon.to_string());
         }
         if let Some(no_auto_flush) = self.no_auto_flush {
-            // Store as the canonical positive key so it wins over any legacy
-            // `no-auto-flush` entry in the project/user config when merged.
             insert_key_value(&mut layer, "sync.auto_flush", (!no_auto_flush).to_string());
         }
         if let Some(no_auto_import) = self.no_auto_import {
@@ -5084,11 +4877,6 @@ fn load_config_from_startup_layers(
 ) -> Result<ConfigLayer> {
     let defaults = default_config_layer();
 
-    // Infer issue prefix from the first issue in JSONL so workspaces with
-    // non-"bd" prefixes don't silently fall back to "bd" when the DB layer
-    // is missing the stored prefix (e.g. after auto-rebuild).
-    // Uses a fast single-line read (not full-file scan) since this runs on
-    // every command.
     let mut jsonl_inferred = ConfigLayer::default();
     let inferred_prefix = match jsonl_source {
         JsonlConfigSource::Uncaptured => {
@@ -5618,9 +5406,6 @@ pub(crate) fn configured_issue_prefix_from_map(
 /// Build ID generation config from a merged config layer.
 #[must_use]
 pub fn id_config_from_layer(layer: &ConfigLayer) -> IdConfig {
-    // `id.prefix` is the documented knob (`br config set id.prefix`, `br config
-    // get id.prefix`); the flat aliases stay for compatibility. Checking it
-    // first keeps a stale `issue_prefix`/`prefix` entry from shadowing it.
     let prefix = get_value(layer, &["id.prefix", "id-prefix"])
         .or_else(|| get_value(layer, &["issue_prefix", "issue-prefix", "prefix"]))
         .cloned()
@@ -5701,8 +5486,6 @@ pub fn external_projects_from_layer(
 ) -> HashMap<String, PathBuf> {
     let base_dir = beads_dir.parent().unwrap_or(beads_dir);
     let mut map = HashMap::new();
-    // Startup keys are lower precedence than runtime keys in merged config.
-    // Insert startup first so runtime values win on duplicate project names.
     let iter = layer.startup.iter().chain(layer.runtime.iter());
 
     for (key, value) in iter {
@@ -5875,8 +5658,6 @@ pub fn is_startup_key(key: &str) -> bool {
 }
 
 fn insert_key_value(layer: &mut ConfigLayer, key: &str, value: String) {
-    // Normalize hyphens to underscores so YAML keys like `issue-prefix`
-    // are stored under the same canonical key as `issue_prefix`.
     let canonical = key.replace('-', "_");
     if is_startup_key(key) {
         layer.startup.insert(canonical, value);
@@ -6133,10 +5914,6 @@ mod tests {
             .with_write_transaction(|storage| storage.rebuild_child_counters_in_tx())
             .expect("rebuild child counters");
 
-        // Standalone import relation sync legitimately marks the touched issues
-        // dirty (unflushed local state) so the next flush exports the change.
-        // A rebuilt database mirrors the JSONL exactly, so emulate post-rebuild
-        // cleanliness before verifying the recovery postconditions.
         storage
             .clear_dirty_issues_legacy(&[parent.id.clone(), child.id.clone()])
             .expect("clear dirty markers");
@@ -6393,12 +6170,8 @@ labels:
         assert_eq!(timeout, 2500);
     }
 
-    // ==================== Additional Config Unit Tests ====================
-    // Tests for beads-7h9: Config unit tests - Layered configuration
-
     #[test]
     fn precedence_default_is_lowest() {
-        // Verify that default layer values are overridden by any other layer
         let defaults = default_config_layer();
         assert_eq!(defaults.runtime.get("issue_prefix").unwrap(), "br");
 
@@ -6510,7 +6283,6 @@ labels:
 
     #[test]
     fn precedence_full_chain_with_different_keys() {
-        // Each layer sets a different key, all should be preserved
         let mut defaults = default_config_layer();
         defaults
             .runtime
@@ -6548,13 +6320,11 @@ labels:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Write metadata with empty strings
         let metadata_path = beads_dir.join("metadata.json");
         let metadata = r#"{"database": "", "jsonl_export": "  "}"#;
         fs::write(metadata_path, metadata).expect("write metadata");
 
         let loaded = Metadata::load(&beads_dir).expect("metadata");
-        // Empty strings should fall back to defaults
         assert_eq!(loaded.database, DEFAULT_DB_FILENAME);
         assert_eq!(loaded.jsonl_export, DEFAULT_JSONL_FILENAME);
     }
@@ -6565,7 +6335,6 @@ labels:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Write metadata with extra fields (should be ignored)
         let metadata_path = beads_dir.join("metadata.json");
         let metadata =
             r#"{"database": "test.db", "jsonl_export": "test.jsonl", "unknown_field": true}"#;
@@ -6622,10 +6391,7 @@ labels:
 
     #[test]
     fn discover_beads_dir_returns_error_when_not_found() {
-        // Discovery walks every ancestor with no boundary, so this must start
-        // outside any beads workspace or it finds the enclosing repo's.
         let temp = crate::util::test_helpers::isolated_temp_dir();
-        // No .beads directory created
 
         let result =
             discover_beads_dir_with_env_and_ceiling(Some(temp.path()), None, Some(temp.path()));
@@ -6672,10 +6438,6 @@ labels:
 
     #[test]
     fn discover_resolves_linked_worktree_tracked_snapshot_to_primary() {
-        // GitHub #429's underlying bug: a linked worktree checks out the
-        // tracked half of `.beads` (metadata.json, issues.jsonl) but no
-        // database; discovery must bind to the primary checkout instead of
-        // rebuilding a private database from the stale snapshot.
         let temp = crate::util::test_helpers::isolated_temp_dir();
         let (primary_beads, worktree) = linked_worktree_fixture(temp.path());
         let wt_beads = worktree.join(".beads");
@@ -6696,8 +6458,6 @@ labels:
 
     #[test]
     fn discover_keeps_linked_worktree_workspace_with_local_database() {
-        // A worktree that ran `br init` (or already imported once) owns its
-        // database; discovery must not rug-pull it to the primary checkout.
         let temp = crate::util::test_helpers::isolated_temp_dir();
         let (_primary_beads, worktree) = linked_worktree_fixture(temp.path());
         let wt_beads = worktree.join(".beads");
@@ -6718,9 +6478,6 @@ labels:
 
     #[test]
     fn discover_resolves_sibling_worktree_without_beads_to_primary() {
-        // `git worktree add ../feature-x` on a project that does NOT track
-        // `.beads`: the walk finds nothing, but the `.git` file identifies
-        // the primary checkout.
         let temp = crate::util::test_helpers::isolated_temp_dir();
         let (primary_beads, worktree) = linked_worktree_fixture(temp.path());
 
@@ -6733,9 +6490,6 @@ labels:
 
     #[test]
     fn discover_prefers_explicit_worktree_redirect_over_common_dir() {
-        // An explicit `.beads/redirect` is the operator's routing decision;
-        // the linked-worktree resolution must stand aside and let
-        // `routing::follow_redirects` handle it.
         let temp = crate::util::test_helpers::isolated_temp_dir();
         let (primary_beads, worktree) = linked_worktree_fixture(temp.path());
         let elsewhere = temp.path().join("elsewhere").join(".beads");
@@ -6765,7 +6519,6 @@ labels:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Create deeply nested directory
         let nested = temp
             .path()
             .join("a")
@@ -7033,8 +6786,8 @@ labels:
         assert!(is_startup_key("actor"));
         assert!(is_startup_key("identity"));
         assert!(is_startup_key("lock-timeout"));
-        assert!(is_startup_key("git.branch")); // prefix check
-        assert!(is_startup_key("routing.policy")); // prefix check
+        assert!(is_startup_key("git.branch"));
+        assert!(is_startup_key("routing.policy"));
     }
 
     #[test]
@@ -7184,8 +6937,6 @@ labels:
         }
         .as_layer();
         assert_eq!(display_color_from_layer(&on), Some(true));
-        // Actual color emission and NO_COLOR precedence are exercised in
-        // e2e_list_comprehensive with isolated child-process environments.
 
         let mut runtime_only = ConfigLayer::default();
         runtime_only
@@ -7227,7 +6978,6 @@ labels:
         assert_eq!(layer.startup.get("json").unwrap(), "true");
         assert_eq!(layer.startup.get("no_db").unwrap(), "true");
         assert_eq!(layer.startup.get("no_daemon").unwrap(), "true");
-        // no_auto_flush=true => sync.auto_flush=false (canonical positive key, inverted)
         assert_eq!(layer.startup.get("sync.auto_flush").unwrap(), "false");
         assert_eq!(layer.startup.get("sync.auto_import").unwrap(), "false");
         assert_eq!(layer.startup.get("lock_timeout").unwrap(), "5000");
@@ -7244,7 +6994,6 @@ labels:
 
     #[test]
     fn no_auto_flush_from_layer_reads_sync_auto_flush_false() {
-        // A project config with `sync.auto_flush: false` should disable auto-flush.
         let mut layer = ConfigLayer::default();
         insert_key_value(&mut layer, "sync.auto_flush", "false".to_string());
 
@@ -7258,7 +7007,6 @@ labels:
 
     #[test]
     fn no_auto_flush_from_layer_reads_sync_auto_flush_true() {
-        // A project config with `sync.auto_flush: true` should enable auto-flush.
         let mut layer = ConfigLayer::default();
         insert_key_value(&mut layer, "sync.auto_flush", "true".to_string());
 
@@ -7272,15 +7020,10 @@ labels:
 
     #[test]
     fn no_auto_flush_from_layer_canonical_key_beats_legacy_key() {
-        // When both canonical `sync.auto_flush` and legacy `no-auto-flush` are present,
-        // `sync.auto_flush` should take precedence.
         let mut layer = ConfigLayer::default();
-        // sync.auto_flush=true means "enable auto-flush" (no_auto_flush=false)
         insert_key_value(&mut layer, "sync.auto_flush", "true".to_string());
-        // no-auto-flush=true means "disable auto-flush" (no_auto_flush=true)
         insert_key_value(&mut layer, "no-auto-flush", "true".to_string());
 
-        // sync.auto_flush should win -> no_auto_flush=false
         let result = no_auto_flush_from_layer(&layer);
         assert_eq!(
             result,
@@ -7318,7 +7061,6 @@ labels:
 
     #[test]
     fn history_enabled_from_layer_canonical_beats_legacy() {
-        // sync.history_enabled=true should win even if no-history=true is present
         let mut layer = ConfigLayer::default();
         insert_key_value(&mut layer, "sync.history_enabled", "true".to_string());
         insert_key_value(&mut layer, "no-history", "true".to_string());
@@ -7334,8 +7076,6 @@ labels:
 
     #[test]
     fn no_auto_flush_from_layer_hyphen_underscore_equivalence() {
-        // Config key `sync.auto-flush` (with hyphen) should be equivalent to
-        // `sync.auto_flush` (with underscore).
         let mut layer = ConfigLayer::default();
         insert_key_value(&mut layer, "sync.auto-flush", "false".to_string());
 
@@ -7349,20 +7089,15 @@ labels:
 
     #[test]
     fn cli_no_auto_flush_overrides_config_sync_auto_flush() {
-        // When --no-auto-flush is passed on CLI (no_auto_flush=Some(true)),
-        // it should translate to sync.auto_flush=false in the layer, overriding
-        // any YAML config that has sync.auto_flush=true.
         let overrides = CliOverrides {
             no_auto_flush: Some(true),
             ..CliOverrides::default()
         };
         let cli_layer = overrides.as_layer();
 
-        // Simulate a project config layer with sync.auto_flush=true
         let mut project_layer = ConfigLayer::default();
         insert_key_value(&mut project_layer, "sync.auto_flush", "true".to_string());
 
-        // Merge: project first (lower precedence), CLI second (higher precedence)
         let merged = ConfigLayer::merge_layers(&[project_layer, cli_layer]);
 
         let result = no_auto_flush_from_layer(&merged);
@@ -7386,8 +7121,6 @@ routing:
         let value: serde_yml::Value = serde_yml::from_str(yaml).expect("parse yaml");
         let layer = layer_from_yaml_value(&value);
 
-        // git.* and routing.* prefixes go to startup (per is_startup_key)
-        // sync.branch is an explicit startup key
         assert!(layer.startup.contains_key("sync.branch"));
         assert!(layer.startup.contains_key("git.auto_commit"));
         assert!(layer.startup.contains_key("routing.policy"));
@@ -7538,10 +7271,7 @@ routing:
     #[test]
     fn resolve_actor_falls_back_to_unknown() {
         let layer = ConfigLayer::default();
-        // This test assumes USER env var may not be set in test context
-        // or we need to verify the fallback mechanism
         let actor = resolve_actor(&layer);
-        // Should be either USER env value or "unknown"
         assert!(!actor.is_empty());
     }
 
@@ -7690,16 +7420,12 @@ routing:
         );
     }
 
-    // ==================== JSONL Discovery Tests ====================
-    // Tests for beads-ndl: JSONL discovery + metadata.json handling
-
     #[test]
     fn discover_jsonl_prefers_issues_over_legacy() {
         let temp = TempDir::new().expect("tempdir");
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Create both files
         fs::write(beads_dir.join("issues.jsonl"), "{}").expect("write issues");
         fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
 
@@ -7713,7 +7439,6 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Only legacy file exists
         fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
 
         let discovered = discover_jsonl(&beads_dir).expect("should discover");
@@ -7726,7 +7451,6 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // No JSONL files
         let discovered = discover_jsonl(&beads_dir);
         assert!(discovered.is_none());
     }
@@ -7737,7 +7461,6 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Only merge artifacts exist (should not be discovered)
         fs::write(beads_dir.join("beads.base.jsonl"), "{}").expect("write base");
         fs::write(beads_dir.join("beads.left.jsonl"), "{}").expect("write left");
         fs::write(beads_dir.join("beads.right.jsonl"), "{}").expect("write right");
@@ -7782,13 +7505,11 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Only legacy file exists
         fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
 
         let metadata = Metadata::default();
         let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
 
-        // Should discover beads.jsonl since issues.jsonl doesn't exist
         assert_eq!(resolved, beads_dir.join("beads.jsonl"));
     }
 
@@ -7798,7 +7519,6 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Both legacy and custom exist
         fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
         fs::write(beads_dir.join("custom.jsonl"), "{}").expect("write custom");
 
@@ -7810,7 +7530,6 @@ routing:
         };
 
         let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
-        // Metadata override should win over discovered legacy/default filenames.
         assert_eq!(resolved, beads_dir.join("custom.jsonl"));
     }
 
@@ -7820,10 +7539,8 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Create issues.jsonl
         fs::write(beads_dir.join("issues.jsonl"), "{}").expect("write issues");
 
-        // Metadata points to excluded file (should be ignored)
         let metadata = Metadata {
             database: DEFAULT_DB_FILENAME.to_string(),
             jsonl_export: "deletions.jsonl".to_string(),
@@ -7832,7 +7549,6 @@ routing:
         };
 
         let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
-        // Should fall through to discovery, find issues.jsonl
         assert_eq!(resolved, beads_dir.join("issues.jsonl"));
     }
 
@@ -7842,11 +7558,9 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // No JSONL files exist
         let metadata = Metadata::default();
         let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
 
-        // Should return default for writing
         assert_eq!(resolved, beads_dir.join("issues.jsonl"));
     }
 
@@ -7858,14 +7572,12 @@ routing:
         fs::create_dir_all(&beads_dir).expect("create beads dir");
         fs::create_dir_all(&custom_dir).expect("create custom dir");
 
-        // Create files in beads_dir (should be ignored)
         fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
 
         let metadata = Metadata::default();
         let db_override = custom_dir.join("custom.db");
 
         let resolved = resolve_jsonl_path(&beads_dir, &metadata, Some(&db_override));
-        // Should derive sibling from db_override path
         assert_eq!(resolved, custom_dir.join("issues.jsonl"));
     }
 
@@ -7875,12 +7587,10 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Only legacy file exists
         fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
 
         let paths = ConfigPaths::resolve(&beads_dir, None).expect("paths");
 
-        // Should discover beads.jsonl
         assert_eq!(paths.jsonl_path, beads_dir.join("beads.jsonl"));
     }
 
@@ -7890,14 +7600,12 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Write metadata with custom jsonl_export
         fs::write(
             beads_dir.join("metadata.json"),
             r#"{"database": "beads.db", "jsonl_export": "my-export.jsonl"}"#,
         )
         .expect("write metadata");
 
-        // Create the custom file
         fs::write(beads_dir.join("my-export.jsonl"), "{}").expect("write custom");
 
         let paths = ConfigPaths::resolve(&beads_dir, None).expect("paths");
@@ -7910,7 +7618,6 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Write metadata with custom jsonl_export
         fs::write(
             beads_dir.join("metadata.json"),
             r#"{"database": "beads.db", "jsonl_export": "custom-name.jsonl"}"#,
@@ -7921,7 +7628,6 @@ routing:
         let metadata = Metadata::load(&beads_dir).expect("metadata");
         let resolved = resolve_jsonl_path(&beads_dir, &metadata, Some(&db_override));
 
-        // Metadata override should still win when the database path is explicit.
         assert_eq!(
             resolved,
             beads_dir.join("custom-name.jsonl"),
@@ -7935,7 +7641,6 @@ routing:
         let beads_dir = temp.path().join(".beads");
         fs::create_dir_all(&beads_dir).expect("create beads dir");
 
-        // Create multiple candidates
         fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
         fs::write(beads_dir.join("issues.jsonl"), "{}").expect("write issues");
         fs::write(beads_dir.join("beads.base.jsonl"), "{}").expect("write base");
@@ -7943,7 +7648,6 @@ routing:
 
         let paths = ConfigPaths::resolve(&beads_dir, None).expect("paths");
 
-        // Should pick issues.jsonl (preferred over legacy, ignoring excluded)
         assert_eq!(paths.jsonl_path, beads_dir.join("issues.jsonl"));
     }
 
@@ -8845,8 +8549,6 @@ routing:
             .expect_err("read-only miss should wait for recovery lock");
         let message = err.to_string();
         assert!(
-            // The budget is 1ms; by the time the failure surfaces the
-            // remaining window can have decayed to 0ms.
             message.contains("Timed out after") && message.contains("waiting for write lock"),
             "{message}"
         );
@@ -9911,12 +9613,7 @@ routing:
 
     #[test]
     fn quarantine_truncated_wal_sidecar_leaves_zero_byte_wal_in_place() {
-        // Regression for beads#291. A 0-byte WAL is the documented
         // post-`PRAGMA wal_checkpoint(TRUNCATE)` resting state, which
-        // SqliteStorage::Drop runs on every mutating br invocation. The
-        // pre-fix heuristic quarantined that healthy hand-off as corruption
-        // and flooded `.beads/.br_recovery/` with empty-file artifacts at
-        // ~1 entry / 2 invocations on multi-agent repos.
         let temp = TempDir::new().expect("tempdir");
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
@@ -9963,10 +9660,6 @@ routing:
 
     #[test]
     fn quarantine_orphan_sidecars_when_db_absent_moves_classic_and_legacy_sidecars() {
-        // beads_rust-avhq: with the DB file gone, ANY dangling sidecar —
-        // classic or legacy fsqlite-era — must be quarantined before a
-        // fresh database is created, so SQLite never replays a foreign WAL
-        // against a new lineage.
         let temp = TempDir::new().expect("tempdir");
         let beads_dir = temp.path().join(".beads");
         let db_path = beads_dir.join("beads.db");
@@ -10176,8 +9869,6 @@ routing:
         let recovery_dir = recovery_dir_for_db_path(&db_path, &beads_dir);
         fs::create_dir_all(&recovery_dir).expect("create recovery dir");
 
-        // Use a specific backup file path that does NOT exist, so the
-        // restore step fails with a missing-backup error.
         let wal_backup_file =
             recovery_dir.join(recovery_backup_filename(&wal_path, "fixed-stamp", "bak"));
 

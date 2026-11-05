@@ -31,10 +31,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use tempfile::TempDir;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn create_test_issue(id: &str, title: &str) -> Issue {
     let mut issue = common::fixtures::issue(title);
     issue.id = id.to_string();
@@ -84,22 +80,13 @@ fn default_config(beads_dir: &Path) -> ExportConfig {
     }
 }
 
-// ===========================================================================
-// 1. Concurrent exports produce valid output (no corruption)
-// ===========================================================================
-
 #[test]
 fn concurrent_exports_no_corruption() {
     let _log = common::test_log("concurrent_exports_no_corruption");
 
-    // Two separate storages writing to two separate paths (concurrent same-path
-    // needs file-level locking which is OS-dependent; here we verify independent
-    // concurrent exports don't interfere with each other).
     let temp = TempDir::new().unwrap();
     let beads_dir = setup_beads_dir(&temp);
 
-    // Export all concurrently using threads - create storage inside each thread
-    // single-threaded test harness; connections are not shared across threads
     let handles: Vec<_> = (0..4)
         .map(|i| {
             let path = beads_dir.join(format!("issues_{i}.jsonl"));
@@ -128,7 +115,6 @@ fn concurrent_exports_no_corruption() {
         let export = result.expect("export should succeed");
         assert_eq!(export.exported_count, 5, "Each export should have 5 issues");
 
-        // Verify the output is valid JSONL
         let content = fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 5);
@@ -139,10 +125,6 @@ fn concurrent_exports_no_corruption() {
     }
 }
 
-// ===========================================================================
-// 2. Export rejects path traversal at runtime
-// ===========================================================================
-
 #[test]
 fn export_rejects_path_traversal() {
     let _log = common::test_log("export_rejects_path_traversal");
@@ -151,7 +133,6 @@ fn export_rejects_path_traversal() {
     let temp = TempDir::new().unwrap();
     let beads_dir = setup_beads_dir(&temp);
 
-    // Attempt to export to a path outside beads_dir via traversal
     let evil_path = beads_dir.join("..").join("escaped.jsonl");
     let config = default_config(&beads_dir);
 
@@ -161,17 +142,12 @@ fn export_rejects_path_traversal() {
         "Export to traversal path should fail at runtime"
     );
 
-    // The escaped file should NOT exist
     let escaped = temp.path().join("escaped.jsonl");
     assert!(
         !escaped.exists(),
         "Traversal path should not create escaped file"
     );
 }
-
-// ===========================================================================
-// 3. Export rejects path outside beads_dir
-// ===========================================================================
 
 #[test]
 fn export_rejects_outside_beads_dir() {
@@ -181,7 +157,6 @@ fn export_rejects_outside_beads_dir() {
     let temp = TempDir::new().unwrap();
     let beads_dir = setup_beads_dir(&temp);
 
-    // Path directly outside .beads/
     let outside_path = temp.path().join("outside.jsonl");
     let config = default_config(&beads_dir);
 
@@ -196,10 +171,6 @@ fn export_rejects_outside_beads_dir() {
     );
 }
 
-// ===========================================================================
-// 4. Export rejects .git path at runtime
-// ===========================================================================
-
 #[test]
 fn export_rejects_git_path() {
     let _log = common::test_log("export_rejects_git_path");
@@ -208,7 +179,6 @@ fn export_rejects_git_path() {
     let temp = TempDir::new().unwrap();
     let beads_dir = setup_beads_dir(&temp);
 
-    // Create a .git dir inside beads to test rejection
     let git_dir = beads_dir.join(".git");
     fs::create_dir_all(&git_dir).unwrap();
     let git_path = git_dir.join("issues.jsonl");
@@ -226,10 +196,6 @@ fn export_rejects_git_path() {
     );
 }
 
-// ===========================================================================
-// 5. Temp file does not remain after failure
-// ===========================================================================
-
 #[test]
 #[cfg(unix)]
 fn temp_file_cleaned_up_on_failure() {
@@ -241,30 +207,22 @@ fn temp_file_cleaned_up_on_failure() {
     let jsonl_path = beads_dir.join("issues.jsonl");
     let temp_path = export_temp_path_for_test(&jsonl_path);
 
-    // Create initial JSONL
     fs::write(&jsonl_path, r#"{"id":"old","title":"Old"}"#).unwrap();
 
-    // Make directory read-only to force failure
     fs::set_permissions(&beads_dir, Permissions::from_mode(0o555)).unwrap();
 
     let config = default_config(&beads_dir);
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
 
-    // Restore permissions
     fs::set_permissions(&beads_dir, Permissions::from_mode(0o755)).unwrap();
 
     assert!(result.is_err(), "Export should fail on read-only dir");
 
-    // Temp file should NOT remain
     assert!(
         !temp_path.exists(),
         "Temp file should not remain after failed export"
     );
 }
-
-// ===========================================================================
-// 6. Re-export overwrites previous output cleanly
-// ===========================================================================
 
 #[test]
 fn re_export_overwrites_cleanly() {
@@ -274,7 +232,6 @@ fn re_export_overwrites_cleanly() {
     let beads_dir = setup_beads_dir(&temp);
     let jsonl_path = beads_dir.join("issues.jsonl");
 
-    // First export with 3 issues
     let mut storage = SqliteStorage::open_memory().unwrap();
     for i in 0..3 {
         let issue = create_test_issue(&format!("test-{i:03}"), &format!("Issue {i}"));
@@ -287,7 +244,6 @@ fn re_export_overwrites_cleanly() {
 
     let hash1 = compute_file_hash(&jsonl_path);
 
-    // Add more issues and re-export
     for i in 3..6 {
         let issue = create_test_issue(&format!("test-{i:03}"), &format!("Issue {i}"));
         storage.create_issue(&issue, "tester").unwrap();
@@ -299,15 +255,10 @@ fn re_export_overwrites_cleanly() {
     let hash2 = compute_file_hash(&jsonl_path);
     assert_ne!(hash1, hash2, "Re-export with new issues should change hash");
 
-    // Verify new content is valid
     let content = fs::read_to_string(&jsonl_path).unwrap();
     let lines: Vec<&str> = content.lines().collect();
     assert_eq!(lines.len(), 6, "Re-export should contain all 6 issues");
 }
-
-// ===========================================================================
-// 7. Successive identical exports are idempotent
-// ===========================================================================
 
 #[test]
 fn successive_exports_idempotent() {
@@ -319,7 +270,6 @@ fn successive_exports_idempotent() {
     let jsonl_path = beads_dir.join("issues.jsonl");
     let config = default_config(&beads_dir);
 
-    // Export three times
     let r1 = export_to_jsonl(&storage, &jsonl_path, &config).unwrap();
     let hash1 = compute_file_hash(&jsonl_path);
 
@@ -329,24 +279,17 @@ fn successive_exports_idempotent() {
     let r3 = export_to_jsonl(&storage, &jsonl_path, &config).unwrap();
     let hash3 = compute_file_hash(&jsonl_path);
 
-    // All hashes should be identical
     assert_eq!(hash1, hash2, "Successive exports should produce same hash");
     assert_eq!(hash2, hash3, "Third export should match second");
 
-    // All counts identical
     assert_eq!(r1.exported_count, r2.exported_count);
     assert_eq!(r2.exported_count, r3.exported_count);
 
-    // Content hashes from export result should match
     assert_eq!(
         r1.content_hash, r2.content_hash,
         "Export result content_hash should be deterministic"
     );
 }
-
-// ===========================================================================
-// 8. Export validates every line is valid JSON
-// ===========================================================================
 
 #[test]
 fn export_produces_valid_jsonl_per_line() {
@@ -365,30 +308,22 @@ fn export_produces_valid_jsonl_per_line() {
     assert_eq!(lines.len(), 20);
 
     for (i, line) in lines.iter().enumerate() {
-        // Each line must be valid JSON
         let parsed: serde_json::Value =
             serde_json::from_str(line).expect("line should be valid JSON");
 
-        // Must have id field
         assert!(parsed.get("id").is_some(), "Line {i} missing 'id' field");
 
-        // Must have title field
         assert!(
             parsed.get("title").is_some(),
             "Line {i} missing 'title' field"
         );
 
-        // Must have status field
         assert!(
             parsed.get("status").is_some(),
             "Line {i} missing 'status' field"
         );
     }
 }
-
-// ===========================================================================
-// 9. Symlink escape in export path is rejected
-// ===========================================================================
 
 #[test]
 #[cfg(unix)]
@@ -399,10 +334,8 @@ fn export_rejects_symlink_escape() {
     let temp = TempDir::new().unwrap();
     let beads_dir = setup_beads_dir(&temp);
 
-    // Create an outside directory
     let outside = TempDir::new().unwrap();
 
-    // Create a symlink inside beads_dir pointing outside
     let symlink_path = beads_dir.join("escape_link");
     std::os::unix::fs::symlink(outside.path(), &symlink_path).unwrap();
 
@@ -415,7 +348,6 @@ fn export_rejects_symlink_escape() {
         "Export through symlink escape should be rejected"
     );
 
-    // Nothing should be written outside
     let escaped_file = outside.path().join("issues.jsonl");
     assert!(
         !escaped_file.exists(),
@@ -489,10 +421,6 @@ fn export_skips_stale_regular_temp_file_and_preserves_it() {
     );
 }
 
-// ===========================================================================
-// 10. Export with allow_external_jsonl to outside path works
-// ===========================================================================
-
 #[test]
 fn export_external_path_with_flag() {
     let _log = common::test_log("export_external_path_with_flag");
@@ -501,7 +429,6 @@ fn export_external_path_with_flag() {
     let temp = TempDir::new().unwrap();
     let beads_dir = setup_beads_dir(&temp);
 
-    // External path outside .beads/
     let external_path = temp.path().join("external_export.jsonl");
 
     let config = ExportConfig {
@@ -517,7 +444,6 @@ fn export_external_path_with_flag() {
         result.err()
     );
 
-    // File should exist and contain 3 issues
     assert!(external_path.exists(), "External file should be created");
     let content = fs::read_to_string(&external_path).unwrap();
     assert_eq!(
@@ -527,10 +453,6 @@ fn export_external_path_with_flag() {
     );
 }
 
-// ===========================================================================
-// 11. Export with allow_external_jsonl still rejects .git paths
-// ===========================================================================
-
 #[test]
 fn export_external_still_rejects_git() {
     let _log = common::test_log("export_external_still_rejects_git");
@@ -539,7 +461,6 @@ fn export_external_still_rejects_git() {
     let temp = TempDir::new().unwrap();
     let beads_dir = setup_beads_dir(&temp);
 
-    // Create .git directory and target within it
     let git_dir = temp.path().join(".git");
     fs::create_dir_all(&git_dir).unwrap();
     let git_path = git_dir.join("issues.jsonl");
@@ -558,10 +479,6 @@ fn export_external_still_rejects_git() {
     assert!(!git_path.exists(), ".git file should not be created");
 }
 
-// ===========================================================================
-// 12. Export count matches re-read count (integrity verification)
-// ===========================================================================
-
 #[test]
 fn export_count_matches_file_line_count() {
     let _log = common::test_log("export_count_matches_file_line_count");
@@ -574,7 +491,6 @@ fn export_count_matches_file_line_count() {
 
     let result = export_to_jsonl(&storage, &jsonl_path, &config).unwrap();
 
-    // exported_count should match actual line count
     let content = fs::read_to_string(&jsonl_path).unwrap();
     let actual_lines = content.lines().count();
     assert_eq!(
@@ -582,7 +498,6 @@ fn export_count_matches_file_line_count() {
         "Export count should match actual JSONL line count"
     );
 
-    // Also verify issue IDs are unique
     let ids: std::collections::HashSet<String> = content
         .lines()
         .map(|line| {

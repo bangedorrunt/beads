@@ -98,10 +98,6 @@ fn read_child_wait_channel(pid: u32) -> Option<String> {
 
 #[cfg(target_os = "linux")]
 fn is_write_lock_wait_channel(channel: &str) -> bool {
-    // Under heavy load, the child might be observed mid-backoff (hrtimer_nanosleep)
-    // or waiting on a futex used by fs2's lock primitives, rather than directly
-    // in the fcntl/flock syscall. All of these indicate "blocked waiting for the
-    // exclusive write lock" for the purposes of this test.
     let channel = channel.to_ascii_lowercase();
     channel.contains("lock")
         || channel.contains("flock")
@@ -178,7 +174,6 @@ impl FailureTestArtifacts {
     }
 
     fn save(&self) {
-        // Save logs
         let log_path = self.artifact_dir.join("test.log");
         let mut log_content = format!("=== Failure Injection Test: {} ===\n\n", self.test_name);
 
@@ -186,7 +181,6 @@ impl FailureTestArtifacts {
             log_content.push_str(&format!("--- {} ---\n{}\n\n", label, content));
         }
 
-        // Save snapshots
         for (label, files) in &self.snapshots {
             log_content.push_str(&format!("--- Snapshot: {} ---\n", label));
             for (path, hash) in files {
@@ -430,20 +424,17 @@ fn export_failure_readonly_dir_preserves_original() {
     let _log = common::test_log("export_failure_readonly_dir_preserves_original");
     let mut artifacts = FailureTestArtifacts::new("export_readonly_dir");
 
-    // Setup: Create storage with issues
     let mut storage = SqliteStorage::open_memory().unwrap();
     let issue1 = create_test_issue("test-001", "Issue One");
     let issue2 = create_test_issue("test-002", "Issue Two");
     storage.create_issue(&issue1, "tester").unwrap();
     storage.create_issue(&issue2, "tester").unwrap();
 
-    // Create temp directory with existing JSONL
     let temp = TempDir::new().unwrap();
     let beads_dir = temp.path().join(".beads");
     fs::create_dir_all(&beads_dir).unwrap();
     let jsonl_path = beads_dir.join("issues.jsonl");
 
-    // Create initial JSONL with known content
     let initial_content = r#"{"id":"test-old","title":"Old Issue"}"#;
     fs::write(&jsonl_path, format!("{}\n", initial_content)).unwrap();
     let initial_hash = compute_file_hash(&jsonl_path).unwrap();
@@ -451,27 +442,22 @@ fn export_failure_readonly_dir_preserves_original() {
     artifacts.log("initial_jsonl_hash", &initial_hash);
     artifacts.snapshot_dir("before_failure", temp.path());
 
-    // Make directory read-only to cause export failure
     fs::set_permissions(&beads_dir, Permissions::from_mode(0o555)).unwrap();
 
-    // Attempt export (should fail)
     let config = ExportConfig {
         beads_dir: Some(beads_dir.clone()),
         ..Default::default()
     };
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
 
-    // Restore permissions for cleanup
     fs::set_permissions(&beads_dir, Permissions::from_mode(0o755)).unwrap();
 
     artifacts.snapshot_dir("after_failure", temp.path());
 
-    // Verify export failed
     assert!(result.is_err(), "Export should fail on read-only directory");
     let err_msg = result.unwrap_err().to_string();
     artifacts.log("error_message", &err_msg);
 
-    // Verify original JSONL is intact
     let final_hash = compute_file_hash(&jsonl_path).unwrap();
     artifacts.log("final_jsonl_hash", &final_hash);
 
@@ -480,7 +466,6 @@ fn export_failure_readonly_dir_preserves_original() {
         "Original JSONL should be intact after export failure"
     );
 
-    // Verify original content is still readable
     let content = fs::read_to_string(&jsonl_path).unwrap();
     assert!(
         content.contains("test-old"),
@@ -501,18 +486,15 @@ fn export_failure_temp_file_preserves_original() {
     let _log = common::test_log("export_failure_temp_file_preserves_original");
     let mut artifacts = FailureTestArtifacts::new("export_temp_file_failure");
 
-    // Setup storage
     let mut storage = SqliteStorage::open_memory().unwrap();
     let issue = create_test_issue("test-001", "Issue One");
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Create temp directory
     let temp = TempDir::new().unwrap();
     let beads_dir = temp.path().join(".beads");
     fs::create_dir_all(&beads_dir).unwrap();
     let jsonl_path = beads_dir.join("issues.jsonl");
 
-    // Create initial JSONL
     let initial_content = r#"{"id":"test-old","title":"Old"}"#;
     fs::write(&jsonl_path, format!("{}\n", initial_content)).unwrap();
     let initial_hash = compute_file_hash(&jsonl_path).unwrap();
@@ -520,11 +502,9 @@ fn export_failure_temp_file_preserves_original() {
     artifacts.log("initial_hash", &initial_hash);
     artifacts.snapshot_dir("before", temp.path());
 
-    // Create the exact temp path used by export to block temp file creation.
     let temp_path = export_temp_path_for_test(&jsonl_path);
     fs::create_dir_all(&temp_path).unwrap();
 
-    // Attempt export
     let config = ExportConfig {
         beads_dir: Some(beads_dir.clone()),
         ..Default::default()
@@ -533,11 +513,9 @@ fn export_failure_temp_file_preserves_original() {
 
     artifacts.snapshot_dir("after", temp.path());
 
-    // Should fail
     assert!(result.is_err(), "Export should fail when temp file blocked");
     artifacts.log("error", &result.unwrap_err().to_string());
 
-    // Original should be intact
     let final_hash = compute_file_hash(&jsonl_path).unwrap();
     assert_eq!(initial_hash, final_hash, "Original JSONL preserved");
 
@@ -551,7 +529,6 @@ fn import_failure_missing_file_no_db_changes() {
     let _log = common::test_log("import_failure_missing_file_no_db_changes");
     let mut artifacts = FailureTestArtifacts::new("import_missing_file");
 
-    // Setup storage with existing issue
     let mut storage = SqliteStorage::open_memory().unwrap();
     let existing = create_test_issue("test-existing", "Existing Issue");
     storage.create_issue(&existing, "tester").unwrap();
@@ -559,25 +536,21 @@ fn import_failure_missing_file_no_db_changes() {
     let initial_count = storage.list_issues(&ListFilters::default()).unwrap().len();
     artifacts.log("initial_issue_count", &initial_count.to_string());
 
-    // Attempt import from non-existent file
     let temp = TempDir::new().unwrap();
     let missing_path = temp.path().join(".beads").join("nonexistent.jsonl");
 
     let config = ImportConfig::default();
     let result = import_from_jsonl(&mut storage, &missing_path, &config, Some("test-"));
 
-    // Should fail
     assert!(result.is_err(), "Import should fail for missing file");
     artifacts.log("error", &result.unwrap_err().to_string());
 
-    // DB should be unchanged
     let final_count = storage.list_issues(&ListFilters::default()).unwrap().len();
     assert_eq!(
         initial_count, final_count,
         "DB should be unchanged after import failure"
     );
 
-    // Original issue still present
     let fetched = storage.get_issue("test-existing").unwrap();
     assert!(fetched.is_some(), "Existing issue should still be present");
 
@@ -591,7 +564,6 @@ fn import_failure_malformed_json_no_db_changes() {
     let _log = common::test_log("import_failure_malformed_json_no_db_changes");
     let mut artifacts = FailureTestArtifacts::new("import_malformed_json");
 
-    // Setup storage
     let mut storage = SqliteStorage::open_memory().unwrap();
     let existing = create_test_issue("test-existing", "Existing");
     storage.create_issue(&existing, "tester").unwrap();
@@ -599,7 +571,6 @@ fn import_failure_malformed_json_no_db_changes() {
     let initial_count = storage.list_issues(&ListFilters::default()).unwrap().len();
     artifacts.log("initial_count", &initial_count.to_string());
 
-    // Create malformed JSONL
     let temp = TempDir::new().unwrap();
     let beads_dir = temp.path().join(".beads");
     fs::create_dir_all(&beads_dir).unwrap();
@@ -608,14 +579,12 @@ fn import_failure_malformed_json_no_db_changes() {
 
     artifacts.log("malformed_content", "not valid json");
 
-    // Attempt import
     let config = ImportConfig {
         beads_dir: Some(beads_dir),
         ..Default::default()
     };
     let result = import_from_jsonl(&mut storage, &jsonl_path, &config, Some("test-"));
 
-    // Should fail
     assert!(result.is_err(), "Import should fail on malformed JSON");
     let err_msg = result.unwrap_err().to_string();
     artifacts.log("error", &err_msg);
@@ -624,7 +593,6 @@ fn import_failure_malformed_json_no_db_changes() {
         "Error should mention invalid JSON"
     );
 
-    // DB unchanged
     let final_count = storage.list_issues(&ListFilters::default()).unwrap().len();
     assert_eq!(
         initial_count, final_count,
@@ -641,14 +609,12 @@ fn import_failure_conflict_markers_no_db_changes() {
     let _log = common::test_log("import_failure_conflict_markers_no_db_changes");
     let mut artifacts = FailureTestArtifacts::new("import_conflict_markers");
 
-    // Setup
     let mut storage = SqliteStorage::open_memory().unwrap();
     let existing = create_test_issue("test-existing", "Existing");
     storage.create_issue(&existing, "tester").unwrap();
 
     let initial_count = storage.list_issues(&ListFilters::default()).unwrap().len();
 
-    // Create JSONL with conflict markers
     let temp = TempDir::new().unwrap();
     let beads_dir = temp.path().join(".beads");
     fs::create_dir_all(&beads_dir).unwrap();
@@ -661,7 +627,6 @@ fn import_failure_conflict_markers_no_db_changes() {
     };
     let result = import_from_jsonl(&mut storage, &jsonl_path, &config, Some("test-"));
 
-    // Should fail
     assert!(result.is_err(), "Import should fail on conflict markers");
     let err_msg = result.unwrap_err().to_string();
     artifacts.log("error", &err_msg);
@@ -670,7 +635,6 @@ fn import_failure_conflict_markers_no_db_changes() {
         "Error should mention conflict markers"
     );
 
-    // DB unchanged
     let final_count = storage.list_issues(&ListFilters::default()).unwrap().len();
     assert_eq!(initial_count, final_count, "DB unchanged");
 
@@ -684,14 +648,12 @@ fn import_failure_prefix_mismatch_no_db_changes() {
     let _log = common::test_log("import_failure_prefix_mismatch_no_db_changes");
     let mut artifacts = FailureTestArtifacts::new("import_prefix_mismatch");
 
-    // Setup
     let mut storage = SqliteStorage::open_memory().unwrap();
     let existing = create_test_issue("test-existing", "Existing");
     storage.create_issue(&existing, "tester").unwrap();
 
     let initial_count = storage.list_issues(&ListFilters::default()).unwrap().len();
 
-    // Create JSONL with wrong prefix
     let temp = TempDir::new().unwrap();
     let beads_dir = temp.path().join(".beads");
     fs::create_dir_all(&beads_dir).unwrap();
@@ -707,7 +669,6 @@ fn import_failure_prefix_mismatch_no_db_changes() {
     };
     let result = import_from_jsonl(&mut storage, &jsonl_path, &config, Some("test-"));
 
-    // Should fail
     assert!(result.is_err(), "Import should fail on prefix mismatch");
     let err_msg = result.unwrap_err().to_string();
     artifacts.log("error", &err_msg);
@@ -716,7 +677,6 @@ fn import_failure_prefix_mismatch_no_db_changes() {
         "Error should mention prefix"
     );
 
-    // DB unchanged
     let final_count = storage.list_issues(&ListFilters::default()).unwrap().len();
     assert_eq!(initial_count, final_count, "DB unchanged");
 
@@ -733,7 +693,6 @@ fn cli_export_readonly_preserves_state() {
 
     let workspace = BrWorkspace::new();
 
-    // Initialize (without explicit prefix)
     let init_run = run_br(&workspace, ["init"], "init");
     artifacts.log("init_stdout", &init_run.stdout);
     artifacts.log("init_stderr", &init_run.stderr);
@@ -743,7 +702,6 @@ fn cli_export_readonly_preserves_state() {
         init_run.stderr
     );
 
-    // Create issue
     let create_run = run_br(&workspace, ["create", "Test Issue"], "create");
     artifacts.log("create_stdout", &create_run.stdout);
     artifacts.log("create_stderr", &create_run.stderr);
@@ -753,7 +711,6 @@ fn cli_export_readonly_preserves_state() {
         create_run.stderr
     );
 
-    // First export to establish baseline
     let export1_run = run_br(&workspace, ["sync", "--flush-only"], "export1");
     artifacts.log("export1_stdout", &export1_run.stdout);
     artifacts.log("export1_stderr", &export1_run.stderr);
@@ -769,26 +726,19 @@ fn cli_export_readonly_preserves_state() {
 
     artifacts.snapshot_dir("before_readonly", &workspace.root);
 
-    // Make .beads read-only
     let beads_dir = workspace.root.join(".beads");
     fs::set_permissions(&beads_dir, Permissions::from_mode(0o555)).unwrap();
 
-    // Attempt another export (should fail)
     let export2_run = run_br(&workspace, ["sync", "--flush-only"], "export2_fail");
     artifacts.log("export2_stdout", &export2_run.stdout);
     artifacts.log("export2_stderr", &export2_run.stderr);
 
-    // Restore permissions
     fs::set_permissions(&beads_dir, Permissions::from_mode(0o755)).unwrap();
 
     artifacts.snapshot_dir("after_readonly", &workspace.root);
 
-    // Save artifacts before assertions
     artifacts.save();
 
-    // Export may succeed or fail depending on how the engine handles
-    // read-only directories (temp file placement, fallback strategies).
-    // The key invariant: if it fails, the JSONL must be unchanged.
     if !export2_run.status.success() {
         let final_hash = compute_file_hash(&jsonl_path);
         assert_eq!(
@@ -806,7 +756,6 @@ fn cli_import_malformed_preserves_db() {
 
     let workspace = BrWorkspace::new();
 
-    // Initialize (without explicit prefix - let it auto-generate)
     let init_run = run_br(&workspace, ["init"], "init");
     artifacts.log("init_stdout", &init_run.stdout);
     artifacts.log("init_stderr", &init_run.stderr);
@@ -816,7 +765,6 @@ fn cli_import_malformed_preserves_db() {
         init_run.stderr
     );
 
-    // Create issue
     let create_run = run_br(&workspace, ["create", "Original Issue"], "create");
     artifacts.log("create_stdout", &create_run.stdout);
     artifacts.log("create_stderr", &create_run.stderr);
@@ -826,7 +774,6 @@ fn cli_import_malformed_preserves_db() {
         create_run.stderr
     );
 
-    // List before import attempt
     let list1_run = run_br(&workspace, ["list", "--json"], "list_before");
     artifacts.log("list_before", &list1_run.stdout);
     assert!(
@@ -834,25 +781,20 @@ fn cli_import_malformed_preserves_db() {
         "Issue should exist before import attempt"
     );
 
-    // Corrupt the JSONL file
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     fs::write(&jsonl_path, "totally not json {{{\n").unwrap();
 
-    // Attempt import
     let import_run = run_br(&workspace, ["sync", "--import-only"], "import_fail");
     artifacts.log("import_stdout", &import_run.stdout);
     artifacts.log("import_stderr", &import_run.stderr);
 
-    // Save artifacts before assertions for debugging
     artifacts.save();
 
-    // Verify import failed
     assert!(
         !import_run.status.success(),
         "Import should fail on malformed JSON"
     );
 
-    // List after - DB should still have original issue (use --no-auto-import --allow-stale to ignore corrupt/newer JSONL)
     let list2_run = run_br(
         &workspace,
         ["list", "--json", "--no-auto-import", "--allow-stale"],
@@ -861,7 +803,6 @@ fn cli_import_malformed_preserves_db() {
     artifacts.log("list_after", &list2_run.stdout);
     artifacts.log("list_after_stderr", &list2_run.stderr);
 
-    // Original issue should still exist in DB
     assert!(
         list2_run.stdout.contains("Original Issue"),
         "Original issue should still be in DB after failed import.\nActual stdout: {}\nActual stderr: {}",
@@ -903,9 +844,6 @@ fn cli_mutation_crash_boundary_matrix_marks_dirty_until_recovered() {
     assert_stale_show_finds(&workspace, &issue_id, "matrix_create_stale_show");
     flush_and_assert_clean(&workspace, "matrix_create_recover_flush");
 
-    // The matrix's close case must satisfy the fail-closed close ceremony:
-    // record the PASS gate up front so the crash-boundary close is refused
-    // only by the injected crash, never by missing close evidence.
     let gate = run_br(
         &workspace,
         [
@@ -1010,10 +948,6 @@ fn cli_mutation_crash_boundary_matrix_marks_dirty_until_recovered() {
 
     for (operation, args) in cases {
         let label = format!("matrix_{operation}_primary_write");
-        // Close gates are bound to the issue's status at record time: an
-        // earlier case moved the anchor to `in_progress`, so the up-front
-        // gate no longer covers the `in_progress -> closed` transition.
-        // Report a fresh gate immediately before the close case.
         if operation == "close" {
             let gate = run_br(
                 &workspace,
@@ -1553,10 +1487,6 @@ fn cli_sync_flush_concurrent_export_race_serializes_jsonl_sidecars() {
 
     drop(write_lock);
 
-    // Drain both children concurrently. Either child may win `.write.lock`,
-    // and verbose dependency tracing can fill that winner's captured stderr
-    // before it releases the lock. Sequential `wait_with_output` calls would
-    // then wait on the losing child while leaving the winner's pipe full.
     let collect_a = thread::spawn(move || flush_a.wait_with_output());
     let collect_b = thread::spawn(move || flush_b.wait_with_output());
     let output_a = collect_a
@@ -1729,18 +1659,15 @@ fn export_preserves_large_existing_jsonl() {
     let _log = common::test_log("export_preserves_large_existing_jsonl");
     let mut artifacts = FailureTestArtifacts::new("export_large_jsonl");
 
-    // Setup storage
     let mut storage = SqliteStorage::open_memory().unwrap();
     let issue = create_test_issue("test-001", "New Issue");
     storage.create_issue(&issue, "tester").unwrap();
 
-    // Create temp directory with large existing JSONL
     let temp = TempDir::new().unwrap();
     let beads_dir = temp.path().join(".beads");
     fs::create_dir_all(&beads_dir).unwrap();
     let jsonl_path = beads_dir.join("issues.jsonl");
 
-    // Create a reasonably large JSONL (100KB of issues)
     let mut large_content = String::new();
     for i in 0..100 {
         let issue = create_test_issue(&format!("old-{:04}", i), &format!("Old Issue {}", i));
@@ -1754,7 +1681,6 @@ fn export_preserves_large_existing_jsonl() {
     artifacts.log("initial_size", &format!("{} bytes", initial_size));
     artifacts.log("initial_hash", &initial_hash);
 
-    // Make directory read-only to force failure
     fs::set_permissions(&beads_dir, Permissions::from_mode(0o555)).unwrap();
 
     let config = ExportConfig {
@@ -1763,21 +1689,17 @@ fn export_preserves_large_existing_jsonl() {
     };
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
 
-    // Restore permissions
     fs::set_permissions(&beads_dir, Permissions::from_mode(0o755)).unwrap();
 
-    // Verify failure
     assert!(result.is_err(), "Export should fail");
     artifacts.log("error", &result.unwrap_err().to_string());
 
-    // Verify large JSONL intact
     let final_hash = compute_file_hash(&jsonl_path).unwrap();
     let final_size = fs::metadata(&jsonl_path).unwrap().len();
 
     assert_eq!(initial_hash, final_hash, "JSONL content unchanged");
     assert_eq!(initial_size, final_size, "JSONL size unchanged");
 
-    // Verify content readable and valid
     let content = fs::read_to_string(&jsonl_path).unwrap();
     let lines: Vec<&str> = content.lines().collect();
     assert_eq!(lines.len(), 100, "All 100 issues preserved");
@@ -1792,7 +1714,6 @@ fn export_cleans_up_temp_file_on_success() {
     let _log = common::test_log("export_cleans_up_temp_file_on_success");
     let mut artifacts = FailureTestArtifacts::new("export_temp_cleanup");
 
-    // Setup
     let mut storage = SqliteStorage::open_memory().unwrap();
     let issue = create_test_issue("test-001", "Issue One");
     storage.create_issue(&issue, "tester").unwrap();
@@ -1803,7 +1724,6 @@ fn export_cleans_up_temp_file_on_success() {
     let jsonl_path = beads_dir.join("issues.jsonl");
     let temp_path = export_temp_path_for_test(&jsonl_path);
 
-    // Export should succeed
     let config = ExportConfig {
         beads_dir: Some(beads_dir.clone()),
         ..Default::default()
@@ -1811,13 +1731,11 @@ fn export_cleans_up_temp_file_on_success() {
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
     assert!(result.is_ok(), "Export should succeed");
 
-    // Verify temp file does not exist
     assert!(
         !temp_path.exists(),
         "Temp file should be cleaned up after successful export"
     );
 
-    // Verify final file exists
     assert!(jsonl_path.exists(), "Final JSONL should exist");
 
     artifacts.log("verification", "PASSED: Temp file cleaned up");
@@ -1831,7 +1749,6 @@ fn multiple_export_failures_no_accumulation() {
     let _log = common::test_log("multiple_export_failures_no_accumulation");
     let mut artifacts = FailureTestArtifacts::new("multiple_failures");
 
-    // Setup
     let mut storage = SqliteStorage::open_memory().unwrap();
     let issue = create_test_issue("test-001", "Issue One");
     storage.create_issue(&issue, "tester").unwrap();
@@ -1841,11 +1758,9 @@ fn multiple_export_failures_no_accumulation() {
     fs::create_dir_all(&beads_dir).unwrap();
     let jsonl_path = beads_dir.join("issues.jsonl");
 
-    // Create initial JSONL
     fs::write(&jsonl_path, r#"{"id":"test-orig","title":"Original"}"#).unwrap();
     let initial_hash = compute_file_hash(&jsonl_path).unwrap();
 
-    // Attempt multiple failures
     for i in 0..5 {
         fs::set_permissions(&beads_dir, Permissions::from_mode(0o555)).unwrap();
 
@@ -1883,7 +1798,6 @@ fn atomic_write_pipeline_produces_valid_output() {
     let _log = common::test_log("atomic_write_pipeline_produces_valid_output");
     let mut artifacts = FailureTestArtifacts::new("atomic_pipeline_valid");
 
-    // Setup storage with multiple issues
     let mut storage = SqliteStorage::open_memory().unwrap();
     for i in 0..10 {
         let issue = create_test_issue(&format!("test-{:03}", i), &format!("Issue {}", i));
@@ -1896,7 +1810,6 @@ fn atomic_write_pipeline_produces_valid_output() {
     let jsonl_path = beads_dir.join("issues.jsonl");
     let temp_path = export_temp_path_for_test(&jsonl_path);
 
-    // Export
     let config = ExportConfig {
         beads_dir: Some(beads_dir.clone()),
         ..Default::default()
@@ -1906,14 +1819,12 @@ fn atomic_write_pipeline_produces_valid_output() {
     artifacts.log("export_count", &result.exported_count.to_string());
     artifacts.log("content_hash", &result.content_hash);
 
-    // Verify JSONL exists and temp file is gone
     assert!(jsonl_path.exists(), "JSONL file should exist after export");
     assert!(
         !temp_path.exists(),
         "Temp file should be removed after successful export"
     );
 
-    // Verify content is valid JSON lines
     let content = fs::read_to_string(&jsonl_path).unwrap();
     let lines: Vec<&str> = content.lines().collect();
     assert_eq!(lines.len(), 10, "Should have 10 issues exported");
@@ -1938,7 +1849,6 @@ fn atomic_write_pipeline_produces_valid_output() {
         );
     }
 
-    // Verify content hash is consistent
     let hash2 = compute_file_hash(&jsonl_path).unwrap();
     artifacts.log("file_hash", &hash2);
 
@@ -1955,7 +1865,6 @@ fn stale_temp_file_handled_gracefully() {
     let _log = common::test_log("stale_temp_file_handled_gracefully");
     let mut artifacts = FailureTestArtifacts::new("stale_temp_file");
 
-    // Setup storage
     let mut storage = SqliteStorage::open_memory().unwrap();
     let issue = create_test_issue("test-001", "Fresh Issue");
     storage.create_issue(&issue, "tester").unwrap();
@@ -1964,17 +1873,12 @@ fn stale_temp_file_handled_gracefully() {
     let beads_dir = temp.path().join(".beads");
     fs::create_dir_all(&beads_dir).unwrap();
     let jsonl_path = beads_dir.join("issues.jsonl");
-    // Use a fake PID (99999) to simulate a stale temp from a *different*
-    // crashed process, which is the realistic scenario.  Same-PID collisions
-    // are now correctly treated as an error by the export engine.
     let temp_path = jsonl_path.with_extension("jsonl.99999.tmp");
 
-    // Create a stale temp file (simulating previous failed export)
     let stale_content = r#"{"id":"stale-001","title":"Stale from crash"}"#;
     fs::write(&temp_path, format!("{}\n", stale_content)).unwrap();
     artifacts.log("stale_temp_content", stale_content);
 
-    // Export should succeed and overwrite stale temp file
     let config = ExportConfig {
         beads_dir: Some(beads_dir.clone()),
         ..Default::default()
@@ -1986,11 +1890,6 @@ fn stale_temp_file_handled_gracefully() {
         result.err()
     );
 
-    // The stale temp file from a different PID may or may not be cleaned up
-    // by the export — the engine only manages its own PID-based temp file.
-    // The key invariant is that the JSONL has fresh content, not stale.
-
-    // Verify JSONL has fresh content, not stale
     let content = fs::read_to_string(&jsonl_path).unwrap();
     assert!(
         content.contains("Fresh Issue"),
@@ -2011,7 +1910,6 @@ fn export_empty_db_produces_empty_jsonl() {
     let _log = common::test_log("export_empty_db_produces_empty_jsonl");
     let mut artifacts = FailureTestArtifacts::new("export_empty_db");
 
-    // Empty storage
     let storage = SqliteStorage::open_memory().unwrap();
 
     let temp = TempDir::new().unwrap();
@@ -2019,16 +1917,13 @@ fn export_empty_db_produces_empty_jsonl() {
     fs::create_dir_all(&beads_dir).unwrap();
     let jsonl_path = beads_dir.join("issues.jsonl");
 
-    // Export empty DB
     let config = ExportConfig {
         beads_dir: Some(beads_dir.clone()),
-        force: true, // Allow empty export
+        force: true,
         ..Default::default()
     };
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
 
-    // Empty DB export may fail or produce empty file depending on config
-    // The important thing is it doesn't crash and handles gracefully
     match result {
         Ok(export_result) => {
             assert_eq!(export_result.exported_count, 0, "Should export 0 issues");
@@ -2042,7 +1937,6 @@ fn export_empty_db_produces_empty_jsonl() {
             artifacts.log("outcome", "Empty export succeeded");
         }
         Err(e) => {
-            // Some configs reject empty exports - that's acceptable
             artifacts.log("outcome", &format!("Empty export rejected: {}", e));
         }
     }
@@ -2058,7 +1952,6 @@ fn export_sets_correct_permissions() {
     let _log = common::test_log("export_sets_correct_permissions");
     let mut artifacts = FailureTestArtifacts::new("export_permissions");
 
-    // Setup
     let mut storage = SqliteStorage::open_memory().unwrap();
     let issue = create_test_issue("test-001", "Permission Test");
     storage.create_issue(&issue, "tester").unwrap();
@@ -2068,21 +1961,18 @@ fn export_sets_correct_permissions() {
     fs::create_dir_all(&beads_dir).unwrap();
     let jsonl_path = beads_dir.join("issues.jsonl");
 
-    // Export
     let config = ExportConfig {
         beads_dir: Some(beads_dir.clone()),
         ..Default::default()
     };
     export_to_jsonl(&storage, &jsonl_path, &config).unwrap();
 
-    // Check permissions
     let metadata = fs::metadata(&jsonl_path).unwrap();
     let mode = metadata.permissions().mode();
-    let file_mode = mode & 0o777; // Extract file permission bits
+    let file_mode = mode & 0o777;
 
     artifacts.log("file_mode", &format!("{:o}", file_mode));
 
-    // Should be 0o600 (read/write for owner only)
     assert!(
         file_mode == 0o600 || file_mode == 0o644,
         "File permissions should be restrictive (got {:o})",

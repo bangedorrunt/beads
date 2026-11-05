@@ -137,7 +137,6 @@ fn execute_inner(
         && config_layer.as_ref().is_some_and(should_use_color);
     let ctx = OutputContext::from_output_format(output_format, quiet, !use_color);
 
-    // Get blocked issues from cache
     let blocked_raw = storage.get_blocked_issues_for_command_output()?;
 
     tracing::debug!(
@@ -146,7 +145,6 @@ fn execute_inner(
         blocked_raw.len()
     );
 
-    // Convert to BlockedIssue format
     let mut blocked_issues: Vec<BlockedIssue> = blocked_raw
         .into_iter()
         .map(|(issue, blockers)| BlockedIssue {
@@ -208,19 +206,15 @@ fn execute_inner(
         }
     }
 
-    // Apply filters
     filter_by_type(&mut blocked_issues, &args.type_)?;
     filter_by_priority(&mut blocked_issues, &args.priority)?;
 
-    // Filter by labels (AND logic) - need to fetch labels from storage
     if !args.label.is_empty() {
         filter_by_labels(&mut blocked_issues, storage, &args.label)?;
     }
 
-    // Sort by priority (ascending), then by blocker count (descending)
     sort_blocked_issues(&mut blocked_issues);
 
-    // Apply limit (offset is always 0: BlockedArgs has no --offset)
     let total_before_truncation = blocked_issues.len();
     let truncated = args.limit > 0 && blocked_issues.len() > args.limit;
     if truncated {
@@ -237,7 +231,6 @@ fn execute_inner(
         );
     }
 
-    // Output
     if matches!(ctx.mode(), OutputMode::Quiet) {
         return Ok(());
     }
@@ -403,34 +396,26 @@ fn print_text_output(
     use crate::format::{format_status_label, sanitize_terminal_inline, truncate_title};
 
     if blocked_issues.is_empty() {
-        // Match bd format
         println!("✨ No blocked issues");
         return;
     }
 
-    // Match bd format: 🚫 Blocked issues (N):
     println!("\n🚫 Blocked issues ({}):\n", blocked_issues.len());
 
     for bi in blocked_issues {
         let priority = bi.issue.priority.0;
         let issue_id = blocked_id_text(&bi.issue.id);
-        // Calculate prefix length for title truncation
-        // "[● P2] id: " prefix - estimate ~20 chars for priority badge and ID
         let prefix_len = 10 + issue_id.len();
         let title = if max_width == 0 {
-            // No wrap - use full title
             sanitize_terminal_inline(&bi.issue.title).into_owned()
         } else {
-            // When wrapping, truncate for initial display
             truncate_title(&bi.issue.title, max_width.saturating_sub(prefix_len))
         };
-        // Match bd format: [● P2] ID: Title
         println!("[● P{}] {}: {}", priority, issue_id, title);
 
         if verbose {
             println!("  Blocked by:");
             for blocker_ref in &bi.blocked_by {
-                // blocker_ref format is "id:status", extract just the id for lookup
                 let blocker_id = blocker_id_from_ref(blocker_ref);
                 if let Ok(Some(blocker)) = storage.get_issue(blocker_id) {
                     let blocker_title = if max_width > 0 {
@@ -453,10 +438,7 @@ fn print_text_output(
                 }
             }
         } else {
-            // Match bd format: Blocked by N open dependencies: [id1, id2]
-            // Note: bd uses "dependencies" even for count=1 (grammatically incorrect but we match for conformance)
             let count = bi.blocked_by.len();
-            // Extract just the IDs from blocker refs (strip :status suffix)
             println!(
                 "  Blocked by {} open dependencies: [{}]",
                 count,
@@ -479,7 +461,6 @@ fn blocked_id_list_text(blocked_by: &[String]) -> String {
 }
 
 fn blocker_id_from_ref(blocker_ref: &str) -> &str {
-    // Split from the right to preserve external IDs containing ':'
     blocker_ref
         .rsplit_once(':')
         .map_or(blocker_ref, |(prefix, _)| prefix)
@@ -508,13 +489,10 @@ fn render_blocked_rich(
             "No blocked issues",
             Style::new().bold().color(color("green")),
         );
-        // `print_text` honors the Text's line ending; `print_renderable`
-        // drops it, collapsing successive records onto one line (#421).
         console.print_text(&text);
         return;
     }
 
-    // Header
     let mut header = Text::new("");
     header.append_styled("\u{1f6ab} ", Style::new().color(color("red")));
     header.append_styled("Blocked issues", Style::new().bold().color(color("red")));
@@ -527,16 +505,14 @@ fn render_blocked_rich(
         let blocker_count = bi.blocked_by_count;
         let issue_id = blocked_id_text(&bi.issue.id);
 
-        // Color code blocker count: yellow(1), orange(2-3), red(4+)
         let count_style = match blocker_count {
             1 => Style::new().color(color("yellow")),
             2 | 3 => Style::new().color(color("bright_yellow")),
             _ => Style::new().color(color("red")),
         };
 
-        // Calculate title width - account for "[P2] id: " prefix and " [N blockers]" suffix
-        let prefix_len = 6 + issue_id.len() + 2; // "[P2] " + id + ": "
-        let suffix_len = 15; // " [N blockers]"
+        let prefix_len = 6 + issue_id.len() + 2;
+        let suffix_len = 15;
         let title = if max_width > 0 {
             let available = max_width.saturating_sub(prefix_len + suffix_len);
             truncate_title(&bi.issue.title, available)
@@ -683,9 +659,8 @@ mod tests {
     fn test_blocked_args_defaults() {
         init_test_logging();
         info!("test_blocked_args_defaults: starting");
-        // Note: Default::default() gives 0 for limit; clap sets 50 at parse time
         let args = BlockedArgs::default();
-        assert_eq!(args.limit, 0); // Rust Default, not clap default
+        assert_eq!(args.limit, 0);
         assert!(!args.detailed);
         assert!(args.type_.is_empty());
         assert!(args.priority.is_empty());
@@ -740,11 +715,10 @@ mod tests {
 
         sort_blocked_issues(&mut issues);
 
-        // Should be sorted: P0 first, then P1 (more blockers first), then P2
-        assert_eq!(issues[0].issue.id, "d"); // P0
-        assert_eq!(issues[1].issue.id, "c"); // P1, 5 blockers
-        assert_eq!(issues[2].issue.id, "b"); // P1, 1 blocker
-        assert_eq!(issues[3].issue.id, "a"); // P2
+        assert_eq!(issues[0].issue.id, "d");
+        assert_eq!(issues[1].issue.id, "c");
+        assert_eq!(issues[2].issue.id, "b");
+        assert_eq!(issues[3].issue.id, "a");
         info!("test_sort_by_priority_then_blocker_count: assertions passed");
     }
 

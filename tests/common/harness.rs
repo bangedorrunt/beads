@@ -150,10 +150,6 @@ impl Default for ArtifactConfig {
     }
 }
 
-// ============================================================================
-// RUNNER POLICY (beads-enep)
-// ============================================================================
-
 /// Parallelism mode for scenario execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -185,22 +181,17 @@ pub struct ResourceGuardrails {
 impl Default for ResourceGuardrails {
     fn default() -> Self {
         Self {
-            // 1MB stdout/stderr max (prevents memory issues)
             max_stdout_bytes: parse_env_usize("HARNESS_MAX_STDOUT_BYTES", 1024 * 1024),
             max_stderr_bytes: parse_env_usize("HARNESS_MAX_STDERR_BYTES", 1024 * 1024),
-            // 10MB per artifact file
             max_artifact_file_bytes: parse_env_usize(
                 "HARNESS_MAX_ARTIFACT_BYTES",
                 10 * 1024 * 1024,
             ),
-            // 100MB total per test
             max_artifact_dir_bytes: parse_env_usize(
                 "HARNESS_MAX_ARTIFACT_DIR_BYTES",
                 100 * 1024 * 1024,
             ),
-            // 7 days retention by default
             artifact_retention_days: parse_env_u32("HARNESS_ARTIFACT_RETENTION_DAYS", 7),
-            // 10000 log lines max
             max_log_lines: parse_env_usize("HARNESS_MAX_LOG_LINES", 10000),
         }
     }
@@ -233,9 +224,7 @@ pub struct RunnerPolicy {
 impl Default for RunnerPolicy {
     fn default() -> Self {
         Self {
-            // 30 second command timeout by default
             command_timeout: Duration::from_secs(parse_env_u64("HARNESS_COMMAND_TIMEOUT_SECS", 30)),
-            // 5 minute scenario timeout by default
             scenario_timeout: Duration::from_secs(parse_env_u64(
                 "HARNESS_SCENARIO_TIMEOUT_SECS",
                 300,
@@ -246,7 +235,6 @@ impl Default for RunnerPolicy {
             } else {
                 ParallelismMode::Serial
             },
-            // Default to number of CPUs, capped at 8
             max_parallel_workers: parse_env_usize(
                 "HARNESS_PARALLEL_WORKERS",
                 std::thread::available_parallelism().map_or(4, |p| p.get().min(8)),
@@ -291,12 +279,12 @@ impl RunnerPolicy {
     /// Create a benchmark policy with no timeouts
     pub fn benchmark() -> Self {
         Self {
-            command_timeout: Duration::from_secs(3600),  // 1 hour
-            scenario_timeout: Duration::from_secs(7200), // 2 hours
-            parallelism_mode: ParallelismMode::Serial,   // Serial for accurate timing
+            command_timeout: Duration::from_secs(3600),
+            scenario_timeout: Duration::from_secs(7200),
+            parallelism_mode: ParallelismMode::Serial,
             max_parallel_workers: 1,
             guardrails: ResourceGuardrails {
-                max_stdout_bytes: 100 * 1024 * 1024, // 100MB
+                max_stdout_bytes: 100 * 1024 * 1024,
                 max_stderr_bytes: 100 * 1024 * 1024,
                 ..Default::default()
             },
@@ -389,8 +377,7 @@ fn truncate_output(output: &str, max_bytes: usize) -> (String, bool) {
         return (output.to_string(), false);
     }
 
-    // Find a safe UTF-8 boundary
-    let mut truncate_at = max_bytes.saturating_sub(100); // Leave room for notice
+    let mut truncate_at = max_bytes.saturating_sub(100);
     while truncate_at > 0 && !output.is_char_boundary(truncate_at) {
         truncate_at -= 1;
     }
@@ -561,7 +548,6 @@ impl ArtifactLogger {
             "timestamp": Utc::now().to_rfc3339(),
         });
 
-        // Include policy if provided
         if let Some(p) = policy {
             summary["policy"] = p.to_json();
         }
@@ -572,7 +558,6 @@ impl ArtifactLogger {
         }
 
         if passed && !self.config.preserve_on_success {
-            // Clean up detailed artifacts on success, keep only summary
             if let Ok(entries) = fs::read_dir(&self.artifact_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
@@ -798,18 +783,12 @@ impl TestWorkspace {
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
-        // Same create gate the `common::cli` runners apply. This harness is a
-        // second, independent funnel (TestWorkspace methods rather than the
-        // free functions), so without this its seeds are refused by
-        // fail-closed `br create` exactly as the other harness's were.
         let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
         clear_inherited_br_env(&mut cmd);
         cmd.envs(env_vars);
         cmd.env("NO_COLOR", "1");
-        // See tests/common/cli.rs: debug tracing on stderr trips `br doctor`'s
-        // own `rust_log` check and corrupts stderr-matching assertions.
         cmd.env("RUST_LOG", "error");
         cmd.env("RUST_BACKTRACE", "1");
         cmd.env("PATH", super::cli::deduplicated_br_path());
@@ -874,10 +853,6 @@ impl TestWorkspace {
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
-        // Same create gate the `common::cli` runners apply. This harness is a
-        // second, independent funnel (TestWorkspace methods rather than the
-        // free functions), so without this its seeds are refused by
-        // fail-closed `br create` exactly as the other harness's were.
         let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
@@ -1098,17 +1073,11 @@ impl ConformanceWorkspace {
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
-        // Same create gate the `common::cli` runners apply. This harness is a
-        // second, independent funnel (TestWorkspace methods rather than the
-        // free functions), so without this its seeds are refused by
-        // fail-closed `br create` exactly as the other harness's were.
         let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
         clear_inherited_br_env(&mut cmd);
         cmd.env("NO_COLOR", "1");
-        // See tests/common/cli.rs: debug tracing on stderr trips `br doctor`'s
-        // own `rust_log` check and corrupts stderr-matching assertions.
         cmd.env("RUST_LOG", "error");
         cmd.env("RUST_BACKTRACE", "1");
         cmd.env("PATH", super::cli::deduplicated_br_path());
@@ -1179,18 +1148,12 @@ impl ConformanceWorkspace {
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
-        // Same create gate the `common::cli` runners apply. This harness is a
-        // second, independent funnel (TestWorkspace methods rather than the
-        // free functions), so without this its seeds are refused by
-        // fail-closed `br create` exactly as the other harness's were.
         let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
         clear_inherited_br_env(&mut cmd);
         cmd.envs(env_vars);
         cmd.env("NO_COLOR", "1");
-        // See tests/common/cli.rs: debug tracing on stderr trips `br doctor`'s
-        // own `rust_log` check and corrupts stderr-matching assertions.
         cmd.env("RUST_LOG", "error");
         cmd.env("RUST_BACKTRACE", "1");
         cmd.env("PATH", super::cli::deduplicated_br_path());
@@ -1259,10 +1222,6 @@ impl ConformanceWorkspace {
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
-        // Same create gate the `common::cli` runners apply. This harness is a
-        // second, independent funnel (TestWorkspace methods rather than the
-        // free functions), so without this its seeds are refused by
-        // fail-closed `br create` exactly as the other harness's were.
         let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
@@ -1333,10 +1292,6 @@ impl ConformanceWorkspace {
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().to_string())
             .collect();
-        // Same create gate the `common::cli` runners apply. This harness is a
-        // second, independent funnel (TestWorkspace methods rather than the
-        // free functions), so without this its seeds are refused by
-        // fail-closed `br create` exactly as the other harness's were.
         let args_vec = super::cli::gate_create_args(raw_args);
         cmd.args(&args_vec);
 
@@ -1468,22 +1423,15 @@ mod tests {
         assert_eq!(id, "bd-abc123"); // invariant: parser test, not ID-pinning
     }
 
-    // ========================================================================
-    // RunnerPolicy tests (beads-enep)
-    // ========================================================================
-
     #[test]
     fn test_runner_policy_default() {
         let policy = RunnerPolicy::default();
 
-        // Verify default timeouts
         assert_eq!(policy.command_timeout.as_secs(), 30);
         assert_eq!(policy.scenario_timeout.as_secs(), 300);
 
-        // Verify default parallelism (serial)
         assert_eq!(policy.parallelism_mode, ParallelismMode::Serial);
 
-        // Verify default guardrails
         assert_eq!(policy.guardrails.max_stdout_bytes, 1024 * 1024);
         assert_eq!(policy.guardrails.max_stderr_bytes, 1024 * 1024);
         assert_eq!(policy.guardrails.artifact_retention_days, 7);
@@ -1493,11 +1441,9 @@ mod tests {
     fn test_runner_policy_ci() {
         let policy = RunnerPolicy::ci();
 
-        // CI has tighter timeouts
         assert_eq!(policy.command_timeout.as_secs(), 10);
         assert_eq!(policy.scenario_timeout.as_secs(), 60);
 
-        // CI uses fail_fast
         assert!(policy.fail_fast);
         assert!(policy.skip_slow);
     }
@@ -1506,11 +1452,9 @@ mod tests {
     fn test_runner_policy_local() {
         let policy = RunnerPolicy::local();
 
-        // Local has relaxed timeouts
         assert_eq!(policy.command_timeout.as_secs(), 60);
         assert_eq!(policy.scenario_timeout.as_secs(), 600);
 
-        // Local doesn't fail fast
         assert!(!policy.fail_fast);
         assert!(!policy.skip_slow);
         assert_eq!(policy.retry_count, 1);
@@ -1520,15 +1464,12 @@ mod tests {
     fn test_runner_policy_benchmark() {
         let policy = RunnerPolicy::benchmark();
 
-        // Benchmark has very long timeouts
         assert_eq!(policy.command_timeout.as_secs(), 3600);
         assert_eq!(policy.scenario_timeout.as_secs(), 7200);
 
-        // Benchmark uses serial for accurate timing
         assert_eq!(policy.parallelism_mode, ParallelismMode::Serial);
         assert_eq!(policy.max_parallel_workers, 1);
 
-        // Benchmark has larger output buffers
         assert_eq!(policy.guardrails.max_stdout_bytes, 100 * 1024 * 1024);
     }
 
@@ -1574,12 +1515,10 @@ mod tests {
 
     #[test]
     fn test_truncate_output() {
-        // Short output - no truncation
         let (result, truncated) = truncate_output("short", 100);
         assert_eq!(result, "short");
         assert!(!truncated);
 
-        // Long output - truncated
         let long_output = "x".repeat(1000);
         let (result, truncated) = truncate_output(&long_output, 200);
         assert!(truncated);

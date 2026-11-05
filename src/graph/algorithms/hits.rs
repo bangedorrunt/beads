@@ -62,7 +62,6 @@ pub fn hits(graph: &DiGraph, config: &HITSConfig) -> HITSResult {
         };
     }
 
-    // Initialize with uniform scores
     let mut hubs = vec![1.0 / (n as f64); n];
     let mut auth = vec![1.0 / (n as f64); n];
 
@@ -74,25 +73,21 @@ pub fn hits(graph: &DiGraph, config: &HITSConfig) -> HITSResult {
         let mut new_auth = vec![0.0; n];
         let mut new_hubs = vec![0.0; n];
 
-        // Authority update: auth(v) = sum of hub(u) for all u → v
         for (v, auth_score) in new_auth.iter_mut().enumerate() {
             for &u in graph.predecessors_slice(v) {
                 *auth_score += hubs[u];
             }
         }
 
-        // Hub update: hub(u) = sum of auth(v) for all u → v
         for (u, hub_score) in new_hubs.iter_mut().enumerate() {
             for &v in graph.successors_slice(u) {
                 *hub_score += new_auth[v];
             }
         }
 
-        // Normalize both vectors (L2 norm for stability)
         normalize_l2(&mut new_auth);
         normalize_l2(&mut new_hubs);
 
-        // Check convergence
         let auth_diff: f64 = auth
             .iter()
             .zip(new_auth.iter())
@@ -157,9 +152,6 @@ mod tests {
 
     #[test]
     fn test_hits_chain() {
-        // a -> b -> c
-        // a is a hub (points to things)
-        // c is an authority (pointed to)
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -169,8 +161,6 @@ mod tests {
 
         let result = hits_default(&graph);
 
-        // In a chain: a has highest hub (points to b), c has highest authority (final target)
-        // b is in the middle, moderate both
         assert!(
             result.authorities[c] > result.authorities[a],
             "c should have higher authority"
@@ -180,8 +170,6 @@ mod tests {
 
     #[test]
     fn test_hits_star_hub() {
-        // hub -> a, hub -> b, hub -> c
-        // hub is a pure hub, a/b/c are pure authorities
         let mut graph = DiGraph::new();
         let hub = graph.add_node("hub");
         let a = graph.add_node("a");
@@ -193,12 +181,10 @@ mod tests {
 
         let result = hits_default(&graph);
 
-        // Hub should have high hub score
         assert!(
             result.hubs[hub] > result.hubs[a],
             "hub should have higher hub score"
         );
-        // a, b, c should have equal authority scores
         let auth_diff = (result.authorities[a] - result.authorities[b]).abs()
             + (result.authorities[b] - result.authorities[c]).abs();
         assert!(auth_diff < 0.01, "a, b, c should have equal authority");
@@ -206,8 +192,6 @@ mod tests {
 
     #[test]
     fn test_hits_star_authority() {
-        // a -> auth, b -> auth, c -> auth
-        // auth is a pure authority, a/b/c are pure hubs
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -219,12 +203,10 @@ mod tests {
 
         let result = hits_default(&graph);
 
-        // auth should have highest authority score
         assert!(
             result.authorities[auth] > result.authorities[a],
             "auth should have higher authority"
         );
-        // a, b, c should have equal hub scores
         let hub_diff =
             (result.hubs[a] - result.hubs[b]).abs() + (result.hubs[b] - result.hubs[c]).abs();
         assert!(hub_diff < 0.01, "a, b, c should have equal hub scores");
@@ -232,9 +214,6 @@ mod tests {
 
     #[test]
     fn test_hits_bipartite() {
-        // Hubs: h1, h2 -> Authorities: a1, a2
-        // h1 -> a1, h1 -> a2
-        // h2 -> a1, h2 -> a2
         let mut graph = DiGraph::new();
         let h1 = graph.add_node("h1");
         let h2 = graph.add_node("h2");
@@ -247,8 +226,6 @@ mod tests {
 
         let result = hits_default(&graph);
 
-        // h1, h2 should have high hub scores
-        // a1, a2 should have high authority scores
         assert!(result.hubs[h1] > result.authorities[h1]);
         assert!(result.hubs[h2] > result.authorities[h2]);
         assert!(result.authorities[a1] > result.hubs[a1]);
@@ -257,7 +234,6 @@ mod tests {
 
     #[test]
     fn test_hits_cycle() {
-        // a -> b -> c -> a
         let mut graph = DiGraph::new();
         let a = graph.add_node("a");
         let b = graph.add_node("b");
@@ -268,7 +244,6 @@ mod tests {
 
         let result = hits_default(&graph);
 
-        // In a symmetric cycle, all nodes should have similar scores
         let hub_diff =
             (result.hubs[a] - result.hubs[b]).abs() + (result.hubs[b] - result.hubs[c]).abs();
         let auth_diff = (result.authorities[a] - result.authorities[b]).abs()
@@ -295,7 +270,6 @@ mod tests {
 
         let result = hits_default(&graph);
 
-        // L2 norm should be 1
         let hub_norm: f64 = result.hubs.iter().map(|v| v * v).sum::<f64>().sqrt();
         let auth_norm: f64 = result.authorities.iter().map(|v| v * v).sum::<f64>().sqrt();
 
@@ -311,12 +285,10 @@ mod tests {
 
     #[test]
     fn test_hits_convergence() {
-        // Create a non-trivial graph
         let mut graph = DiGraph::new();
         for i in 0..10 {
             graph.add_node(&format!("n{}", i));
         }
-        // Add various edges
         for i in 0..5 {
             for j in 5..10 {
                 graph.add_edge(i, j);
@@ -325,10 +297,7 @@ mod tests {
 
         let result = hits_default(&graph);
 
-        // Should converge within max_iterations
         assert!(result.iterations <= 100);
-        // Hubs (0-4) should have higher hub scores
-        // Authorities (5-9) should have higher authority scores
         let avg_hub_hub: f64 = (0..5).map(|i| result.hubs[i]).sum::<f64>() / 5.0;
         let avg_auth_hub: f64 = (5..10).map(|i| result.hubs[i]).sum::<f64>() / 5.0;
         assert!(

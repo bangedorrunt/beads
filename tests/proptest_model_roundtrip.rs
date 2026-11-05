@@ -228,8 +228,6 @@ proptest! {
 
     #[test]
     fn dependency_type_deserialize_matches_lowercase_for_known_values(value in "[a-z\\-]{3,20}") {
-        // Known kebab-case values parse case-insensitively; anything else
-        // fails loud (bd-bqyb) instead of normalizing to Custom.
         let lowered = value.to_lowercase();
         let original = serde_json::from_str::<DependencyType>(&format!("\"{value}\""));
         let lowercase = serde_json::from_str::<DependencyType>(&format!("\"{lowered}\""));

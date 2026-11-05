@@ -31,7 +31,7 @@ proptest! {
     fn rfc3339_parses_correctly(
         year in 2020u32..2030u32,
         month in 1u32..=12u32,
-        day in 1u32..=28u32,  // Use 28 to avoid month-length issues
+        day in 1u32..=28u32,
         hour in 0u32..24u32,
         minute in 0u32..60u32,
         second in 0u32..60u32,
@@ -77,8 +77,6 @@ proptest! {
 
         let formatted = parsed.unwrap().to_rfc3339();
 
-        // Compare the parsed datetime values, not string representations
-        // (format may differ slightly: Z vs +00:00)
         let reparsed = DateTime::parse_from_rfc3339(&formatted);
         prop_assert!(reparsed.is_ok(), "Formatted should reparse: {formatted}");
     }
@@ -99,7 +97,6 @@ proptest! {
         let parsed = result.unwrap();
         prop_assert!(parsed > now, "+{amount}d should be in the future");
 
-        // Verify approximate difference (within 1 second tolerance for test timing)
         let expected_diff = Duration::days(amount);
         let actual_diff = parsed - now;
         let tolerance = Duration::seconds(2);
@@ -215,9 +212,6 @@ proptest! {
         prop_assert!(result.is_ok(), "Simple date should parse: {date}");
 
         let parsed = result.unwrap();
-        // Contract: bare dates mean 09:00 LOCAL on that calendar date; UTC
-        // day fields shift on hosts where local 09:00 maps to the previous
-        // UTC day, so round-trip through Local before comparing.
         let local = parsed.with_timezone(&Local);
         let year_i32 = i32::try_from(year).expect("year fits i32");
         prop_assert_eq!(local.year(), year_i32, "Year should match");
@@ -229,7 +223,7 @@ proptest! {
     #[test]
     fn invalid_unit_rejected(
         amount in 1i64..100i64,
-        unit in "[a-z&&[^mhdw]]",  // Any letter except m, h, d, w
+        unit in "[a-z&&[^mhdw]]",
     ) {
         init_test_logging();
 
@@ -246,7 +240,6 @@ proptest! {
     fn garbage_rejected(garbage in "[^0-9+-]{3,20}") {
         init_test_logging();
 
-        // Skip if garbage happens to match a keyword
         let lower = garbage.to_lowercase();
         prop_assume!(lower != "tomorrow" && lower != "next-week" && lower != "nextweek");
 
@@ -271,9 +264,6 @@ fn keyword_tomorrow_is_future() {
     let parsed = result.unwrap();
     assert!(parsed > now, "tomorrow should be in the future");
 
-    // Should be roughly 1 day ahead. Since "tomorrow" is set to 9 AM tomorrow,
-    // the actual difference depends on current time of day. At 10 PM, it's only
-    // ~11 hours away. Just verify it's a positive duration and less than 48 hours.
     let diff = parsed - now;
     assert!(
         diff > Duration::zero() && diff < Duration::hours(48),
@@ -296,7 +286,6 @@ fn keyword_next_week_is_week_away() {
     let parsed = result.unwrap();
     assert!(parsed > now, "next-week should be in the future");
 
-    // Should be roughly 7 days ahead
     let diff = parsed - now;
     assert!(
         diff > Duration::days(6) && diff < Duration::days(8),

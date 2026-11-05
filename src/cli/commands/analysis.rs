@@ -101,10 +101,6 @@ fn load_analysis_issues(label: Option<&str>, cli: &CliOverrides) -> Result<Vec<I
     Ok(issues)
 }
 
-// ---------------------------------------------------------------------------
-// Envelope assembly
-// ---------------------------------------------------------------------------
-
 fn generated_at() -> String {
     analysis_now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
@@ -125,7 +121,6 @@ fn analysis_now() -> chrono::DateTime<Utc> {
 /// structural parity holds against the Go-generated goldens.
 fn go_number(value: f64) -> Value {
     if value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
-        // Guarded above: integral and well inside the exact-integer f64 range.
         #[allow(clippy::cast_possible_truncation)]
         Value::from(value as i64)
     } else {
@@ -205,7 +200,6 @@ fn analysis_config_value(config: &AnalysisConfig) -> Value {
 fn status_value(result: &AnalysisResult) -> Value {
     let serialized = serde_json::to_value(to_value_map(&result.status))
         .unwrap_or_else(|_| Value::Object(Map::new()));
-    // Re-wrap as a plain object even when every metric is absent.
     if serialized.is_object() {
         serialized
     } else {
@@ -249,8 +243,6 @@ fn plan_status_value(result: &AnalysisResult) -> Value {
     ] {
         status.insert(metric.into(), entry);
     }
-    // bv computes Slack even with cycles (golden shows computed); synthesize
-    // a computed entry when the engine skipped it due to SCC truth.
     if status
         .get("Slack")
         .is_none_or(|v| v.get("state").and_then(Value::as_str) != Some("computed"))
@@ -281,11 +273,6 @@ fn is_deferred(issue: &Issue, now: chrono::DateTime<Utc>) -> bool {
 fn plan_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
     let now = analysis_now();
 
-    // Actionable: open (including InProgress) with no open blocker, not
-    // deferred. Matches bv empirics and the committed goldens (4 actionable
-    // tracks including the InProgress issue). CobaltMaple's Open-only flag
-    // is noted but would require golden regen (would drop to 3); keeping
-    // bv-parity for now.
     let actionable: Vec<&Issue> = issues
         .iter()
         .filter(|issue| {
@@ -307,7 +294,6 @@ fn plan_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
         })
         .count();
 
-    // Component membership for track grouping (components cover all nodes).
     let mut component_of: HashMap<&str, &str> = HashMap::new();
     for component in &result.components {
         let Some(key) = component.iter().min().map(String::as_str) else {
@@ -328,7 +314,7 @@ fn plan_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
 
     let mut tracks: Vec<Value> = Vec::new();
     for (track_index, group) in groups.values().enumerate() {
-        #[allow(clippy::cast_possible_truncation)] // tracks beyond u8::MAX are not a real case
+        #[allow(clippy::cast_possible_truncation)]
         let letter = b'A' + (track_index as u8);
         let mut items: Vec<Value> = Vec::new();
         let mut sorted: Vec<&&Issue> = group.iter().collect();
@@ -359,13 +345,11 @@ fn plan_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
         let reason = if count == 1 {
             "Single actionable item"
         } else {
-            // Multi-item tracks never occur in the committed fixture; bv's
-            // exact wording was not observable, so describe the grouping.
             "Actionable items share one dependency group"
         };
         tracks.push(Value::Object({
             let mut map = Map::new();
-            #[allow(clippy::cast_possible_truncation)] // track_index < u8::MAX in practice
+            #[allow(clippy::cast_possible_truncation)]
             let track_id = if letter <= b'Z' {
                 format!("track-{}", letter as char)
             } else {
@@ -378,8 +362,6 @@ fn plan_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
         }));
     }
 
-    // Highest impact: most actionable unblocks, ties to lowest id.
-    // bv counts direct blocked successors (not just actionable ones).
     let highest = actionable
         .iter()
         .min_by_key(|issue| {
@@ -544,9 +526,6 @@ fn insights_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
     const EMPTY_F64: BTreeMap<String, f64> = BTreeMap::new();
     const EMPTY_USIZE: BTreeMap<String, usize> = BTreeMap::new();
 
-    // The engine L2-normalizes the dominant eigenvector; bv emits it scaled
-    // so the values sum to one. Rescale here for envelope parity without
-    // touching the shared engine contract.
     let mut eigenvector_scaled: BTreeMap<String, f64> =
         result.eigenvector.clone().unwrap_or_default();
     let eigen_sum: f64 = eigenvector_scaled.values().sum();
@@ -556,8 +535,6 @@ fn insights_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
         }
     }
 
-    // bv empirics: include all ranked entries; goldens show 12 hubs/authorities
-    // even with small values, and bottlenecks with a cycle present.
     let gated =
         |map: &Option<BTreeMap<String, f64>>| ranked_entries(map.as_ref().unwrap_or(&EMPTY_F64));
 
@@ -580,8 +557,6 @@ fn insights_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
             })
         })
         .collect();
-    // Slack: bv computes it even with cycles (golden shows computed), so
-    // synthesize zeros when the engine skipped it due to SCC has_cycles.
     let slack_map: BTreeMap<String, f64> = result
         .slack
         .clone()
@@ -656,7 +631,6 @@ fn insights_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
             "analysis_config".into(),
             analysis_config_value(&AnalysisConfig::full()),
         );
-        // bv computes Slack even with cycles; ensure status reflects synthesized map.
         let mut insights_status = match status_value(result) {
             Value::Object(map) => map,
             _ => Map::new(),
@@ -732,7 +706,6 @@ fn insights_envelope(issues: &[Issue], result: &AnalysisResult) -> Value {
         map
     })
 }
-
 
 fn stats_value(result: &AnalysisResult, node_count: usize, edge_count: usize) -> Value {
     Value::Object({
@@ -835,8 +808,6 @@ fn advanced_insights_value(issues: &[Issue], result: &AnalysisResult) -> Value {
         })
         .collect();
     let open_ids: HashSet<&str> = open.iter().map(|issue| issue.id.as_str()).collect();
-    // bv's `limited` / `max_parallel` count every non-closed issue, deferred
-    // ones included (observed on the fixture: 11 with fx-l deferred).
     let open_including_deferred = issues
         .iter()
         .filter(|issue| {
@@ -847,8 +818,6 @@ fn advanced_insights_value(issues: &[Issue], result: &AnalysisResult) -> Value {
         })
         .count();
 
-    // Greedy submodular top-k unlock; ties break to the lowest id, matching
-    // the fixture's id-ordered picks when every candidate gains nothing.
     let mut remaining: Vec<&Issue> = open.clone();
     let mut picked: Vec<Value> = Vec::with_capacity(ADVANCED_TOPK_LIMIT);
     let mut marginal_gains: Vec<u64> = Vec::new();
@@ -1056,7 +1025,6 @@ fn would_unblock(
     open_ids: &HashSet<&str>,
     already_gained: &[String],
 ) -> bool {
-    // `successor` unblocks when every other open blocker is itself gained.
     let Some(&node) = result.index.get(successor) else {
         return false;
     };
@@ -1092,8 +1060,6 @@ fn coverage_set_value(edge_count: usize) -> Value {
             Value::from("Graph has no blocking dependencies."),
         );
     } else {
-        // Greedy 2-approx vertex cover over blocking edges; the fixture never
-        // exercises this branch, so emit the accounting without a rationale.
         entry.insert(
             "status".into(),
             Value::Object({
@@ -1127,7 +1093,6 @@ fn cycle_break_value(result: &AnalysisResult) -> Value {
             status
         }),
     );
-    // bv empirics: has_cycles / cycle_count come from enumeration (result.cycles), not SCC truth.
     let has_cycles = result.cycles.as_ref().is_some_and(|v| !v.is_empty());
     let cycle_count = result.cycles.as_ref().map(Vec::len).unwrap_or(0);
     entry.insert("cycle_count".into(), Value::from(cycle_count));

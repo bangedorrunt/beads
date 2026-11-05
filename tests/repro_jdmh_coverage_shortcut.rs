@@ -85,9 +85,6 @@ fn lying_metadata_workspace() -> TempDir {
     let two_rows = fs::read(&jsonl_path).expect("read 2-row jsonl");
     assert_ne!(one_row, two_rows);
 
-    // Rebuild the DB from the 1-row file (JSONL-authoritative), then restore
-    // the 2-row file and plant its hash so every byte/hash signal reports
-    // "current" while the DB is missing an issue.
     fs::write(&jsonl_path, &one_row).expect("restore 1-row jsonl");
     run_ok(ws, &["sync", "--import-only", "--rebuild"]);
     fs::write(&jsonl_path, &two_rows).expect("restore 2-row jsonl");
@@ -141,8 +138,6 @@ fn import_shortcut_rejects_uncovered_hash_match_and_imports() {
         "import must fall through the stored-hash shortcut and pull the missing row: {result}"
     );
 
-    // The DB now covers the JSONL; the shortcut may engage again and status
-    // is genuinely in sync.
     let stdout = run_ok(ws, &["sync", "--status", "--json"]);
     let status: Value = serde_json::from_str(&stdout).expect("status json");
     assert_eq!(status["coverage_drift"], Value::Bool(false), "{status}");

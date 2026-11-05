@@ -76,7 +76,6 @@ pub struct TuiApp {
     height: u16,
     status_message: Option<String>,
     should_quit: bool,
-    // gu7ts.8 extras
     /// Applied filter query (persisted after Search Enter). None = no filter.
     filter: Option<String>,
     /// Live search input buffer while in Search focus. Only meaningful when focus==Search.
@@ -110,14 +109,11 @@ impl TuiApp {
     /// Display order: open → in_progress → blocked/deferred → closed last (so first page is actionable, not 1000 closed).
     #[must_use]
     pub fn new(mut issues: Vec<Issue>) -> Self {
-        // Display order: actionable first (open/in_progress), closed last — otherwise 1000 closed dominate first page (user report).
         issues.sort_by(|a, b| {
             status_sort_key(&a.status)
                 .cmp(&status_sort_key(&b.status))
                 .then_with(|| a.id.cmp(&b.id))
         });
-        // Precompute analysis once for triage insights + graph analysis sections.
-        // Keep it cheap: full triage only for <2000 issues, else phase1.
         let (analysis, triage) = if issues.is_empty() {
             (None, None)
         } else if issues.len() < 2000 {
@@ -318,12 +314,10 @@ impl TuiApp {
     }
 
     fn viewport_rows(&self) -> usize {
-        // Body height = total - footer (1) - optional search bar (1).
         let mut h = usize::from(self.height.saturating_sub(1));
         if self.is_searching() {
             h = h.saturating_sub(1);
         }
-        // Reserve header line.
         h.saturating_sub(1)
     }
 
@@ -334,7 +328,6 @@ impl TuiApp {
     /// Apply one key event. This is the whole focus contract.
     #[allow(clippy::too_many_lines)]
     pub fn handle_key(&mut self, key: Key) {
-        // Status messages clear on any keypress (bv footer rule §1.6).
         self.status_message = None;
 
         if key == Key::CtrlC {
@@ -342,13 +335,11 @@ impl TuiApp {
             return;
         }
 
-        // Search input consumes all keys (bv §3.2: filtering suppresses globals).
         if self.focus == Focus::Search {
             self.handle_search_key(key);
             return;
         }
 
-        // Help overlay: any key closes and restores focus (bv §5.2).
         if self.focus == Focus::Help {
             let prev = self.focus_before_help.take().unwrap_or(Focus::List);
             self.focus = prev;
@@ -358,7 +349,6 @@ impl TuiApp {
             return;
         }
 
-        // QuitConfirm handled before globals.
         if self.focus == Focus::QuitConfirm {
             if key == Key::Char('y') {
                 self.should_quit = true;
@@ -369,7 +359,6 @@ impl TuiApp {
             return;
         }
 
-        // View overlays: q/esc/tab close back to list.
         if self.is_view_focus() {
             match key {
                 Key::Char('q') | Key::Esc => {
@@ -378,7 +367,6 @@ impl TuiApp {
                     return;
                 }
                 Key::Enter => {
-                    // Drill-down: keep selection, open detail (split keeps pane, single replaces).
                     self.focus = Focus::Detail;
                     self.detail_scroll = 0;
                     return;
@@ -400,10 +388,8 @@ impl TuiApp {
                 }
                 _ => {}
             }
-            // Fall through to global toggles for view switching (b/g/… switch views directly).
         }
 
-        // Shortcuts sidebar scroll when visible (ctrl+j/k) — available from any non-search/help/quit/view layer.
         if self.show_shortcuts {
             match key {
                 Key::CtrlJ => {
@@ -418,8 +404,6 @@ impl TuiApp {
             }
         }
 
-        // Global toggles when not filtering (bv §3.1, filtering gates)
-        // Applied filter does NOT suppress these.
         match key {
             Key::Char('?') | Key::F1 => {
                 self.focus_before_help = Some(self.focus);
@@ -466,11 +450,9 @@ impl TuiApp {
             | Focus::Insights
             | Focus::Tree
             | Focus::LabelDashboard => {
-                // View overlays reuse list navigation for any unhandled key (don't panic on stray input)
                 self.handle_view_nav(key);
             }
             Focus::Search | Focus::Help | Focus::QuitConfirm => {
-                // Already returned above; reaching here means a stray key arrived after early return race — ignore
             }
         }
     }
@@ -625,7 +607,7 @@ impl TuiApp {
                 self.detail_scroll = self.detail_scroll.saturating_sub(self.page_step())
             }
             Key::Home | Key::Char('g') => self.detail_scroll = 0,
-            Key::End | Key::Char('G') => self.detail_scroll = usize::MAX / 2, // clamped in draw
+            Key::End | Key::Char('G') => self.detail_scroll = usize::MAX / 2,
             _ => {}
         }
     }
