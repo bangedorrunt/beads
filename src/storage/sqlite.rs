@@ -8708,6 +8708,7 @@ impl SqliteStorage {
         for row in &rows {
             issues.push(Self::command_summary_issue_from_row(row)?);
         }
+        self.hydrate_command_issues(&mut issues)?;
         Ok(issues)
     }
 
@@ -8851,6 +8852,7 @@ impl SqliteStorage {
         for row in &rows {
             issues.push(Self::stale_command_issue_from_row(row)?);
         }
+        self.hydrate_command_issues(&mut issues)?;
         Ok(issues)
     }
 
@@ -8936,6 +8938,7 @@ impl SqliteStorage {
         for row in &rows {
             issues.push(Self::lint_command_issue_from_row(row)?);
         }
+        self.hydrate_command_issues(&mut issues)?;
         Ok(issues)
     }
 
@@ -8999,6 +9002,7 @@ impl SqliteStorage {
         for row in &rows {
             issues.push(Self::command_summary_issue_from_row(row)?);
         }
+        self.hydrate_command_issues(&mut issues)?;
         Ok(issues)
     }
 
@@ -9061,6 +9065,7 @@ impl SqliteStorage {
         for row in &rows {
             issues.push(Self::command_summary_issue_from_row(row)?);
         }
+        self.hydrate_command_issues(&mut issues)?;
         Ok(issues)
     }
 
@@ -9839,6 +9844,9 @@ impl SqliteStorage {
         for row in &rows {
             issues.push(projection.parse_issue(row)?);
         }
+        if !matches!(projection, SearchIssueProjection::Full) {
+            self.hydrate_command_issues(&mut issues)?;
+        }
 
         Ok(issues)
     }
@@ -10559,6 +10567,9 @@ impl SqliteStorage {
         for row in &rows {
             issues.push(projection.parse_row(row)?);
         }
+        if !matches!(projection, ReadyIssueProjection::Full) {
+            self.hydrate_command_issues(&mut issues)?;
+        }
         if sort_hybrid_in_rust {
             sort_ready_hybrid(&mut issues);
         }
@@ -10656,6 +10667,9 @@ impl SqliteStorage {
             if let Some(issue) = by_id.remove(id) {
                 issues.push(issue);
             }
+        }
+        if !matches!(projection, ReadyIssueProjection::Full) {
+            self.hydrate_command_issues(&mut issues)?;
         }
 
         Ok(issues)
@@ -11303,6 +11317,9 @@ impl SqliteStorage {
                 blocked_issues.push((issue, Vec::new()));
             }
         }
+        if matches!(projection, BlockedIssueProjection::Command) {
+            self.hydrate_blocked_command_issues(&mut blocked_issues)?;
+        }
 
         Ok(blocked_issues)
     }
@@ -11818,6 +11835,9 @@ impl SqliteStorage {
                 }
             };
             blocked_issues.push((issue, blockers));
+        }
+        if matches!(projection, BlockedIssueProjection::Command) {
+            self.hydrate_blocked_command_issues(&mut blocked_issues)?;
         }
 
         Ok(blocked_issues)
@@ -16008,6 +16028,73 @@ impl SqliteStorage {
             dependencies: vec![],
             comments: vec![],
         })
+    }
+
+    /// Replace command-row placeholders with the canonical stored values.
+    ///
+    /// `*_command_issue_from_row` parsers read only the columns their SQL
+    /// selects; every other field was fabricated (`ac_shape=Checkable`,
+    /// `blast=Normal`, `pinned=false`, ...). Commands then acted on those
+    /// defaults — a judgment-shaped issue looked checkable. One chunked read
+    /// of the full rows is cheaper (and safer) than widening seven SELECTs
+    /// that must stay index-friendly.
+    fn hydrate_command_issues(&self, issues: &mut [Issue]) -> Result<()> {
+        if issues.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = issues.iter().map(|issue| issue.id.clone()).collect();
+        let full = self.get_issues_by_ids(&ids)?;
+        let by_id: std::collections::HashMap<&str, &Issue> = full
+            .iter()
+            .map(|issue| (issue.id.as_str(), issue))
+            .collect();
+        for issue in issues {
+            let Some(stored) = by_id.get(issue.id.as_str()) else {
+                continue;
+            };
+            // Merge ONLY the fields the command projections could not parse.
+            // Bulk fields (description, design, notes, ...) stay None by
+            // contract: command output must not load them.
+            issue.ac_shape = stored.ac_shape;
+            issue.blast = stored.blast;
+            issue.deliverable = stored.deliverable;
+            issue.promotes = stored.promotes.clone();
+            issue.pinned = stored.pinned;
+            issue.ephemeral = stored.ephemeral;
+            issue.is_template = stored.is_template;
+            issue.commit_sha = stored.commit_sha.clone();
+            issue.close_verdict = stored.close_verdict.clone();
+        }
+        Ok(())
+    }
+
+    /// Pair-preserving variant of [`Self::hydrate_command_issues`] for the
+    /// blocked listing (issue + its blocker ids).
+    fn hydrate_blocked_command_issues(&self, issues: &mut [(Issue, Vec<String>)]) -> Result<()> {
+        if issues.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = issues.iter().map(|(issue, _)| issue.id.clone()).collect();
+        let full = self.get_issues_by_ids(&ids)?;
+        let by_id: std::collections::HashMap<&str, &Issue> = full
+            .iter()
+            .map(|issue| (issue.id.as_str(), issue))
+            .collect();
+        for (issue, _) in issues {
+            let Some(stored) = by_id.get(issue.id.as_str()) else {
+                continue;
+            };
+            issue.ac_shape = stored.ac_shape;
+            issue.blast = stored.blast;
+            issue.deliverable = stored.deliverable;
+            issue.promotes = stored.promotes.clone();
+            issue.pinned = stored.pinned;
+            issue.ephemeral = stored.ephemeral;
+            issue.is_template = stored.is_template;
+            issue.commit_sha = stored.commit_sha.clone();
+            issue.close_verdict = stored.close_verdict.clone();
+        }
+        Ok(())
     }
 
     fn ready_issue_from_row(row: &Row) -> Result<Issue> {
@@ -28854,6 +28941,41 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(projected, full);
+    }
+
+    #[test]
+    fn command_projection_carries_semantic_fields_instead_of_placeholders() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 4, 2, 9, 0, 0).unwrap();
+        let mut issue = make_issue(
+            "bd-semantic-fields",
+            "Judgment-shaped row",
+            Status::Open,
+            1,
+            None,
+            now,
+            None,
+        );
+        issue.ac_shape = crate::model::AcShape::Judgment;
+        issue.blast = crate::model::Blast::High;
+        storage.create_issue(&issue, "tester").unwrap();
+
+        let projected = storage
+            .get_ready_issues_for_command_output(
+                &ReadyFilters::default(),
+                ReadySortPolicy::Priority,
+            )
+            .unwrap();
+        let row = projected
+            .iter()
+            .find(|issue| issue.id == "bd-semantic-fields")
+            .expect("ready row");
+        assert_eq!(
+            row.ac_shape,
+            crate::model::AcShape::Judgment,
+            "the fabricated Checkable default would mis-gate a judgment issue"
+        );
+        assert_eq!(row.blast, crate::model::Blast::High);
     }
 
     #[test]

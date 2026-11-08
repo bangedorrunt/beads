@@ -86,6 +86,10 @@ pub struct TuiApp {
     shortcuts_scroll: usize,
     /// Scroll offset inside the detail viewport (j/k, ctrl+d/u, g/G).
     detail_scroll: usize,
+    /// Highest useful detail scroll for the last rendered viewport. Set by
+    /// the renderer (it knows the wrapped line count) so End can name a real
+    /// bottom instead of a sentinel that Up cannot walk back from.
+    detail_max_scroll: std::cell::Cell<usize>,
     /// Cached analysis for triage/graph sections (bv parity, computed once).
     analysis: Option<AnalysisResult>,
     triage: Option<TriageResult>,
@@ -144,6 +148,7 @@ impl TuiApp {
             show_shortcuts: false,
             shortcuts_scroll: 0,
             detail_scroll: 0,
+            detail_max_scroll: std::cell::Cell::new(0),
             analysis,
             triage,
         }
@@ -212,6 +217,11 @@ impl TuiApp {
     #[must_use]
     pub const fn detail_scroll(&self) -> usize {
         self.detail_scroll
+    }
+
+    /// The renderer publishes the current viewport's maximum scroll.
+    pub fn set_detail_max_scroll(&self, max: usize) {
+        self.detail_max_scroll.set(max);
     }
 
     #[must_use]
@@ -452,8 +462,7 @@ impl TuiApp {
             | Focus::LabelDashboard => {
                 self.handle_view_nav(key);
             }
-            Focus::Search | Focus::Help | Focus::QuitConfirm => {
-            }
+            Focus::Search | Focus::Help | Focus::QuitConfirm => {}
         }
     }
 
@@ -491,8 +500,9 @@ impl TuiApp {
     fn handle_search_key(&mut self, key: Key) {
         match key {
             Key::Esc => {
+                // Cancel only the in-progress search; a filter committed by a
+                // previous Enter stays applied (Esc on the list clears it).
                 self.search_buffer.clear();
-                self.filter = None;
                 self.focus = Focus::List;
                 self.selected = 0;
                 self.set_status("search cancelled");
@@ -607,7 +617,7 @@ impl TuiApp {
                 self.detail_scroll = self.detail_scroll.saturating_sub(self.page_step())
             }
             Key::Home | Key::Char('g') => self.detail_scroll = 0,
-            Key::End | Key::Char('G') => self.detail_scroll = usize::MAX / 2,
+            Key::End | Key::Char('G') => self.detail_scroll = self.detail_max_scroll.get(),
             _ => {}
         }
     }

@@ -1113,8 +1113,9 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
 
     let viewport = usize::from(area.height.saturating_sub(2));
     let total = lines.len();
-    let start = app.detail_scroll().min(total.saturating_sub(viewport));
-    let start = start.min(total.saturating_sub(viewport));
+    let max_scroll = total.saturating_sub(viewport);
+    app.set_detail_max_scroll(max_scroll);
+    let start = app.detail_scroll().min(max_scroll);
     let end = (start + viewport).min(total);
     let visible: Vec<Line> = lines.into_iter().skip(start).take(end - start).collect();
     let scroll_hint = if total > viewport {
