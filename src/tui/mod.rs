@@ -50,10 +50,9 @@ pub fn run() -> crate::error::Result<()> {
         }
         if let Event::Key(key) =
             event::read().map_err(|e| crate::error::BeadsError::Config(format!("TUI read: {e}")))?
+            && key.kind == KeyEventKind::Press
         {
-            if key.kind == KeyEventKind::Press {
-                app.handle_key(to_key(&key));
-            }
+            app.handle_key(to_key(&key));
         }
         if app.should_quit() {
             break;

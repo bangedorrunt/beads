@@ -94,16 +94,15 @@ impl BackupFileGuard {
 
 impl Drop for BackupFileGuard {
     fn drop(&mut self) {
-        if !self.persist {
-            if let Err(cleanup_err) = fs::remove_file(&self.path)
-                && cleanup_err.kind() != io::ErrorKind::NotFound
-            {
-                tracing::warn!(
-                    backup = %self.path.display(),
-                    error = %cleanup_err,
-                    "Failed to remove partially written history backup"
-                );
-            }
+        if !self.persist
+            && let Err(cleanup_err) = fs::remove_file(&self.path)
+            && cleanup_err.kind() != io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                backup = %self.path.display(),
+                error = %cleanup_err,
+                "Failed to remove partially written history backup"
+            );
         }
     }
 }

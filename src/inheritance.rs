@@ -131,14 +131,13 @@ pub fn collect_inherited_blocks(
     let mut blocks = Vec::new();
     let mut emitted_ids: HashSet<String> = HashSet::new();
 
-    if let Some(root_issue) = root.as_ref() {
-        if !emitted_ids.contains(&root_issue.id)
-            && root_issue.id != immediate_parent.id
-            && let Some(block) = block_from_ancestor(root_issue, root_role(root_issue))
-        {
-            emitted_ids.insert(root_issue.id.clone());
-            blocks.push(block);
-        }
+    if let Some(root_issue) = root.as_ref()
+        && !emitted_ids.contains(&root_issue.id)
+        && root_issue.id != immediate_parent.id
+        && let Some(block) = block_from_ancestor(root_issue, root_role(root_issue))
+    {
+        emitted_ids.insert(root_issue.id.clone());
+        blocks.push(block);
     }
 
     let parent_is_also_root = root.as_ref().is_some_and(|r| r.id == immediate_parent.id);

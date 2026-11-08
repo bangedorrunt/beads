@@ -416,10 +416,10 @@ pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
         match normalized_path.parent() {
             Some(parent) if parent.exists() => parent.to_path_buf(),
             _ => {
-                if let Ok(relative) = normalized_path.strip_prefix(&canonical_beads) {
-                    if !relative.to_string_lossy().contains("..") {
-                        return validate_extension_and_name(&normalized_path);
-                    }
+                if let Ok(relative) = normalized_path.strip_prefix(&canonical_beads)
+                    && !relative.to_string_lossy().contains("..")
+                {
+                    return validate_extension_and_name(&normalized_path);
                 }
                 normalized_path.clone()
             }
@@ -429,12 +429,11 @@ pub fn validate_sync_path(path: &Path, beads_dir: &Path) -> PathValidation {
     let canonical_path = match canonicalize(&path_to_check) {
         Ok(p) => p,
         Err(e) => {
-            if !normalized_path.exists() {
-                if normalized_path.starts_with(beads_dir)
-                    || normalized_path.starts_with(&canonical_beads)
-                {
-                    return validate_extension_and_name(&normalized_path);
-                }
+            if !normalized_path.exists()
+                && (normalized_path.starts_with(beads_dir)
+                    || normalized_path.starts_with(&canonical_beads))
+            {
+                return validate_extension_and_name(&normalized_path);
             }
             let result = PathValidation::CanonicalizationFailed {
                 path: path.to_path_buf(),
