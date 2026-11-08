@@ -10422,10 +10422,17 @@ fn export_to_jsonl_with_policy_expected_authority(
         database_authority.verify_database_authority()?;
     }
 
+    let exported_marked_at =
+        filter_dirty_metadata_for_export(&dirty_metadata, &exported_ids, &skipped_tombstone_ids);
     let pending_receipt = JsonlFlushPendingReceipt {
         output_path: output_path.to_string_lossy().to_string(),
         content_hash: content_hash.clone(),
         exported_count: exported_ids.len(),
+        exported_ids: exported_ids.clone(),
+        exported_marked_at: exported_marked_at.clone(),
+        intentionally_excluded_marked_at: intentionally_excluded_marked_at.clone(),
+        skipped_tombstone_ids: skipped_tombstone_ids.clone(),
+        issue_hashes: issue_hashes.clone(),
     };
     storage.set_metadata_shared(
         METADATA_JSONL_FLUSH_PENDING,
@@ -10449,11 +10456,7 @@ fn export_to_jsonl_with_policy_expected_authority(
 
     let result = ExportResult {
         exported_count: exported_ids.len(),
-        exported_marked_at: filter_dirty_metadata_for_export(
-            &dirty_metadata,
-            &exported_ids,
-            &skipped_tombstone_ids,
-        ),
+        exported_marked_at,
         intentionally_excluded_marked_at,
         exported_ids,
         skipped_tombstone_ids,
@@ -10628,6 +10631,16 @@ pub(crate) struct JsonlFlushPendingReceipt {
     pub content_hash: String,
     #[serde(default)]
     pub exported_count: usize,
+    #[serde(default)]
+    pub exported_ids: Vec<String>,
+    #[serde(default)]
+    pub exported_marked_at: Vec<(String, String)>,
+    #[serde(default)]
+    pub intentionally_excluded_marked_at: Vec<(String, String)>,
+    #[serde(default)]
+    pub skipped_tombstone_ids: Vec<String>,
+    #[serde(default)]
+    pub issue_hashes: Vec<(String, String)>,
 }
 
 fn pending_jsonl_flush(storage: &SqliteStorage) -> Result<Option<JsonlFlushPendingReceipt>> {
@@ -10637,6 +10650,105 @@ fn pending_jsonl_flush(storage: &SqliteStorage) -> Result<Option<JsonlFlushPendi
     serde_json::from_str(&raw).map(Some).map_err(|error| {
         BeadsError::Config(format!("Invalid JSONL flush receipt in SQLite: {error}"))
     })
+}
+
+/// Complete a crash-interrupted export from its durable receipt when the
+/// published file is byte-identical to what the receipt describes. This is
+/// the direct replay path: no second publication, no new signed bytes, just
+/// the SQLite finalization the dying process never committed.
+///
+/// Returns `None` when the file is absent, the receipt is for another
+/// target, the bytes no longer match, or new dirty rows make the receipt an
+/// incomplete account of the current work. In all those cases the normal
+/// export path remains authoritative.
+fn recover_pending_jsonl_flush(
+    storage: &mut SqliteStorage,
+    jsonl_path: &Path,
+) -> Result<Option<AutoFlushResult>> {
+    let Some(receipt) = pending_jsonl_flush(storage)? else {
+        return Ok(None);
+    };
+    if !jsonl_path.is_file()
+        || receipt.output_path != jsonl_path.to_string_lossy()
+        || compute_jsonl_hash(jsonl_path)? != receipt.content_hash
+    {
+        return Ok(None);
+    }
+
+    let live_dirty = storage.get_dirty_issue_metadata()?;
+    let covered: std::collections::BTreeSet<(String, String)> = receipt
+        .exported_marked_at
+        .iter()
+        .chain(receipt.intentionally_excluded_marked_at.iter())
+        .cloned()
+        .collect();
+    if live_dirty.iter().any(|row| !covered.contains(row)) {
+        return Ok(None);
+    }
+
+    let expected_hashes: BTreeMap<String, String> = receipt.issue_hashes.iter().cloned().collect();
+    if expected_hashes.len() != receipt.issue_hashes.len() {
+        return Err(BeadsError::SyncConflict {
+            message: "Flush receipt contains duplicate issue-hash mappings".to_string(),
+        });
+    }
+    let observed = observed_jsonl_witness(jsonl_path)?;
+    storage.with_write_transaction(|storage| -> Result<()> {
+        if !receipt.exported_marked_at.is_empty() {
+            storage.clear_dirty_issues_in_tx(&receipt.exported_marked_at)?;
+        }
+        if !receipt.intentionally_excluded_marked_at.is_empty() {
+            storage.clear_dirty_issues_in_tx(&receipt.intentionally_excluded_marked_at)?;
+        }
+        let remaining = additive_raw_rows(
+            storage,
+            "SELECT issue_id, marked_at FROM dirty_issues ORDER BY issue_id, marked_at",
+        )?;
+        if !remaining.is_empty() {
+            return Err(BeadsError::SyncConflict {
+                message: "Flush receipt recovery left dirty rows it did not describe".to_string(),
+            });
+        }
+
+        let current_hashes = additive_export_hashes(storage)?;
+        let stale_ids = current_hashes
+            .keys()
+            .filter(|issue_id| !expected_hashes.contains_key(*issue_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !stale_ids.is_empty() {
+            storage.clear_export_hashes_in_tx(&stale_ids)?;
+        }
+        let changed = expected_hashes
+            .iter()
+            .filter(|(issue_id, content_hash)| current_hashes.get(*issue_id) != Some(*content_hash))
+            .map(|(issue_id, content_hash)| (issue_id.clone(), content_hash.clone()))
+            .collect::<Vec<_>>();
+        if !changed.is_empty() {
+            storage.set_changed_export_hashes_in_tx(&changed)?;
+        }
+        if additive_export_hashes(storage)? != expected_hashes {
+            return Err(BeadsError::SyncConflict {
+                message:
+                    "Flush receipt recovery did not reproduce the published issue-hash mapping"
+                        .to_string(),
+            });
+        }
+
+        storage.set_metadata_in_tx(METADATA_JSONL_CONTENT_HASH, &receipt.content_hash)?;
+        storage.set_metadata_in_tx(METADATA_LAST_EXPORT_TIME, &Utc::now().to_rfc3339())?;
+        record_observed_jsonl_witness_in_tx(storage, &observed)?;
+        storage.set_metadata_in_tx("needs_flush", "false")?;
+        storage.clear_purged_ids_pending_export_in_tx()?;
+        storage.delete_metadata_in_tx(METADATA_JSONL_FLUSH_PENDING)?;
+        Ok(())
+    })?;
+
+    Ok(Some(AutoFlushResult {
+        flushed: true,
+        exported_count: receipt.exported_count,
+        content_hash: receipt.content_hash,
+    }))
 }
 /// Metadata key for the exact observed JSONL mtime at the last successful sync.
 pub const METADATA_JSONL_MTIME: &str = "jsonl_mtime";
@@ -12464,6 +12576,14 @@ fn auto_flush_internal(
             );
             return Ok(AutoFlushResult::default());
         }
+    }
+
+    if jsonl_exists && let Some(recovered) = recover_pending_jsonl_flush(storage, jsonl_path)? {
+        tracing::info!(
+            exported = recovered.exported_count,
+            "Auto-flush recovered a durable publication receipt without republishing"
+        );
+        return Ok(recovered);
     }
 
     tracing::debug!(
@@ -21275,10 +21395,15 @@ mod tests {
         drop(storage);
 
         let mut storage = SqliteStorage::open(&db_path).unwrap();
-        auto_flush(&mut storage, &beads_dir, &output_path, false)
-            .expect("restart recovery republishes and finalizes");
+        let recovered = recover_pending_jsonl_flush(&mut storage, &output_path)
+            .expect("direct receipt recovery")
+            .expect("receipt matches the published bytes");
+        assert_eq!(recovered.exported_count, 1);
         assert!(pending_jsonl_flush(&storage).unwrap().is_none());
         assert!(storage.get_dirty_issue_ids().unwrap().is_empty());
+        let noop = auto_flush(&mut storage, &beads_dir, &output_path, false)
+            .expect("post-recovery auto-flush is a no-op");
+        assert!(!noop.flushed);
     }
 
     #[test]
