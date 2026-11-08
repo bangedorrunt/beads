@@ -15618,6 +15618,15 @@ impl SqliteStorage {
         })
     }
 
+    /// Delete one metadata key inside the caller's transaction.
+    pub(crate) fn delete_metadata_in_tx(&self, key: &str) -> Result<bool> {
+        let count = self.conn.execute_with_params(
+            "DELETE FROM metadata WHERE key = ?",
+            &[SqliteValue::from(key)],
+        )?;
+        Ok(count > 0)
+    }
+
     /// Count issues in the database.
     ///
     /// # Errors

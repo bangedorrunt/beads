@@ -10422,6 +10422,15 @@ fn export_to_jsonl_with_policy_expected_authority(
         database_authority.verify_database_authority()?;
     }
 
+    storage.set_metadata_shared(
+        METADATA_JSONL_FLUSH_PENDING,
+        &serde_json::json!({
+            "output_path": output_path.to_string_lossy(),
+            "content_hash": content_hash,
+            "exported_count": exported_ids.len(),
+        })
+        .to_string(),
+    )?;
     let publication = publish_staged_jsonl_conditionally(
         &temp_path,
         temp_guard,
@@ -10604,6 +10613,12 @@ pub(crate) fn export_to_writer_with_policy_and_retention_at<W: Write>(
 
 /// Metadata key for the JSONL content hash.
 pub const METADATA_JSONL_CONTENT_HASH: &str = "jsonl_content_hash";
+
+/// Durable SQLite receipt written before the JSONL rename and cleared inside
+/// the finalization transaction. A crash between the two leaves this row as
+/// explicit evidence that the published bytes are a flush awaiting metadata
+/// finalization, not an uncoordinated external edit.
+pub const METADATA_JSONL_FLUSH_PENDING: &str = "jsonl_flush_pending_v1";
 /// Metadata key for the exact observed JSONL mtime at the last successful sync.
 pub const METADATA_JSONL_MTIME: &str = "jsonl_mtime";
 /// Metadata key for the exact observed JSONL size at the last successful sync.
@@ -11121,6 +11136,7 @@ pub(crate) fn finalize_export_under_authority(
 
         storage.set_metadata_in_tx(METADATA_JSONL_CONTENT_HASH, &result.content_hash)?;
         storage.set_metadata_in_tx(METADATA_LAST_EXPORT_TIME, &Utc::now().to_rfc3339())?;
+        storage.delete_metadata_in_tx(METADATA_JSONL_FLUSH_PENDING)?;
         record_observed_jsonl_witness_in_tx(storage, &observed_jsonl)?;
 
         storage.set_metadata_in_tx("needs_flush", "false")?;
@@ -21202,6 +21218,11 @@ mod tests {
 
         let config = ExportConfig::default();
         let result = export_to_jsonl(&storage, &output_path, &config).unwrap();
+        let pending = storage
+            .get_metadata(METADATA_JSONL_FLUSH_PENDING)
+            .unwrap()
+            .expect("JSONL publication leaves a durable flush receipt");
+        assert!(pending.contains(&result.content_hash));
         finalize_export(
             &mut storage,
             &result,
@@ -21209,6 +21230,13 @@ mod tests {
             &output_path,
         )
         .unwrap();
+        assert!(
+            storage
+                .get_metadata(METADATA_JSONL_FLUSH_PENDING)
+                .unwrap()
+                .is_none(),
+            "finalization clears the flush receipt inside its transaction"
+        );
 
         assert!(storage.get_dirty_issue_ids().unwrap().is_empty());
         assert!(
