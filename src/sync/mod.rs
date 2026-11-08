@@ -10422,14 +10422,16 @@ fn export_to_jsonl_with_policy_expected_authority(
         database_authority.verify_database_authority()?;
     }
 
+    let pending_receipt = JsonlFlushPendingReceipt {
+        output_path: output_path.to_string_lossy().to_string(),
+        content_hash: content_hash.clone(),
+        exported_count: exported_ids.len(),
+    };
     storage.set_metadata_shared(
         METADATA_JSONL_FLUSH_PENDING,
-        &serde_json::json!({
-            "output_path": output_path.to_string_lossy(),
-            "content_hash": content_hash,
-            "exported_count": exported_ids.len(),
-        })
-        .to_string(),
+        &serde_json::to_string(&pending_receipt).map_err(|error| {
+            BeadsError::Config(format!("Failed to serialize flush receipt: {error}"))
+        })?,
     )?;
     let publication = publish_staged_jsonl_conditionally(
         &temp_path,
@@ -10619,6 +10621,23 @@ pub const METADATA_JSONL_CONTENT_HASH: &str = "jsonl_content_hash";
 /// explicit evidence that the published bytes are a flush awaiting metadata
 /// finalization, not an uncoordinated external edit.
 pub const METADATA_JSONL_FLUSH_PENDING: &str = "jsonl_flush_pending_v1";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct JsonlFlushPendingReceipt {
+    pub output_path: String,
+    pub content_hash: String,
+    #[serde(default)]
+    pub exported_count: usize,
+}
+
+fn pending_jsonl_flush(storage: &SqliteStorage) -> Result<Option<JsonlFlushPendingReceipt>> {
+    let Some(raw) = storage.get_metadata(METADATA_JSONL_FLUSH_PENDING)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&raw).map(Some).map_err(|error| {
+        BeadsError::Config(format!("Invalid JSONL flush receipt in SQLite: {error}"))
+    })
+}
 /// Metadata key for the exact observed JSONL mtime at the last successful sync.
 pub const METADATA_JSONL_MTIME: &str = "jsonl_mtime";
 /// Metadata key for the exact observed JSONL size at the last successful sync.
@@ -10807,6 +10826,20 @@ fn compute_jsonl_newer_impl(storage: &SqliteStorage, jsonl_path: &Path) -> Resul
         Some(_) if identity_unchanged => false,
         Some(stored_hash) => compute_jsonl_hash(jsonl_path)? != stored_hash,
         None => true,
+    };
+    // A crash between publishing JSONL and finalizing SQLite leaves the
+    // stored content hash one generation behind. When the durable pending
+    // receipt names the exact published bytes, this is our own un-finalized
+    // flush, not an external edit; keep it in the DB-newer path so the next
+    // export can republish deterministically and finalize it.
+    let jsonl_newer = if jsonl_newer
+        && pending_jsonl_flush(storage)?.is_some_and(|receipt| {
+            receipt.output_path == jsonl_path.to_string_lossy()
+                && compute_jsonl_hash(jsonl_path).is_ok_and(|hash| hash == receipt.content_hash)
+        }) {
+        false
+    } else {
+        jsonl_newer
     };
     let stored_size_matches =
         stored_size.as_deref().and_then(parse_jsonl_size_witness) == Some(observed.size);
@@ -11417,6 +11450,9 @@ fn finalize_incremental_auto_flush(
             storage.set_metadata_in_tx(METADATA_LAST_EXPORT_TIME, &Utc::now().to_rfc3339())?;
             record_observed_jsonl_witness_in_tx(storage, observed_jsonl)?;
         }
+        // Any successful publication finalization owns the pending receipt,
+        // including an incremental or unchanged flush.
+        storage.delete_metadata_in_tx(METADATA_JSONL_FLUSH_PENDING)?;
         storage.set_metadata_in_tx("needs_flush", "false")?;
         storage.clear_purged_ids_pending_export_in_tx()?;
         Ok(())
@@ -21204,6 +21240,45 @@ mod tests {
             .map(|comment| comment.id)
             .collect::<Vec<_>>();
         assert_eq!(ids, vec![2, 9]);
+    }
+
+    #[test]
+    fn test_flush_receipt_survives_reopen_and_marks_own_bytes_not_external() {
+        let temp_dir = TempDir::new().unwrap();
+        let beads_dir = temp_dir.path().join(".beads");
+        fs::create_dir_all(&beads_dir).unwrap();
+        let db_path = beads_dir.join("beads.db");
+        let output_path = beads_dir.join("issues.jsonl");
+        let mut storage = SqliteStorage::open(&db_path).unwrap();
+        let issue = make_test_issue("bd-flush-crash", "Crash window");
+        storage.create_issue(&issue, "test").unwrap();
+
+        let result = export_to_jsonl(&storage, &output_path, &ExportConfig::default()).unwrap();
+        let receipt = pending_jsonl_flush(&storage)
+            .unwrap()
+            .expect("publication leaves a durable receipt");
+        assert_eq!(receipt.content_hash, result.content_hash);
+        assert_eq!(receipt.exported_count, 1);
+        drop(storage);
+
+        let storage = SqliteStorage::open(&db_path).unwrap();
+        let reopened = pending_jsonl_flush(&storage)
+            .unwrap()
+            .expect("receipt survives a process restart");
+        assert_eq!(reopened, receipt);
+        let probe = compute_jsonl_newer_impl(&storage, &output_path).unwrap();
+        assert!(probe.jsonl_exists);
+        assert!(
+            !probe.jsonl_newer,
+            "the receipt identifies the published bytes as our own un-finalized flush"
+        );
+        drop(storage);
+
+        let mut storage = SqliteStorage::open(&db_path).unwrap();
+        auto_flush(&mut storage, &beads_dir, &output_path, false)
+            .expect("restart recovery republishes and finalizes");
+        assert!(pending_jsonl_flush(&storage).unwrap().is_none());
+        assert!(storage.get_dirty_issue_ids().unwrap().is_empty());
     }
 
     #[test]
