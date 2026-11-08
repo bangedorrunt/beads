@@ -281,6 +281,10 @@ fn execute_route(
             deleted_at: Some(None),
             deleted_by: Some(None),
             delete_reason: Some(None),
+            // Reopen fences the prior attempt: a stale close proof must not
+            // ride the issue into its next status revision.
+            commit_sha: Some(None),
+            close_verdict: Some(None),
             transition_comment: args
                 .reason
                 .as_ref()
@@ -514,6 +518,8 @@ mod tests {
             updated_at: now,
             closed_at: Some(now),
             defer_until: Some(now + Duration::days(7)),
+            commit_sha: Some("a1b2c3d4".to_string()),
+            close_verdict: Some("unit-test-verified".to_string()),
             ..Issue::default()
         }
     }
@@ -559,6 +565,14 @@ mod tests {
         assert_eq!(issue.status, Status::Open);
         assert!(issue.defer_until.is_none());
         assert!(issue.closed_at.is_none());
+        assert!(
+            issue.commit_sha.is_none(),
+            "reopen must fence the prior attempt's commit"
+        );
+        assert!(
+            issue.close_verdict.is_none(),
+            "reopen must fence the prior attempt's close verdict"
+        );
     }
 
     #[test]

@@ -60,6 +60,8 @@ fn facts(status: Status, priority: i32, verify: &str) -> IssueFacts {
         status,
         priority,
         verify: verify.into(),
+        blast: crate::model::Blast::Normal,
+        ac_shape: crate::model::AcShape::Checkable,
     }
 }
 
@@ -232,6 +234,62 @@ fn a_close_with_no_pass_row_is_refused_and_the_status_stays_open() {
 
     assert!(commands.is_empty());
     assert_eq!(model.issues["beads_rust-a"].status, Status::Open);
+}
+
+/// A judgment-AC bead is legally closed by `reviewer-signed`; the fold must
+/// carry the bead's real AC shape rather than assuming checkable.
+#[test]
+fn a_judgment_bead_accepts_reviewer_signed() {
+    let mut judgment = facts(Status::Open, 2, "");
+    judgment.ac_shape = crate::model::AcShape::Judgment;
+    let (model, _) = update(
+        &BeadsModel::default(),
+        &BeadsMsg::CloseRequested {
+            issue_id: "beads_rust-a".into(),
+            facts: judgment,
+        },
+    );
+    let (model, _) = update(
+        &model,
+        &gates_loaded("beads_rust-a", &[gate("reviewer-signed", true)]),
+    );
+    let decision = model.pending["beads_rust-a"]
+        .decision
+        .clone()
+        .expect("a decision was reached");
+    assert!(
+        decision.is_legal(),
+        "reviewer-signed is the only legal gate for judgment AC: {:?}",
+        decision.violations
+    );
+    assert_eq!(decision.verdict.as_deref(), Some("reviewer-signed"));
+}
+
+/// A high-blast bead may not close on `command-verified` even at P2.
+#[test]
+fn a_high_blast_bead_refuses_command_verified() {
+    let mut high = facts(Status::Open, 2, "cargo test -p beads");
+    high.blast = crate::model::Blast::High;
+    let (model, _) = update(
+        &BeadsModel::default(),
+        &BeadsMsg::CloseRequested {
+            issue_id: "beads_rust-a".into(),
+            facts: high,
+        },
+    );
+    let (model, _) = update(
+        &model,
+        &gates_loaded("beads_rust-a", &[gate("command-verified", true)]),
+    );
+    let decision = model.pending["beads_rust-a"]
+        .decision
+        .clone()
+        .expect("a decision was reached");
+    assert!(
+        !decision.is_legal(),
+        "high blast requires unit/live verification"
+    );
+    assert_eq!(decision.violations[0].gate, "gate_require_legal_close");
 }
 
 /// The other half of the fail-closed invariant: a legal PASS row does

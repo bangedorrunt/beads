@@ -907,6 +907,22 @@ pub fn legal_close_input_for_issue_pub(
     legal_close_input_for_issue(priority, verify)
 }
 
+/// Assemble legal-close inputs from the issue's REAL typed shape.
+///
+/// The compatibility wrapper above keeps old callers on the schema defaults;
+/// every close-authorizing path uses this one so a judgment bead's
+/// `reviewer-signed` verdict and a high-blast bead's unit/live requirement
+/// are evaluated against the bead rather than a hardcoded Normal/Checkable.
+#[must_use]
+pub fn legal_close_input_for_shape_pub(
+    priority: i32,
+    blast: crate::verify::Blast,
+    ac: crate::verify::AcShape,
+    verify: &str,
+) -> crate::verify::LegalCloseInput<'_> {
+    legal_close_input_for_shape(priority, blast, ac, verify)
+}
+
 /// ADR-0005 §2 report-close witness kinds. The close `--reason` cites the
 /// artifact with one of these `kind:value` references; the citation is what
 /// marks the close as a report close (no schema column — the witness carries
@@ -1015,10 +1031,24 @@ pub fn report_close_violations(
 }
 
 fn legal_close_input_for_issue(priority: i32, verify: &str) -> crate::verify::LegalCloseInput<'_> {
+    legal_close_input_for_shape(
+        priority,
+        crate::verify::Blast::Normal,
+        crate::verify::AcShape::Checkable,
+        verify,
+    )
+}
+
+fn legal_close_input_for_shape(
+    priority: i32,
+    blast: crate::verify::Blast,
+    ac: crate::verify::AcShape,
+    verify: &str,
+) -> crate::verify::LegalCloseInput<'_> {
     crate::verify::LegalCloseInput {
         priority: u8::try_from(priority).unwrap_or(0),
-        blast: crate::verify::Blast::Normal,
-        ac: crate::verify::AcShape::Checkable,
+        blast,
+        ac,
         verify,
     }
 }
@@ -1036,7 +1066,29 @@ pub fn evaluate_require_legal_close(
     verify: &str,
     results: &[GateResult],
 ) -> Vec<PolicyViolation> {
-    let input = legal_close_input_for_issue(priority, verify);
+    evaluate_require_legal_close_for_shape(
+        issue_id,
+        from,
+        priority,
+        crate::verify::Blast::Normal,
+        crate::verify::AcShape::Checkable,
+        verify,
+        results,
+    )
+}
+
+/// [`evaluate_require_legal_close`] against the issue's real blast/AC shape.
+#[must_use]
+pub fn evaluate_require_legal_close_for_shape(
+    issue_id: &str,
+    from: &str,
+    priority: i32,
+    blast: crate::verify::Blast,
+    ac: crate::verify::AcShape,
+    verify: &str,
+    results: &[GateResult],
+) -> Vec<PolicyViolation> {
+    let input = legal_close_input_for_shape(priority, blast, ac, verify);
     let legal_names = legal_close_gate_names(&input);
 
     let mut pass_kinds: Vec<&'static str> = Vec::new();

@@ -1632,18 +1632,16 @@ fn perform_conditional_namespace_change(
 
     match flagged_attempt {
         Ok(()) => Ok(change),
-        Err(rustix::io::Errno::INVAL) => {
-            match expected_previous_state {
-                JsonlSourceStateWitness::Missing => {
-                    emulate_no_replace_publication_with_link(staged_name, output_name)?;
-                    Ok(ConditionalNamespaceChange::LinkedCreate)
-                }
-                JsonlSourceStateWitness::Present { .. } => {
-                    emulate_exchange_publication_with_witnessed_renames(staged_name, output_name)?;
-                    Ok(ConditionalNamespaceChange::ExchangedViaWitnessedRenames)
-                }
+        Err(rustix::io::Errno::INVAL) => match expected_previous_state {
+            JsonlSourceStateWitness::Missing => {
+                emulate_no_replace_publication_with_link(staged_name, output_name)?;
+                Ok(ConditionalNamespaceChange::LinkedCreate)
             }
-        }
+            JsonlSourceStateWitness::Present { .. } => {
+                emulate_exchange_publication_with_witnessed_renames(staged_name, output_name)?;
+                Ok(ConditionalNamespaceChange::ExchangedViaWitnessedRenames)
+            }
+        },
         Err(error) => {
             let error = std::io::Error::from(error);
             match (expected_previous_state, error.kind()) {
@@ -9694,9 +9692,40 @@ fn populate_export_issue_relations(
     }
 }
 
+/// Current status revision per issue, for the JSONL export line. A read
+/// failure exports 0; the gate ledger remains the rebuild fallback.
+fn export_status_revisions(
+    storage: &SqliteStorage,
+    issues: &[Issue],
+) -> std::collections::HashMap<String, i64> {
+    issues
+        .iter()
+        .map(|issue| {
+            (
+                issue.id.clone(),
+                storage.status_revision(&issue.id).unwrap_or(0),
+            )
+        })
+        .collect()
+}
+
+/// Append `"status_revision":N` to an already-serialized issue object,
+/// before its closing brace. This keeps `Issue`'s established field order and
+/// survives a JSONL rebuild even though `events` is not exported.
+fn inject_status_revision(jsonl: &mut Vec<u8>, status_revision: i64) {
+    if status_revision <= 0 {
+        return;
+    }
+    if jsonl.last() == Some(&b'}') {
+        jsonl.pop();
+        jsonl.extend_from_slice(format!(r#","status_revision":{status_revision}}}"#).as_bytes());
+    }
+}
+
 fn write_export_issue_jsonl<W: Write>(
     writer: &mut W,
     issue: &Issue,
+    status_revision: i64,
     hasher: &mut Sha256,
     buffer: &mut Vec<u8>,
     ctx: &mut ExportContext,
@@ -9710,6 +9739,7 @@ fn write_export_issue_jsonl<W: Write>(
         ))?;
         return Ok(false);
     }
+    inject_status_revision(buffer, status_revision);
 
     if let Err(err) = writer
         .write_all(buffer)
@@ -9775,6 +9805,7 @@ fn prepare_export_issue_jsonl(
     issue: &Issue,
     retention_days: Option<u64>,
     export_as_of: &DateTime<Utc>,
+    status_revision: i64,
 ) -> PreparedExportEntry {
     if issue.is_expired_tombstone_at(retention_days, export_as_of.to_owned()) {
         return PreparedExportEntry::SkippedTombstone(issue.id.clone());
@@ -9788,6 +9819,7 @@ fn prepare_export_issue_jsonl(
             err.to_string(),
         ));
     }
+    inject_status_revision(&mut jsonl_line, status_revision);
     jsonl_line.push(b'\n');
 
     PreparedExportEntry::Issue(PreparedExportIssue {
@@ -9807,10 +9839,18 @@ fn prepare_export_issue_chunk(
     issues: &[Issue],
     retention_days: Option<u64>,
     export_as_of: &DateTime<Utc>,
+    status_revisions: &std::collections::HashMap<String, i64>,
 ) -> Vec<PreparedExportEntry> {
     issues
         .iter()
-        .map(|issue| prepare_export_issue_jsonl(issue, retention_days, export_as_of))
+        .map(|issue| {
+            prepare_export_issue_jsonl(
+                issue,
+                retention_days,
+                export_as_of,
+                status_revisions.get(&issue.id).copied().unwrap_or(0),
+            )
+        })
         .collect()
 }
 
@@ -9819,12 +9859,14 @@ fn prepare_export_issues_jsonl_parallel(
     retention_days: Option<u64>,
     export_as_of: &DateTime<Utc>,
     max_parallelism: usize,
+    status_revisions: &std::collections::HashMap<String, i64>,
 ) -> Result<Vec<PreparedExportEntry>> {
     if !should_prepare_export_issues_parallel(issues.len(), max_parallelism) {
         return Ok(prepare_export_issue_chunk(
             issues,
             retention_days,
             export_as_of,
+            status_revisions,
         ));
     }
 
@@ -9838,7 +9880,12 @@ fn prepare_export_issues_jsonl_parallel(
             handles.push(scope.spawn(move || {
                 (
                     start_index,
-                    prepare_export_issue_chunk(chunk, retention_days, export_as_of),
+                    prepare_export_issue_chunk(
+                        chunk,
+                        retention_days,
+                        export_as_of,
+                        status_revisions,
+                    ),
                 )
             }));
         }
@@ -10201,11 +10248,13 @@ fn export_to_jsonl_with_policy_expected_authority(
     if export_ids.len() <= EXPORT_FULL_SCAN_ISSUE_THRESHOLD {
         let issues = hydrate_export_issues_full_scan(storage, &mut ctx)?;
         if should_prepare_export_issues_parallel(issues.len(), max_parallelism) {
+            let status_revisions = export_status_revisions(storage, &issues);
             let prepared = prepare_export_issues_jsonl_parallel(
                 &issues,
                 config.retention_days,
                 &export_as_of,
                 max_parallelism,
+                &status_revisions,
             )?;
             write_prepared_export_entries(
                 &mut writer,
@@ -10226,9 +10275,11 @@ fn export_to_jsonl_with_policy_expected_authority(
                     continue;
                 }
 
+                let status_revision = storage.status_revision(&issue.id).unwrap_or(0);
                 if !write_export_issue_jsonl(
                     &mut writer,
                     issue,
+                    status_revision,
                     &mut hasher,
                     &mut buffer,
                     &mut ctx,
@@ -10256,11 +10307,13 @@ fn export_to_jsonl_with_policy_expected_authority(
         for id_batch in export_ids.chunks(EXPORT_ISSUE_BATCH_SIZE) {
             let issues = hydrate_export_issue_batch(storage, id_batch, &mut ctx)?;
             if should_prepare_export_issues_parallel(issues.len(), max_parallelism) {
+                let status_revisions = export_status_revisions(storage, &issues);
                 let prepared = prepare_export_issues_jsonl_parallel(
                     &issues,
                     config.retention_days,
                     &export_as_of,
                     max_parallelism,
+                    &status_revisions,
                 )?;
                 write_prepared_export_entries(
                     &mut writer,
@@ -10281,9 +10334,11 @@ fn export_to_jsonl_with_policy_expected_authority(
                         continue;
                     }
 
+                    let status_revision = storage.status_revision(&issue.id).unwrap_or(0);
                     if !write_export_issue_jsonl(
                         &mut writer,
                         issue,
+                        status_revision,
                         &mut hasher,
                         &mut buffer,
                         &mut ctx,
@@ -10467,7 +10522,15 @@ pub(crate) fn export_to_writer_with_policy_and_retention_at<W: Write>(
                 skipped_tombstone_ids.push(issue.id.clone());
                 continue;
             }
-            if !write_export_issue_jsonl(writer, issue, &mut hasher, &mut buffer, &mut ctx)? {
+            let status_revision = storage.status_revision(&issue.id).unwrap_or(0);
+            if !write_export_issue_jsonl(
+                writer,
+                issue,
+                status_revision,
+                &mut hasher,
+                &mut buffer,
+                &mut ctx,
+            )? {
                 continue;
             }
 
@@ -10492,7 +10555,15 @@ pub(crate) fn export_to_writer_with_policy_and_retention_at<W: Write>(
                     skipped_tombstone_ids.push(issue.id.clone());
                     continue;
                 }
-                if !write_export_issue_jsonl(writer, issue, &mut hasher, &mut buffer, &mut ctx)? {
+                let status_revision = storage.status_revision(&issue.id).unwrap_or(0);
+                if !write_export_issue_jsonl(
+                    writer,
+                    issue,
+                    status_revision,
+                    &mut hasher,
+                    &mut buffer,
+                    &mut ctx,
+                )? {
                     continue;
                 }
 
@@ -12624,8 +12695,7 @@ fn normalize_issue(issue: &mut Issue) {
         for (i, dep) in issue.dependencies.iter().enumerate() {
             let key = (dep.issue_id.clone(), dep.depends_on_id.clone());
             match best.get(&key) {
-                Some(&prev_idx) if issue.dependencies[prev_idx].created_at >= dep.created_at => {
-                }
+                Some(&prev_idx) if issue.dependencies[prev_idx].created_at >= dep.created_at => {}
                 _ => {
                     best.insert(key, i);
                 }
@@ -14382,12 +14452,10 @@ pub fn merge_issue(
                         "Local modified, external deleted - kept local".to_string(),
                     ),
                     ConflictResolution::PreferExternal => MergeResult::Delete,
-                    ConflictResolution::PreferNewer => {
-                        MergeResult::KeepWithNote(
-                            l.clone(),
-                            "Local modified after base, external deleted - kept local".to_string(),
-                        )
-                    }
+                    ConflictResolution::PreferNewer => MergeResult::KeepWithNote(
+                        l.clone(),
+                        "Local modified after base, external deleted - kept local".to_string(),
+                    ),
                     ConflictResolution::Manual => {
                         MergeResult::Conflict(ConflictType::DeleteVsModify)
                     }
@@ -14405,13 +14473,10 @@ pub fn merge_issue(
                         r.clone(),
                         "External modified, local deleted - kept external".to_string(),
                     ),
-                    ConflictResolution::PreferNewer => {
-                        MergeResult::KeepWithNote(
-                            r.clone(),
-                            "External modified after base, local deleted - kept external"
-                                .to_string(),
-                        )
-                    }
+                    ConflictResolution::PreferNewer => MergeResult::KeepWithNote(
+                        r.clone(),
+                        "External modified after base, local deleted - kept external".to_string(),
+                    ),
                     ConflictResolution::Manual => {
                         MergeResult::Conflict(ConflictType::DeleteVsModify)
                     }
@@ -21014,6 +21079,24 @@ mod tests {
         assert_eq!(ids, vec!["bd-a", "bd-m", "bd-z"]);
     }
 
+    /// The JSONL line carries the current status revision without changing
+    /// `Issue` or its field order. A rebuild can therefore distinguish a
+    /// current gate pass from one filed under an older revision.
+    #[test]
+    fn status_revision_is_persisted_in_export_line() {
+        let export_as_of = fixed_time(2_000_000_000);
+        let issue = make_test_issue("bd-status-rev", "Status revision export");
+        let entry = prepare_export_issue_jsonl(&issue, None, &export_as_of, 42);
+        let PreparedExportEntry::Issue(prepared) = entry else {
+            panic!("issue must export");
+        };
+        let line = String::from_utf8(prepared.jsonl_line).expect("utf8");
+        assert!(line.ends_with('\n'), "{line}");
+        let value: serde_json::Value = serde_json::from_str(line.trim()).expect("json");
+        assert_eq!(value["status_revision"], serde_json::json!(42));
+        assert_eq!(value["id"], serde_json::json!(issue.id));
+    }
+
     #[test]
     fn frozen_export_cutoff_produces_identical_serial_and_parallel_preparation() {
         let export_as_of = fixed_time(2_000_000_000);
@@ -21029,9 +21112,11 @@ mod tests {
         issues[2].status = Status::Tombstone;
         issues[2].deleted_at = Some(export_as_of - ttl + chrono::Duration::nanoseconds(1));
 
-        let serial = prepare_export_issue_chunk(&issues, Some(30), &export_as_of);
+        let revisions = std::collections::HashMap::new();
+        let serial = prepare_export_issue_chunk(&issues, Some(30), &export_as_of, &revisions);
         let parallel =
-            prepare_export_issues_jsonl_parallel(&issues, Some(30), &export_as_of, 4).unwrap();
+            prepare_export_issues_jsonl_parallel(&issues, Some(30), &export_as_of, 4, &revisions)
+                .unwrap();
 
         assert_eq!(serial.len(), parallel.len());
         for (serial_entry, parallel_entry) in serial.iter().zip(&parallel) {

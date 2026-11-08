@@ -57,6 +57,14 @@ pub struct IssueFacts {
     /// The typed VERIFY fence. Empty means not loop-runnable, which is a
     /// band of its own in the legal-close table.
     pub verify: String,
+    /// Blast radius band. The legal-close table treats high-blast beads
+    /// differently from normal ones, so the fold must carry the real value.
+    #[serde(default)]
+    pub blast: crate::model::Blast,
+    /// Acceptance-criteria shape. Judgment beads admit `reviewer-signed`
+    /// alone; hardcoding checkable falsely reopened them.
+    #[serde(default)]
+    pub ac_shape: crate::model::AcShape,
 }
 
 /// An in-flight close request.
@@ -325,7 +333,12 @@ fn status_after(event: &Event) -> Option<Status> {
 fn close_decision(issue_id: &str, facts: &IssueFacts, rows: &[GateResult]) -> CloseDecision {
     let from = facts.status.as_str();
     let verify = &facts.verify;
-    let input = close_policy::legal_close_input_for_issue_pub(facts.priority, verify);
+    let input = close_policy::legal_close_input_for_shape_pub(
+        facts.priority,
+        facts.blast.into(),
+        facts.ac_shape.into(),
+        verify,
+    );
     let verdict = rows
         .iter()
         .filter(|result| result.passed)
@@ -333,8 +346,15 @@ fn close_decision(issue_id: &str, facts: &IssueFacts, rows: &[GateResult]) -> Cl
             let kind = crate::verify::VerdictKind::from_gate_name(&result.gate)?;
             crate::verify::legal_close(kind, &input).then(|| kind.gate_name().to_string())
         });
-    let violations =
-        close_policy::evaluate_require_legal_close(issue_id, from, facts.priority, verify, rows);
+    let violations = close_policy::evaluate_require_legal_close_for_shape(
+        issue_id,
+        from,
+        facts.priority,
+        facts.blast.into(),
+        facts.ac_shape.into(),
+        verify,
+        rows,
+    );
     CloseDecision {
         verdict,
         violations,

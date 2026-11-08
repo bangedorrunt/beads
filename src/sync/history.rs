@@ -869,7 +869,11 @@ mod tests {
         rotate_history_with_budget(&history_dir, &config, &target_key, 25).unwrap();
 
         let remaining = list_backups(&history_dir, None).unwrap();
-        assert_eq!(remaining.len(), 2, "byte budget holds two 10-byte snapshots");
+        assert_eq!(
+            remaining.len(),
+            2,
+            "byte budget holds two 10-byte snapshots"
+        );
         assert!(
             remaining
                 .iter()

@@ -80,14 +80,8 @@ fn external_path_descriptor(path: &Path) -> String {
 /// Files explicitly allowed for sync operations within `.beads/`.
 ///
 /// This list is exhaustive - any file not matching these patterns is rejected.
-pub const ALLOWED_EXTENSIONS: &[&str] = &[
-    "db",
-    "db-wal",
-    "db-shm",
-    "db-journal",
-    "jsonl",
-    "jsonl.tmp",
-];
+pub const ALLOWED_EXTENSIONS: &[&str] =
+    &["db", "db-wal", "db-shm", "db-journal", "jsonl", "jsonl.tmp"];
 
 /// Files explicitly allowed by exact name within `.beads/`.
 pub const ALLOWED_EXACT_NAMES: &[&str] = &[".manifest.json", "metadata.json"];

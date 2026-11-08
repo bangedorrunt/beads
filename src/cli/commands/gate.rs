@@ -104,9 +104,27 @@ pub fn execute(
 /// names the wrong gates for every loop-runnable bead
 /// (bd-close-policy-empty-verify-1-zdz6). The close path takes the same input,
 /// so the preview cannot accept what `close` will reject.
+#[cfg(test)]
 fn illegal_verdict_warning(gate: &str, priority: i32, verify: &str) -> Option<String> {
+    illegal_verdict_warning_for_shape(
+        gate,
+        priority,
+        crate::verify::Blast::Normal,
+        crate::verify::AcShape::Checkable,
+        verify,
+    )
+}
+
+/// Preview against the bead's real blast/AC shape (the production call).
+fn illegal_verdict_warning_for_shape(
+    gate: &str,
+    priority: i32,
+    blast: crate::verify::Blast,
+    ac: crate::verify::AcShape,
+    verify: &str,
+) -> Option<String> {
     crate::verify::VerdictKind::from_gate_name(gate)?;
-    let input = close_policy::legal_close_input_for_issue_pub(priority, verify);
+    let input = close_policy::legal_close_input_for_shape_pub(priority, blast, ac, verify);
     let legal = close_policy::legal_close_gate_names(&input);
     if legal.contains(&gate) {
         return None;
@@ -278,9 +296,11 @@ pub(crate) fn record_verdict(
         &actor,
     )?;
 
-    if let Some(warning) = illegal_verdict_warning(
+    if let Some(warning) = illegal_verdict_warning_for_shape(
         gate,
         issue.priority.0,
+        issue.blast.into(),
+        issue.ac_shape.into(),
         issue.verify.as_deref().unwrap_or(""),
     ) {
         eprintln!("{warning}");

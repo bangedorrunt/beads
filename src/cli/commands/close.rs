@@ -526,6 +526,8 @@ fn evaluate_close_policy(
                 status: issue.status.clone(),
                 priority: issue.priority.0,
                 verify: issue.verify.clone().unwrap_or_default(),
+                blast: issue.blast,
+                ac_shape: issue.ac_shape,
             },
         );
         close_verdict = decision.verdict;

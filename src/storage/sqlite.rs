@@ -1557,13 +1557,6 @@ fn resolved_ready_status_list(filters: &ReadyFilters) -> Vec<String> {
         filters.ready_statuses.clone()
     };
     statuses.retain(|status| !status.eq_ignore_ascii_case("draft"));
-    if filters.include_deferred
-        && !statuses
-            .iter()
-            .any(|status| status.eq_ignore_ascii_case("deferred"))
-    {
-        statuses.push("deferred".to_string());
-    }
     statuses
 }
 
@@ -2049,8 +2042,7 @@ impl SqliteStorage {
             }
             match Self::insert_metadata_default_if_missing(conn, key, default_value) {
                 Ok(()) => {}
-                Err(e) if e.is_transient() => {
-                }
+                Err(e) if e.is_transient() => {}
                 Err(e) => return Err(e),
             }
         }
@@ -3839,8 +3831,13 @@ impl SqliteStorage {
         if !crate::storage::schema::table_exists(conn, "captain_holds") {
             return Ok(false);
         }
+        // Close is the one path an expired/re-surfaced hold still blocks:
+        // expiry re-surfaces for operator attention, it never releases. The
+        // ready/wave queries filter these rows; this guard deliberately does
+        // not.
         let rows = conn.query_with_params(
-            "SELECT 1 FROM captain_holds WHERE issue_id = ? AND kind = 'captain' AND open = 1 LIMIT 1",
+            "SELECT 1 FROM captain_holds WHERE issue_id = ? AND kind = 'captain' AND open = 1 \
+             LIMIT 1",
             &[SqliteValue::from(issue_id)],
         )?;
         Ok(!rows.is_empty())
@@ -3972,20 +3969,26 @@ impl SqliteStorage {
         if !crate::storage::schema::table_exists(conn, "gate_result_history") {
             return Ok(());
         }
+        let revision = Self::status_revision_in_tx(conn, id)?;
         let rows = conn.query_with_params(
-            "SELECT gate, passed FROM gate_result_history
-             WHERE issue_id = ? AND to_status = 'closed'",
-            &[SqliteValue::from(id)],
+            "SELECT passed FROM gate_result_history
+             WHERE issue_id = ? AND to_status = 'closed' AND status_revision = ?
+               AND lower(gate) = lower(?)
+             ORDER BY id DESC LIMIT 1",
+            &[
+                SqliteValue::from(id),
+                SqliteValue::from(revision),
+                SqliteValue::from(verdict),
+            ],
         )?;
-        let proven = rows.iter().any(|row| {
-            let gate = row.get(0).and_then(SqliteValue::as_text).unwrap_or("");
-            let passed = row
-                .get(1)
-                .and_then(SqliteValue::as_integer)
-                .unwrap_or_default()
-                != 0;
-            passed && gate.eq_ignore_ascii_case(verdict)
-        });
+        // The LATEST row for this gate at the current revision wins: an
+        // earlier pass overridden by a later fail is not proof.
+        let proven = rows
+            .first()
+            .and_then(|row| row.get(0))
+            .and_then(SqliteValue::as_integer)
+            .unwrap_or_default()
+            != 0;
         if !proven {
             return Err(BeadsError::validation(
                 "close_verdict",
@@ -4006,7 +4009,26 @@ impl SqliteStorage {
              ORDER BY id DESC LIMIT 1",
             &[SqliteValue::from(issue_id)],
         )?;
-        Ok(rows
+        let event_revision = rows
+            .first()
+            .and_then(|row| row.get(0))
+            .and_then(SqliteValue::as_integer)
+            .unwrap_or(0);
+        if event_revision > 0 {
+            return Ok(event_revision);
+        }
+        if !crate::storage::schema::table_exists(conn, "gate_result_history") {
+            return Ok(0);
+        }
+        // events is not exported with issues.jsonl. After a rebuild the
+        // event-derived revision is 0 while gates.jsonl still carries the
+        // last revision it was filed under. The gate ledger is the surviving
+        // authority, so use its max revision instead of orphaning every row.
+        let gate_rows = conn.query_with_params(
+            "SELECT MAX(status_revision) FROM gate_result_history WHERE issue_id = ?",
+            &[SqliteValue::from(issue_id)],
+        )?;
+        Ok(gate_rows
             .first()
             .and_then(|row| row.get(0))
             .and_then(SqliteValue::as_integer)
@@ -7177,7 +7199,11 @@ impl SqliteStorage {
                 ),
             ));
         }
-        if issue.status == Status::Deferred || issue.defer_until.is_some_and(|until| until > now) {
+        // A timed deferral becomes claimable only when its clock expires;
+        // a manual deferral (no clock) stays refused until `br undefer`.
+        if (issue.status == Status::Deferred && issue.defer_until.is_none())
+            || issue.defer_until.is_some_and(|until| until > now)
+        {
             return Err(BeadsError::validation(
                 "claim",
                 format!(
@@ -7230,10 +7256,8 @@ impl SqliteStorage {
             let claim_actor = updates.claim_actor.as_deref().unwrap_or("");
 
             match trimmed {
-                None => {  }
-                Some(current) if !updates.claim_exclusive && current == claim_actor => {
-
-                }
+                None => {}
+                Some(current) if !updates.claim_exclusive && current == claim_actor => {}
                 Some(current) => {
                     return Err(BeadsError::validation(
                         "claim",
@@ -10101,7 +10125,17 @@ impl SqliteStorage {
         projection: ReadyIssueProjection,
     ) -> Result<Vec<Issue>> {
         let ready_statuses = resolved_ready_status_list(filters);
-        let readiness = self.ready_readiness_probe(&ready_statuses)?;
+        // A timed deferral keeps status=deferred until it wakes. Probe for
+        // that status too, or the early exit hides the very rows the query
+        // below is meant to surface once their timer expires.
+        let mut probe_statuses = ready_statuses.clone();
+        if !probe_statuses
+            .iter()
+            .any(|status| status.eq_ignore_ascii_case("deferred"))
+        {
+            probe_statuses.push("deferred".to_string());
+        }
+        let readiness = self.ready_readiness_probe(&probe_statuses)?;
         if !readiness.has_candidate_status {
             return Ok(Vec::new());
         }
@@ -10321,7 +10355,18 @@ impl SqliteStorage {
         let ready_statuses = resolved_ready_status_list(filters);
         {
             let list = inline_status_list(&ready_statuses);
-            let _ = write!(sql, " AND status IN ({list})");
+            // A timed deferral WAKES when its clock expires even though its
+            // status is still `deferred`; a manual deferral with no clock
+            // stays hidden. `include_deferred` opts into all of them.
+            if filters.include_deferred {
+                let _ = write!(sql, " AND (status IN ({list}) OR status = 'deferred')");
+            } else {
+                let _ = write!(
+                    sql,
+                    " AND (status IN ({list}) OR (status = 'deferred' \
+                     AND defer_until IS NOT NULL))"
+                );
+            }
         }
 
         if exclude_blocked_in_sql {
@@ -10330,7 +10375,9 @@ impl SqliteStorage {
 
         if exclude_held_in_sql {
             sql.push_str(
-                " AND issues.id NOT IN (SELECT issue_id FROM captain_holds WHERE open = 1)",
+                " AND issues.id NOT IN (SELECT issue_id FROM captain_holds \
+                 WHERE open = 1 AND resurfaced = 0 \
+                   AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')))",
             );
         }
 
@@ -10365,12 +10412,44 @@ impl SqliteStorage {
              OR trim(je.value ->> '$.decision') = '')))",
         );
 
+        // Legacy stores and the cache-missing fallback may not have these
+        // tables. The outer filters already gate on table existence; do the
+        // same inside the wave gate so it never turns a working fallback
+        // into a "no such table" error. The dependency edges below remain
+        // unconditional and still exclude blocked lower waves.
         sql.push_str(
             " AND (issues.wave IS NULL OR issues.wave <= COALESCE((\
              SELECT MIN(lower_wave.wave) FROM issues lower_wave \
              WHERE lower_wave.wave IS NOT NULL \
-             AND lower_wave.status IN ('open', 'in_progress')), 9223372036854775807))",
+             AND lower_wave.status IN ('open', 'in_progress')",
         );
+        if exclude_blocked_in_sql {
+            sql.push_str(" AND lower_wave.id NOT IN (SELECT issue_id FROM blocked_issues_cache)");
+        }
+        sql.push_str(
+            " AND NOT EXISTS (\
+                 SELECT 1 FROM dependencies d \
+                 JOIN issues dep ON dep.id = d.depends_on_id \
+                 WHERE d.issue_id = lower_wave.id \
+                   AND d.type IN ('blocks', 'conditional-blocks', 'waits-for') \
+                   AND dep.status NOT IN ('closed', 'tombstone')) \
+             AND NOT EXISTS (\
+                 SELECT 1 FROM dependencies d \
+                 JOIN issues child ON child.id = d.issue_id \
+                 WHERE d.depends_on_id = lower_wave.id \
+                   AND d.type = 'parent-child' \
+                   AND child.status NOT IN ('closed', 'tombstone')) \
+             AND (lower_wave.defer_until IS NULL \
+                  OR datetime(lower_wave.defer_until) <= datetime('now'))",
+        );
+        if exclude_held_in_sql {
+            sql.push_str(
+                " AND lower_wave.id NOT IN (SELECT issue_id FROM captain_holds \
+                 WHERE open = 1 AND resurfaced = 0 \
+                   AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')))",
+            );
+        }
+        sql.push_str("), 9223372036854775807))");
 
         if let Some(ref types) = filters.types
             && !types.is_empty()
@@ -11207,10 +11286,6 @@ impl SqliteStorage {
         blocked_issues_map: &HashMap<String, Vec<String>>,
         projection: BlockedIssueProjection,
     ) -> Result<Vec<(Issue, Vec<String>)>> {
-        if blocked_issues_map.is_empty() {
-            return Ok(Vec::new());
-        }
-
         let sql = format!(
             "{} FROM issues
              WHERE status NOT IN ('closed', 'tombstone')
@@ -11224,6 +11299,8 @@ impl SqliteStorage {
             let issue = projection.parse_issue(row)?;
             if let Some(blockers) = blocked_issues_map.get(issue.id.as_str()) {
                 blocked_issues.push((issue, blockers.clone()));
+            } else if issue.status == Status::Blocked {
+                blocked_issues.push((issue, Vec::new()));
             }
         }
 
@@ -11703,8 +11780,9 @@ impl SqliteStorage {
         }
         let sql = format!(
             "{} FROM issues i
-             INNER JOIN blocked_issues_cache bc ON i.id = bc.issue_id
+             LEFT JOIN blocked_issues_cache bc ON i.id = bc.issue_id
              WHERE i.status NOT IN ('closed', 'tombstone')
+               AND (i.status = 'blocked' OR bc.issue_id IS NOT NULL)
              ORDER BY i.priority ASC, i.created_at DESC, i.id ASC",
             projection.cached_select_clause()
         );
@@ -11727,6 +11805,9 @@ impl SqliteStorage {
                     .and_then(SqliteValue::as_text),
             ) {
                 Ok(blockers) => blockers,
+                // An explicit `status = blocked` with no open dependency
+                // edge has no cache row. It still belongs on `br blocked`.
+                Err(_) if issue.status == Status::Blocked => Vec::new(),
                 Err(error) => {
                     let blocked_issues_map =
                         self.recover_blocked_issues_map("get_blocked_issues_parse", &error)?;
@@ -14437,9 +14518,7 @@ impl SqliteStorage {
             .iter()
             .filter_map(|id| {
                 id.strip_prefix(&prefix_with_dot)
-                    .and_then(|suffix| {
-                        suffix.split('.').next()
-                    })
+                    .and_then(|suffix| suffix.split('.').next())
                     .and_then(|num_str| num_str.parse::<u32>().ok())
             })
             .max()
@@ -24796,6 +24875,30 @@ mod tests {
     }
 
     #[test]
+    fn test_blocked_status_without_dependency_edge_is_visible() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 4, 1, 0, 0, 0).unwrap();
+        let blocked = make_issue(
+            "bd-status-only",
+            "Operator blocked",
+            Status::Blocked,
+            2,
+            None,
+            t1,
+            None,
+        );
+        storage.create_issue(&blocked, "tester").unwrap();
+
+        let blocked_issues = storage.get_blocked_issues().unwrap();
+        assert!(
+            blocked_issues
+                .iter()
+                .any(|(issue, _)| issue.id == "bd-status-only"),
+            "status=blocked with no dependency edge must not vanish"
+        );
+    }
+
+    #[test]
     fn test_add_and_remove_labels_sorted() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let t1 = Utc.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap();
@@ -28514,6 +28617,61 @@ mod tests {
         assert!(
             !ready.contains("br-wave-2"),
             "a higher wave is held while a lower wave sits open"
+        );
+    }
+
+    /// A lower-wave bead that cannot be dispatched (its dependency edge puts
+    /// it in the blocked cache) must not deadlock every higher wave.
+    #[test]
+    fn ready_wave_gate_ignores_dependency_blocked_lower_wave() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let created_at = Utc.with_ymd_and_hms(2026, 3, 20, 12, 0, 0).unwrap();
+        let blocker = make_issue(
+            "br-wave-blocker",
+            "Blocker",
+            Status::Open,
+            3,
+            None,
+            created_at,
+            None,
+        );
+        let mut lower = make_issue(
+            "br-wave-blocked-1",
+            "Blocked wave one",
+            Status::Open,
+            3,
+            None,
+            created_at,
+            None,
+        );
+        lower.wave = Some(1);
+        lower.verify = Some("mbx test --lib ready_wave_gate".to_string());
+        let mut higher = make_issue(
+            "br-wave-2b",
+            "Wave two",
+            Status::Open,
+            3,
+            None,
+            created_at,
+            None,
+        );
+        higher.wave = Some(2);
+        higher.verify = Some("mbx test --lib ready_wave_gate".to_string());
+
+        storage.create_issue(&blocker, "tester").unwrap();
+        storage.create_issue(&lower, "tester").unwrap();
+        storage.create_issue(&higher, "tester").unwrap();
+        storage
+            .add_dependency("br-wave-blocked-1", "br-wave-blocker", "blocks", "tester")
+            .unwrap();
+
+        let ready = storage
+            .get_ready_issues(&ReadyFilters::default(), ReadySortPolicy::Priority)
+            .unwrap();
+        let ids: HashSet<&str> = ready.iter().map(|issue| issue.id.as_str()).collect();
+        assert!(
+            ids.contains("br-wave-2b"),
+            "a blocked lower wave must not gate higher dispatchable work: {ids:?}"
         );
     }
 
@@ -32377,6 +32535,83 @@ mod tests {
             .unwrap();
         let ids: Vec<&str> = res.iter().map(|i| i.id.as_str()).collect();
         assert_eq!(ids, vec!["bd-open"], "default group must be [open] only");
+    }
+
+    #[test]
+    fn test_ready_wakes_expired_timed_defer() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let t1 = Utc::now();
+        let expired = t1 - chrono::Duration::hours(1);
+        storage
+            .create_issue(
+                &make_issue(
+                    "bd-wake",
+                    "Wakened",
+                    Status::Deferred,
+                    2,
+                    None,
+                    t1,
+                    Some(expired),
+                ),
+                "tester",
+            )
+            .unwrap();
+
+        let res = storage
+            .get_ready_issues(&ReadyFilters::default(), ReadySortPolicy::Oldest)
+            .unwrap();
+        let ids: Vec<&str> = res.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["bd-wake"],
+            "an expired timed deferral must return to ready"
+        );
+    }
+
+    #[test]
+    fn test_claim_refuses_manual_defer_but_allows_expired_timed_defer() {
+        let now = Utc::now();
+        let manual = make_issue(
+            "bd-manual-defer",
+            "Manual defer",
+            Status::Deferred,
+            2,
+            None,
+            now,
+            None,
+        );
+        assert!(
+            SqliteStorage::validate_claim_target(&manual, now).is_err(),
+            "manual defer has no clock and must not be claimable"
+        );
+
+        let expired = make_issue(
+            "bd-expired-defer",
+            "Expired defer",
+            Status::Deferred,
+            2,
+            None,
+            now,
+            Some(now - chrono::Duration::hours(1)),
+        );
+        assert!(
+            SqliteStorage::validate_claim_target(&expired, now).is_ok(),
+            "an expired timed deferral is claimable"
+        );
+
+        let future = make_issue(
+            "bd-future-defer",
+            "Future defer",
+            Status::Deferred,
+            2,
+            None,
+            now,
+            Some(now + chrono::Duration::hours(1)),
+        );
+        assert!(
+            SqliteStorage::validate_claim_target(&future, now).is_err(),
+            "a future timed deferral is not claimable"
+        );
     }
 
     #[test]

@@ -90,8 +90,10 @@ fn build_gate_note(sha: &str, receipt: Option<&str>) -> String {
 /// it is about to attempt is a guaranteed dead end, so it fails closed here
 /// with the same legal-name list the close would demand.
 fn resolve_gate_name(explicit: Option<&str>, issue: &crate::model::Issue) -> Result<String> {
-    let input = close_policy::legal_close_input_for_issue_pub(
+    let input = close_policy::legal_close_input_for_shape_pub(
         issue.priority.0,
+        issue.blast.into(),
+        issue.ac_shape.into(),
         issue.verify.as_deref().unwrap_or(""),
     );
     let legal = close_policy::legal_close_gate_names(&input);

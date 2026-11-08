@@ -20,6 +20,24 @@ pub enum Blast {
     High,
 }
 
+impl From<crate::model::Blast> for Blast {
+    fn from(value: crate::model::Blast) -> Self {
+        match value {
+            crate::model::Blast::Normal => Self::Normal,
+            crate::model::Blast::High => Self::High,
+        }
+    }
+}
+
+impl From<crate::model::AcShape> for AcShape {
+    fn from(value: crate::model::AcShape) -> Self {
+        match value {
+            crate::model::AcShape::Checkable => Self::Checkable,
+            crate::model::AcShape::Judgment => Self::Judgment,
+        }
+    }
+}
+
 /// Who produced the proof (ADR-0001 §5.3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum VerdictKind {
