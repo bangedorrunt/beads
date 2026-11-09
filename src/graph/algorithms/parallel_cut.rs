@@ -69,9 +69,11 @@ pub fn parallel_cut_suggestions(
                 .iter()
                 .filter(|&&w| {
                     !closed_set.get(w).copied().unwrap_or(false)
-                    && graph.predecessors_slice(w).iter()
-                        .filter(|&&p| p != v)
-                        .all(|&p| closed_set.get(p).copied().unwrap_or(false))
+                        && graph
+                            .predecessors_slice(w)
+                            .iter()
+                            .filter(|&&p| p != v)
+                            .all(|&p| closed_set.get(p).copied().unwrap_or(false))
                 })
                 .count();
 

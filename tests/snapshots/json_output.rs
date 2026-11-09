@@ -290,6 +290,7 @@ fn snapshot_close_json() {
         "gate_close_json",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close_sha = super::common::cli::citing_sha(&workspace, &id);
     let output = run_br(
         &workspace,
         [
@@ -298,7 +299,7 @@ fn snapshot_close_json() {
             "--reason",
             "Done",
             "--commit-sha",
-            "abc1234",
+            &close_sha,
             "--json",
         ],
         "close_json",

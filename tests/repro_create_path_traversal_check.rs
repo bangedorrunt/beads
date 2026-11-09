@@ -9,7 +9,6 @@ use tempfile::TempDir;
 #[test]
 #[ignore = "Path traversal restriction still active; feature to allow .. in CLI input not yet implemented"]
 fn test_create_from_file_rejects_parent_dir() {
-
     let temp = TempDir::new().unwrap();
     let subdir = temp.path().join("subdir");
     fs::create_dir(&subdir).unwrap();

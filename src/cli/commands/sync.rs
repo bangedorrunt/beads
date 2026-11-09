@@ -2324,7 +2324,6 @@ fn execute_flush(
     }
 
     if dirty_ids.is_empty() && !needs_flush && jsonl_exists && !args.force {
-
         let (existing_count, jsonl_ids) =
             analyze_jsonl_snapshot(source.expect("existing JSONL has an immutable snapshot"))?;
         if existing_count > 0 && db_issue_count == 0 {

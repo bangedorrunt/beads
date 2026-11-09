@@ -50,11 +50,7 @@ pub fn topological_sort(graph: &DiGraph) -> Option<Vec<usize>> {
         }
     }
 
-    if order.len() == n {
-        Some(order)
-    } else {
-        None
-    }
+    if order.len() == n { Some(order) } else { None }
 }
 
 /// Check if the graph is a DAG (directed acyclic graph).

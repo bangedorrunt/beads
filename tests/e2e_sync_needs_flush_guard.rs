@@ -263,6 +263,8 @@ fn e2e_hard_delete_flush_still_prunes_purged_issues() {
             "--force",
             "--no-auto-flush",
             "--no-auto-import",
+            "--reason",
+            "e2e tombstone",
         ],
         "soft_delete",
     );
@@ -276,6 +278,8 @@ fn e2e_hard_delete_flush_still_prunes_purged_issues() {
             "--force",
             "--no-auto-flush",
             "--no-auto-import",
+            "--reason",
+            "e2e tombstone",
         ],
         "hard_delete",
     );

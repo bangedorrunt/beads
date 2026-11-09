@@ -807,7 +807,7 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
         "gate_external_before_follow_up_close",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
-    let cite_sha = common::cli::citing_sha(&main_workspace, "--commit-sha");
+    let cite_sha = common::cli::citing_sha(&main_workspace, &external_id);
     let close = run_br(
         &main_workspace,
         ["close", "--commit-sha", &cite_sha, "--json"],
@@ -894,7 +894,7 @@ fn e2e_routing_close_external_issue_via_main_workspace() {
         "gate_external_via_route",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
-    let cite_sha = common::cli::citing_sha(&main_workspace, &routed_input);
+    let cite_sha = common::cli::citing_sha(&main_workspace, &external_id);
     let close = run_br(
         &main_workspace,
         ["close", &routed_input, "--commit-sha", &cite_sha, "--json"],
@@ -981,7 +981,7 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
         "gate_external_before_follow_up_reopen",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
-    let cite_sha = common::cli::citing_sha(&main_workspace, &routed_input);
+    let cite_sha = common::cli::citing_sha(&main_workspace, &external_id);
     let close = run_br(
         &main_workspace,
         ["close", &routed_input, "--commit-sha", &cite_sha, "--json"],
@@ -1990,7 +1990,14 @@ fn e2e_routing_delete_external_issue_via_main_workspace() {
 
     let delete = run_br(
         &main_workspace,
-        ["delete", &routed_issue, "--force", "--json"],
+        [
+            "delete",
+            &routed_issue,
+            "--force",
+            "--json",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_external_via_route",
     );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
@@ -2086,7 +2093,14 @@ fn e2e_routing_delete_preview_does_not_mutate_earlier_local_batch() {
     let routed_blocker = routed_partial_id(&blocker_id);
     let delete = run_br(
         &main_workspace,
-        ["delete", &local_id, &routed_blocker, "--json"],
+        [
+            "delete",
+            &local_id,
+            &routed_blocker,
+            "--json",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_preview_cross_route_guard",
     );
     assert!(
@@ -2170,7 +2184,15 @@ fn e2e_routing_delete_force_dry_run_reports_orphans_not_cascade() {
     let routed_blocker = routed_partial_id(&blocker_id);
     let delete = run_br(
         &main_workspace,
-        ["delete", &routed_blocker, "--dry-run", "--force", "--json"],
+        [
+            "delete",
+            &routed_blocker,
+            "--dry-run",
+            "--force",
+            "--json",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_force_dry_run_external_via_route",
     );
     assert!(

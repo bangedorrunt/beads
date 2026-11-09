@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_issues_array, extract_json_payload, run_br};
+use common::cli::{BrWorkspace, citing_sha, extract_issues_array, extract_json_payload, run_br};
 use serde_json::Value;
 use tracing::info;
 fn parse_created_id(stdout: &str) -> String {
@@ -582,9 +582,10 @@ fn defer_closed_issue_skips() {
         "gate_close_first",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let sha = citing_sha(&workspace, &id);
     let close = run_br(
         &workspace,
-        ["close", &id, "--commit-sha", "e2e-defer-close"],
+        ["close", &id, "--commit-sha", &sha],
         "close_first",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);

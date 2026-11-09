@@ -180,9 +180,10 @@ fn snapshot_reopen_output() {
         "gate_for_reopen",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close_sha = super::common::cli::citing_sha(&workspace, &id);
     let close = run_br(
         &workspace,
-        ["close", &id, "--commit-sha", "abc1234"],
+        ["close", &id, "--commit-sha", &close_sha],
         "close_for_reopen",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);

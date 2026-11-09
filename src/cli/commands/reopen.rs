@@ -139,6 +139,18 @@ pub fn execute(
     if let Some(last_reopened) = reopened_issues.last() {
         crate::util::set_last_touched_id(&beads_dir, &last_reopened.id);
     }
+    let all_skipped = reopened_issues.is_empty() && !skipped_issues.is_empty();
+    if all_skipped {
+        let skipped_count = skipped_issues.len();
+        let skipped_summary = skipped_issues
+            .iter()
+            .map(|item| format!("{}: {}", item.id, item.reason))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(BeadsError::NothingToDo {
+            reason: format!("all {skipped_count} issue(s) skipped — {skipped_summary}"),
+        });
+    }
 
     if use_structured_output {
         let result = ReopenResult {
@@ -194,6 +206,7 @@ pub fn execute(
             ctx.warning(&warning.to_string());
         }
     }
+
     Ok(())
 }
 
@@ -620,7 +633,12 @@ mod tests {
             db: Some(db_path.clone()),
             ..CliOverrides::default()
         };
-        execute(&args, false, &overrides, &ctx).expect("reopen");
+        let error = execute(&args, false, &overrides, &ctx)
+            .expect_err("an all-skipped reopen must not exit zero");
+        assert!(
+            error.to_string().contains("all 1 issue(s) skipped"),
+            "unexpected error: {error}"
+        );
 
         let storage = SqliteStorage::open(&db_path).expect("reopen storage");
         let issue = storage

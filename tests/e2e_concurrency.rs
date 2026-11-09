@@ -322,6 +322,42 @@ fn assert_only_success_or_contention(role: &str, results: &[BrResult]) -> usize 
     success_count
 }
 
+/// `reopen` of an already-open issue is a typed refusal, not a failure:
+/// the command exits non-zero so a caller cannot mistake a skipped reopen for
+/// a close proof, but the concurrency test only cares that the refusal is
+/// clean and carries no integrity signal.
+fn is_expected_nothing_to_do(result: &BrResult) -> bool {
+    let output = format!("{}{}", result.stdout, result.stderr);
+    !result.success
+        && output.contains("NOTHING_TO_DO")
+        && output.contains("already open")
+        && !contains_integrity_failure_signal(&output)
+}
+
+fn assert_only_success_contention_or_nothing_to_do(role: &str, results: &[BrResult]) -> usize {
+    let mut success_count = 0;
+    let mut unexpected_failures = Vec::new();
+
+    for (index, result) in results.iter().enumerate() {
+        if result.success {
+            success_count += 1;
+        } else if !is_expected_contention_failure(result) && !is_expected_nothing_to_do(result) {
+            unexpected_failures.push(format!(
+                "{role}[{index}] stdout={} stderr={}",
+                result.stdout, result.stderr
+            ));
+        }
+    }
+
+    assert!(
+        unexpected_failures.is_empty(),
+        "unexpected {role} failures: {}",
+        unexpected_failures.join(" | ")
+    );
+
+    success_count
+}
+
 fn issue_title_count(root: &Path, title: &str) -> i64 {
     let db_path = root.join(".beads").join("beads.db");
     let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open beads db");
@@ -3050,7 +3086,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
             ],
         );
         assert!(gate.success, "seed gate {idx} failed: {}", gate.stderr);
-    let cite_sha = common::cli::citing_sha_in(&root, &issue_id);
+        let cite_sha = common::cli::citing_sha_in(&root, &issue_id);
         let closed = run_br_in_dir(
             &root,
             [
@@ -3233,7 +3269,8 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
 
     let close_successes = assert_only_success_or_contention("close", &close_results);
     let update_successes = assert_only_success_or_contention("update", &update_results);
-    let reopen_successes = assert_only_success_or_contention("reopen", &reopen_results);
+    let reopen_successes =
+        assert_only_success_contention_or_nothing_to_do("reopen", &reopen_results);
     let reader_successes = assert_only_success_or_contention("reader", &reader_results);
 
     assert!(

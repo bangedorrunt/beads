@@ -545,7 +545,6 @@ fn fsync_dir(dir: &Path) -> std::io::Result<()> {
 /// - Out-of-scope paths (refused per safety envelope)
 /// - DB ops that fail the precondition gate or the SQL transaction
 pub fn mutate(ctx: &MutateContext, path: &Path, op: Op) -> Result<ActionResult, BeadsError> {
-
     let before_bytes_or_missing = match fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,

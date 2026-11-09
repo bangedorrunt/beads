@@ -594,7 +594,14 @@ fn e2e_no_db_hard_delete_flushes_jsonl() {
 
     let delete = run_br(
         &workspace,
-        ["--no-db", "delete", &issue_id, "--hard"],
+        [
+            "--no-db",
+            "delete",
+            &issue_id,
+            "--hard",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_no_db_hard",
     );
     assert!(
@@ -685,8 +692,7 @@ fn e2e_no_auto_flush_flag() {
 
     if jsonl_path.exists() {
         let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
-        if contents.contains("No auto-flush test") {
-        }
+        if contents.contains("No auto-flush test") {}
     }
 
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
@@ -824,7 +830,6 @@ fn e2e_quiet_flag() {
         "create --quiet failed: {}",
         create.stderr
     );
-
 }
 
 #[test]
@@ -844,7 +849,6 @@ fn e2e_quiet_flag_list() {
         "list --quiet failed: {}",
         list.stderr
     );
-
 }
 
 #[test]
@@ -1335,7 +1339,7 @@ fn e2e_quiet_flag_config_epic_label_and_q_subcommands() {
 
     assert_quiet_command(
         &workspace,
-        ["--quiet", "delete", &issue_id],
+        ["--quiet", "delete", &issue_id, "--reason", "e2e tombstone"],
         "delete_quiet",
         "delete --quiet",
     );
@@ -1405,7 +1409,6 @@ fn e2e_verbose_flag() {
         "create -v failed: {}",
         create.stderr
     );
-
 }
 
 #[test]

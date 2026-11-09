@@ -210,7 +210,12 @@ pub fn citing_sha_all_in(root: &Path, bead_ids: &[&str]) -> String {
     std::fs::write(root.join(&work_file), format!("work for {cited}\n"))
         .expect("write the work file");
     git(&["add", &work_file]);
-    git(&["commit", "-q", "-m", &format!("fix: carry the work for {cited}")]);
+    git(&[
+        "commit",
+        "-q",
+        "-m",
+        &format!("fix: carry the work for {cited}"),
+    ]);
     git(&["rev-parse", "HEAD"])
 }
 

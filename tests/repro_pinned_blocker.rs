@@ -61,7 +61,6 @@ fn make_issue(id: &str, title: &str, status: Status) -> Issue {
 
 #[test]
 fn test_pinned_status_blocks_dependents() {
-
     let mut storage = SqliteStorage::open_memory().unwrap();
 
     let issue_a = make_issue("bd-a", "Pinned Blocker", Status::Pinned);

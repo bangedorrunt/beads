@@ -794,6 +794,49 @@ fn ready_holds_wave_2_while_wave_1_open() {
     assert!(ids.contains(&wave2.id), "closing wave 1 releases wave 2");
 }
 
+#[test]
+fn ready_holds_wave_2_while_wave_1_timed_deferral_expired() {
+    let mut storage = test_db();
+
+    let mut wave1 = fixtures::IssueBuilder::new("Wave 1 timed deferral").build();
+    wave1.wave = Some(1);
+    wave1.status = Status::Deferred;
+    wave1.defer_until = Some(chrono::Utc::now() - chrono::Duration::hours(1));
+    wave1.verify = Some("cargo test".to_string());
+    storage.create_issue(&wave1, "tester").unwrap();
+
+    let mut wave2 = fixtures::IssueBuilder::new("Wave 2 work").build();
+    wave2.wave = Some(2);
+    wave2.verify = Some("cargo test".to_string());
+    storage.create_issue(&wave2, "tester").unwrap();
+
+    let filters = ReadyFilters::default();
+    let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
+    assert!(
+        ids.contains(&wave1.id),
+        "expired timed deferral wakes into ready"
+    );
+    assert!(
+        !ids.contains(&wave2.id),
+        "wave 2 must be held while wave 1 timed deferral is ready"
+    );
+}
+
+#[test]
+fn may_have_blocked_command_results_detects_explicit_blocked_issue() {
+    let mut storage = test_db();
+
+    let blocked = fixtures::IssueBuilder::new("Explicit blocked")
+        .with_status(Status::Blocked)
+        .build();
+    storage.create_issue(&blocked, "tester").unwrap();
+
+    assert!(
+        storage.may_have_blocked_command_results().unwrap(),
+        "explicit blocked status must flag candidate probe"
+    );
+}
+
 /// §8.4 #12 / §5.5 condition 2 (parent #432): closed blockers are ignored;
 /// a MISSING blocker (dependency pointing at an absent local id) is ignored
 /// too — only open or in_progress blockers hide an issue from ready.
@@ -828,5 +871,4 @@ fn ready_ignores_closed_blocker() {
         ids.contains(&dependent.id),
         "closed blocker must be ignored (#432)"
     );
-
 }

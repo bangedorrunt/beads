@@ -57,7 +57,15 @@ fi
 # (#432): the audit must report it as informational, never degrade it.
 "$tool_bin" dep add "$blocked_id" "$blocker_id" >/dev/null 2>&1
 "$tool_bin" gate report "$blocker_id" --gate unit-test-verified --provider fixture --status pass --to closed >/dev/null 2>&1
-"$tool_bin" close "$blocker_id" --reason "fixture: blocker completed" --commit-sha fixture-dep-dead-closed >/dev/null 2>&1
+# Close verifies that the SHA resolves in a real repository and cites the bead.
+git init -q 2>/dev/null || true
+git config user.email fixture@example.com
+git config user.name fixture
+printf 'fixture close witness\n' > .fixture_close_commit
+git add .fixture_close_commit
+git commit -q -m "fixture: close $blocker_id"
+close_sha=$(git rev-parse HEAD)
+"$tool_bin" close "$blocker_id" --reason "fixture: blocker completed" --commit-sha "$close_sha" >/dev/null 2>&1
 "$tool_bin" sync --flush-only >/dev/null 2>&1
 
 {

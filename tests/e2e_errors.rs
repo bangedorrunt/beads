@@ -165,7 +165,11 @@ fn e2e_error_handling() {
     let show_missing = run_br(&workspace, ["show", "bd-doesnotexist"], "show_missing");
     assert!(!show_missing.status.success());
 
-    let delete_missing = run_br(&workspace, ["delete", "bd-doesnotexist"], "delete_missing");
+    let delete_missing = run_br(
+        &workspace,
+        ["delete", "bd-doesnotexist", "--reason", "e2e tombstone"],
+        "delete_missing",
+    );
     assert!(!delete_missing.status.success());
 
     let beads_dir = workspace.root.join(".beads");
@@ -208,7 +212,14 @@ fn e2e_sync_force_import_keeps_jsonl_authoritative_for_existing_tombstones() {
 
     let delete = run_br(
         &workspace,
-        ["delete", &id, "--force", "--no-auto-flush"],
+        [
+            "delete",
+            &id,
+            "--force",
+            "--no-auto-flush",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete",
     );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
@@ -270,7 +281,14 @@ fn e2e_sync_rebuild_keeps_jsonl_authoritative_for_existing_tombstones() {
 
     let delete = run_br(
         &workspace,
-        ["delete", &id, "--force", "--no-auto-flush"],
+        [
+            "delete",
+            &id,
+            "--force",
+            "--no-auto-flush",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete",
     );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
@@ -987,7 +1005,14 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
 
     let delete_cmd = run_br(
         &workspace,
-        ["delete", &delete_id, "--force", "--no-auto-flush"],
+        [
+            "delete",
+            &delete_id,
+            "--force",
+            "--no-auto-flush",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_no_flush",
     );
     assert!(
@@ -1931,9 +1956,10 @@ fn e2e_lint_status_all_includes_closed() {
         "gate report failed: {}",
         close_gate.stderr
     );
+    let close_sha = common::cli::citing_sha(&workspace, &id);
     let close = run_br(
         &workspace,
-        ["close", &id, "--reason", "done", "--commit-sha", "abc1234"],
+        ["close", &id, "--reason", "done", "--commit-sha", &close_sha],
         "lint_closed_close",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
@@ -2150,7 +2176,8 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     );
     assert!(close.status.success(), "gate failed: {}", close.stderr);
 
-    let cite_sha = common::cli::citing_sha(&workspace, &blocked_id);
+    let cite_sha =
+        common::cli::citing_sha_all(&workspace, &[blocked_id.as_str(), free_id.as_str()]);
     let close = run_br(
         &workspace,
         [
@@ -3510,7 +3537,11 @@ fn e2e_delete_with_dependents_preview() {
     let dep_add = run_br(&workspace, ["dep", "add", &id_b, &id_a], "dep_add");
     assert!(dep_add.status.success());
 
-    let result = run_br(&workspace, ["delete", &id_a], "delete_with_deps");
+    let result = run_br(
+        &workspace,
+        ["delete", &id_a, "--reason", "e2e tombstone"],
+        "delete_with_deps",
+    );
     assert!(
         result.status.success(),
         "delete with dependents should show preview"
@@ -3549,7 +3580,14 @@ fn e2e_delete_json_sorts_deleted_ids() {
 
     let result = run_br(
         &workspace,
-        ["delete", &id_b, &id_a, "--json"],
+        [
+            "delete",
+            &id_b,
+            &id_a,
+            "--json",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_json_sorted_ids",
     );
     assert!(
@@ -3589,7 +3627,14 @@ fn e2e_delete_dry_run_sorts_requested_ids() {
 
     let result = run_br(
         &workspace,
-        ["delete", &id_b, &id_a, "--dry-run"],
+        [
+            "delete",
+            &id_b,
+            &id_a,
+            "--dry-run",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_dry_run_sorted_ids",
     );
     assert!(
@@ -3637,7 +3682,15 @@ fn e2e_delete_dry_run_json_returns_structured_preview() {
 
     let result = run_br(
         &workspace,
-        ["delete", &id_b, &id_a, "--dry-run", "--json"],
+        [
+            "delete",
+            &id_b,
+            &id_a,
+            "--dry-run",
+            "--json",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_dry_run_json",
     );
     assert!(
@@ -3684,7 +3737,7 @@ fn e2e_delete_with_dependents_json_returns_structured_preview() {
 
     let result = run_br(
         &workspace,
-        ["delete", &id_a, "--json"],
+        ["delete", &id_a, "--json", "--reason", "e2e tombstone"],
         "delete_with_dependents_json_preview",
     );
     assert!(
@@ -3733,7 +3786,7 @@ fn e2e_delete_ignores_non_blocking_related_dependencies() {
 
     let delete = run_br(
         &workspace,
-        ["delete", &anchor_id, "--json"],
+        ["delete", &anchor_id, "--json", "--reason", "e2e tombstone"],
         "delete_related_edge_json",
     );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
@@ -3784,7 +3837,7 @@ fn e2e_delete_child_with_parent_child_dependency_previews_parent() {
 
     let delete = run_br(
         &workspace,
-        ["delete", &child_id, "--json"],
+        ["delete", &child_id, "--json", "--reason", "e2e tombstone"],
         "delete_child_parent_child_json",
     );
     assert!(
@@ -3833,7 +3886,14 @@ fn e2e_delete_hard_json_reports_removed_labels_and_events() {
 
     let delete = run_br(
         &workspace,
-        ["delete", &issue_id, "--hard", "--json"],
+        [
+            "delete",
+            &issue_id,
+            "--hard",
+            "--json",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_hard_counters_json",
     );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);

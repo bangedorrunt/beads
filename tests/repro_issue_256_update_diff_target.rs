@@ -85,9 +85,10 @@ fn br_update_prints_target_beads_title_not_unrelated_bead_title() {
         "noise gate report failed: {}",
         noise_gate.stderr
     );
+    let close_sha = common::cli::citing_sha(&workspace, &noise_id);
     let noise_close = run_br(
         &workspace,
-        ["close", &noise_id, "--commit-sha", "abc1234"],
+        ["close", &noise_id, "--commit-sha", &close_sha],
         "close_noise",
     );
     assert!(

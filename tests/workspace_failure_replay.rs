@@ -1001,6 +1001,7 @@ fn assert_core_write_success(
         fixture.metadata.name,
         gate.stderr
     );
+    let close_sha = common::cli::citing_sha(&fixture.workspace, &issue_id);
     let close = run_br(
         &fixture.workspace,
         [
@@ -1009,7 +1010,7 @@ fn assert_core_write_success(
             "--reason",
             "Replay close",
             "--commit-sha",
-            "abc1234",
+            &close_sha,
             "--json",
         ],
         &surface_label(&fixture.metadata.name, "core_close"),
@@ -1035,7 +1036,7 @@ fn assert_core_write_success(
 
     let delete = run_br(
         &fixture.workspace,
-        ["delete", &issue_id, "--json"],
+        ["delete", &issue_id, "--json", "--reason", "e2e tombstone"],
         &surface_label(&fixture.metadata.name, "core_delete"),
     );
     assert!(

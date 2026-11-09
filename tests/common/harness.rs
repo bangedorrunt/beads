@@ -557,16 +557,17 @@ impl ArtifactLogger {
             fs::write(summary_path, json).ok();
         }
 
-        if passed && !self.config.preserve_on_success {
-            if let Ok(entries) = fs::read_dir(&self.artifact_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path
-                        .extension()
-                        .is_some_and(|e| e == "stdout" || e == "stderr")
-                    {
-                        fs::remove_file(path).ok();
-                    }
+        if passed
+            && !self.config.preserve_on_success
+            && let Ok(entries) = fs::read_dir(&self.artifact_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path
+                    .extension()
+                    .is_some_and(|e| e == "stdout" || e == "stderr")
+                {
+                    fs::remove_file(path).ok();
                 }
             }
         }

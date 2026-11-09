@@ -312,8 +312,7 @@ fn apply_section_to_issue(issue: &mut ParsedIssue, section: Section, lines: &[St
         Section::AgentContext => {
             issue.agent_context = Some(content);
         }
-        Section::Unknown => {
-        }
+        Section::Unknown => {}
     }
 }
 

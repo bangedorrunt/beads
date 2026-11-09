@@ -2,7 +2,6 @@ use beads::format::truncate_title;
 
 #[test]
 fn test_truncate_title_with_wide_characters() {
-
     let title = "🚀🚀🚀";
     let _truncated = truncate_title(title, 4);
 

@@ -356,7 +356,10 @@ fn commit_changes_nothing(repo_dir: &Path, sha: &str) -> bool {
     ) else {
         return false;
     };
-    let files: Vec<&str> = files.lines().filter(|line| !line.trim().is_empty()).collect();
+    let files: Vec<&str> = files
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     if files.is_empty() {
         return true;
     }
@@ -2667,7 +2670,10 @@ mod tests {
                 "bd-close-skip".to_string(),
                 "bd-close-last".to_string(),
             ],
-            commit_sha: Some(test_sha(temp.path(), &["bd-close-first", "bd-close-skip", "bd-close-last"])),
+            commit_sha: Some(test_sha(
+                temp.path(),
+                &["bd-close-first", "bd-close-skip", "bd-close-last"],
+            )),
             ..CloseArgs::default()
         };
         let execution = execute_route(&args, &CliOverrides::default(), &ctx, &beads_dir, false)

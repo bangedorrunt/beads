@@ -310,23 +310,8 @@ fn render_rich_markdown(content: &str, width: usize) -> String {
 #[must_use]
 pub fn contains_markdown(content: &str) -> bool {
     let patterns = [
-        "**",
-        "__",
-        "*",
-        "_",
-        "~~",
-        "`",
-        "```",
-        "[",
-        "](",
-        "# ",
-        "##",
-        "> ",
-        "- ",
-        "* ",
-        "1.",
-        "---",
-        "***",
+        "**", "__", "*", "_", "~~", "`", "```", "[", "](", "# ", "##", "> ", "- ", "* ", "1.",
+        "---", "***",
     ];
 
     patterns.iter().any(|pattern| content.contains(pattern))

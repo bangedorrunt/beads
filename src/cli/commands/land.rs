@@ -20,6 +20,7 @@ use crate::format::sanitize_terminal_inline;
 use crate::output::OutputContext;
 use crate::util::id::{IdResolver, ResolverConfig};
 use serde::Serialize;
+use std::path::Path;
 
 /// Git object names are exactly 40 hex chars.
 const SHA_LEN: usize = 40;
@@ -228,49 +229,20 @@ pub fn execute(args: &LandArgs, cli: &CliOverrides, ctx: &OutputContext) -> Resu
         ..close::CloseArgs::default()
     };
 
+    let plan = LandPlan {
+        issue_id: &issue_id,
+        gate: &gate_name,
+        provider: &provider,
+        sha: &sha,
+        note: &note,
+    };
     if args.dry_run {
         let report = close::preview_close_report(&close_args, cli, &beads_dir, &storage_ctx)?;
-        let plan = LandPlan {
-            issue_id: &issue_id,
-            gate: &gate_name,
-            provider: &provider,
-            sha: &sha,
-            note: &note,
-        };
         emit_dry_run(args, ctx, use_json, &plan, report);
         return Ok(());
     }
 
-    let recorded = gate::record_verdict(
-        &GateReportArgs {
-            id: issue_id.clone(),
-            gate: gate_name.clone(),
-            provider: provider.clone(),
-            status: GateStatus::Pass,
-            to: Some("closed".to_string()),
-            note: Some(note.clone()),
-            robot: false,
-        },
-        cli,
-        &beads_dir,
-    )?;
-
-    let outcome = close::execute_land_close(&close_args, cli, ctx, &beads_dir)?;
-    if outcome.closed.is_empty() {
-        let reasons = outcome
-            .skipped
-            .iter()
-            .map(|skipped| format!("{}: {}", skipped.id, skipped.reason))
-            .collect::<Vec<_>>()
-            .join("; ");
-        return Err(BeadsError::validation(
-            "close",
-            format!(
-                "land: gate '{}' was recorded (row {}) but the close did not land ({reasons})",
-                recorded.gate, recorded.id
-            ),
-        ));
-    }
+    record_land_gate_and_close(&plan, &close_args, cli, ctx, &beads_dir, &storage_ctx)?;
 
     let mut steps = vec![
         LandStep::done(
@@ -295,6 +267,140 @@ pub fn execute(args: &LandArgs, cli: &CliOverrides, ctx: &OutputContext) -> Resu
     };
     render_live(use_json, ctx, &output);
     Ok(())
+}
+
+/// Record the PASS row, make the same close decision the live verb will make,
+/// then close. Every failure after the PASS row is compensated so a refused
+/// land cannot authorize a later close.
+fn record_land_gate_and_close(
+    plan: &LandPlan<'_>,
+    close_args: &close::CloseArgs,
+    cli: &CliOverrides,
+    ctx: &OutputContext,
+    beads_dir: &Path,
+    storage_ctx: &config::OpenStorageResult,
+) -> Result<()> {
+    let recorded = gate::record_verdict(
+        &GateReportArgs {
+            id: plan.issue_id.to_string(),
+            gate: plan.gate.to_string(),
+            provider: plan.provider.to_string(),
+            status: GateStatus::Pass,
+            to: Some("closed".to_string()),
+            note: Some(plan.note.to_string()),
+            robot: false,
+        },
+        cli,
+        beads_dir,
+    )?;
+
+    // The gate is now visible, so this is the same close decision the live
+    // close will make. A refusal is compensated before any issue transition.
+    let preview = match close::preview_close_report(close_args, cli, beads_dir, storage_ctx) {
+        Ok(preview) => preview,
+        Err(error) => {
+            let reason = format!("close preview failed: {error}");
+            let compensation = compensate_land_gate(&recorded, &reason, cli, beads_dir);
+            return Err(land_abort_error(&recorded, &reason, compensation));
+        }
+    };
+    if !preview.would_close {
+        let reason = preview_reasons(&preview);
+        let compensation = compensate_land_gate(&recorded, &reason, cli, beads_dir);
+        return Err(land_abort_error(&recorded, &reason, compensation));
+    }
+
+    let outcome = match close::execute_land_close(close_args, cli, ctx, beads_dir) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let reason = format!("close failed: {error}");
+            let compensation = compensate_land_gate(&recorded, &reason, cli, beads_dir);
+            return Err(land_abort_error(&recorded, &reason, compensation));
+        }
+    };
+    if outcome.closed.is_empty() {
+        let reason = outcome
+            .skipped
+            .iter()
+            .map(|skipped| format!("{}: {}", skipped.id, skipped.reason))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let reason = if reason.is_empty() {
+            "close skipped the issue".to_string()
+        } else {
+            reason
+        };
+        let compensation = compensate_land_gate(&recorded, &reason, cli, beads_dir);
+        return Err(land_abort_error(&recorded, &reason, compensation));
+    }
+    Ok(())
+}
+
+/// Render the preview's refusal reasons for the abort error.
+fn preview_reasons(report: &close::CloseDryRunReport) -> String {
+    let reasons = report
+        .issues
+        .iter()
+        .flat_map(|issue| {
+            issue
+                .missing
+                .iter()
+                .map(move |missing| format!("{}: {missing}", issue.id))
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    if reasons.is_empty() {
+        "close preview refused".to_string()
+    } else {
+        reasons
+    }
+}
+
+/// A failed land must not leave its PASS row authorizing a later close.
+/// Gate history is append-only, so neutralize it with a later FAIL at the same
+/// transition revision; the close-verdict assertion takes the latest row.
+fn compensate_land_gate(
+    recorded: &gate::GateReportOutput,
+    reason: &str,
+    cli: &CliOverrides,
+    beads_dir: &Path,
+) -> Result<()> {
+    gate::record_verdict(
+        &GateReportArgs {
+            id: recorded.issue_id.clone(),
+            gate: recorded.gate.clone(),
+            provider: recorded.provider.clone(),
+            status: GateStatus::Fail,
+            to: Some(recorded.to_status.clone()),
+            note: Some(format!("land aborted: {reason}")),
+            robot: false,
+        },
+        cli,
+        beads_dir,
+    )?;
+    Ok(())
+}
+
+fn land_abort_error(
+    recorded: &gate::GateReportOutput,
+    reason: &str,
+    compensation: Result<()>,
+) -> BeadsError {
+    let resolution = match compensation {
+        Ok(()) => format!(
+            "a compensating FAIL row now shadows PASS row {} at revision {}",
+            recorded.id, recorded.status_revision
+        ),
+        Err(error) => format!("the compensating FAIL row ALSO failed: {error}"),
+    };
+    BeadsError::validation(
+        "close",
+        format!(
+            "land: gate '{}' PASS row {} was recorded, but the close did not land ({reason}). \
+             {resolution}; fix the close precondition and rerun `br land {} --commit-sha <sha>`",
+            recorded.gate, recorded.id, recorded.issue_id
+        ),
+    )
 }
 
 /// The identity of one land plan, for dry-run rendering.
@@ -576,7 +682,12 @@ fn render_dry_run(use_json: bool, ctx: &OutputContext, output: &LandDryRun) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::commands;
     use crate::model::{Issue, IssueType, Priority, Status};
+    use crate::output::OutputContext;
+    use crate::storage::SqliteStorage;
+    use chrono::Utc;
+    use tempfile::TempDir;
 
     fn issue_with(priority: Priority, verify: Option<&str>) -> Issue {
         let now = chrono::Utc::now();
@@ -608,6 +719,69 @@ mod tests {
         assert_eq!(validate_sha_token(&SHA.to_uppercase()).unwrap(), SHA);
         assert!(validate_sha_token("d1d02dd3").is_err());
         assert!(validate_sha_token("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz").is_err());
+    }
+
+    #[test]
+    fn a_failed_land_compensation_shadows_the_pass_row() {
+        let _lock = crate::util::test_helpers::TEST_DIR_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = TempDir::new().expect("tempdir");
+        let ctx = OutputContext::from_flags(false, false, true);
+        commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
+        let beads_dir = temp.path().join(".beads");
+        let db_path = beads_dir.join("beads.db");
+        let now = Utc::now();
+        let issue = Issue {
+            id: "bd-land-compensate".to_string(),
+            title: "Land abort compensation".to_string(),
+            status: Status::Open,
+            priority: Priority::MEDIUM,
+            issue_type: IssueType::Task,
+            created_at: now,
+            updated_at: now,
+            verify: Some("cargo test -p beads land_abort".to_string()),
+            ..Issue::default()
+        };
+        let mut storage = SqliteStorage::open(&db_path).expect("storage");
+        storage.create_issue(&issue, "tester").expect("create");
+        drop(storage);
+
+        let overrides = CliOverrides {
+            db: Some(db_path.clone()),
+            ..CliOverrides::default()
+        };
+        let recorded = gate::record_verdict(
+            &GateReportArgs {
+                id: issue.id.clone(),
+                gate: "command-verified".to_string(),
+                provider: "tester".to_string(),
+                status: GateStatus::Pass,
+                to: Some("closed".to_string()),
+                note: Some(format!("sha={SHA}")),
+                robot: false,
+            },
+            &overrides,
+            &beads_dir,
+        )
+        .expect("pass row");
+        compensate_land_gate(&recorded, "unit-test abort", &overrides, &beads_dir)
+            .expect("compensating fail");
+
+        let storage = SqliteStorage::open(&db_path).expect("reopen storage");
+        let history = storage
+            .get_gate_result_history(&issue.id)
+            .expect("gate history");
+        assert_eq!(history.len(), 2, "pass + compensating fail");
+        assert!(history[0].passed, "the original pass remains auditable");
+        assert!(!history[1].passed, "the latest row must shadow the pass");
+        assert!(
+            history[1]
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("land aborted")),
+            "the compensation must say why"
+        );
     }
 
     #[test]

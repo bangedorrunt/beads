@@ -42,7 +42,11 @@ fn doctor_repair_restores_the_gate_verdicts_a_rebuild_would_drop() {
         created.stderr
     );
     let id = parse_created_id(&created.stdout);
-    assert!(!id.is_empty(), "create must report the id: {}", created.stdout);
+    assert!(
+        !id.is_empty(),
+        "create must report the id: {}",
+        created.stdout
+    );
 
     let gate = run_br(
         &workspace,

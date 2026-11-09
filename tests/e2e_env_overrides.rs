@@ -1031,7 +1031,7 @@ fn e2e_delete_honors_toon_env_mode() {
 
     let delete = run_br_with_env(
         &workspace,
-        ["delete", issue_id],
+        ["delete", issue_id, "--reason", "e2e tombstone"],
         [("BR_OUTPUT_FORMAT", "toon")],
         "delete_toon_env",
     );
@@ -1097,7 +1097,7 @@ fn e2e_delete_preview_honors_toon_env_mode() {
 
     let delete = run_br_with_env(
         &workspace,
-        ["delete", &blocker_id],
+        ["delete", &blocker_id, "--reason", "e2e tombstone"],
         [("BR_OUTPUT_FORMAT", "toon")],
         "delete_preview_toon_env",
     );

@@ -260,8 +260,7 @@ fn build_schemas(target: SchemaTarget) -> BTreeMap<&'static str, Schema> {
         SchemaTarget::Error => {
             schemas.insert("ErrorEnvelope", schema_for_output::<ErrorEnvelope>());
         }
-        SchemaTarget::Commands => {
-        }
+        SchemaTarget::Commands => {}
     }
 
     schemas

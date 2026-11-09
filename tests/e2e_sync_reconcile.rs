@@ -635,7 +635,11 @@ fn tombstone_protection_wins_over_live_jsonl_row() {
     assert!(flush.status.success());
     let live_lines = read_jsonl_lines(&ws);
 
-    let delete = run_br(&ws, ["delete", &id, "--force"], "tomb_delete");
+    let delete = run_br(
+        &ws,
+        ["delete", &id, "--force", "--reason", "e2e tombstone"],
+        "tomb_delete",
+    );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
     let mut lines = live_lines;
     lines[0] = set_row_field(&lines[0], "updated_at", json!("2032-01-01T00:00:00Z"));

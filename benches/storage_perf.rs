@@ -1,4 +1,3 @@
-
 #![allow(
     clippy::significant_drop_tightening,
     clippy::cast_possible_truncation,

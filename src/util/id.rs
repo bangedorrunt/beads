@@ -857,8 +857,7 @@ impl IdResolver {
                 }
 
                 match matches.len() {
-                    0 => {
-                    }
+                    0 => {}
                     1 => {
                         return Ok(ResolvedId {
                             id: matches.into_iter().next().unwrap_or_default(),

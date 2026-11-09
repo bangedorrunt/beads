@@ -337,23 +337,24 @@ impl ArtifactIndexer {
                         stderr_path: event.stderr_path,
                     });
                 }
-            } else if event.event_type == "snapshot" && self.config.include_snapshots {
-                if let Some(ref snapshot_path) = event.snapshot_path {
-                    let full_path = if Path::new(snapshot_path).is_absolute() {
-                        PathBuf::from(snapshot_path)
-                    } else {
-                        test_dir.join(snapshot_path)
-                    };
+            } else if event.event_type == "snapshot"
+                && self.config.include_snapshots
+                && let Some(ref snapshot_path) = event.snapshot_path
+            {
+                let full_path = if Path::new(snapshot_path).is_absolute() {
+                    PathBuf::from(snapshot_path)
+                } else {
+                    test_dir.join(snapshot_path)
+                };
 
-                    let (file_count, total_size) = self.parse_snapshot(&full_path);
+                let (file_count, total_size) = self.parse_snapshot(&full_path);
 
-                    snapshots.push(SnapshotMetric {
-                        label: event.label,
-                        file_count,
-                        total_size,
-                        snapshot_path: snapshot_path.clone(),
-                    });
-                }
+                snapshots.push(SnapshotMetric {
+                    label: event.label,
+                    file_count,
+                    total_size,
+                    snapshot_path: snapshot_path.clone(),
+                });
             }
         }
 

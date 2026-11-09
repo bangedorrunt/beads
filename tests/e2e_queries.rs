@@ -843,27 +843,18 @@ fn e2e_reopen_tombstone_skips_without_resurrection() {
         "reopen_tombstone_reopen",
     );
     assert!(
-        reopen.status.success(),
-        "reopen tombstone failed: {}",
-        reopen.stderr
+        !reopen.status.success(),
+        "a tombstone-only reopen must be a typed refusal, not success: {}",
+        reopen.stdout
     );
-
-    let payload = extract_json_payload(&reopen.stdout);
-    let parsed: Value = serde_json::from_str(&payload).expect("reopen tombstone json");
-    let reopened = parsed["reopened"].as_array().cloned().unwrap_or_default();
-    let skipped = parsed["skipped"].as_array().cloned().unwrap_or_default();
-
+    let refusal = format!("{}{}", reopen.stdout, reopen.stderr);
     assert!(
-        reopened.is_empty(),
-        "tombstone should not be reported as reopened"
+        !reopen.status.success(),
+        "a tombstone-only reopen must refuse with a nonzero status: {refusal}"
     );
-    assert_eq!(skipped.len(), 1, "tombstone should be reported as skipped");
-    assert_eq!(skipped[0]["id"], issue_id);
     assert!(
-        skipped[0]["reason"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("tombstone")),
-        "skip reason should explain that tombstones cannot be reopened"
+        refusal.contains("NOTHING_TO_DO") && refusal.contains("cannot reopen tombstone"),
+        "the refusal must name the tombstone: {refusal}"
     );
 
     let show = run_br(

@@ -433,9 +433,10 @@ fn e2e_lint_filter_by_status_all() {
         "gate_report_bug",
     );
     assert!(gate.status.success(), "gate report failed: {}", gate.stderr);
+    let close_sha = common::cli::citing_sha(&workspace, &bug_id);
     let close = run_br(
         &workspace,
-        ["close", &bug_id, "--commit-sha", "abc1234"],
+        ["close", &bug_id, "--commit-sha", &close_sha],
         "close_bug",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);

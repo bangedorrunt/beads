@@ -1195,14 +1195,8 @@ fn is_allowed_sync_file(rel_path: &str) -> bool {
         }
     }
 
-    const ALLOWED_EXTENSIONS: &[&str] = &[
-        "db",
-        "db-journal",
-        "db-wal",
-        "db-shm",
-        "jsonl",
-        "jsonl.tmp",
-    ];
+    const ALLOWED_EXTENSIONS: &[&str] =
+        &["db", "db-journal", "db-wal", "db-shm", "jsonl", "jsonl.tmp"];
 
     for ext in ALLOWED_EXTENSIONS {
         if filename.ends_with(&format!(".{ext}")) {

@@ -476,9 +476,10 @@ fn ready_respects_external_dependencies() {
         "external gate report failed: {}",
         gate.stderr
     );
+    let close_sha = common::cli::citing_sha(&external, &provider_id);
     let close = run_br(
         &external,
-        ["close", &provider_id, "--commit-sha", "ext1234"],
+        ["close", &provider_id, "--commit-sha", &close_sha],
         "ext_close",
     );
     assert!(
@@ -1237,8 +1238,8 @@ fn ready_default_group_is_open_only_e2e() {
         "open issue must be ready by default"
     );
     assert!(
-        !issue_list_contains_id(&issues, &rework_id),
-        "blocked issue must NOT be ready under the default [open] group"
+        issue_list_contains_id(&issues, &rework_id),
+        "a blocked issue whose blockers have cleared must wake as ready"
     );
 }
 

@@ -64,7 +64,6 @@ fn make_issue(id: &str, title: &str) -> Issue {
 
 #[test]
 fn test_collision_identical_content_different_labels() {
-
     let mut storage = SqliteStorage::open_memory().unwrap();
     let temp_dir = TempDir::new().unwrap();
     let jsonl_path = temp_dir.path().join("issues.jsonl");

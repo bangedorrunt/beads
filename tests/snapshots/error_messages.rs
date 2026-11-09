@@ -110,9 +110,10 @@ fn snapshot_error_update_closed_issue() {
         "gate_close_issue",
     );
     assert!(gate.status.success(), "gate should succeed");
+    let close_sha = super::common::cli::citing_sha(&workspace, &id);
     let close = run_br(
         &workspace,
-        ["close", &id, "--commit-sha", "abc1234"],
+        ["close", &id, "--commit-sha", &close_sha],
         "close_issue",
     );
     assert!(close.status.success(), "close should succeed");

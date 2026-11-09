@@ -322,6 +322,89 @@ fn land_full_ceremony_live_close_binds_sha_and_receipt() {
 }
 
 #[test]
+fn land_full_ceremony_compensates_pass_when_close_refuses() {
+    let _log = common::test_log("land_full_ceremony_compensates_pass_when_close_refuses");
+    let (workspace, id) = setup_workspace_with_issue("Land compensation");
+    let blocker = run_br(
+        &workspace,
+        [
+            "create",
+            "Open blocker",
+            "-p",
+            "2",
+            "-t",
+            "task",
+            "-d",
+            "must stay open so the land cannot close",
+            "--verify",
+            "true",
+            "--principle",
+            "prove-it-works — the open blocker is the refusal witness",
+        ],
+        "create_blocker",
+    );
+    assert!(
+        blocker.status.success(),
+        "create blocker: {}",
+        blocker.stderr
+    );
+    let blocker_id = parse_created_id(&blocker.stdout);
+    assert!(!blocker_id.is_empty(), "blocker id: {}", blocker.stdout);
+    let dep = run_br(&workspace, ["dep", "add", &id, &blocker_id], "add_blocker");
+    assert!(dep.status.success(), "dep add: {}", dep.stderr);
+    let sha = commit_citing(&workspace, &id, &format!("feat: land compensation ({id})"));
+
+    let attempted = run_br(
+        &workspace,
+        ["land", &id, "--commit-sha", &sha, "--json"],
+        "land_compensation",
+    );
+    assert!(
+        !attempted.status.success(),
+        "a blocked land must refuse: {}",
+        attempted.stdout
+    );
+    let transcript = format!("{}{}", attempted.stdout, attempted.stderr);
+    assert!(
+        transcript.contains("close did not land")
+            && transcript.contains("compensating FAIL row now shadows PASS row"),
+        "the abort must state the PASS was compensated: {transcript}"
+    );
+    assert!(
+        transcript.contains(&blocker_id),
+        "the refusal must name the open blocker: {transcript}"
+    );
+
+    let gates = run_br(
+        &workspace,
+        ["gate", "list", &id, "--json"],
+        "gate_list_after_compensation",
+    );
+    assert!(gates.status.success(), "gate list: {}", gates.stderr);
+    let payload = parse_json_value(&gates.stdout);
+    let history = payload["history"].as_array().expect("gate history array");
+    assert_eq!(history.len(), 2, "PASS then compensating FAIL: {payload}");
+    assert_eq!(history[0]["passed"], true, "first row is PASS: {payload}");
+    assert_eq!(history[1]["passed"], false, "latest row is FAIL: {payload}");
+    assert_eq!(
+        history[1]["status_revision"], history[0]["status_revision"],
+        "both rows bind the same revision: {payload}"
+    );
+    let note = history[1]["note"].as_str().unwrap_or_default();
+    assert!(
+        note.contains("land aborted") && note.contains("blocked by"),
+        "the FAIL note must record the land refusal: {note}"
+    );
+
+    let show = run_br(&workspace, ["show", &id, "--json"], "show_still_open");
+    let payload = parse_json_value(&show.stdout);
+    assert_eq!(
+        payload["status"], "open",
+        "the refused land must not close the bead: {payload}"
+    );
+}
+
+#[test]
 fn land_full_ceremony_release_leases_flag() {
     let _log = common::test_log("land_full_ceremony_release_leases_flag");
 

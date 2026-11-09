@@ -168,8 +168,9 @@ fn scroll_to_bottom_in_every_view_does_not_panic() {
 
     let mut app = app();
     app.handle_key(Key::Enter);
+    app.set_detail_max_scroll(5);
     app.handle_key(Key::End);
-    assert!(app.detail_scroll() > 0);
+    assert_eq!(app.detail_scroll(), 5);
     app.handle_key(Key::PageDown);
     app.handle_key(Key::Char('g'));
     assert_eq!(app.detail_scroll(), 0);

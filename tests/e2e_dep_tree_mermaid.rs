@@ -55,8 +55,7 @@ fn validate_mermaid_syntax(output: &str) -> (Vec<String>, Vec<(String, String)>)
                 let label = &trimmed[label_start + 2..label_end];
                 nodes.push(label.to_string());
             }
-        }
-        else if trimmed.contains("-->") {
+        } else if trimmed.contains("-->") {
             let parts: Vec<&str> = trimmed.split("-->").collect();
             if parts.len() == 2 {
                 let from = parts[0].trim().to_string();

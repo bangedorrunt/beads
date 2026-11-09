@@ -1508,8 +1508,7 @@ const fn should_auto_import(cmd: &Commands) -> bool {
         | Commands::Audit { .. }
         | Commands::Orphans(beads::cli::OrphansArgs { fix: true, .. })
         | Commands::Config { .. }
-        | Commands::History(_)
-        => false,
+        | Commands::History(_) => false,
 
         Commands::Plan(_) | Commands::Insights(_) | Commands::Triage(_) | Commands::Next(_) => {
             false

@@ -505,7 +505,14 @@ fn e2e_startup_auto_recovery_preserves_unflushed_tombstones() {
 
     let delete_cmd = run_br(
         &workspace,
-        ["delete", &delete_id, "--force", "--no-auto-flush"],
+        [
+            "delete",
+            &delete_id,
+            "--force",
+            "--no-auto-flush",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_no_flush",
     );
     assert!(
@@ -587,7 +594,14 @@ fn e2e_doctor_repair_preserves_unflushed_tombstones() {
 
     let delete_cmd = run_br(
         &workspace,
-        ["delete", &delete_id, "--force", "--no-auto-flush"],
+        [
+            "delete",
+            &delete_id,
+            "--force",
+            "--no-auto-flush",
+            "--reason",
+            "e2e tombstone",
+        ],
         "delete_no_flush",
     );
     assert!(

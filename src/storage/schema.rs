@@ -1032,6 +1032,15 @@ pub fn run_reviewed_schema_migration_steps_in_transaction(
 
     add_missing_typed_work_ledger_columns(conn)?;
 
+    // v18 adds the `wave` column, but sources 15-17 predate its partial
+    // index. The index is part of the canonical runtime shape, so restore it
+    // here rather than leaving the migrated database one required index
+    // short of a fresh bootstrap.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_issues_wave \
+         ON issues(status, wave) WHERE wave IS NOT NULL",
+    )?;
+
     apply_event_log_migration_in_transaction(conn)?;
 
     let row = conn.query_row("PRAGMA integrity_check")?;
@@ -4868,6 +4877,10 @@ mod schema18_tests {
                 "reviewed 17->18 must add typed work-ledger column {name}"
             );
         }
+        assert!(
+            index_exists(&conn, "idx_issues_wave"),
+            "reviewed 17->current must restore the wave-gate index"
+        );
 
         let ac_shape = conn
             .query_row("SELECT ac_shape FROM issues WHERE id = 'bd-reviewed-v17'")
@@ -5070,6 +5083,10 @@ mod schema18_tests {
                 "reviewed 16->18 must add typed work-ledger column {name}"
             );
         }
+        assert!(
+            index_exists(&conn, "idx_issues_wave"),
+            "reviewed 16->current must restore the wave-gate index"
+        );
 
         let ac_shape = conn
             .query_row("SELECT ac_shape FROM issues WHERE id = 'bd-reviewed-v16'")

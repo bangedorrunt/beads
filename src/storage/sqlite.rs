@@ -1557,6 +1557,16 @@ fn resolved_ready_status_list(filters: &ReadyFilters) -> Vec<String> {
         filters.ready_statuses.clone()
     };
     statuses.retain(|status| !status.eq_ignore_ascii_case("draft"));
+    // A `blocked` row whose blockers have all closed has no cache entry, so
+    // the blocked-cache join already excludes only genuinely blocked work.
+    // Include the status here so `br ready` wakes it without an operator
+    // having to rewrite it to open first.
+    if !statuses
+        .iter()
+        .any(|status| status.eq_ignore_ascii_case("blocked"))
+    {
+        statuses.push("blocked".to_string());
+    }
     statuses
 }
 
@@ -3961,10 +3971,9 @@ impl SqliteStorage {
     ///
     /// Scoped by issue + gate + `to_status = 'closed'`, which is the same
     /// invariant `br doctor`'s `gate.verdict_orphans` check reads back out of
-    /// `gates.jsonl`. Deliberately not scoped by `status_revision`: the row is
-    /// recorded at the transition attempt and the verdict is copied from it
-    /// moments later, so a matching row is proof regardless of which revision
-    /// the proof was filed under.
+    /// `gates.jsonl`. Scoped by the issue's current `status_revision`: a row
+    /// from an earlier review cycle cannot prove this close. The latest row
+    /// for the gate at that revision wins, so a later fail shadows a pass.
     fn assert_close_verdict_proven_in_tx(conn: &Connection, id: &str, verdict: &str) -> Result<()> {
         if !crate::storage::schema::table_exists(conn, "gate_result_history") {
             return Ok(());
@@ -7396,6 +7405,14 @@ impl SqliteStorage {
                         "DELETE FROM close_metadata WHERE issue_id = ?",
                         &[SqliteValue::from(id)],
                     )?;
+                    if issue.commit_sha.is_some() && updates.commit_sha.is_none() {
+                        issue.commit_sha = None;
+                        add_update("commit_sha", SqliteValue::Null);
+                    }
+                    if issue.close_verdict.is_some() && updates.close_verdict.is_none() {
+                        issue.close_verdict = None;
+                        add_update("close_verdict", SqliteValue::Null);
+                    }
                 }
                 if issue.closed_at.is_some() && updates.closed_at.is_none() {
                     issue.closed_at = None;
@@ -11877,6 +11894,12 @@ impl SqliteStorage {
                        AND d.type = 'parent-child'
                        AND p.issue_type = 'epic'
                      LIMIT 1
+                 ),
+                 EXISTS(
+                     SELECT 1
+                     FROM issues
+                     WHERE status = 'blocked'
+                     LIMIT 1
                  )",
         ) {
             Ok(rows) => rows,
@@ -11895,7 +11918,8 @@ impl SqliteStorage {
         Ok(
             row.get(0).and_then(SqliteValue::as_integer).unwrap_or(0) != 0
                 || row.get(1).and_then(SqliteValue::as_integer).unwrap_or(0) != 0
-                || row.get(2).and_then(SqliteValue::as_integer).unwrap_or(0) != 0,
+                || row.get(2).and_then(SqliteValue::as_integer).unwrap_or(0) != 0
+                || row.get(3).and_then(SqliteValue::as_integer).unwrap_or(0) != 0,
         )
     }
 
@@ -24555,10 +24579,25 @@ mod tests {
             None,
         );
         storage.create_issue(&issue, "tester").unwrap();
+        storage
+            .record_scoped_gate_result(
+                "bd-rmeta",
+                "open",
+                0,
+                "closed",
+                "command-verified",
+                "test-provider",
+                true,
+                None,
+                "tester",
+            )
+            .unwrap();
 
         let close_update = IssueUpdate {
             status: Some(Status::Closed),
             close_reason: Some(Some("done".to_string())),
+            commit_sha: Some(Some("abcdef1234567890".to_string())),
+            close_verdict: Some(Some("command-verified".to_string())),
             ..IssueUpdate::default()
         };
         storage
@@ -24574,6 +24613,9 @@ mod tests {
             )
             .unwrap();
         assert!(storage.get_close_metadata("bd-rmeta").unwrap().is_some());
+        let closed = storage.get_issue("bd-rmeta").unwrap().unwrap();
+        assert_eq!(closed.commit_sha.as_deref(), Some("abcdef1234567890"));
+        assert_eq!(closed.close_verdict.as_deref(), Some("command-verified"));
 
         let reopen_update = IssueUpdate {
             status: Some(Status::Open),
@@ -24587,6 +24629,9 @@ mod tests {
             .unwrap();
 
         assert!(storage.get_close_metadata("bd-rmeta").unwrap().is_none());
+        let reopened = storage.get_issue("bd-rmeta").unwrap().unwrap();
+        assert_eq!(reopened.commit_sha, None);
+        assert_eq!(reopened.close_verdict, None);
     }
 
     #[test]
@@ -32666,6 +32711,62 @@ mod tests {
             .unwrap();
         let ids: Vec<&str> = res.iter().map(|i| i.id.as_str()).collect();
         assert_eq!(ids, vec!["bd-open"], "default group must be [open] only");
+    }
+
+    #[test]
+    fn test_ready_wakes_blocked_status_after_its_blocker_closes() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let t1 = Utc::now();
+        storage
+            .create_issue(
+                &make_issue("bd-blocker", "Blocker", Status::Open, 2, None, t1, None),
+                "tester",
+            )
+            .unwrap();
+        storage
+            .create_issue(
+                &make_issue(
+                    "bd-stale-blocked",
+                    "Stale blocked",
+                    Status::Blocked,
+                    2,
+                    None,
+                    t1,
+                    None,
+                ),
+                "tester",
+            )
+            .unwrap();
+        storage
+            .add_dependency("bd-stale-blocked", "bd-blocker", "blocks", "tester")
+            .unwrap();
+
+        let ready_ids = |storage: &SqliteStorage| {
+            issue_ids(
+                storage
+                    .get_ready_issues(&ReadyFilters::default(), ReadySortPolicy::Oldest)
+                    .unwrap(),
+            )
+        };
+        assert!(
+            !ready_ids(&storage).contains(&"bd-stale-blocked".to_string()),
+            "a blocked issue with a live blocker must stay out of ready"
+        );
+
+        storage
+            .update_issue(
+                "bd-blocker",
+                &IssueUpdate {
+                    status: Some(Status::Closed),
+                    ..Default::default()
+                },
+                "tester",
+            )
+            .unwrap();
+        assert!(
+            ready_ids(&storage).contains(&"bd-stale-blocked".to_string()),
+            "a blocked status with no live blocker must wake in ready"
+        );
     }
 
     #[test]

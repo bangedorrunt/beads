@@ -12224,7 +12224,7 @@ fn emit_fully_unblocked_open(
         map.insert(
             "remediation".to_string(),
             serde_json::Value::String(
-                "These issues have status `blocked` but no live blocker remains — update their status (e.g. `br update <id> --status open`) so they surface as ready.".to_string(),
+                "These issues have status `blocked` but no live blocker remains — `br ready` now surfaces them automatically; clear the stale status when convenient with `br update <id> --status open`.".to_string(),
             ),
         );
     }
@@ -13316,8 +13316,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             ));
         }
         let gate_rows = gate_verdict_row_count(&paths.db_path);
-        let restorable_rows =
-            crate::sync::gate_sidecar_row_count(&beads_dir.join("gates.jsonl"));
+        let restorable_rows = crate::sync::gate_sidecar_row_count(&beads_dir.join("gates.jsonl"));
         if let Some(reason) =
             gate_verdict_rebuild_refusal(gate_rows, restorable_rows, args.allow_gate_verdict_loss)
         {
@@ -15223,8 +15222,7 @@ mod tests {
             preserved_dirty_issue_ids: Vec::new(),
             verified_backups: Vec::new(),
         };
-        let mut session =
-            DoctorRepairSession::new(temp.path(),  false).expect("session builds");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session builds");
 
         let marker = write_jsonl_rebuild_verification_failed_marker(
             &beads_dir,
@@ -15544,8 +15542,7 @@ mod tests {
                 .any(|c| c.name == "base_jsonl" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         // refuses per safety) AND the symlink remains at its original
         let result =
@@ -15595,8 +15592,7 @@ mod tests {
                 .any(|c| c.name == "base_jsonl" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_base_jsonl_symlink_if_warned(
             &beads_dir,
@@ -15664,8 +15660,7 @@ mod tests {
             .and_then(|v| v.as_str());
         assert_eq!(kind, Some("stale"));
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_base_jsonl_stale_if_warned(
             &beads_dir,
@@ -15719,8 +15714,7 @@ mod tests {
         let check = find_check(&report.checks, "base_jsonl").expect("check present");
         assert!(matches!(check.status, CheckStatus::Warn));
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_base_jsonl_stale_if_warned(
             &beads_dir,
@@ -15760,8 +15754,7 @@ mod tests {
             Some(serde_json::json!({"kind": "stale"})),
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_base_jsonl_stale_if_warned(
             &beads_dir,
@@ -16203,8 +16196,7 @@ mod tests {
             let write_authority =
                 acquire_doctor_database_write_authority(&beads_dir, &db_path, Some(5_000))
                     .expect("write authority");
-            let mut session =
-                DoctorRepairSession::new(temp.path(),  true).expect("session");
+            let mut session = DoctorRepairSession::new(temp.path(), true).expect("session");
             let mut repair = LocalRepairResult::default();
             repair_stale_drafts_under_write_authority(
                 &db_path,
@@ -16247,8 +16239,7 @@ mod tests {
             let write_authority =
                 acquire_doctor_database_write_authority(&beads_dir, &db_path, Some(5_000))
                     .expect("write authority");
-            let mut session =
-                DoctorRepairSession::new(temp.path(),  false).expect("session");
+            let mut session = DoctorRepairSession::new(temp.path(), false).expect("session");
             let mut repair = LocalRepairResult::default();
             repair_stale_drafts_under_write_authority(
                 &db_path,
@@ -16330,8 +16321,7 @@ mod tests {
                 .any(|c| c.name == "dependencies.orphans" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_dependencies_orphans_if_warned(
             &db_path,
@@ -16439,8 +16429,7 @@ mod tests {
                 .any(|c| c.name == "labels.orphans" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_labels_orphans_if_warned(
             &db_path,
@@ -16537,8 +16526,7 @@ mod tests {
                 .any(|c| c.name == "comments.orphans" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_comments_orphans_if_warned(
             &db_path,
@@ -16606,8 +16594,7 @@ mod tests {
             "precondition: detector must warn on the injected NULL"
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_null_defaults_if_warned(
             &db_path,
@@ -16667,8 +16654,7 @@ mod tests {
             .any(|c| c.name == "dirty_bitmap" && matches!(c.status, CheckStatus::Warn));
         assert!(warned, "precondition: detector must warn");
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_dirty_bitmap_orphans_if_warned(
             &db_path,
@@ -16722,8 +16708,7 @@ mod tests {
             "precondition: NULL dirty_issues issue_id must warn"
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         assert!(fix_dirty_bitmap_orphans_if_warned(
             &db_path,
             &report,
@@ -16758,8 +16743,7 @@ mod tests {
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         check_dirty_bitmap_divergence(&conn, &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_dirty_bitmap_orphans_if_warned(
             &db_path,
@@ -17687,8 +17671,7 @@ mod tests {
         };
         check_jsonl_utf8_bom(Some(&jsonl_path), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_jsonl_utf8_bom_if_warned(
             Some(&jsonl_path),
@@ -17727,7 +17710,7 @@ mod tests {
             checks: Vec::new(),
         };
         check_jsonl_utf8_bom(Some(&traversal_path), &mut report.checks);
-        let mut session = DoctorRepairSession::new(&repo,  false).expect("session");
+        let mut session = DoctorRepairSession::new(&repo, false).expect("session");
 
         assert!(!fix_jsonl_utf8_bom_if_warned(
             Some(&traversal_path),
@@ -18059,8 +18042,7 @@ mod tests {
         };
         check_inner_gitignore_present(&beads_dir, &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_inner_gitignore_if_warned(
             &beads_dir,
@@ -18095,8 +18077,7 @@ mod tests {
         };
         check_inner_gitignore_present(&beads_dir, &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_inner_gitignore_if_warned(
             &beads_dir,
@@ -18133,8 +18114,8 @@ mod tests {
             };
             check_inner_gitignore_present(&beads_dir, &mut report.checks);
 
-            let mut session = DoctorRepairSession::new(temp.path(),  false)
-                .expect("session must build");
+            let mut session =
+                DoctorRepairSession::new(temp.path(), false).expect("session must build");
             let ctx =
                 OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
             assert!(!fix_inner_gitignore_if_warned(
@@ -18168,8 +18149,7 @@ mod tests {
         };
         check_config_yaml_secret_mode(&beads_dir, &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_config_yaml_secret_mode_if_warned(
             &beads_dir,
@@ -18205,8 +18185,7 @@ mod tests {
         };
         check_config_yaml_secret_mode(&beads_dir, &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_config_yaml_secret_mode_if_warned(
             &beads_dir,
@@ -18239,8 +18218,7 @@ mod tests {
         };
         check_jsonl_world_writable(Some(&jsonl), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_jsonl_world_writable_if_warned(
             Some(&jsonl),
@@ -18276,8 +18254,7 @@ mod tests {
         };
         check_jsonl_world_writable(Some(&jsonl), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         assert!(fix_jsonl_world_writable_if_warned(
             Some(&jsonl),
             &report,
@@ -18307,8 +18284,7 @@ mod tests {
         };
         check_jsonl_world_writable(Some(&jsonl), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_jsonl_world_writable_if_warned(
             Some(&jsonl),
@@ -18337,8 +18313,7 @@ mod tests {
         };
         check_jsonl_crlf_endings(Some(&jsonl_path), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_jsonl_crlf_endings_if_warned(
             Some(&jsonl_path),
@@ -18378,8 +18353,7 @@ mod tests {
         let jsonl_path = beads_dir.join("issues.jsonl");
         check_jsonl_crlf_endings(Some(&jsonl_path), &mut report.checks);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_jsonl_crlf_endings_if_warned(
             Some(&jsonl_path),
@@ -18413,7 +18387,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session = DoctorRepairSession::new(&repo,  false).expect("session");
+        let mut session = DoctorRepairSession::new(&repo, false).expect("session");
 
         assert!(!fix_jsonl_crlf_endings_if_warned(
             Some(&traversal_path),
@@ -18455,8 +18429,7 @@ mod tests {
                 .any(|c| c.name == "wal_size" && matches!(c.status, CheckStatus::Warn))
         );
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(fix_wal_oversized_if_warned(
             &db_path,
@@ -18535,8 +18508,7 @@ mod tests {
         };
         check_wal_oversized(&db_path, &mut report.checks, None);
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Text, false, true);
         assert!(!fix_wal_oversized_if_warned(
             &db_path,
@@ -18748,8 +18720,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
 
         assert!(fix_orphan_tmp_files_if_warned(
             &beads_dir,
@@ -18807,8 +18778,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
 
         assert!(fix_orphan_tmp_files_if_warned(
             &beads_dir,
@@ -19147,8 +19117,7 @@ mod tests {
             metadata: config::Metadata::default(),
         };
 
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
         let report_before = collect_doctor_report(&beads_dir, &paths).expect("doctor report");
         let before_check = find_check(&report_before.report.checks, "jsonl.merge_artifacts")
             .expect("merge_artifacts check");
@@ -19277,8 +19246,7 @@ mod tests {
         };
         let report = collect_doctor_report(&beads_dir, &paths).expect("doctor report");
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Json, false, true);
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
 
         assert!(!fix_merge_artifacts_if_warned(
             &beads_dir,
@@ -19320,8 +19288,7 @@ mod tests {
             }],
         };
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Json, false, true);
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
 
         assert!(fix_startup_cache_entries_if_warned(
             &poisoned,
@@ -20379,8 +20346,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session = DoctorRepairSession::new(temp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session must build");
 
         assert!(fix_jsonl_trailing_newline_if_warned(
             Some(&external_jsonl),
@@ -20415,8 +20381,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session =
-            DoctorRepairSession::new(repo.path(),  false).expect("session");
+        let mut session = DoctorRepairSession::new(repo.path(), false).expect("session");
 
         assert!(!fix_jsonl_trailing_newline_if_warned(
             Some(&external_jsonl),
@@ -20456,7 +20421,7 @@ mod tests {
                 details: None,
             }],
         };
-        let mut session = DoctorRepairSession::new(&repo,  false).expect("session");
+        let mut session = DoctorRepairSession::new(&repo, false).expect("session");
 
         assert!(!fix_jsonl_trailing_newline_if_warned(
             Some(&traversal_path),
@@ -21099,8 +21064,7 @@ mod tests {
             }],
         };
 
-        let mut session =
-            DoctorRepairSession::new(temp.path(),  false).expect("session builds");
+        let mut session = DoctorRepairSession::new(temp.path(), false).expect("session builds");
 
         let repair = repair_recoverable_db_state(
             &beads_dir,
@@ -21188,8 +21152,7 @@ mod tests {
             }],
         };
 
-        let mut session =
-            DoctorRepairSession::new(temp.path(),  true).expect("session builds");
+        let mut session = DoctorRepairSession::new(temp.path(), true).expect("session builds");
 
         let repair = repair_recoverable_db_state(
             &beads_dir,
@@ -22830,8 +22793,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (beads_dir, gitignore, report) = make_doctor_fixture(tmp.path());
 
-        let mut session =
-            DoctorRepairSession::new(tmp.path(),  true).expect("session must build");
+        let mut session = DoctorRepairSession::new(tmp.path(), true).expect("session must build");
         let post_session_baseline = fs::read(&gitignore).unwrap();
         let actions_path = session.run.actions_file.clone();
 
@@ -22858,8 +22820,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (beads_dir, _gitignore, report) = make_doctor_fixture(tmp.path());
 
-        let mut session = DoctorRepairSession::new(tmp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(tmp.path(), false).expect("session must build");
         let actions_path = session.run.actions_file.clone();
         let result =
             fix_root_gitignore_if_warned(&beads_dir, &report, &quiet_ctx(), Some(&mut session));
@@ -22901,8 +22862,7 @@ mod tests {
             details: None,
         });
 
-        let mut session = DoctorRepairSession::new(tmp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(tmp.path(), false).expect("session must build");
         fs::set_permissions(&gitignore, fs::Permissions::from_mode(0o444)).unwrap();
         let before = fs::read(&gitignore).unwrap();
         let actions_path = session.run.actions_file.clone();
@@ -22926,8 +22886,7 @@ mod tests {
     #[test]
     fn wp3_repair_creates_undo_sh() {
         let tmp = TempDir::new().unwrap();
-        let session = DoctorRepairSession::new(tmp.path(),  false)
-            .expect("session must build");
+        let session = DoctorRepairSession::new(tmp.path(), false).expect("session must build");
         run_dir::write_undo_sh(&session.run).expect("undo.sh write");
 
         let undo = &session.run.undo_script;
@@ -22949,8 +22908,7 @@ mod tests {
         let orphan_wal = beads_dir.join("beads.db-wal");
         fs::write(&orphan_wal, b"orphan-wal-bytes").unwrap();
 
-        let mut session = DoctorRepairSession::new(tmp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(tmp.path(), false).expect("session must build");
         session.set_fixer("doctor.test.quarantine");
         let quarantine_dst = session.run.root.join("quarantine/.beads/beads.db-wal");
         let result = chokepoint::mutate(
@@ -24538,8 +24496,7 @@ version = "2026-05-11-abc123"
             }],
         };
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Json, false, true);
-        let mut session = DoctorRepairSession::new(tmp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(tmp.path(), false).expect("session must build");
 
         assert!(fix_recovery_artifacts_aged_if_warned(
             &beads_dir,
@@ -24605,8 +24562,7 @@ version = "2026-05-11-abc123"
             }],
         };
         let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Json, false, true);
-        let mut session = DoctorRepairSession::new(tmp.path(),  false)
-            .expect("session must build");
+        let mut session = DoctorRepairSession::new(tmp.path(), false).expect("session must build");
         let expected_hash = crate::sync::compute_jsonl_hash(&jsonl_path).unwrap();
 
         assert!(fix_export_hash_cache_divergence_if_warned(
@@ -25065,7 +25021,11 @@ mod bd_lt77_gate_verdict_loss {
         );
         assert!(
             !src.contains(
-                &["gate_verdict_rebuild_refusal(", "gate_rows, args.allow_repeated_repair"].concat()
+                &[
+                    "gate_verdict_rebuild_refusal(",
+                    "gate_rows, args.allow_repeated_repair"
+                ]
+                .concat()
             ),
             "the ordinary --allow-repeated-repair flag must NOT reach the verdict refusal"
         );

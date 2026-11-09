@@ -413,6 +413,7 @@ fn create_live_command_fixture() -> LiveCommandFixture {
         ],
         "schema_contract_gate_close",
     );
+    let close_sha = super::common::cli::citing_sha(&workspace, &closed_id);
     run_success(
         &workspace,
         &[
@@ -421,7 +422,7 @@ fn create_live_command_fixture() -> LiveCommandFixture {
             "--reason",
             "schema contract fixture",
             "--commit-sha",
-            "abc1234",
+            &close_sha,
             "--json",
         ],
         "schema_contract_close_issue",

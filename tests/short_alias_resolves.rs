@@ -146,9 +146,10 @@ fn short_alias_resolves_child_and_close_via_slice_alias() {
         "gate_via_slice_alias",
     );
     assert!(gate.status.success(), "gate failed: {}", gate.stderr);
+    let close_sha = common::cli::citing_sha(&workspace, &closable);
     let close = run_br(
         &workspace,
-        ["close", &closable_slice, "--commit-sha", "abc1234"],
+        ["close", &closable_slice, "--commit-sha", &close_sha],
         "close_via_slice_alias",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);

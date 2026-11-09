@@ -59,14 +59,22 @@ fn e2e_delete_detach_drops_edges_and_spares_unrelated_work() {
     let dep2 = run_br(&workspace, ["dep", "add", &c, &mid], "dep_c_mid");
     assert!(dep2.status.success(), "dep add failed: {}", dep2.stderr);
 
-    let blocked = run_br(&workspace, ["delete", &mid], "delete_blocked");
+    let blocked = run_br(
+        &workspace,
+        ["delete", &mid, "--reason", "e2e tombstone"],
+        "delete_blocked",
+    );
     assert!(
         blocked.stdout.contains("Use --detach"),
         "preview should advertise --detach: {}",
         blocked.stdout
     );
 
-    let delete = run_br(&workspace, ["delete", &mid, "--detach"], "delete_detach");
+    let delete = run_br(
+        &workspace,
+        ["delete", &mid, "--detach", "--reason", "e2e tombstone"],
+        "delete_detach",
+    );
     assert!(delete.status.success(), "detach failed: {}", delete.stderr);
     assert!(
         delete.stdout.contains("Detached 2 edge(s)"),
@@ -115,7 +123,14 @@ fn e2e_delete_detach_dry_run_changes_nothing() {
 
     let dry = run_br(
         &workspace,
-        ["delete", &a, "--detach", "--dry-run"],
+        [
+            "delete",
+            &a,
+            "--detach",
+            "--dry-run",
+            "--reason",
+            "e2e tombstone",
+        ],
         "detach_dry_run",
     );
     assert!(dry.status.success(), "dry-run failed: {}", dry.stderr);
@@ -148,7 +163,7 @@ fn e2e_delete_detach_conflicts_with_cascade_and_force() {
     for flag in ["--cascade", "--force"] {
         let run = run_br(
             &workspace,
-            ["delete", &a, "--detach", flag],
+            ["delete", &a, "--detach", flag, "--reason", "e2e tombstone"],
             "detach_conflict",
         );
         assert!(
