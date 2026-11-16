@@ -1550,6 +1550,13 @@ pub(crate) struct ReadyNondispatchable {
     pub(crate) missing_principles_ids: String,
 }
 
+/// A lower wave gates the waves above it when it is READY work. That includes
+/// an EXPIRED timed deferral: the ready query surfaces exactly that row (status
+/// stays `deferred` until something wakes it), so the wave gate must count it
+/// or the higher wave leaks into ready beside it.
+const LOWER_WAVE_READY_STATUS: &str = "(lower_wave.status IN ('open', 'in_progress', 'blocked') \
+     OR (lower_wave.status = 'deferred' AND lower_wave.defer_until IS NOT NULL))";
+
 fn resolved_ready_status_list(filters: &ReadyFilters) -> Vec<String> {
     let mut statuses = if filters.ready_statuses.is_empty() {
         vec!["open".to_string()]
@@ -2143,7 +2150,7 @@ impl SqliteStorage {
             AND (issues.wave IS NULL OR NOT EXISTS (\
                 SELECT 1 FROM issues lower_wave \
                 WHERE lower_wave.wave IS NOT NULL AND lower_wave.wave < issues.wave \
-                AND lower_wave.status IN ('open', 'in_progress')))"
+                AND {LOWER_WAVE_READY_STATUS}))"
         );
         let row = self.conn.query_row_with_params(&sql, &[])?;
         Ok(ReadyNondispatchable {
@@ -10446,8 +10453,9 @@ impl SqliteStorage {
             " AND (issues.wave IS NULL OR issues.wave <= COALESCE((\
              SELECT MIN(lower_wave.wave) FROM issues lower_wave \
              WHERE lower_wave.wave IS NOT NULL \
-             AND lower_wave.status IN ('open', 'in_progress')",
+             AND ",
         );
+        sql.push_str(LOWER_WAVE_READY_STATUS);
         if exclude_blocked_in_sql {
             sql.push_str(" AND lower_wave.id NOT IN (SELECT issue_id FROM blocked_issues_cache)");
         }
