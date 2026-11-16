@@ -1349,8 +1349,28 @@ pub(crate) fn is_kebab_case_name(name: &str) -> bool {
         })
 }
 
-/// Parse repeatable `--principle 'name — decision'` citations (em dash
-/// separator). Rejects missing separators, non-kebab-case names, and empty
+/// The separators a citation may use before normalization. The em dash is
+/// canonical (ADR-0001 §5.2); ` - ` and `: ` are what people actually type.
+pub(crate) const PRINCIPLE_SEPARATORS: [&str; 3] = ["—", " - ", ": "];
+
+/// Split one citation into (name, decision), accepting every separator in
+/// [`PRINCIPLE_SEPARATORS`]. Splits at the FIRST separator that leaves a
+/// non-empty name and decision, so a decision may itself contain ` - ` or `: `.
+fn split_principle(raw: &str) -> Option<(String, String)> {
+    for separator in PRINCIPLE_SEPARATORS {
+        if let Some((name, decision)) = raw.split_once(separator) {
+            let (name, decision) = (name.trim(), decision.trim());
+            if !name.is_empty() && !decision.is_empty() {
+                return Some((name.to_string(), decision.to_string()));
+            }
+        }
+    }
+    None
+}
+
+/// Parse repeatable `--principle 'name — decision'` citations. Accepts the em
+/// dash or the ascii ` - ` / `: ` forms (normalized to the canonical citation
+/// when rendered). Rejects a missing separator, non-kebab-case names, and empty
 /// decisions at the CLI boundary so storage never sees a malformed citation.
 #[allow(clippy::single_match_else)]
 pub(crate) fn parse_principle_args(
@@ -1358,15 +1378,16 @@ pub(crate) fn parse_principle_args(
 ) -> Result<Vec<crate::model::PrincipleCitation>> {
     args.iter()
         .map(|raw| {
-            let Some((name, decision)) = raw.split_once('—') else {
+            let Some((name, decision)) = split_principle(raw) else {
                 return Err(BeadsError::validation(
                     "principle",
-                    format!("expected 'name — decision' (em dash separator), got: {raw:?}"),
+                    format!(
+                        "expected 'name — decision' (also accepted: 'name - decision', \
+                         'name: decision'), got: {raw:?}"
+                    ),
                 ));
             };
-            let name = name.trim();
-            let decision = decision.trim();
-            if !is_kebab_case_name(name) {
+            if !is_kebab_case_name(&name) {
                 return Err(BeadsError::validation(
                     "principle",
                     format!("principle names are kebab-case, got: {name:?}"),
@@ -1378,10 +1399,7 @@ pub(crate) fn parse_principle_args(
                     "the cited decision must not be empty".to_string(),
                 ));
             }
-            Ok(crate::model::PrincipleCitation {
-                name: name.to_string(),
-                decision: decision.to_string(),
-            })
+            Ok(crate::model::PrincipleCitation { name, decision })
         })
         .collect()
 }
@@ -2610,5 +2628,57 @@ mod bd_clear_principles {
             }],
         );
         assert_eq!(issue.principles.len(), 2, "default must remain append-only");
+    }
+}
+
+#[cfg(test)]
+mod bd_principle_separator_tests {
+    use super::*;
+
+    /// bd-nwfj7: the em dash is canonical, but people type ` - ` and `: `.
+    /// All three must produce the SAME citation, so the stored form is one
+    /// shape regardless of how it was typed.
+    #[test]
+    fn all_three_separators_parse_to_the_same_citation() {
+        for raw in [
+            "prove-it-works — unit test proves it",
+            "prove-it-works - unit test proves it",
+            "prove-it-works: unit test proves it",
+        ] {
+            let got = parse_principle_args(&[raw.to_string()])
+                .unwrap_or_else(|e| panic!("{raw:?} must parse: {e}"));
+            assert_eq!(got.len(), 1);
+            assert_eq!(got[0].name, "prove-it-works", "raw {raw:?}");
+            assert_eq!(got[0].decision, "unit test proves it", "raw {raw:?}");
+        }
+    }
+
+    /// The separator splits once: a decision is prose and may contain hyphens
+    /// and colons of its own.
+    #[test]
+    fn a_decision_may_contain_the_separator_itself() {
+        let got =
+            parse_principle_args(&["fix-root-causes - a - b: c".to_string()]).expect("parses");
+        assert_eq!(got[0].name, "fix-root-causes");
+        assert_eq!(got[0].decision, "a - b: c");
+    }
+
+    /// A refusal names EVERY accepted form, not just the canonical one, so the
+    /// next person does not have to read the source to find out what works.
+    #[test]
+    fn the_refusal_names_the_accepted_forms() {
+        let err = parse_principle_args(&["prove-it-works but no separator".to_string()])
+            .expect_err("no separator must be refused");
+        let text = err.to_string();
+        assert!(text.contains("'name — decision'"), "{text}");
+        assert!(text.contains("'name - decision'"), "{text}");
+        assert!(text.contains("'name: decision'"), "{text}");
+    }
+
+    /// The name rules are unchanged: kebab-case only, non-empty decision.
+    #[test]
+    fn name_and_decision_rules_are_unchanged() {
+        assert!(parse_principle_args(&["Prove It Works - x".to_string()]).is_err());
+        assert!(parse_principle_args(&["prove-it-works -   ".to_string()]).is_err());
     }
 }
