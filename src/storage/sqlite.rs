@@ -1554,8 +1554,7 @@ pub(crate) struct ReadyNondispatchable {
 /// an EXPIRED timed deferral: the ready query surfaces exactly that row (status
 /// stays `deferred` until something wakes it), so the wave gate must count it
 /// or the higher wave leaks into ready beside it.
-const LOWER_WAVE_READY_STATUS: &str =
-    "(lower_wave.status IN ('open', 'in_progress', 'blocked', 'deferred') \
+const LOWER_WAVE_READY_STATUS: &str = "(lower_wave.status IN ('open', 'in_progress', 'blocked', 'deferred') \
      AND (lower_wave.status <> 'deferred' OR lower_wave.defer_until IS NOT NULL))";
 
 fn resolved_ready_status_list(filters: &ReadyFilters) -> Vec<String> {
