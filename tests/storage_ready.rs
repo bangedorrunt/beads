@@ -872,3 +872,34 @@ fn ready_ignores_closed_blocker() {
         "closed blocker must be ignored (#432)"
     );
 }
+
+/// The counterpart of the expired-deferral gate: a MANUAL deferral (no clock)
+/// is not ready work, so it must not hold the wave above it. Only a deferral
+/// that has an expiry can wake, and only a woken one gates.
+#[test]
+fn a_manual_deferral_does_not_gate_the_wave_above() {
+    let mut storage = test_db();
+
+    let mut wave1 = fixtures::IssueBuilder::new("Wave 1 manual deferral").build();
+    wave1.wave = Some(1);
+    wave1.status = Status::Deferred;
+    wave1.defer_until = None;
+    wave1.verify = Some("cargo test".to_string());
+    storage.create_issue(&wave1, "tester").unwrap();
+
+    let mut wave2 = fixtures::IssueBuilder::new("Wave 2 after manual deferral").build();
+    wave2.wave = Some(2);
+    wave2.verify = Some("cargo test".to_string());
+    storage.create_issue(&wave2, "tester").unwrap();
+
+    let filters = ReadyFilters::default();
+    let ids = ready_ids(&storage, &filters, ReadySortPolicy::Oldest);
+    assert!(
+        !ids.contains(&wave1.id),
+        "a manual deferral is not ready work"
+    );
+    assert!(
+        ids.contains(&wave2.id),
+        "a manual deferral does not gate the wave above it: {ids:?}"
+    );
+}
