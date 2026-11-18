@@ -136,6 +136,7 @@ struct UpdateRouteOutput {
     render_items: Vec<UpdateRenderItem>,
     resolved_ids: Vec<String>,
     capacity_warnings: Vec<crate::close_policy::WorkflowCapacityWarning>,
+    claim_trap_queries: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -290,6 +291,9 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
         } else {
             let route_output =
                 execute_prepared_route(prepare_single_route(args, cli, &beads_dir, false)?, ctx)?;
+            if args.claim && !route_output.claim_trap_queries.is_empty() {
+                warn_claim_traps(&beads_dir, &route_output.claim_trap_queries);
+            }
             (
                 route_output.updated_issues,
                 route_output.render_items,
@@ -767,6 +771,7 @@ fn execute_prepared_route(
         render_items,
         resolved_ids,
         capacity_warnings,
+        claim_trap_queries: Vec::new(),
     })
 }
 
@@ -780,6 +785,7 @@ fn can_use_bulk_label_only_route(prepared: &PreparedUpdateRoute) -> bool {
         && matches!(prepared.resolved_parent, ParentUpdatePlan::Unchanged)
 }
 
+#[allow(clippy::too_many_lines)]
 fn execute_bulk_label_only_route(
     mut prepared: PreparedUpdateRoute,
     ctx: &OutputContext,
@@ -806,7 +812,6 @@ fn execute_bulk_label_only_route(
         )?;
         route_has_mutated = true;
     }
-
     for label in remove_labels {
         let remove_label_result = retry_mutation_with_jsonl_recovery(
             &mut prepared.storage_ctx,
@@ -832,7 +837,6 @@ fn execute_bulk_label_only_route(
         .into_iter()
         .map(|issue| (issue.id.clone(), issue))
         .collect::<HashMap<_, _>>();
-
     let use_machine_output = update_uses_machine_output(ctx);
     let use_human_output = update_uses_human_output(ctx);
     let mut updated_issues = Vec::new();
@@ -867,12 +871,99 @@ fn execute_bulk_label_only_route(
         );
     }
 
+    let claim_trap_queries = if prepared.update.claim_actor.is_some() {
+        resolved_ids
+            .iter()
+            .filter_map(|id| {
+                issues_by_id.get(id).map(|issue| {
+                    let combined = format!(
+                        "{} {} {}",
+                        issue.id,
+                        issue.title,
+                        issue.description.as_deref().unwrap_or("")
+                    );
+                    combined.chars().take(400).collect::<String>()
+                })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     Ok(UpdateRouteOutput {
         updated_issues,
         render_items,
         resolved_ids,
         capacity_warnings: Vec::new(),
+        claim_trap_queries,
     })
+}
+
+fn warn_claim_traps(beads_dir: &Path, queries: &[String]) {
+    if queries.is_empty() || std::env::var_os("BR_SKIP_TRAP_CHECK").is_some() {
+        return;
+    }
+    let project_dir = beads_dir.parent().unwrap_or(beads_dir);
+    let chie = std::env::var("BR_CHIE_BIN").unwrap_or_else(|_| "chie".to_string());
+    let mut seen = std::collections::BTreeSet::new();
+    for query in queries.iter().take(4) {
+        let mut cmd = std::process::Command::new(&chie);
+        cmd.args([
+            "memory",
+            "check-trap",
+            "--query",
+            query,
+            "--project",
+            &project_dir.to_string_lossy(),
+            "--json",
+        ]);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::null());
+        let Ok(mut child) = cmd.spawn() else {
+            return;
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1200);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if status.success()
+                        && let Some(mut stdout) = child.stdout.take()
+                    {
+                        let mut buf = Vec::new();
+                        if std::io::Read::read_to_end(&mut stdout, &mut buf).is_ok()
+                            && let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&buf)
+                        {
+                            for row in rows {
+                                if let Some(w) = row.get("warning").and_then(|v| v.as_str()) {
+                                    let id =
+                                        row.get("rule_id").and_then(|v| v.as_str()).unwrap_or("");
+                                    let line = if id.is_empty() {
+                                        w.to_string()
+                                    } else {
+                                        format!("{w} [{id}]")
+                                    };
+                                    seen.insert(line);
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                }
+                Err(_) => break,
+            }
+        }
+    }
+    for w in seen.into_iter().take(5) {
+        eprintln!("⚠️  [trap] {w}");
+    }
 }
 
 fn update_uses_machine_output(ctx: &OutputContext) -> bool {
