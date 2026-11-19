@@ -246,10 +246,12 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
             let use_machine_output = update_uses_machine_output(ctx);
             let use_human_output = update_uses_human_output(ctx);
 
+            let mut routed_claim_trap_queries = Vec::new();
             for (issue_inputs, prepared_route) in prepared_routes {
                 let route_output = execute_prepared_route(prepared_route, ctx)?;
 
                 routed_capacity_warnings.extend(route_output.capacity_warnings);
+                routed_claim_trap_queries.extend(route_output.claim_trap_queries);
 
                 if use_machine_output {
                     routed_updated_issues.push((issue_inputs.clone(), route_output.updated_issues));
@@ -257,6 +259,9 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
                     routed_render_items.push((issue_inputs.clone(), route_output.render_items));
                 }
                 routed_resolved_ids.push((issue_inputs, route_output.resolved_ids));
+            }
+            if args.claim && !routed_claim_trap_queries.is_empty() {
+                warn_claim_traps(&beads_dir, &routed_claim_trap_queries);
             }
 
             let updated_issues = if use_machine_output {
@@ -584,6 +589,7 @@ fn execute_prepared_route(
 
     let mut updated_issues: Vec<UpdatedIssueOutput> = Vec::new();
     let mut render_items = Vec::new();
+    let mut claim_trap_queries = Vec::new();
     let resolved_ids = prepared.resolved_ids.clone();
     let use_machine_output = update_uses_machine_output(ctx);
     let use_human_output = update_uses_human_output(ctx);
@@ -718,6 +724,17 @@ fn execute_prepared_route(
             "update",
             issue_after_result,
         )?;
+        if prepared.update.claim_actor.is_some()
+            && let Some(ref issue) = issue_after
+        {
+            let combined = format!(
+                "{} {} {}",
+                issue.id,
+                issue.title,
+                issue.description.as_deref().unwrap_or("")
+            );
+            claim_trap_queries.push(combined.chars().take(400).collect());
+        }
 
         if use_machine_output {
             if let Some(ref issue) = issue_after {
@@ -771,7 +788,7 @@ fn execute_prepared_route(
         render_items,
         resolved_ids,
         capacity_warnings,
-        claim_trap_queries: Vec::new(),
+        claim_trap_queries,
     })
 }
 
@@ -871,97 +888,107 @@ fn execute_bulk_label_only_route(
         );
     }
 
-    let claim_trap_queries = if prepared.update.claim_actor.is_some() {
-        resolved_ids
-            .iter()
-            .filter_map(|id| {
-                issues_by_id.get(id).map(|issue| {
-                    let combined = format!(
-                        "{} {} {}",
-                        issue.id,
-                        issue.title,
-                        issue.description.as_deref().unwrap_or("")
-                    );
-                    combined.chars().take(400).collect::<String>()
-                })
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-
     Ok(UpdateRouteOutput {
         updated_issues,
         render_items,
         resolved_ids,
         capacity_warnings: Vec::new(),
-        claim_trap_queries,
+        claim_trap_queries: Vec::new(),
     })
+}
+
+struct TrapChildGuard(Option<std::process::Child>);
+
+impl Drop for TrapChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn run_chie_trap_bounded(
+    chie: &str,
+    project_dir: &Path,
+    query: &str,
+    timeout: std::time::Duration,
+) -> Option<Vec<u8>> {
+    let mut cmd = std::process::Command::new(chie);
+    cmd.args([
+        "memory",
+        "check-trap",
+        "--query",
+        query,
+        "--project",
+        &project_dir.to_string_lossy(),
+        "--json",
+    ]);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::null());
+    let mut child = cmd.spawn().ok()?;
+    let stdout = child.stdout.take()?;
+    let mut guard = TrapChildGuard(Some(child));
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut stdout = stdout;
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut buf);
+        let _ = tx.send(buf);
+    });
+
+    let Ok(buf) = rx.recv_timeout(timeout) else {
+        drop(guard);
+        return None;
+    };
+    let status = guard.0.take()?.wait().ok()?;
+    status.success().then_some(buf)
+}
+
+fn collect_claim_traps_with_bin(
+    chie: &str,
+    beads_dir: &Path,
+    queries: &[String],
+    timeout: std::time::Duration,
+) -> Vec<String> {
+    if queries.is_empty() {
+        return Vec::new();
+    }
+    let project_dir = beads_dir.parent().unwrap_or(beads_dir);
+    let mut seen = std::collections::BTreeSet::new();
+    for query in queries.iter().take(4) {
+        let Some(buf) = run_chie_trap_bounded(chie, project_dir, query, timeout) else {
+            continue;
+        };
+        if let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&buf) {
+            for row in rows {
+                if let Some(w) = row.get("warning").and_then(|v| v.as_str()) {
+                    let id = row.get("rule_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let line = if id.is_empty() {
+                        w.to_string()
+                    } else {
+                        format!("{w} [{id}]")
+                    };
+                    seen.insert(line);
+                }
+            }
+        }
+    }
+    seen.into_iter().take(5).collect()
 }
 
 fn warn_claim_traps(beads_dir: &Path, queries: &[String]) {
     if queries.is_empty() || std::env::var_os("BR_SKIP_TRAP_CHECK").is_some() {
         return;
     }
-    let project_dir = beads_dir.parent().unwrap_or(beads_dir);
     let chie = std::env::var("BR_CHIE_BIN").unwrap_or_else(|_| "chie".to_string());
-    let mut seen = std::collections::BTreeSet::new();
-    for query in queries.iter().take(4) {
-        let mut cmd = std::process::Command::new(&chie);
-        cmd.args([
-            "memory",
-            "check-trap",
-            "--query",
-            query,
-            "--project",
-            &project_dir.to_string_lossy(),
-            "--json",
-        ]);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::null());
-        let Ok(mut child) = cmd.spawn() else {
-            return;
-        };
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1200);
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    if status.success()
-                        && let Some(mut stdout) = child.stdout.take()
-                    {
-                        let mut buf = Vec::new();
-                        if std::io::Read::read_to_end(&mut stdout, &mut buf).is_ok()
-                            && let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&buf)
-                        {
-                            for row in rows {
-                                if let Some(w) = row.get("warning").and_then(|v| v.as_str()) {
-                                    let id =
-                                        row.get("rule_id").and_then(|v| v.as_str()).unwrap_or("");
-                                    let line = if id.is_empty() {
-                                        w.to_string()
-                                    } else {
-                                        format!("{w} [{id}]")
-                                    };
-                                    seen.insert(line);
-                                }
-                            }
-                        }
-                    }
-                    break;
-                }
-                Ok(None) => {
-                    if std::time::Instant::now() >= deadline {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(15));
-                }
-                Err(_) => break,
-            }
-        }
-    }
-    for w in seen.into_iter().take(5) {
+    for w in collect_claim_traps_with_bin(
+        &chie,
+        beads_dir,
+        queries,
+        std::time::Duration::from_millis(1200),
+    ) {
         eprintln!("⚠️  [trap] {w}");
     }
 }
@@ -2771,5 +2798,63 @@ mod bd_principle_separator_tests {
     fn name_and_decision_rules_are_unchanged() {
         assert!(parse_principle_args(&["Prove It Works - x".to_string()]).is_err());
         assert!(parse_principle_args(&["prove-it-works -   ".to_string()]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod bd_claim_trap_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn collect_claim_traps_substitutes_chie_fails_open_and_bounds_hangs() {
+        let dir = tempfile::tempdir().unwrap();
+        let beads_dir = dir.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+
+        let missing = dir.path().join("missing-chie");
+        let empty = collect_claim_traps_with_bin(
+            &missing.to_string_lossy(),
+            &beads_dir,
+            &["bd-1 TMPDIR".to_string()],
+            std::time::Duration::from_millis(500),
+        );
+        assert!(empty.is_empty(), "missing chie must fail open");
+
+        let fake = dir.path().join("chie-ok");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\nprintf '[{\"rule_id\":\"e-1\",\"warning\":\"Strip TMPDIR trailing slash\"}]\\n'\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&fake).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake, perms).unwrap();
+        let found = collect_claim_traps_with_bin(
+            &fake.to_string_lossy(),
+            &beads_dir,
+            &["bd-1 TMPDIR".to_string()],
+            std::time::Duration::from_millis(1000),
+        );
+        assert_eq!(found, vec!["Strip TMPDIR trailing slash [e-1]"]);
+
+        let slow = dir.path().join("chie-slow");
+        std::fs::write(&slow, "#!/bin/sh\nsleep 5\n").unwrap();
+        let mut slow_perms = std::fs::metadata(&slow).unwrap().permissions();
+        slow_perms.set_mode(0o755);
+        std::fs::set_permissions(&slow, slow_perms).unwrap();
+        let started = std::time::Instant::now();
+        let timed_out = collect_claim_traps_with_bin(
+            &slow.to_string_lossy(),
+            &beads_dir,
+            &["bd-1 slow".to_string()],
+            std::time::Duration::from_millis(80),
+        );
+        assert!(timed_out.is_empty());
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "slow chie must be killed at timeout, elapsed={:?}",
+            started.elapsed()
+        );
     }
 }
