@@ -16,12 +16,12 @@ use crate::model::{IssueType, Priority};
 use crate::output::{IssueTable, IssueTableColumns, JsonArrayPageMeta, OutputContext, OutputMode};
 use crate::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 use crate::util::id::{IdResolver, ResolverConfig};
+use rich_rust::cells::cell_len;
 use serde::Serialize;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::str::FromStr;
 use tracing::{debug, info, trace};
-use unicode_width::UnicodeWidthStr;
 
 /// Pagination envelope for `br ready --json` / `--format toon`, matching
 /// `br list --json` (`{issues, total, limit, offset, has_more}`).
@@ -370,7 +370,7 @@ fn format_ready_line(
         max_width.map_or_else(
             || crate::format::sanitize_terminal_inline(&issue.title).into_owned(),
             |width| {
-                let max_title = width.saturating_sub(UnicodeWidthStr::width(prefix_plain.as_str()));
+                let max_title = width.saturating_sub(cell_len(prefix_plain.as_str()));
                 truncate_title(&issue.title, max_title)
             },
         )

@@ -17,12 +17,12 @@ use crate::model::{Issue, Priority, Status};
 use crate::output::{OutputContext, OutputMode};
 use crate::storage::{ListFilters, SqliteStorage};
 use crate::util::id::{IdResolver, ResolverConfig};
+use rich_rust::cells::cell_len;
 use rich_rust::prelude::*;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::FromStr;
 use tracing::debug;
-use unicode_width::UnicodeWidthStr;
 
 const GRAPH_DEPENDENTS_BATCH_SIZE: usize = 400;
 
@@ -1401,7 +1401,7 @@ fn render_all_graph_rich(
             content.append_styled(&graph_display_text(&node.id), theme.issue_id.clone());
             content.append(" ");
 
-            let title = if UnicodeWidthStr::width(node.title.as_str()) > 40 {
+            let title = if cell_len(node.title.as_str()) > 40 {
                 crate::format::truncate_title(&node.title, 40)
             } else {
                 sanitize_terminal_inline(&node.title).into_owned()

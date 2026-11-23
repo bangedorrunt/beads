@@ -1,4 +1,4 @@
-//! Bare-`br` TUI skeleton (ADR-0003 §3.3, bead gu7ts.6). governed-by: ADR-0003.
+//! Bare-`br` TUI (ADR-0003 §3.3, bead gu7ts.6). governed-by: ADR-0003.
 //!
 //! Layout, focus model, and key contract port the subset of the bv UX map
 //! (docs/research/bv-tui-ux-map.md) this bead owns: split list+detail above
@@ -6,13 +6,20 @@
 //! `q`/`esc` with quit-confirm at the top list. The state machine lives in
 //! [`app`] with no terminal dependency so `tests/tui_harness.rs` can drive
 //! it headless (ADR-0003 §5 proof 4).
+//!
+//! Writes are effects: [`app::TuiApp::handle_key`] returns a
+//! [`actions::TuiCmd`] and never touches storage. [`run`] is the one
+//! interpreter that runs the command and feeds the reply back through
+//! [`app::TuiApp::update`].
 
+pub mod actions;
 pub mod app;
 pub mod keys;
 pub mod theme;
 pub mod ui;
 
 use std::io::{self, Stdout};
+use std::path::{Path, PathBuf};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -30,7 +37,7 @@ pub use app::{Focus, Key, TuiApp};
 ///
 /// Returns an error when the terminal cannot be driven or storage fails.
 pub fn run() -> crate::error::Result<()> {
-    let issues = load_issues()?;
+    let (beads_dir, issues) = load_workspace()?;
     let mut app = TuiApp::new(issues);
     let backend = CrosstermBackend::new(setup_terminal()?);
     let mut terminal = Terminal::new(backend)
@@ -52,7 +59,10 @@ pub fn run() -> crate::error::Result<()> {
             event::read().map_err(|e| crate::error::BeadsError::Config(format!("TUI read: {e}")))?
             && key.kind == KeyEventKind::Press
         {
-            app.handle_key(to_key(&key));
+            for command in app.handle_key(to_key(&key)) {
+                let reply = actions::interpret(beads_dir.as_deref(), &command);
+                app.update(reply);
+            }
         }
         if app.should_quit() {
             break;
@@ -71,8 +81,8 @@ fn to_key(key: &crossterm::event::KeyEvent) -> Key {
             KeyCode::Char('u') => Key::CtrlU,
             KeyCode::Char('j') => Key::CtrlJ,
             KeyCode::Char('k') => Key::CtrlK,
-            KeyCode::Char('r') => Key::Other(KeyCode::Char('r')),
-            other => Key::Other(other),
+            KeyCode::Char('r') => Key::CtrlR,
+            _ => Key::Unhandled,
         };
     }
     match key.code {
@@ -91,7 +101,7 @@ fn to_key(key: &crossterm::event::KeyEvent) -> Key {
         KeyCode::Char('q') => Key::Char('q'),
         KeyCode::Char('y') => Key::Char('y'),
         KeyCode::Char(other) => Key::Char(other),
-        other => Key::Other(other),
+        _ => Key::Unhandled,
     }
 }
 
@@ -110,17 +120,23 @@ fn restore_terminal() -> crate::error::Result<()> {
     Ok(())
 }
 
-/// Every issue in the workspace sorted by id — the same hydration the robot
-/// commands use, so list and detail agree with `br list`/`br show`.
-fn load_issues() -> crate::error::Result<Vec<crate::model::Issue>> {
+/// The workspace root and its issues, or no workspace at all.
+fn load_workspace() -> crate::error::Result<(Option<PathBuf>, Vec<crate::model::Issue>)> {
     let Some(beads_dir) = crate::config::discover_optional_beads_dir_with_cli(
         &crate::config::CliOverrides::default(),
     )?
     else {
-        return Ok(Vec::new());
+        return Ok((None, Vec::new()));
     };
+    let issues = load_issues_from(&beads_dir)?;
+    Ok((Some(beads_dir), issues))
+}
+
+/// Every issue in the workspace sorted by id — the same hydration the robot
+/// commands use, so list and detail agree with `br list`/`br show`.
+pub(crate) fn load_issues_from(beads_dir: &Path) -> crate::error::Result<Vec<crate::model::Issue>> {
     let ctx =
-        crate::config::open_storage_with_cli(&beads_dir, &crate::config::CliOverrides::default())?;
+        crate::config::open_storage_with_cli(beads_dir, &crate::config::CliOverrides::default())?;
     let filters = crate::storage::ListFilters {
         include_closed: true,
         include_deferred: true,

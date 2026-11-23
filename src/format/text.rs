@@ -8,8 +8,8 @@
 
 use crate::model::{Issue, IssueType, Priority, Status};
 use crossterm::style::Stylize;
+use rich_rust::cells::{cell_len, get_character_cell_size};
 use std::borrow::Cow;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Status icon characters.
 pub mod icons {
@@ -248,7 +248,7 @@ pub fn truncate_title(title: &str, max_len: usize) -> String {
         return String::new();
     }
 
-    let width = UnicodeWidthStr::width(title);
+    let width = cell_len(title);
     if width <= max_len {
         return title.to_string();
     }
@@ -257,7 +257,7 @@ pub fn truncate_title(title: &str, max_len: usize) -> String {
         let mut w = 0;
         let mut s = String::new();
         for c in title.chars() {
-            let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+            let cw = get_character_cell_size(c);
             if w + cw > max_len {
                 break;
             }
@@ -271,7 +271,7 @@ pub fn truncate_title(title: &str, max_len: usize) -> String {
     let mut w = 0;
     let mut s = String::new();
     for c in title.chars() {
-        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+        let cw = get_character_cell_size(c);
         if w + cw > target_len {
             break;
         }
@@ -283,7 +283,7 @@ pub fn truncate_title(title: &str, max_len: usize) -> String {
 }
 
 fn visible_len(text: &str) -> usize {
-    UnicodeWidthStr::width(text)
+    cell_len(text)
 }
 
 /// Format a single-line issue summary with options.

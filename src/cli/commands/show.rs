@@ -1301,25 +1301,25 @@ fn compact_wrap_width() -> usize {
 /// continuations, and a single over-long word is never split. Passing
 /// `usize::MAX` is a no-op, so callers can disable wrapping cheaply.
 fn wrap_body(text: &str, width: usize) -> String {
-    use unicode_width::UnicodeWidthStr;
+    use rich_rust::cells::cell_len;
     let width = width.max(1);
     let mut out = String::new();
     for (line_idx, line) in text.split('\n').enumerate() {
         if line_idx > 0 {
             out.push('\n');
         }
-        if UnicodeWidthStr::width(line) <= width {
+        if cell_len(line) <= width {
             out.push_str(line);
             continue;
         }
         let indent_len = line.len() - line.trim_start().len();
         let indent = &line[..indent_len];
-        let avail = width.saturating_sub(UnicodeWidthStr::width(indent)).max(1);
+        let avail = width.saturating_sub(cell_len(indent)).max(1);
         out.push_str(indent);
         let mut cur_w = 0usize;
         let mut started = false;
         for word in line[indent_len..].split(' ') {
-            let word_w = UnicodeWidthStr::width(word);
+            let word_w = cell_len(word);
             if !started {
                 out.push_str(word);
                 cur_w = word_w;

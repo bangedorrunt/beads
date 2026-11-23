@@ -1,9 +1,8 @@
 use crate::format::{format_status_icon, sanitize_terminal_inline};
 use crate::model::Issue;
 use crate::output::Theme;
+use rich_rust::cells::{cell_len, get_character_cell_size};
 use rich_rust::prelude::*;
-use unicode_width::UnicodeWidthChar;
-use unicode_width::UnicodeWidthStr;
 
 /// Renders a dependency tree for an issue.
 pub struct DependencyTree<'a> {
@@ -76,14 +75,14 @@ fn truncate(s: &str, max: usize) -> String {
     let s = sanitize_terminal_inline(s);
     let s = s.as_ref();
 
-    let width = UnicodeWidthStr::width(s);
+    let width = cell_len(s);
     if width <= max {
         s.to_string()
     } else if max <= 3 {
         let mut w = 0;
         let mut out = String::new();
         for c in s.chars() {
-            let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+            let cw = get_character_cell_size(c);
             if w + cw > max {
                 break;
             }
@@ -96,7 +95,7 @@ fn truncate(s: &str, max: usize) -> String {
         let mut w = 0;
         let mut out = String::new();
         for c in s.chars() {
-            let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+            let cw = get_character_cell_size(c);
             if w + cw > target {
                 break;
             }
@@ -120,7 +119,7 @@ mod tests {
         let title = "😊".repeat(20);
         let truncated = truncate(&title, 10);
 
-        assert!(UnicodeWidthStr::width(truncated.as_str()) <= 10);
+        assert!(cell_len(truncated.as_str()) <= 10);
         assert!(truncated.starts_with("😊"));
         assert!(truncated.ends_with("..."));
     }
@@ -129,7 +128,7 @@ mod tests {
     fn test_dep_tree_truncation_ascii() {
         let title = "Hello, World! This is a long title";
         let truncated = truncate(title, 15);
-        assert!(UnicodeWidthStr::width(truncated.as_str()) <= 15);
+        assert!(cell_len(truncated.as_str()) <= 15);
         assert!(truncated.ends_with("..."));
     }
 

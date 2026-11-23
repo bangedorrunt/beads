@@ -17,9 +17,12 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use crate::analysis::engine::AnalysisResult;
+use crate::analysis::triage::Recommendation;
+use crate::model::Issue;
+use rich_rust::cells::get_character_cell_size;
 
-use super::app::{Focus, TuiApp};
+use super::app::{Focus, PromptKind, TuiApp};
 use super::{keys, theme};
 
 /// Render one frame.
@@ -88,33 +91,24 @@ pub fn draw(frame: &mut Frame, app: &TuiApp) {
     if app.focus() == Focus::QuitConfirm {
         draw_quit_confirm(frame, area);
     }
+    if app.focus() == Focus::Prompt {
+        draw_prompt(frame, area, app);
+    }
 
     draw_footer(frame, footer, app);
 }
 
 fn view_title(focus: Focus) -> (&'static str, &'static str) {
     match focus {
-        Focus::Board => (
-            " Board — Kanban ",
-            "b close • h/l columns • j/k cards • enter detail",
-        ),
+        Focus::Board => (" Board — Kanban ", "b close • j/k cards • enter detail"),
         Focus::Graph => (
             " Graph — Dependencies ",
-            "g close • j/k nodes • enter detail • h/l scroll",
+            "g close • j/k nodes • enter detail",
         ),
         Focus::Actionable => (" Actionable — Ready Plan ", "a close • j/k • enter detail"),
-        Focus::Insights => (
-            " Insights — Metrics ",
-            "i close • h/l panels • j/k items • enter jump",
-        ),
-        Focus::Tree => (
-            " Tree — Hierarchy ",
-            "E close • j/k • enter toggle • h/l collapse",
-        ),
-        Focus::LabelDashboard => (
-            " Labels — Dashboard ",
-            "[ close • j/k • enter filter • h detail",
-        ),
+        Focus::Insights => (" Insights — Metrics ", "i close"),
+        Focus::Tree => (" Tree — Hierarchy ", "E close • j/k • enter detail"),
+        Focus::LabelDashboard => (" Labels — Dashboard ", "[ close • j/k • enter filter"),
         _ => ("", ""),
     }
 }
@@ -159,105 +153,112 @@ fn draw_board(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         );
         return;
     }
-    let visible = app.visible_indices();
-    if area.width <= 80 {
-        let mut lines = vec![Line::from(vec![
-            Span::styled(" Board ", theme::primary()),
-            Span::styled(format!("({} cards)", visible.len()), theme::dim()),
-        ])];
-        let window = viewport_window(
-            app.selected(),
-            visible.len(),
-            area.height.saturating_sub(2) as usize,
-        );
-        for vis_idx in window.0..window.1 {
-            let issue_idx = visible[vis_idx];
-            let issue = &app.issues()[issue_idx];
-            let sel = vis_idx == app.selected();
-            let style = if sel {
-                theme::selected_row()
-            } else {
-                theme::row()
-            };
-            lines.push(Line::from(vec![
-                Span::styled(if sel { "› " } else { "  " }.to_string(), style),
-                Span::styled(format!("[{}] ", issue.status.as_str()), status_style(issue)),
-                Span::styled(format!("{:<10} ", issue.id), style),
-                Span::styled(truncate(&issue.title, 22), style),
-            ]));
-        }
-        if visible.is_empty() {
-            lines.push(Line::from(Span::styled("  (no cards)", theme::dim())));
-        }
+    let columns = app.board_columns();
+    if columns.is_empty() {
         frame.render_widget(
-            Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
+            Paragraph::new(Line::from(Span::styled("  (no cards)", theme::dim())))
+                .block(Block::default().borders(Borders::ALL)),
             area,
         );
         return;
     }
-    let mut groups: std::collections::BTreeMap<&str, Vec<usize>> =
-        std::collections::BTreeMap::new();
-    for (vis_idx, &issue_idx) in visible.iter().enumerate() {
-        let s = app.issues()[issue_idx].status.as_str();
-        groups.entry(s).or_default().push(vis_idx);
+    let column_count = u16::try_from(columns.len()).unwrap_or(1).max(1);
+    let column_width = area.width / column_count;
+    if area.width <= 80 || column_width < 16 {
+        draw_board_compact(frame, area, app);
+        return;
     }
-    let order = ["open", "in_progress", "blocked", "closed"];
-    let cols: Vec<String> = order
-        .iter()
-        .map(|s| {
-            let count = groups.get(s).map(Vec::len).unwrap_or(0);
-            format!("{s} ({count})")
-        })
-        .collect();
-    let header = Line::from(vec![
-        Span::styled(" Board ", theme::primary()),
-        Span::styled(cols.join(" │ "), theme::dim()),
-    ]);
-    let col_count = 4;
-    let col_width = area.width / u16::try_from(col_count).unwrap_or(4);
-    let constraints = vec![Constraint::Length(col_width); col_count];
+    let constraints = vec![Constraint::Length(column_width); columns.len()];
     let col_areas = Layout::horizontal(constraints).split(area);
-    for (ci, status) in order.iter().enumerate() {
-        if ci >= col_areas.len() {
+    let selection = app.board_selection();
+    let mut flat = 0usize;
+    for (index, column) in columns.iter().enumerate() {
+        let Some(&column_area) = col_areas.get(index) else {
             break;
-        }
-        let vis_indices = groups.get(status).cloned().unwrap_or_default();
+        };
+        let column_start = flat;
+        let column_end = flat + column.rows.len();
+        let selected_in_column = selection >= column_start && selection < column_end;
+        let content_height = usize::from(column_area.height.saturating_sub(3)).max(1);
+        let row_in_column = selection.saturating_sub(column_start);
+        let start = if selected_in_column {
+            row_in_column.saturating_sub(content_height / 2)
+        } else {
+            0
+        };
         let mut lines = vec![Line::from(Span::styled(
-            format!(" {status} "),
+            format!(" {} ({}) ", column.status, column.rows.len()),
             theme::status_warning().add_modifier(Modifier::BOLD),
         ))];
-        for &vis_idx in vis_indices
+        for (offset, &issue_index) in column
+            .rows
             .iter()
-            .take(col_areas[ci].height.saturating_sub(1) as usize)
+            .skip(start)
+            .take(content_height)
+            .enumerate()
         {
-            let issue_idx = visible[vis_idx];
-            let issue = &app.issues()[issue_idx];
-            let sel = vis_idx == app.selected();
-            let style = if sel {
+            let is_selected = column_start + start + offset == selection;
+            let issue = &app.issues()[issue_index];
+            let style = if is_selected {
                 theme::selected_row()
             } else {
                 theme::row()
             };
-            let marker = if sel { "› " } else { "  " };
+            let marker = if is_selected { "› " } else { "  " };
             lines.push(Line::from(vec![
                 Span::styled(marker.to_string(), style),
-                Span::styled(format!("{} ", issue.id), style),
+                Span::styled(clean(format!("{} ", issue.id)), style),
                 Span::styled(truncate(&issue.title, 20), style),
             ]));
         }
-        let is_first = ci == 0;
+        let border = if selected_in_column {
+            theme::border_focused()
+        } else {
+            theme::border_unfocused()
+        };
         frame.render_widget(
-            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).border_style(
-                if is_first {
-                    theme::border_focused()
-                } else {
-                    theme::border_unfocused()
-                },
-            )),
-            col_areas[ci],
+            Paragraph::new(lines)
+                .block(Block::default().borders(Borders::ALL).border_style(border)),
+            column_area,
         );
+        flat = column_end;
     }
-    let _ = header;
+}
+
+fn draw_board_compact(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
+    let rows = app.board_rows();
+    let selection = app.board_selection().min(rows.len().saturating_sub(1));
+    let mut lines = vec![Line::from(vec![
+        Span::styled(" Board ", theme::primary()),
+        Span::styled(format!("({} cards)", rows.len()), theme::dim()),
+    ])];
+    let window = viewport_window(
+        selection,
+        rows.len(),
+        usize::from(area.height.saturating_sub(2)),
+    );
+    for position in window.0..window.1 {
+        let issue = &app.issues()[rows[position]];
+        let is_selected = position == selection;
+        let style = if is_selected {
+            theme::selected_row()
+        } else {
+            theme::row()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(if is_selected { "› " } else { "  " }.to_string(), style),
+            Span::styled(format!("[{}] ", issue.status.as_str()), status_style(issue)),
+            Span::styled(clean(format!("{:<10} ", issue.id)), style),
+            Span::styled(truncate(&issue.title, 22), style),
+        ]));
+    }
+    if rows.is_empty() {
+        lines.push(Line::from(Span::styled("  (no cards)", theme::dim())));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
+        area,
+    );
 }
 
 fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
@@ -287,7 +288,7 @@ fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
         let deps = issue.dependencies.len();
         lines.push(Line::from(vec![
             Span::styled(if sel { "› " } else { "  " }.to_string(), style),
-            Span::styled(format!("{:<14} ", issue.id), style),
+            Span::styled(clean(format!("{:<14} ", issue.id)), style),
             Span::styled(
                 if deps > 0 {
                     format!("→{deps}")
@@ -306,7 +307,7 @@ fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
         && let Some(issue) = app.selected_issue()
     {
         let mut r_lines = vec![Line::from(Span::styled(
-            format!(" {} ", issue.id),
+            clean(format!(" {} ", issue.id)),
             theme::primary(),
         ))];
         if issue.dependencies.is_empty() {
@@ -318,7 +319,7 @@ fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
             for dep in &issue.dependencies {
                 r_lines.push(Line::from(vec![
                     Span::styled(format!("  {} ", dep.dep_type.as_str()), theme::dim()),
-                    Span::styled(dep.depends_on_id.clone(), theme::primary_fg()),
+                    Span::styled(clean(&dep.depends_on_id), theme::primary_fg()),
                 ]));
             }
         }
@@ -344,47 +345,33 @@ fn draw_graph_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
 }
 
 fn draw_actionable(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
-    let visible = app.visible_indices();
-    let mut actionable: Vec<usize> = visible
-        .iter()
-        .copied()
-        .filter(|&issue_idx| {
-            let s = app.issues()[issue_idx].status.as_str();
-            s == "open"
-        })
-        .collect();
-    actionable.sort_by(|&a, &b| {
-        let pa = app.issues()[a].priority.0;
-        let pb = app.issues()[b].priority.0;
-        pa.cmp(&pb)
-            .then_with(|| app.issues()[a].id.cmp(&app.issues()[b].id))
-    });
+    let rows = app.actionable_rows();
+    let selection = app.actionable_selection().min(rows.len().saturating_sub(1));
     let mut lines = vec![Line::from(vec![
         Span::styled(" Actionable ", theme::primary()),
-        Span::styled(format!("({} ready)", actionable.len()), theme::dim()),
+        Span::styled(format!("({} ready)", rows.len()), theme::dim()),
     ])];
     let window = viewport_window(
-        app.selected().min(actionable.len().saturating_sub(1)),
-        actionable.len(),
-        area.height.saturating_sub(2) as usize,
+        selection,
+        rows.len(),
+        usize::from(area.height.saturating_sub(2)),
     );
-    for idx in window.0..window.1 {
-        let issue_idx = actionable[idx];
-        let issue = &app.issues()[issue_idx];
-        let sel = idx == app.selected().min(actionable.len().saturating_sub(1));
-        let style = if sel {
+    for position in window.0..window.1 {
+        let issue = &app.issues()[rows[position]];
+        let is_selected = position == selection;
+        let style = if is_selected {
             theme::selected_row()
         } else {
             theme::row()
         };
         lines.push(Line::from(vec![
-            Span::styled(if sel { "› " } else { "  " }.to_string(), style),
+            Span::styled(if is_selected { "› " } else { "  " }.to_string(), style),
             Span::styled(format!("P{} ", issue.priority.0), style),
-            Span::styled(format!("{:<14} ", issue.id), style),
-            Span::styled(issue.title.clone(), style),
+            Span::styled(clean(format!("{:<14} ", issue.id)), style),
+            Span::styled(clean(&issue.title), style),
         ]));
     }
-    if actionable.is_empty() {
+    if rows.is_empty() {
         lines.push(Line::from(Span::styled(
             "  (no open actionable — triage via br triage)",
             theme::dim(),
@@ -444,7 +431,7 @@ fn draw_insights(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         && !q.is_empty()
     {
         lines.push(Line::from(Span::styled(
-            format!("  filter 🔍 {q}"),
+            clean(format!("  filter 🔍 {q}")),
             theme::status_warning(),
         )));
     }
@@ -455,81 +442,39 @@ fn draw_insights(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
 }
 
 fn draw_tree(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
-    let visible = app.visible_indices();
-    let mut parent_map: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    let mut roots: Vec<String> = Vec::new();
-    let id_set: std::collections::HashSet<String> = visible
-        .iter()
-        .map(|&idx| app.issues()[idx].id.clone())
-        .collect();
-    for &issue_idx in &visible {
-        let issue = &app.issues()[issue_idx];
-        let has_parent = issue
-            .dependencies
-            .iter()
-            .any(|d| d.dep_type.as_str() == "parent-child" && id_set.contains(&d.depends_on_id));
-        if !has_parent {
-            roots.push(issue.id.clone());
-        }
-        for dep in &issue.dependencies {
-            if dep.dep_type.as_str() == "parent-child" {
-                parent_map
-                    .entry(dep.depends_on_id.clone())
-                    .or_default()
-                    .push(issue.id.clone());
-            }
-        }
-    }
+    let rows = app.tree_rows();
+    let selection = app.tree_selection().min(rows.len().saturating_sub(1));
     let mut lines = vec![Line::from(Span::styled(
         " Tree — parent-child ",
         theme::primary(),
     ))];
     let window = viewport_window(
-        app.selected(),
-        roots.len().max(1),
-        area.height.saturating_sub(2) as usize,
+        selection,
+        rows.len(),
+        usize::from(area.height.saturating_sub(2)),
     );
-    let mut flat: Vec<(String, usize)> = Vec::new();
-    for rid in &roots {
-        flat.push((rid.clone(), 0));
-        if let Some(children) = parent_map.get(rid) {
-            for cid in children {
-                flat.push((cid.clone(), 1));
-            }
-        }
-    }
-    if flat.is_empty() && !visible.is_empty() {
-        for &idx in &visible {
-            flat.push((app.issues()[idx].id.clone(), 0));
-        }
-    }
-    let sel = app.selected().min(flat.len().saturating_sub(1));
-    let w = viewport_window(sel, flat.len(), area.height.saturating_sub(2) as usize);
-    let _ = window;
-    for (i, (id, depth)) in flat.iter().enumerate().skip(w.0).take(w.1 - w.0) {
-        let is_sel = i == sel;
-        let style = if is_sel {
+    for (position, row) in rows
+        .iter()
+        .enumerate()
+        .skip(window.0)
+        .take(window.1.saturating_sub(window.0))
+    {
+        let issue = &app.issues()[row.issue_index];
+        let is_selected = position == selection;
+        let style = if is_selected {
             theme::selected_row()
         } else {
             theme::row()
         };
-        let indent = "  ".repeat(*depth);
-        let issue = app.issues().iter().find(|it| &it.id == id);
-        let title = issue
-            .map(|it| truncate(&it.title, 30))
-            .unwrap_or_else(|| "-".to_string());
+        let indent = "  ".repeat(row.depth);
         lines.push(Line::from(vec![
-            Span::styled(if is_sel { "› " } else { "  " }.to_string(), style),
-            Span::styled(format!("{indent}{id} "), style),
-            Span::styled(title, style),
+            Span::styled(if is_selected { "› " } else { "  " }.to_string(), style),
+            Span::styled(clean(format!("{indent}{} ", issue.id)), style),
+            Span::styled(truncate(&issue.title, 30), style),
         ]));
     }
-    if flat.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "  (no parent-child edges; flat list)",
-            theme::dim(),
-        )));
+    if rows.is_empty() {
+        lines.push(Line::from(Span::styled("  (no issues)", theme::dim())));
     }
     frame.render_widget(
         Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
@@ -538,40 +483,38 @@ fn draw_tree(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
 }
 
 fn draw_label_dashboard(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
-    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for issue in app.issues() {
-        for l in &issue.labels {
-            *counts.entry(l.clone()).or_default() += 1;
-        }
-        if issue.labels.is_empty() {
-            *counts.entry("(unlabeled)".to_string()).or_default() += 1;
-        }
-    }
+    let rows = app.label_rows();
+    let selection = app.label_selection().min(rows.len().saturating_sub(1));
     let mut lines = vec![Line::from(vec![
         Span::styled(" Labels ", theme::primary()),
-        Span::styled(format!("({} labels)", counts.len()), theme::dim()),
+        Span::styled(format!("({} labels)", rows.len()), theme::dim()),
     ])];
-    let mut sorted: Vec<_> = counts.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    let sel = app.selected().min(sorted.len().saturating_sub(1));
-    let window = viewport_window(sel, sorted.len(), area.height.saturating_sub(2) as usize);
-    for idx in window.0..window.1 {
-        let (label, count) = &sorted[idx];
-        let is_sel = idx == sel;
-        let style = if is_sel {
+    let window = viewport_window(
+        selection,
+        rows.len(),
+        usize::from(area.height.saturating_sub(2)),
+    );
+    for (position, row) in rows
+        .iter()
+        .enumerate()
+        .skip(window.0)
+        .take(window.1.saturating_sub(window.0))
+    {
+        let is_selected = position == selection;
+        let style = if is_selected {
             theme::selected_row()
         } else {
             theme::row()
         };
-        let bar = "█".repeat((*count).min(12));
+        let bar = "█".repeat(row.count.min(12));
         lines.push(Line::from(vec![
-            Span::styled(if is_sel { "› " } else { "  " }.to_string(), style),
-            Span::styled(format!("{label:<18} "), style),
-            Span::styled(format!("{count:>3} "), theme::dim()),
+            Span::styled(if is_selected { "› " } else { "  " }.to_string(), style),
+            Span::styled(clean(format!("{:<18} ", row.label)), style),
+            Span::styled(format!("{:>3} ", row.count), theme::dim()),
             Span::styled(bar, theme::primary_fg()),
         ]));
     }
-    if sorted.is_empty() {
+    if rows.is_empty() {
         lines.push(Line::from(Span::styled("  (no labels)", theme::dim())));
     }
     frame.render_widget(
@@ -580,148 +523,147 @@ fn draw_label_dashboard(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tu
     );
 }
 
-#[allow(
-    clippy::too_many_lines,
-    clippy::wildcard_enum_match_arm,
-    clippy::needless_pass_by_value,
-    clippy::drain_collect
-)]
-#[allow(clippy::pedantic, clippy::nursery)]
 fn markdown_lines(md: &str, width: usize) -> Vec<Line<'static>> {
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TABLES);
-    let parser = Parser::new_ext(md, opts);
-    let mut lines: Vec<Line> = Vec::new();
-    let mut cur_spans: Vec<Span<'static>> = Vec::new();
-    let mut in_code_block = false;
-    let mut code_lang: String = String::new();
-    let mut strong = false;
-    let mut em = false;
-    let mut _code_inline = false;
-    let mut heading_level: u8 = 0;
-    for ev in parser {
-        match ev {
-            Event::Start(Tag::Heading { level, .. }) => {
-                if !cur_spans.is_empty() {
-                    lines.push(Line::from(cur_spans.clone()));
-                    cur_spans.clear();
+    if width == 0 {
+        return Vec::new();
+    }
+    let sanitized = crate::format::sanitize_terminal_text(md);
+    let markdown = rich_rust::renderables::Markdown::new(sanitized.as_ref()).hyperlinks(false);
+    let rendered = markdown.render(width);
+    let mut lines = Vec::new();
+    for segments in rich_rust::segment::split_lines(rendered.into_iter()) {
+        let spans: Vec<Span<'static>> = segments
+            .into_iter()
+            .filter(|segment| !segment.is_control() && !segment.text.is_empty())
+            .map(|segment| {
+                Span::styled(
+                    clean(segment.text.as_ref()),
+                    rich_text_style(segment.style.as_ref()),
+                )
+            })
+            .collect();
+        lines.extend(wrap_line(Line::from(spans), width));
+    }
+    while lines
+        .last()
+        .is_some_and(|line| line.spans.iter().all(|span| span.content.trim().is_empty()))
+    {
+        lines.pop();
+    }
+    lines
+}
+
+fn wrap_line(line: Line<'static>, width: usize) -> Vec<Line<'static>> {
+    if width == 0 || line.spans.is_empty() {
+        return vec![line];
+    }
+    let mut lines = Vec::new();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut chunk = String::new();
+    let mut chunk_style = Style::new();
+    let mut used = 0usize;
+    for span in line.spans {
+        let style = span.style;
+        for ch in span.content.chars() {
+            let char_width = get_character_cell_size(ch);
+            if used > 0 && used + char_width > width {
+                if !chunk.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut chunk), chunk_style));
                 }
-                heading_level = level as u8;
+                lines.push(Line::from(std::mem::take(&mut spans)));
+                used = 0;
             }
-            Event::End(TagEnd::Heading(_)) => {
-                if !cur_spans.is_empty() {
-                    let styled: Vec<Span> = cur_spans
-                        .drain(..)
-                        .map(|s| Span::styled(s.content.to_string(), theme::primary_fg()))
-                        .collect();
-                    lines.push(Line::from(styled));
-                }
-                heading_level = 0;
+            if chunk.is_empty() {
+                chunk_style = style;
             }
-            Event::Start(Tag::Paragraph) if !cur_spans.is_empty() => {
-                lines.push(Line::from(cur_spans.clone()));
-                cur_spans.clear();
-            }
-            Event::End(TagEnd::Paragraph) => {
-                if !cur_spans.is_empty() {
-                    lines.push(Line::from(cur_spans.clone()));
-                    cur_spans.clear();
-                }
-                lines.push(Line::from(""));
-            }
-            Event::Start(Tag::CodeBlock(kind)) => {
-                if !cur_spans.is_empty() {
-                    lines.push(Line::from(cur_spans.clone()));
-                    cur_spans.clear();
-                }
-                in_code_block = true;
-                code_lang = match kind {
-                    pulldown_cmark::CodeBlockKind::Fenced(l) => l.to_string(),
-                    _ => String::new(),
-                };
-                if !code_lang.is_empty() {
-                    lines.push(Line::from(Span::styled(
-                        format!("  {} ─", code_lang),
-                        theme::dim(),
-                    )));
-                }
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                in_code_block = false;
-                code_lang.clear();
-            }
-            Event::Start(Tag::Strong) => strong = true,
-            Event::End(TagEnd::Strong) => strong = false,
-            Event::Start(Tag::Emphasis) => em = true,
-            Event::End(TagEnd::Emphasis) => em = false,
-            Event::Start(Tag::Strikethrough) => {}
-            Event::End(TagEnd::Strikethrough) => {}
-            Event::Start(Tag::List(_)) | Event::End(TagEnd::List(_)) => {}
-            Event::Start(Tag::Item) => cur_spans.push(Span::styled("• ".to_string(), theme::dim())),
-            Event::End(TagEnd::Item) if !cur_spans.is_empty() => {
-                lines.push(Line::from(cur_spans.clone()));
-                cur_spans.clear();
-            }
-            Event::Text(text) => {
-                let mut style = Style::new();
-                if in_code_block {
-                    style = theme::status_open().bg(Color::Rgb(0x12, 0x12, 0x2a));
-                    for l in text.lines() {
-                        lines.push(Line::from(Span::styled(format!("    {l}"), style)));
-                    }
-                    continue;
-                }
-                if strong {
-                    style = style.add_modifier(Modifier::BOLD);
-                }
-                if em {
-                    style = style.add_modifier(Modifier::ITALIC);
-                }
-                if heading_level > 0 {
-                    style = theme::primary_fg();
-                }
-                cur_spans.push(Span::styled(text.to_string(), style));
-            }
-            Event::Code(text) => {
-                _code_inline = true;
-                cur_spans.push(Span::styled(format!("`{text}`"), theme::status_warning()));
-                _code_inline = false;
-            }
-            Event::SoftBreak | Event::HardBreak if !cur_spans.is_empty() => {
-                lines.push(Line::from(cur_spans.clone()));
-                cur_spans.clear();
-            }
-            Event::Html(_) | Event::FootnoteReference(_) => {}
-            _ => {}
+            chunk.push(ch);
+            used += char_width;
+        }
+        if !chunk.is_empty() {
+            spans.push(Span::styled(std::mem::take(&mut chunk), chunk_style));
         }
     }
-    if !cur_spans.is_empty() {
-        lines.push(Line::from(cur_spans));
+    if !spans.is_empty() || lines.is_empty() {
+        lines.push(Line::from(spans));
     }
-    if width > 0 {
-        let mut wrapped: Vec<Line> = Vec::new();
-        for line in lines {
-            let s: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();
-            if s.len() <= width {
-                wrapped.push(line);
-            } else {
-                for chunk in s.chars().collect::<Vec<_>>().chunks(width) {
-                    let ch: String = chunk.iter().collect();
-                    wrapped.push(Line::from(Span::styled(ch, theme::row())));
-                }
+    lines
+}
+
+fn rich_color(color: &rich_rust::Color) -> Color {
+    match color.color_type {
+        rich_rust::ColorType::Default => Color::Reset,
+        rich_rust::ColorType::Standard | rich_rust::ColorType::Windows => {
+            match color.number.unwrap_or(0) {
+                0 => Color::Black,
+                1 => Color::Red,
+                2 => Color::Green,
+                3 => Color::Yellow,
+                4 => Color::Blue,
+                5 => Color::Magenta,
+                6 => Color::Cyan,
+                7 => Color::Gray,
+                8 => Color::DarkGray,
+                9 => Color::LightRed,
+                10 => Color::LightGreen,
+                11 => Color::LightYellow,
+                12 => Color::LightBlue,
+                13 => Color::LightMagenta,
+                14 => Color::LightCyan,
+                _ => Color::White,
             }
         }
-        wrapped
-    } else {
-        lines
+        rich_rust::ColorType::EightBit => Color::Indexed(color.number.unwrap_or(0)),
+        rich_rust::ColorType::TrueColor => {
+            let triplet = color.triplet.unwrap_or_default();
+            Color::Rgb(triplet.red, triplet.green, triplet.blue)
+        }
     }
 }
 
+fn rich_text_style(style: Option<&rich_rust::Style>) -> Style {
+    let Some(style) = style else {
+        return Style::new();
+    };
+    let mut output = Style::new();
+    if let Some(color) = &style.color {
+        output = output.fg(rich_color(color));
+    }
+    if let Some(color) = &style.bgcolor {
+        output = output.bg(rich_color(color));
+    }
+    let attributes = style.attributes;
+    if attributes.contains(rich_rust::Attributes::BOLD) {
+        output = output.add_modifier(Modifier::BOLD);
+    }
+    if attributes.contains(rich_rust::Attributes::DIM) {
+        output = output.add_modifier(Modifier::DIM);
+    }
+    if attributes.contains(rich_rust::Attributes::ITALIC) {
+        output = output.add_modifier(Modifier::ITALIC);
+    }
+    if attributes.contains(rich_rust::Attributes::UNDERLINE)
+        || attributes.contains(rich_rust::Attributes::UNDERLINE2)
+    {
+        output = output.add_modifier(Modifier::UNDERLINED);
+    }
+    if attributes.contains(rich_rust::Attributes::STRIKE) {
+        output = output.add_modifier(Modifier::CROSSED_OUT);
+    }
+    if attributes.contains(rich_rust::Attributes::REVERSE) {
+        output = output.add_modifier(Modifier::REVERSED);
+    }
+    output
+}
+
+fn clean(value: impl AsRef<str>) -> String {
+    crate::format::sanitize_terminal_inline(value.as_ref()).into_owned()
+}
+
 fn truncate(s: &str, max: usize) -> String {
+    let s = clean(s);
     let count = s.chars().count();
     if count <= max {
-        s.to_string()
+        s
     } else if max == 0 {
         String::new()
     } else {
@@ -756,7 +698,10 @@ fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let mut header_spans = vec![Span::styled(header_text, theme::primary())];
     if let Some(q) = app.active_filter_query() {
         if !q.is_empty() {
-            header_spans.push(Span::styled(format!("  [filter: {q}]"), theme::dim()));
+            header_spans.push(Span::styled(
+                clean(format!("  [filter: {q}]")),
+                theme::dim(),
+            ));
         }
     } else if app.show_shortcuts() {
         header_spans.push(Span::styled("  [; shortcuts]", theme::dim()));
@@ -797,14 +742,14 @@ fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         };
         let selector = if is_selected { "› " } else { "  " };
         let label_tag = if !issue.labels.is_empty() && area.width > 80 {
-            format!(" {}", issue.labels.join(","))
+            clean(format!(" {}", issue.labels.join(",")))
         } else {
             String::new()
         };
         let row_spans = if area.width <= 40 {
             vec![
                 Span::styled(selector.to_string(), style),
-                Span::styled(format!("{:<10} ", issue.id), style),
+                Span::styled(clean(format!("{:<10} ", issue.id)), style),
                 Span::styled(
                     truncate(&issue.title, usize::from(area.width.saturating_sub(14))),
                     style,
@@ -817,7 +762,7 @@ fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
                     format!("{:<7} ", issue.status.as_str()),
                     status_style(issue),
                 ),
-                Span::styled(format!("{:<10} ", issue.id), style),
+                Span::styled(clean(format!("{:<10} ", issue.id)), style),
                 Span::styled(truncate(&issue.title, 18), style),
             ]
         } else {
@@ -829,7 +774,7 @@ fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
                     format!("{:<7} ", issue.status.as_str()),
                     status_style(issue),
                 ),
-                Span::styled(format!("{:<14} ", issue.id), style),
+                Span::styled(clean(format!("{:<14} ", issue.id)), style),
                 Span::styled(truncate(&issue.title, 28), style),
                 Span::styled(label_tag, theme::dim()),
             ]
@@ -854,16 +799,12 @@ fn draw_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     frame.render_widget(Paragraph::new(rows), area);
 }
 
-fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
-    let Some(issue) = app.selected_issue() else {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled("(no selection)", theme::dim())))
-                .block(Block::default().borders(Borders::LEFT).title(" Detail ")),
-            area,
-        );
-        return;
-    };
-
+fn detail_lines(
+    issue: &Issue,
+    analysis: Option<&AnalysisResult>,
+    triage: Option<&Recommendation>,
+    width: u16,
+) -> Vec<Line<'static>> {
     let status_style_val = status_style(issue);
     let type_icon = match issue.issue_type.as_str() {
         "bug" => "🐛",
@@ -880,12 +821,12 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
                 theme::primary(),
             ),
             Span::styled(
-                issue.title.clone(),
+                clean(&issue.title),
                 theme::row().add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(Span::styled(
-            format!("{} │ {}", issue.id, issue.status.as_str()),
+            clean(format!("{} │ {}", issue.id, issue.status.as_str())),
             status_style_val,
         )),
         Line::from(""),
@@ -905,12 +846,12 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         Line::from(vec![
             Span::styled("Assignee: ", theme::dim()),
             Span::styled(
-                issue.assignee.as_deref().unwrap_or("-").to_string(),
+                clean(issue.assignee.as_deref().unwrap_or("-")),
                 theme::primary_fg(),
             ),
             Span::styled("  Pin: ", theme::dim()),
             Span::styled(
-                issue.pin.as_deref().unwrap_or("-").to_string(),
+                clean(issue.pin.as_deref().unwrap_or("-")),
                 theme::primary_fg(),
             ),
             Span::styled("  Wave: ", theme::dim()),
@@ -938,21 +879,21 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     if !issue.labels.is_empty() {
         lines.push(Line::from(vec![
             Span::styled("Labels: ", theme::dim()),
-            Span::styled(issue.labels.join(" • "), theme::status_warning()),
+            Span::styled(clean(issue.labels.join(" • ")), theme::status_warning()),
         ]));
     }
     if let Some(verify) = &issue.verify {
         lines.push(Line::from(vec![
             Span::styled("VERIFY: ", theme::dim()),
-            Span::styled(verify.clone(), theme::status_open()),
+            Span::styled(clean(verify), theme::status_open()),
         ]));
     }
     if !issue.principles.is_empty() {
         lines.push(Line::from(Span::styled("Principles:", theme::dim())));
         for p in &issue.principles {
             lines.push(Line::from(vec![
-                Span::styled(format!("  • {} — ", p.name), theme::accent_lav()),
-                Span::styled(p.decision.clone(), theme::row()),
+                Span::styled(clean(format!("  • {} — ", p.name)), theme::accent_lav()),
+                Span::styled(clean(&p.decision), theme::row()),
             ]));
         }
     }
@@ -962,14 +903,17 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         .filter(|s| !s.is_empty())
     {
         lines.push(Line::from(Span::styled("Acceptance:", theme::dim())));
-        lines.push(Line::from(Span::styled(format!("  {ac}"), theme::row())));
+        lines.push(Line::from(Span::styled(
+            clean(format!("  {ac}")),
+            theme::row(),
+        )));
     }
     if !issue.dependencies.is_empty() {
         lines.push(Line::from(Span::styled("Depends on:", theme::dim())));
         for dep in issue.dependencies.iter().take(8) {
             lines.push(Line::from(vec![
                 Span::styled(format!("  {} ", dep.dep_type.as_str()), theme::dim()),
-                Span::styled(dep.depends_on_id.clone(), theme::primary_fg()),
+                Span::styled(clean(&dep.depends_on_id), theme::primary_fg()),
             ]));
         }
         if issue.dependencies.len() > 8 {
@@ -990,10 +934,10 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         ]));
         for c in issue.comments.iter().take(5) {
             lines.push(Line::from(vec![
-                Span::styled(format!("  {}: ", c.author), theme::status_warning()),
+                Span::styled(clean(format!("  {}: ", c.author)), theme::status_warning()),
                 Span::styled(c.created_at.format("%m/%d").to_string(), theme::dim()),
             ]));
-            for l in markdown_lines(&c.body, usize::from(area.width.saturating_sub(6))) {
+            for l in markdown_lines(&c.body, usize::from(width.saturating_sub(6))) {
                 let indented: Vec<Span> =
                     std::iter::once(Span::styled("    ".to_string(), theme::dim()))
                         .chain(l.spans)
@@ -1011,7 +955,7 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         lines.push(Line::from(Span::styled("Comments: (none)", theme::dim())));
     }
 
-    if let Some(rec) = app.triage_for(&issue.id) {
+    if let Some(rec) = triage {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "🎯 Triage Insight:",
@@ -1022,11 +966,11 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
                 format!("  score {:.3} ", rec.score),
                 theme::status_warning(),
             ),
-            Span::styled(rec.action.clone(), theme::row()),
+            Span::styled(clean(&rec.action), theme::row()),
         ]));
         for reason in rec.reasons.iter().take(3) {
             lines.push(Line::from(Span::styled(
-                format!("  • {reason}"),
+                clean(format!("  • {reason}")),
                 theme::dim(),
             )));
         }
@@ -1037,7 +981,7 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             )));
         }
     }
-    if let Some(analysis) = app.analysis() {
+    if let Some(analysis) = analysis {
         let mut graph_bits: Vec<String> = Vec::new();
         if let Some(pr) = analysis.pagerank.as_ref().and_then(|m| m.get(&issue.id)) {
             graph_bits.push(format!("PR {:.3}", pr));
@@ -1083,11 +1027,11 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     )));
     if let Some(description) = &issue.description {
         if crate::format::markdown::contains_markdown(description) {
-            for l in markdown_lines(description, usize::from(area.width.saturating_sub(4))) {
+            for l in markdown_lines(description, usize::from(width.saturating_sub(4))) {
                 lines.push(l);
             }
         } else {
-            for chunk in split_for_wrap(description, usize::from(area.width.saturating_sub(4))) {
+            for chunk in split_for_wrap(description, usize::from(width.saturating_sub(4))) {
                 lines.push(Line::from(Span::styled(chunk, theme::row())));
             }
         }
@@ -1101,20 +1045,40 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             Style::new().add_modifier(Modifier::BOLD),
         )));
         if crate::format::markdown::contains_markdown(design) {
-            for l in markdown_lines(design, usize::from(area.width.saturating_sub(4))) {
+            for l in markdown_lines(design, usize::from(width.saturating_sub(4))) {
                 lines.push(l);
             }
         } else {
-            for chunk in split_for_wrap(design, usize::from(area.width.saturating_sub(4))) {
+            for chunk in split_for_wrap(design, usize::from(width.saturating_sub(4))) {
                 lines.push(Line::from(Span::styled(chunk, theme::row())));
             }
         }
     }
 
+    lines
+}
+
+pub(crate) fn detail_line_count(app: &TuiApp, width: u16) -> usize {
+    let Some(issue) = app.selected_issue() else {
+        return 0;
+    };
+    detail_lines(issue, app.analysis(), app.triage_for(&issue.id), width).len()
+}
+
+fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
+    let Some(issue) = app.selected_issue() else {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled("(no selection)", theme::dim())))
+                .block(Block::default().borders(Borders::LEFT).title(" Detail ")),
+            area,
+        );
+        return;
+    };
+
+    let lines = detail_lines(issue, app.analysis(), app.triage_for(&issue.id), area.width);
     let viewport = usize::from(area.height.saturating_sub(2));
     let total = lines.len();
     let max_scroll = total.saturating_sub(viewport);
-    app.set_detail_max_scroll(max_scroll);
     let start = app.detail_scroll().min(max_scroll);
     let end = (start + viewport).min(total);
     let visible: Vec<Line> = lines.into_iter().skip(start).take(end - start).collect();
@@ -1141,13 +1105,15 @@ fn draw_detail(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
 }
 
 fn split_for_wrap(text: &str, width: usize) -> Vec<String> {
-    if width == 0 || text.len() <= width {
+    let text = crate::format::sanitize_terminal_text(text);
+    let text = text.as_ref();
+    if width == 0 || text.chars().count() <= width {
         return vec![text.to_string()];
     }
     let mut out = Vec::new();
     let mut cur = String::new();
     for word in text.split_whitespace() {
-        if cur.len() + word.len() + 1 > width && !cur.is_empty() {
+        if cur.chars().count() + word.chars().count() + 1 > width && !cur.is_empty() {
             out.push(cur);
             cur = String::new();
         }
@@ -1169,7 +1135,7 @@ fn draw_search_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp)
     let q = app.active_filter_query().unwrap_or("");
     let line = Line::from(vec![
         Span::styled(" / ", theme::primary()),
-        Span::styled(q.to_string(), theme::row()),
+        Span::styled(clean(q), theme::row()),
         Span::styled("  (enter keep • esc cancel)", theme::dim()),
     ]);
     frame.render_widget(Paragraph::new(line), area);
@@ -1237,28 +1203,25 @@ fn draw_help(frame: &mut Frame, area: ratatui::layout::Rect, _app: &TuiApp) {
         Line::from(vec![
             Span::styled(" Navigation ", theme::primary()),
             Span::styled(
-                " j/k move  G end  gg start  ctrl+d/u page  pgUp/Dn  enter detail  esc back  q quit",
+                " j/k move  G end  home start  ctrl+d/u page  enter detail  esc back  q quit",
                 theme::dim(),
             ),
         ]),
         Line::from(vec![
             Span::styled(" Views ", theme::primary()),
             Span::styled(
-                " b board  g graph  i insights  a actionable  E tree  [/] labels  ; sidebar  ? help",
+                " b board  g graph  i insights  a actionable  E tree  [ labels  ; sidebar  ? help",
                 theme::dim(),
             ),
         ]),
         Line::from(vec![
             Span::styled(" Filters ", theme::primary()),
-            Span::styled(
-                " / search  o open  c closed  r ready  l labels  esc clear filter",
-                theme::dim(),
-            ),
+            Span::styled(" / search  esc clear filter", theme::dim()),
         ]),
         Line::from(vec![
             Span::styled(" Actions ", theme::primary()),
             Span::styled(
-                " x export  y copy id  C copy full  O editor  ctrl+r refresh",
+                " c close  d delete  e edit title  ctrl+r reload",
                 theme::dim(),
             ),
         ]),
@@ -1303,12 +1266,75 @@ fn draw_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {
     );
 }
 
+fn draw_prompt(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
+    let Some(prompt) = app.prompt() else {
+        return;
+    };
+    let field_rows = u16::try_from(prompt.fields().count()).unwrap_or(1);
+    let height = (field_rows * 2 + 4).min(area.height);
+    let popup = centered_rect(area, area.width.saturating_sub(8).min(72), height);
+    frame.render_widget(Clear, popup);
+    let border = if prompt.kind() == PromptKind::Delete {
+        theme::danger_border()
+    } else {
+        theme::primary()
+    };
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border)
+            .title(clean(format!(
+                " {} — {} ",
+                prompt.title(),
+                prompt.issue_id()
+            ))),
+        popup,
+    );
+    let inner = ratatui::layout::Rect {
+        x: popup.x + 2,
+        y: popup.y + 1,
+        width: popup.width.saturating_sub(4),
+        height: popup.height.saturating_sub(2),
+    };
+    let mut lines = Vec::new();
+    for (index, (label, value)) in prompt.fields().enumerate() {
+        let active = index == prompt.active();
+        lines.push(Line::from(Span::styled(
+            label.to_string(),
+            if active {
+                theme::primary_fg()
+            } else {
+                theme::dim()
+            },
+        )));
+        lines.push(Line::from(Span::styled(
+            clean(format!("  {value}{}", if active { "▌" } else { "" })),
+            if active {
+                theme::selected_row()
+            } else {
+                theme::row()
+            },
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " tab/↑↓ field • enter save • esc cancel",
+        theme::dim(),
+    )));
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
 fn draw_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     if let Some(message) = app.status_message() {
+        let (marker, style) = if app.status_is_error() {
+            ("!", theme::status_blocked())
+        } else {
+            ("✓", theme::status_open())
+        };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!("✓ {message}"),
-                theme::status_open(),
+                clean(format!("{marker} {message}")),
+                style,
             ))),
             area,
         );
@@ -1322,23 +1348,23 @@ fn draw_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             } else if app.show_shortcuts() {
                 "tab focus • ; hide shortcuts • ctrl+j/k scroll • ? help"
             } else {
-                "j/k move • / search • b board • g graph • i insights • ; shortcuts • ? help • q quit"
+                "j/k move • / search • c/d/e act • b board • g graph • ; shortcuts • ? help • q quit"
             }
         }
         Focus::Search => "enter keep filter • esc cancel • backspace del • j/k nav",
-        Focus::Detail => "j/k scroll • q/esc back • tab pane • ? help • ; shortcuts",
-        Focus::Board
-        | Focus::Graph
-        | Focus::Actionable
-        | Focus::Insights
-        | Focus::Tree
-        | Focus::LabelDashboard => "q/esc back • j/k nav • enter detail • ? help",
+        Focus::Detail => "j/k scroll • q/esc back • tab pane • c/d/e act • ? help • ; shortcuts",
+        Focus::Board | Focus::Graph | Focus::Actionable | Focus::Tree => {
+            "q/esc back • j/k nav • enter detail • ? help"
+        }
+        Focus::Insights => "q/esc back • ? help",
+        Focus::LabelDashboard => "q/esc back • j/k nav • enter filter • ? help",
         Focus::Help => "any key to close help",
         Focus::QuitConfirm => "y quit • other cancel",
+        Focus::Prompt => "tab/↑↓ field • enter save • esc cancel",
     };
     let filtered_note = if let Some(q) = app.active_filter_query() {
         if !q.is_empty() {
-            format!(" 🔍{} ", q)
+            clean(format!(" 🔍{} ", q))
         } else {
             String::new()
         }
@@ -1390,5 +1416,41 @@ fn centered_rect(area: ratatui::layout::Rect, width: u16, height: u16) -> ratatu
         y: popup_y,
         width: width.min(area.width),
         height: height.min(area.height),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{markdown_lines, truncate};
+
+    #[test]
+    fn rendered_text_escapes_terminal_controls() {
+        let title = truncate("safe\u{1b}[31mred", 40);
+        assert!(!title.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn markdown_escapes_terminal_controls() {
+        let lines = markdown_lines("hello \u{1b}[31mred", 80);
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(!text.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn markdown_wraps_to_width() {
+        let md = "word ".repeat(40);
+        let lines = markdown_lines(&md, 20);
+        assert!(lines.len() > 1);
+        assert!(lines.iter().all(|line| {
+            line.spans
+                .iter()
+                .map(|span| rich_rust::cells::cell_len(span.content.as_ref()))
+                .sum::<usize>()
+                <= 20
+        }));
     }
 }

@@ -2858,3 +2858,48 @@ mod bd_claim_trap_tests {
         );
     }
 }
+
+/// Rename one issue from the TUI through the same store write `br update` uses.
+///
+/// Title-only, so workflow transition gates do not apply; the expected
+/// revision keeps a rename from overwriting a row that changed after the TUI
+/// rendered it.
+pub(crate) fn update_title_from_tui(
+    beads_dir: &Path,
+    issue_id: &str,
+    title: &str,
+    expected_revision: Option<u64>,
+) -> Result<String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(BeadsError::validation("title", "title cannot be empty"));
+    }
+    let routed_write_lock = acquire_routed_workspace_write_lock(beads_dir, false, None)?;
+    let mut cli = config::CliOverrides::default();
+    routed_write_lock.mark_cli_write_lock_held(&mut cli);
+    let mut storage_ctx = config::open_storage_with_cli(beads_dir, &cli)?;
+    auto_import_storage_ctx_if_stale(&mut storage_ctx, &cli)?;
+    let config_layer = storage_ctx.load_config(&cli)?;
+    let actor = config::resolve_actor(&config_layer);
+    let updates = IssueUpdate {
+        title: Some(title.to_string()),
+        expected_revision,
+        ..IssueUpdate::default()
+    };
+    let updated = retry_mutation_with_jsonl_recovery(
+        &mut storage_ctx,
+        true,
+        "tui update title",
+        Some(issue_id),
+        |storage| storage.update_issue(issue_id, &updates, &actor),
+    )?;
+    storage_ctx.flush_no_db_if_dirty()?;
+    if let Err(error) = storage_ctx.auto_flush_if_enabled() {
+        tracing::warn!(
+            issue_id,
+            error = %error,
+            "TUI title update committed but JSONL auto-flush failed"
+        );
+    }
+    Ok(updated.id)
+}

@@ -2060,6 +2060,44 @@ fn run_close_core(
     })
 }
 
+/// Close one issue from the TUI through the same core `br close` runs.
+///
+/// The TUI is another door into the ledger, not a second close path:
+/// commit citation, policy gates, dependency checks, and the atomic write
+/// stay in [`run_close_core`]. `expected_revision` makes the write fail when
+/// the row changed after the user selected it.
+pub(crate) fn close_from_tui(
+    beads_dir: &Path,
+    issue_id: &str,
+    commit_sha: &str,
+    reason: &str,
+    expected_revision: Option<u64>,
+) -> Result<ClosedIssue> {
+    let routed_write_lock = acquire_routed_workspace_write_lock(beads_dir, false, None)?;
+    let mut cli = config::CliOverrides::default();
+    routed_write_lock.mark_cli_write_lock_held(&mut cli);
+    let mut storage_ctx = config::open_storage_with_cli(beads_dir, &cli)?;
+    auto_import_storage_ctx_if_stale(&mut storage_ctx, &cli)?;
+    let ctx = OutputContext::from_flags(false, true, true);
+    let args = CloseArgs {
+        ids: vec![issue_id.to_string()],
+        reason: (!reason.trim().is_empty()).then(|| reason.trim().to_string()),
+        commit_sha: Some(commit_sha.trim().to_string()),
+        expected_revision,
+        ..CloseArgs::default()
+    };
+    let CloseExecution {
+        closed, skipped, ..
+    } = run_close_core(&args, &cli, &ctx, beads_dir, &mut storage_ctx, true)?;
+    if let Some(closed) = closed.into_iter().next() {
+        return Ok(closed);
+    }
+    Err(skipped.into_iter().next().map_or_else(
+        || BeadsError::internal(format!("close of {issue_id} produced no outcome")),
+        |skipped| BeadsError::validation("close", skipped.reason),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

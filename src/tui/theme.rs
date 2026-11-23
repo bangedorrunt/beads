@@ -8,26 +8,38 @@
 
 use ratatui::style::{Color, Modifier, Style};
 
-fn no_color() -> bool {
-    std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
-        || std::env::var("TERM").is_ok_and(|v| v == "dumb")
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColorMode {
+    Plain,
+    TrueColor,
+    Ansi256,
+    Ansi16,
 }
 
-fn truecolor() -> bool {
-    if no_color() {
-        return false;
-    }
-    std::env::var("COLORTERM").is_ok_and(|v| {
-        let l = v.to_ascii_lowercase();
-        l == "truecolor" || l == "24bit"
+fn color_mode() -> ColorMode {
+    static MODE: std::sync::OnceLock<ColorMode> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| {
+        if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
+            || std::env::var("TERM").is_ok_and(|v| v == "dumb")
+        {
+            return ColorMode::Plain;
+        }
+        if std::env::var("COLORTERM").is_ok_and(|value| {
+            let value = value.to_ascii_lowercase();
+            value == "truecolor" || value == "24bit"
+        }) {
+            return ColorMode::TrueColor;
+        }
+        if std::env::var("TERM").is_ok_and(|value| value.contains("256color")) {
+            ColorMode::Ansi256
+        } else {
+            ColorMode::Ansi16
+        }
     })
 }
 
-fn is_256() -> bool {
-    if no_color() || truecolor() {
-        return false;
-    }
-    std::env::var("TERM").is_ok_and(|v| v.contains("256color"))
+fn no_color() -> bool {
+    color_mode() == ColorMode::Plain
 }
 
 const VOID: Color = Color::Rgb(0x08, 0x08, 0x0e);
@@ -42,16 +54,11 @@ const AMBER: Color = Color::Rgb(0xe0, 0xaf, 0x68);
 const RED: Color = Color::Rgb(0xf7, 0x76, 0x8e);
 
 fn resolve(rgb: Color, idx256: u8, ansi16: Color) -> Color {
-    if no_color() {
-        return Color::Reset;
-    }
-    if truecolor() {
-        return rgb;
-    }
-    if is_256() {
-        Color::Indexed(idx256)
-    } else {
-        ansi16
+    match color_mode() {
+        ColorMode::Plain => Color::Reset,
+        ColorMode::TrueColor => rgb,
+        ColorMode::Ansi256 => Color::Indexed(idx256),
+        ColorMode::Ansi16 => ansi16,
     }
 }
 

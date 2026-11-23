@@ -1277,13 +1277,100 @@ fn render_delete_result_rich(
     console.print_renderable(&panel);
 }
 
+/// Tombstone one issue from the TUI using the CLI's non-routed delete path.
+///
+/// Dependents still block, exactly as `br delete` without `--force`,
+/// `--detach`, or `--cascade` does; the TUI deliberately offers no cascade
+/// door. `expected_revision` fails the write when the row changed after the
+/// user selected it.
+pub(crate) fn delete_from_tui(
+    beads_dir: &Path,
+    issue_id: &str,
+    reason: &str,
+    expected_revision: Option<u64>,
+) -> Result<DeleteResult> {
+    let reason = require_delete_reason(Some(reason))?;
+    let routed_write_lock = acquire_routed_workspace_write_lock(beads_dir, false, None)?;
+    let mut cli = config::CliOverrides::default();
+    routed_write_lock.mark_cli_write_lock_held(&mut cli);
+    let mut storage_ctx = config::open_storage_with_cli(beads_dir, &cli)?;
+    auto_import_storage_ctx_if_stale(&mut storage_ctx, &cli)?;
+    let config_layer = storage_ctx.load_config(&cli)?;
+    let actor = config::resolve_actor(&config_layer);
+    let blocked_dependents =
+        collect_direct_dependents(&storage_ctx.storage, &[issue_id.to_string()])?;
+    if !blocked_dependents.is_empty() {
+        return Err(BeadsError::validation(
+            "dependents",
+            format!(
+                "{issue_id} has {} dependent issue(s): {}. Use `br delete --detach` or `--cascade` from the CLI",
+                blocked_dependents.len(),
+                blocked_dependents.join(", ")
+            ),
+        ));
+    }
+
+    let mut result = DeleteResult::new();
+    retry_mutation_with_jsonl_recovery(
+        &mut storage_ctx,
+        true,
+        "tui delete tombstone",
+        Some(issue_id),
+        |storage| {
+            storage.delete_issue_with_expected_revision(
+                issue_id,
+                &actor,
+                reason,
+                None,
+                expected_revision,
+            )
+        },
+    )?;
+    result.dependencies_removed = match retry_mutation_with_jsonl_recovery(
+        &mut storage_ctx,
+        false,
+        "tui delete remove dependencies",
+        Some(issue_id),
+        |storage| storage.remove_all_dependencies(issue_id, &actor),
+    ) {
+        Ok(removed) => removed,
+        Err(error) => {
+            tracing::warn!(
+                issue_id,
+                error = %error,
+                "TUI delete tombstoned the issue but dependency cleanup failed"
+            );
+            0
+        }
+    };
+
+    storage_ctx.flush_no_db_then(|ctx| {
+        let last_touched = crate::util::get_last_touched_id(&ctx.paths.beads_dir);
+        if last_touched == issue_id {
+            crate::util::clear_last_touched(&ctx.paths.beads_dir);
+        }
+        Ok(())
+    })?;
+    if let Err(error) = storage_ctx.auto_flush_if_enabled() {
+        tracing::warn!(
+            issue_id,
+            error = %error,
+            "TUI delete committed but JSONL auto-flush failed"
+        );
+    }
+
+    result.deleted.push(issue_id.to_string());
+    result.deleted_count = 1;
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Issue, IssueType, Priority, Status};
+    use crate::model::{DependencyType, Issue, IssueType, Priority, Status};
     use chrono::Utc;
     use std::io::Write;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
     use tracing::info;
 
     fn init_logging() {
@@ -1416,6 +1503,60 @@ mod tests {
         let ids = read_ids_from_file(file.path()).unwrap();
         assert_eq!(ids, vec!["bd-1", "bd-2", "bd-3"]);
         info!("test_read_ids_from_file: assertions passed");
+    }
+
+    #[test]
+    fn tui_delete_stale_revision_keeps_dependency_edges() {
+        let _lock = crate::util::test_helpers::TEST_DIR_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = TempDir::new().expect("tempdir");
+        let ctx = OutputContext::from_flags(false, false, true);
+        crate::cli::commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
+        let beads_dir = temp.path().join(".beads");
+        let db_path = beads_dir.join("beads.db");
+
+        let observed = {
+            let mut storage = SqliteStorage::open(&db_path).expect("storage");
+            storage
+                .create_issue(&create_test_issue("bd-tui-del", "Delete target"), "tester")
+                .expect("create target");
+            storage
+                .create_issue(&create_test_issue("bd-tui-dep", "Related issue"), "tester")
+                .expect("create related");
+            storage
+                .add_dependency(
+                    "bd-tui-del",
+                    "bd-tui-dep",
+                    DependencyType::Related.as_str(),
+                    "tester",
+                )
+                .expect("add dependency");
+            storage
+                .get_issue("bd-tui-del")
+                .expect("get target")
+                .expect("target exists")
+        };
+
+        let stale = delete_from_tui(
+            &beads_dir,
+            "bd-tui-del",
+            "stale delete",
+            Some(observed.revision.saturating_sub(1)),
+        )
+        .expect_err("stale revision must refuse");
+        assert!(matches!(stale, BeadsError::StaleRevision { .. }));
+
+        let storage = SqliteStorage::open(&db_path).expect("reopen storage");
+        let target = storage
+            .get_issue("bd-tui-del")
+            .expect("get target")
+            .expect("target still exists");
+        assert_eq!(target.status, Status::Open);
+        let dependencies = storage
+            .get_dependencies("bd-tui-del")
+            .expect("get dependencies");
+        assert_eq!(dependencies, vec!["bd-tui-dep".to_string()]);
     }
 
     #[test]
